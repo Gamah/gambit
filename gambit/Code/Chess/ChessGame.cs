@@ -42,8 +42,19 @@ public sealed class ChessGame
 	}
 
 	// ── State reads ──
+	// The board view and HUD poll these every frame for every table, so the
+	// values the vendor recomputes/copies on each call are cached here and
+	// refreshed only when a move mutates the board. Fen in particular returns
+	// the SAME string instance between moves — ChessBoardView uses that as its
+	// cheap "position unchanged" check.
 
-	public string Fen => _board.ToFen();
+	string _fen;
+	string _lastMoveUci;
+	string _checkedKingSquare;
+	bool _checkedKingDirty = true;
+	int _moveCount;
+
+	public string Fen => _fen ??= _board.ToFen();
 
 	public bool WhiteToMove => _board.Turn == ChessLib.PieceColor.White;
 
@@ -53,27 +64,40 @@ public sealed class ChessGame
 	public bool IsCheck => _board.WhiteKingChecked || _board.BlackKingChecked;
 
 	/// <summary>Square ("e1") of the currently checked king, or null.</summary>
-	public string CheckedKingSquare =>
-		_board.WhiteKingChecked ? _board.WhiteKing.ToString()
-		: _board.BlackKingChecked ? _board.BlackKing.ToString()
-		: null;
-
-	/// <summary>Executed moves in SAN, for the HUD move list.</summary>
-	public IReadOnlyList<string> SanMoves => _board.MovesToSan;
-
-	/// <summary>Number of half-moves played on this game object.</summary>
-	public int MoveCount => _board.ExecutedMoves.Count;
-
-	/// <summary>Last applied move as UCI, or null before the first move. Derived
-	/// from move history, so FEN-loaded spectator games start with null and rely
-	/// on the relayed lastMoveUci instead.</summary>
-	public string LastMoveUci
+	public string CheckedKingSquare
 	{
 		get
 		{
-			var moves = _board.ExecutedMoves;
-			return moves.Count == 0 ? null : UciOf( moves[^1] );
+			if ( _checkedKingDirty )
+			{
+				_checkedKingSquare =
+					_board.WhiteKingChecked ? _board.WhiteKing.ToString()
+					: _board.BlackKingChecked ? _board.BlackKing.ToString()
+					: null;
+				_checkedKingDirty = false;
+			}
+			return _checkedKingSquare;
 		}
+	}
+
+	/// <summary>Executed moves in SAN, for the HUD move list. Copies — call on
+	/// rebuild, not per frame.</summary>
+	public IReadOnlyList<string> SanMoves => _board.MovesToSan;
+
+	/// <summary>Number of half-moves applied to this game object.</summary>
+	public int MoveCount => _moveCount;
+
+	/// <summary>Last applied move as normalized UCI (promotions always carry
+	/// their piece char), or null before the first move. FEN-loaded spectator
+	/// games start with null and rely on the relayed lastMoveUci instead.</summary>
+	public string LastMoveUci => _lastMoveUci;
+
+	void OnBoardMutated( string uci )
+	{
+		_fen = null;
+		_checkedKingDirty = true;
+		_lastMoveUci = uci;
+		_moveCount++;
 	}
 
 	public GameResult Result
@@ -172,17 +196,21 @@ public sealed class ChessGame
 		{
 			if ( move.NewPosition.ToString() != to ) continue;
 
+			string applied = uci[..4];
 			if ( move.Parameter is ChessLib.MovePromotion promotion )
 			{
 				char produced = char.ToLowerInvariant( promotion.PromotionResult.AsChar );
 				if ( produced != ( promo == '\0' ? 'q' : promo ) ) continue;
+				applied += produced; // normalize: promotions always carry the char
 			}
 			else if ( promo != '\0' )
 			{
 				return false; // promotion char on a non-promotion move
 			}
 
-			return _board.Move( move );
+			if ( !_board.Move( move ) ) return false;
+			OnBoardMutated( applied );
+			return true;
 		}
 
 		return false;
@@ -222,7 +250,11 @@ public sealed class ChessGame
 	public long Perft( int depth )
 	{
 		if ( depth <= 0 ) return 1;
-		return PerftInner( _board, depth );
+		long nodes = PerftInner( _board, depth );
+		// Move/Cancel churned the board behind the caches' back
+		_fen = null;
+		_checkedKingDirty = true;
+		return nodes;
 	}
 
 	static long PerftInner( ChessLib.ChessBoard board, int depth )
@@ -242,14 +274,6 @@ public sealed class ChessGame
 	}
 
 	// ── Helpers ──
-
-	static string UciOf( ChessLib.Move move )
-	{
-		var uci = move.OriginalPosition.ToString() + move.NewPosition.ToString();
-		if ( move.Parameter is ChessLib.MovePromotion promotion )
-			uci += char.ToLowerInvariant( promotion.PromotionResult.AsChar );
-		return uci;
-	}
 
 	static bool TryParseSquare( string square, out ChessLib.Position position )
 	{

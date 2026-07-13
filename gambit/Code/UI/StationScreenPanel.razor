@@ -18,6 +18,10 @@
 		<div class="frame seats">
 			<div class="seat">⬜ @( _station.WhiteName ?? "—" )</div>
 			<div class="seat">⬛ @( _station.BlackName ?? "—" )</div>
+			@if ( StatusLine() is string status )
+			{
+				<div class="game-status">@status</div>
+			}
 		</div>
 	}
 </root>
@@ -45,18 +49,37 @@
 		letter-spacing: 2px;
 		text-shadow: 0px 0px 8px rgba(0, 0, 0, 0.8);
 	}
+
+	.game-status {
+		font-size: 10px;
+		color: #ffd60a;
+		letter-spacing: 3px;
+		text-shadow: 0px 0px 8px rgba(0, 0, 0, 0.8);
+	}
 </style>
 
 @code
 {
 	ChessStation _station;
+	Gambit.Game.LocalGameController _controller;
 
 	protected override void OnStart()
 	{
 		_station = Components.Get<ChessStation>( FindMode.Enabled | FindMode.InSelf | FindMode.InAncestors );
+		_controller = Gambit.Game.LocalGameController.For( _station );
+	}
+
+	/// <summary>"GAME IN PROGRESS" while a game runs at this table, the result
+	/// once it ends (until the table resets), null when idle.</summary>
+	string StatusLine()
+	{
+		if ( _controller == null ) return null;
+		if ( _controller.GameOver ) return _controller.OverResult;
+		if ( _controller.Playing ) return "GAME IN PROGRESS";
+		return null;
 	}
 
 	protected override int BuildHash() =>
 		System.HashCode.Combine( _station?.WhiteSteamId, _station?.WhiteName,
-			_station?.BlackSteamId, _station?.BlackName );
+			_station?.BlackSteamId, _station?.BlackName, StatusLine() );
 }

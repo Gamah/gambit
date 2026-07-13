@@ -1,0 +1,266 @@
+@using System;
+@using System.Collections.Generic;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.World;
+@using Gambit.Game;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	Minimal seated-game HUD (M2): whose turn, SAN move list, resign / new game,
+	promotion picker, and the lichess import link after the game. Attached to
+	the scene ScreenPanel at runtime by LobbyPlayer.EnsureGameHud. Screen-space
+	overlay: the board itself is the 3D world — this sits in a column on the
+	right edge, clear of the board (px values are uncalibrated, tune in-editor).
+*@
+
+<root>
+	@if ( Visible() )
+	{
+		var ctrl = Controller();
+		var view = View();
+
+		<div class="hud">
+			<div class="title">LOCAL GAME</div>
+			<div class="names">
+				<div class="name">⬜ @( Station().WhiteName ?? "—" )</div>
+				<div class="name">⬛ @( Station().BlackName ?? "—" )</div>
+			</div>
+
+			@if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
+			{
+				<div class="status wait">Waiting for an opponent to take the @( OpenSeatName() ) seat…</div>
+			}
+			else if ( ctrl.GameOver )
+			{
+				<div class="status over">@( ctrl.OverResult ?? ctrl.Game?.ResultString )</div>
+				<div class="reason">@( ctrl.OverReason ?? ctrl.Game?.ResultReason )</div>
+
+				@if ( ctrl.LichessUrl == null )
+				{
+					@if ( ctrl.Importing )
+					{
+						<div class="button disabled">Sending to lichess…</div>
+					}
+					else
+					{
+						<div class="button" onclick="@( () => ctrl.ImportToLichess() )">Get lichess link</div>
+					}
+					@if ( ctrl.ImportError != null )
+					{
+						<div class="error">@ctrl.ImportError</div>
+					}
+				}
+				else
+				{
+					<div class="url">@ctrl.LichessUrl</div>
+					<div class="button" onclick="@( () => ctrl.CopyLichessUrl() )">
+						@( ctrl.SinceUrlCopied < 2f ? "✓ Copied" : "Copy link" )
+					</div>
+				}
+
+				@if ( BothSeated() )
+				{
+					<div class="button" onclick="@( () => ctrl.RequestNewGame() )">New game</div>
+				}
+			}
+			else
+			{
+				<div class="status turn">@TurnText( ctrl )</div>
+			}
+
+			@if ( ctrl?.HasGame ?? false )
+			{
+				<div class="moves">
+					@foreach ( var row in MoveRows( ctrl ) )
+					{
+						<div class="move-row">@row</div>
+					}
+				</div>
+			}
+
+			@if ( ctrl?.Playing ?? false )
+			{
+				<div class="button resign" onclick="@( () => LobbyPlayer.Local?.RequestLeave() )">
+					@( ( LobbyPlayer.Local?.LeaveArmed ?? false ) ? "Sure? This resigns" : "Resign & stand up" )
+				</div>
+			}
+		</div>
+
+		@if ( view?.PendingPromotion != null )
+		{
+			<div class="promo-veil">
+				<div class="promo">
+					<div class="promo-title">Promote to</div>
+					<div class="promo-row">
+						<div class="promo-pick" onclick="@( () => view.ChoosePromotion( 'q' ) )">♛</div>
+						<div class="promo-pick" onclick="@( () => view.ChoosePromotion( 'r' ) )">♜</div>
+						<div class="promo-pick" onclick="@( () => view.ChoosePromotion( 'b' ) )">♝</div>
+						<div class="promo-pick" onclick="@( () => view.ChoosePromotion( 'n' ) )">♞</div>
+					</div>
+					<div class="promo-cancel" onclick="@( () => view.CancelPromotion() )">cancel</div>
+				</div>
+			</div>
+		}
+	}
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		z-index: 50;
+	}
+
+	.hud {
+		position: absolute;
+		right: 24px;
+		top: 15%;
+		width: 250px;
+		flex-direction: column;
+		gap: 8px;
+		padding: 14px;
+		background-color: rgba(10, 10, 14, 0.78);
+		border-radius: 10px;
+		color: rgba(255, 255, 255, 0.9);
+		font-size: 14px;
+	}
+
+	.title {
+		font-size: 12px;
+		letter-spacing: 2px;
+		color: rgba(255, 255, 255, 0.45);
+	}
+
+	.names { flex-direction: column; gap: 2px; }
+	.name { font-size: 14px; }
+
+	.status { font-size: 16px; font-weight: bold; }
+	.status.wait { color: #ffd60a; font-weight: normal; font-size: 14px; }
+	.status.turn { color: #7fd47f; }
+	.status.over { color: #ffd60a; font-size: 20px; }
+	.reason { font-size: 13px; color: rgba(255, 255, 255, 0.6); }
+
+	.moves {
+		flex-direction: column;
+		max-height: 260px;
+		overflow: hidden;
+		background-color: rgba(255, 255, 255, 0.05);
+		border-radius: 6px;
+		padding: 6px 10px;
+	}
+	.move-row { font-size: 13px; font-family: monospace; color: rgba(255, 255, 255, 0.8); }
+
+	.button {
+		padding: 8px 12px;
+		background-color: rgba(90, 140, 255, 0.25);
+		border-radius: 6px;
+		cursor: pointer;
+		pointer-events: all;
+		font-size: 14px;
+		justify-content: center;
+	}
+	.button:hover { background-color: rgba(90, 140, 255, 0.45); }
+	.button.disabled { color: rgba(255, 255, 255, 0.4); pointer-events: none; }
+	.button.resign { background-color: rgba(255, 45, 85, 0.25); }
+	.button.resign:hover { background-color: rgba(255, 45, 85, 0.5); }
+
+	.url {
+		font-size: 12px;
+		font-family: monospace;
+		color: #9fd0ff;
+		padding: 4px 0;
+	}
+	.error { font-size: 12px; color: #ff8080; }
+
+	.promo-veil {
+		position: absolute;
+		left: 0; top: 0;
+		width: 100%; height: 100%;
+		justify-content: center;
+		align-items: center;
+		background-color: rgba(0, 0, 0, 0.35);
+		pointer-events: all;
+	}
+	.promo {
+		flex-direction: column;
+		align-items: center;
+		gap: 10px;
+		padding: 18px 26px;
+		background-color: rgba(10, 10, 14, 0.92);
+		border-radius: 12px;
+	}
+	.promo-title { font-size: 15px; color: rgba(255, 255, 255, 0.8); }
+	.promo-row { flex-direction: row; gap: 14px; }
+	.promo-pick {
+		font-size: 42px;
+		color: white;
+		padding: 4px 10px;
+		border-radius: 8px;
+		cursor: pointer;
+		pointer-events: all;
+		background-color: rgba(255, 255, 255, 0.08);
+	}
+	.promo-pick:hover { background-color: rgba(90, 140, 255, 0.45); }
+	.promo-cancel {
+		font-size: 12px;
+		color: rgba(255, 255, 255, 0.5);
+		cursor: pointer;
+		pointer-events: all;
+	}
+	.promo-cancel:hover { color: white; }
+</style>
+
+@code
+{
+	static ChessStation Station() => ChessStation.Active;
+	static LocalGameController Controller() => LocalGameController.For( ChessStation.Active );
+	static ChessBoardView View() => ChessStation.Active?.Components.Get<ChessBoardView>();
+
+	static bool Visible() =>
+		ChessStation.Active != null && ( LobbyPlayer.Local?.CameraSettled ?? false );
+
+	static bool BothSeated() =>
+		Station() is { } s && s.WhiteSteamId != 0 && s.BlackSteamId != 0;
+
+	static string OpenSeatName() =>
+		Station()?.WhiteSteamId == 0 ? "White" : "Black";
+
+	static string TurnText( LocalGameController ctrl )
+	{
+		if ( ctrl.IsMyTurn )
+			return ctrl.Game.IsCheck ? "Your move — check!" : "Your move";
+		return ctrl.Game.WhiteToMove ? "White is thinking…" : "Black is thinking…";
+	}
+
+	/// <summary>Last few full-move rows, "12. Nf3 Nc6" style. The list column is
+	/// fixed-height with overflow hidden (drag-scroll fights clicks — CLAUDE.md),
+	/// so we render only the tail.</summary>
+	static IEnumerable<string> MoveRows( LocalGameController ctrl )
+	{
+		var san = ctrl.Game?.SanMoves;
+		if ( san == null || san.Count == 0 ) yield break;
+
+		const int maxRows = 12;
+		int totalRows = ( san.Count + 1 ) / 2;
+		for ( int row = Math.Max( 0, totalRows - maxRows ); row < totalRows; row++ )
+		{
+			int i = row * 2;
+			string line = $"{row + 1}. {san[i]}";
+			if ( i + 1 < san.Count ) line += $"  {san[i + 1]}";
+			yield return line;
+		}
+	}
+
+	protected override int BuildHash()
+	{
+		var ctrl = Controller();
+		return System.HashCode.Combine(
+			Visible(), ctrl?.GameId, ctrl?.Game?.MoveCount, ctrl?.GameOver,
+			System.HashCode.Combine( ctrl?.Importing, ctrl?.LichessUrl, ctrl?.ImportError,
+				ctrl?.SinceUrlCopied < 2f, ctrl?.IsMyTurn, View()?.PendingPromotion != null,
+				LobbyPlayer.Local?.LeaveArmed, BothSeated() ) );
+	}
+}

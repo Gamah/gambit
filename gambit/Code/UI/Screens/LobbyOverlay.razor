@@ -15,7 +15,7 @@
 <root>
 	@if ( LobbyPlayer.Local?.Engaged ?? false )
 	{
-		<div class="leave-btn" onclick="@Leave">✕  @( ChessStation.Active != null ? "Stand Up" : "Close" )</div>
+		<div class="leave-btn" onclick="@Leave">✕  @LeaveLabel()</div>
 	}
 	else if ( LobbyPlayer.Local?.NearbyStation != null )
 	{
@@ -99,7 +99,16 @@
 
 @code
 {
-	void Leave() => LobbyPlayer.Local?.Disengage();
+	// Standing up mid-game resigns, so leaving a chess seat runs through the
+	// two-stage RequestLeave; wall boards close immediately as before.
+	void Leave() => LobbyPlayer.Local?.RequestLeave();
+
+	static string LeaveLabel()
+	{
+		if ( ChessStation.Active == null ) return "Close";
+		if ( LobbyPlayer.Local?.LeaveArmed ?? false ) return "Resign & Stand Up?";
+		return "Stand Up";
+	}
 
 	static string BoardPrompt( Gambit.World.SettingsStation b ) => b.Kind switch
 	{
@@ -115,5 +124,6 @@
 		System.HashCode.Combine( LobbyPlayer.Local?.Engaged, LobbyPlayer.Local?.NearbyStation != null,
 			LobbyPlayer.Local?.NearbySeat, ChessStation.Active != null,
 			LobbyPlayer.Local?.NearbyBoard?.Kind,
-			LobbyPlayer.Local?.NearbyInfo?.Kind, DiscordButton.SinceCopied < 2f );
+			LobbyPlayer.Local?.NearbyInfo?.Kind, DiscordButton.SinceCopied < 2f,
+			LobbyPlayer.Local?.LeaveArmed );
 }

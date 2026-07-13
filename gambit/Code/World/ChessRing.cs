@@ -375,6 +375,16 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			component.WhiteAnchor = BuildSeatAnchor( station, "WhiteAnchor", -1f );
 			component.BlackAnchor = BuildSeatAnchor( station, "BlackAnchor", +1f );
 
+			// Game flow + board rendering (M2). Both replicate with the station GO
+			// like ChessStation does — the controller for its [Sync] game state, the
+			// view because every client renders its own board (dormant in editor
+			// preview: neither is ExecuteInEditor).
+			var controller = station.AddComponent<Gambit.Game.LocalGameController>();
+			controller.Station = component;
+			var view = station.AddComponent<ChessBoardView>();
+			view.Station = component;
+			view.Controller = controller;
+
 			// Floating occupancy sign over the table (blank while the table is
 			// empty). Billboarded per-viewer, so it reads from anywhere in the room.
 			var sign = new GameObject( true, "Sign" );
@@ -486,10 +496,24 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 	// Square tints: neutral black and white (matching the room's checkerboard
 	// floor). The pieces stay warm ivory/walnut, so they still read against
-	// same-color squares. Frame keeps a dark wood tone.
-	static readonly Color LightSquare = new( 0.85f, 0.85f, 0.85f );
-	static readonly Color DarkSquare = new( 0.09f, 0.09f, 0.09f );
+	// same-color squares. Frame keeps a dark wood tone. Public because
+	// ChessBoardView restores cell tints to these after clearing highlights.
+	public static readonly Color LightSquare = new( 0.85f, 0.85f, 0.85f );
+	public static readonly Color DarkSquare = new( 0.09f, 0.09f, 0.09f );
 	static readonly Color FrameColor = new( 0.12f, 0.08f, 0.05f );
+
+	/// <summary>Station-local position of a square's center at piece-base height
+	/// (the cell top surface). file 0=a … 7=h, rank 0 = rank 1. The Table GO sits
+	/// at the station origin, so this works parented to either.</summary>
+	public Vector3 SquareLocalPosition( int file, int rank ) =>
+		CellCenter( rank, file, TableTopZ + FrameThickness + CellThickness ) * TableScale;
+
+	/// <summary>Uniform scale ChessBoardView passes to ChessSetBuilder so runtime
+	/// pieces match the ring-built preview set (see BuildPieces).</summary>
+	public float PieceScale => TableScale * ( BoardSize / 26f );
+
+	/// <summary>World edge length of one board square.</summary>
+	public float CellWorldSize => BoardSize / 8f * TableScale;
 
 	/// <summary>Board frame slab + 64 tinted cells on the tabletop.</summary>
 	void BuildBoard( GameObject table )

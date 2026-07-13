@@ -106,6 +106,20 @@ public sealed class LobbyPlayer : Component
 
 		Local = this;
 		_spawnPos = WorldPosition;
+		EnsureGameHud();
+	}
+
+	/// <summary>Attach the seated-game HUD to the scene's ScreenPanel at runtime
+	/// (local player only) — no scene rewire needed for M2, same self-heal spirit
+	/// as LobbyRoom.EnsureChessRing.</summary>
+	void EnsureGameHud()
+	{
+		foreach ( var screen in Scene.GetAllComponents<Sandbox.UI.ScreenPanel>() )
+		{
+			if ( screen.Components.Get<Gambit.UI.GameHud>() == null )
+				screen.GameObject.AddComponent<Gambit.UI.GameHud>();
+			return; // first ScreenPanel is the scene UI root
+		}
 	}
 
 	/// <summary>Teleport back to spawn after falling off the map.
@@ -158,10 +172,11 @@ public sealed class LobbyPlayer : Component
 		{
 			// Escape or Back stands up / closes the wall board. (Start auto-sets
 			// EscapePressed; the Back button is wired through the "Back" action.)
+			// Standing up mid-game resigns, so that path is two-stage (RequestLeave).
 			if ( Input.EscapePressed || Input.Pressed( "Back" ) )
 			{
 				Input.EscapePressed = false;
-				Disengage();
+				RequestLeave();
 				return;
 			}
 
@@ -325,7 +340,9 @@ public sealed class LobbyPlayer : Component
 	}
 
 	/// <summary>Nearest free seat within InteractRange: each table offers two seat
-	/// spots (ChessStation.SeatWorldPosition), and the closest free one wins.</summary>
+	/// spots (ChessStation.SeatWorldPosition), and the closest free one wins —
+	/// except at an empty table, where the first sitter always gets White (PLAN
+	/// D1), whichever side they walked up to.</summary>
 	void FindNearbySeat()
 	{
 		NearbyStation = null;
@@ -333,6 +350,8 @@ public sealed class LobbyPlayer : Component
 
 		foreach ( var station in Scene.GetAllComponents<ChessStation>() )
 		{
+			bool tableEmpty = !station.AnySeatTaken;
+
 			foreach ( var seat in new[] { ChessSeat.White, ChessSeat.Black } )
 			{
 				if ( station.SeatTaken( seat ) ) continue;
@@ -342,11 +361,44 @@ public sealed class LobbyPlayer : Component
 				if ( dist < bestDist )
 				{
 					NearbyStation = station;
-					NearbySeat = seat;
+					NearbySeat = tableEmpty ? ChessSeat.White : seat;
 					bestDist = dist;
 				}
 			}
 		}
+	}
+
+	// ── Two-stage leave (M2): standing up from a live game resigns it, so the
+	// first Escape/Leave only arms the intent; a second within the window (or
+	// with no live game) actually stands. GameHud/LobbyOverlay read LeaveArmed
+	// to show "again to resign".
+
+	RealTimeSince _leaveArm = 999f;
+	const float LeaveConfirmWindow = 3f;
+
+	/// <summary>An armed leave-confirm is pending (UI shows the resign warning).</summary>
+	public bool LeaveArmed => _leaveArm < LeaveConfirmWindow;
+
+	/// <summary>Escape / the Leave button while engaged. Immediate for wall
+	/// boards, finished games and untouched boards; two-stage when it would
+	/// forfeit a live game.</summary>
+	public void RequestLeave()
+	{
+		var controller = Gambit.Game.LocalGameController.For( ChessStation.Active );
+		bool forfeits = controller is { Playing: true }
+			&& controller.LocalSeat != null
+			&& ( controller.Game?.MoveCount ?? 0 ) > 0;
+
+		if ( forfeits && !LeaveArmed )
+		{
+			_leaveArm = 0f;
+			return;
+		}
+
+		_leaveArm = 999f;
+		if ( forfeits )
+			controller.ResignLocal();
+		Disengage();
 	}
 
 	public void Engage( ChessStation station, ChessSeat seat )
