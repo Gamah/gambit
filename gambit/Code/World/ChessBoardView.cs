@@ -61,8 +61,11 @@ public sealed class ChessBoardView : Component
 	readonly GameObject[] _pieces = new GameObject[64];
 	readonly char[] _rendered = new char[64];
 	ModelRenderer[] _cells; // by square index
+	GameObject _table;
 	GameObject _piecesRoot;
 	bool _ready;
+	bool _cellsComplete;   // all 64 cell renderers bound
+	int _cellBindFrames;   // frames spent waiting on cells (diagnostic)
 
 	sealed class Slide
 	{
@@ -84,46 +87,61 @@ public sealed class ChessBoardView : Component
 	/// <summary>A move waiting on the GameHud promotion picker: (from, to), or null.</summary>
 	public (string From, string To)? PendingPromotion { get; private set; }
 
-	protected override void OnStart()
-	{
-		// Adopt the board: index the 64 cell renderers by square, then replace
-		// ChessRing's static preview pieces with a set this component owns.
-		var table = GameObject.Children.Find( c => c.Name == "Table" );
-		if ( table == null )
-		{
-			Log.Warning( "[Gambit] ChessBoardView found no Table under its station — view disabled" );
-			return;
-		}
-
-		_cells = new ModelRenderer[64];
-		foreach ( var child in table.Children )
-		{
-			// ChessRing names them "Cell e4"
-			if ( child.Name.StartsWith( "Cell " ) && TryParseSquare( child.Name[5..], out int sq ) )
-				_cells[sq] = child.GetComponent<ModelRenderer>();
-		}
-
-		var oldPieces = table.Children.Find( c => c.Name == "Pieces" );
-		oldPieces?.Destroy();
-
-		_piecesRoot = new GameObject( true, "PiecesView" );
-		_piecesRoot.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
-		_piecesRoot.Parent = table;
-		_piecesRoot.LocalPosition = Vector3.Zero;
-		_piecesRoot.LocalRotation = Rotation.Identity;
-
-		for ( int i = 0; i < 64; i++ ) _rendered[i] = '\0';
-		_ready = true;
-	}
-
 	protected override void OnUpdate()
 	{
-		if ( !_ready ) return;
+		if ( !EnsureBoard() ) return;
 
 		SyncPieces();
 		AdvanceSlides();
 		UpdateInput();
 		PaintHighlights();
+	}
+
+	/// <summary>
+	/// Lazily bind to the station's board hierarchy, retrying until it exists.
+	/// On a networked client the station's child GameObjects (Table, its 64
+	/// cells, their ModelRenderers) can attach a frame or two AFTER this
+	/// component starts, so binding once in OnStart would silently miss them and
+	/// leave the board dead. Piece rendering only needs the Table; cell
+	/// renderers (for highlights) are resolved separately in PaintHighlights as
+	/// they stream in, so pieces never wait on them.
+	/// </summary>
+	bool EnsureBoard()
+	{
+		if ( _ready ) return true;
+
+		_table ??= GameObject.Children.Find( c => c.Name == "Table" );
+		if ( _table == null ) return false;
+
+		// Replace ChessRing's static preview set with one this view owns/animates
+		_table.Children.Find( c => c.Name == "Pieces" )?.Destroy();
+
+		_piecesRoot = new GameObject( true, "PiecesView" );
+		_piecesRoot.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
+		_piecesRoot.Parent = _table;
+		_piecesRoot.LocalPosition = Vector3.Zero;
+		_piecesRoot.LocalRotation = Rotation.Identity;
+
+		for ( int i = 0; i < 64; i++ ) _rendered[i] = '\0';
+		_ready = true;
+		return true;
+	}
+
+	/// <summary>Bind the 64 cell renderers by square name ("Cell e4"). Idempotent
+	/// and cumulative — safe to call every frame while cells replicate in.
+	/// Returns true once all 64 are bound.</summary>
+	bool ResolveCells()
+	{
+		_cells ??= new ModelRenderer[64];
+		int found = 0;
+		foreach ( var child in _table.Children )
+		{
+			if ( !child.Name.StartsWith( "Cell " ) || !TryParseSquare( child.Name[5..], out int sq ) )
+				continue;
+			_cells[sq] ??= child.GetComponent<ModelRenderer>();
+			if ( _cells[sq] != null ) found++;
+		}
+		return found == 64;
 	}
 
 	// ── Rendering ──
@@ -398,6 +416,23 @@ public sealed class ChessBoardView : Component
 
 	void PaintHighlights()
 	{
+		// Cell renderers may still be replicating on a fresh client — keep
+		// binding until all 64 are found, and while binding, force a repaint
+		// every frame so cells that just appeared pick up the current state.
+		bool binding = !_cellsComplete;
+		if ( binding )
+		{
+			_cellsComplete = ResolveCells();
+			_cellBindFrames++;
+			if ( !_cellsComplete && _cellBindFrames == 300 ) // ~5s at 60fps
+			{
+				int bound = 0;
+				foreach ( var c in _cells )
+					if ( c != null ) bound++;
+				Log.Warning( $"[Gambit] ChessBoardView bound only {bound}/64 board cells — highlights may be incomplete" );
+			}
+		}
+
 		if ( _cells == null ) return;
 
 		var game = Controller?.Game;
@@ -406,10 +441,11 @@ public sealed class ChessBoardView : Component
 		bool interactive = Controller?.IsMyTurn == true && PendingPromotion == null;
 
 		// Repaint only when an input into the tint decision changed — idle
-		// tables (and non-hovered frames) skip the 64-cell walk entirely.
+		// tables (and non-hovered frames) skip the 64-cell walk entirely. While
+		// cells are still binding, repaint regardless so latecomers get tinted.
 		int hash = HashCode.Combine( lastMove, checkedKing, interactive,
 			Selected, _hoverSquare, _targets );
-		if ( hash == _lastPaintHash ) return;
+		if ( !binding && hash == _lastPaintHash ) return;
 		_lastPaintHash = hash;
 
 		string lastFrom = null, lastTo = null;
@@ -419,11 +455,8 @@ public sealed class ChessBoardView : Component
 			lastTo = lastMove[2..4];
 		}
 
-		// Hover only glows on squares the player can act on: their own pieces
-		// (to pick up) and — handled in the target branch — legal destinations.
-		bool hoverOwnPiece = interactive && _hoverSquare >= 0
-			&& IsOwnPiece( _rendered[_hoverSquare] );
-
+		// _hoverSquare is only set on the local player's own turn (UpdateInput),
+		// so the hover glow naturally appears only when the player can act.
 		for ( int sq = 0; sq < 64; sq++ )
 		{
 			var renderer = _cells[sq];
@@ -431,18 +464,20 @@ public sealed class ChessBoardView : Component
 
 			bool light = ( ( sq >> 3 ) + ( sq & 7 ) ) % 2 != 0; // matches ChessRing parity
 			string name = SquareNames[sq];
+			bool hovered = sq == _hoverSquare;
 
 			Color tint;
 			if ( Selected == name )
 				tint = SelectedTint;
 			else if ( interactive && _targets.Contains( name ) )
 				// Legal move target — brighter under the cursor ("click to move here")
-				tint = sq == _hoverSquare
+				tint = hovered
 					? ( light ? TargetHoverLightTint : TargetHoverDarkTint )
 					: ( light ? TargetLightTint : TargetDarkTint );
 			else if ( checkedKing == name )
 				tint = CheckTint;
-			else if ( hoverOwnPiece && sq == _hoverSquare )
+			else if ( hovered )
+				// The square under the cursor — constant "you're pointing here" feedback
 				tint = light ? HoverLightTint : HoverDarkTint;
 			else if ( lastFrom == name || lastTo == name )
 				tint = light ? LastMoveLightTint : LastMoveDarkTint;
