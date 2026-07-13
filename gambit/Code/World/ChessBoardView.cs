@@ -40,20 +40,20 @@ public sealed class ChessBoardView : Component
 	/// <summary>Peak height of the slide arc, as a fraction of a square.</summary>
 	[Property] public float MoveArc { get; set; } = 0.35f;
 
-	// Highlight tints over the cell boxes (base colors come from ChessRing).
-	// Distinct tiers: selected = strong yellow, legal targets = green (brighter
-	// under the cursor = "click to move here"), hover = pale warm glow on own
-	// pieces only, last move = muted olive, check = red.
-	static readonly Color SelectedTint = new( 0.95f, 0.85f, 0.25f );
-	static readonly Color TargetLightTint = new( 0.50f, 0.85f, 0.40f );
-	static readonly Color TargetDarkTint = new( 0.12f, 0.48f, 0.10f );
-	static readonly Color TargetHoverLightTint = new( 0.65f, 1.00f, 0.55f );
-	static readonly Color TargetHoverDarkTint = new( 0.25f, 0.70f, 0.22f );
-	static readonly Color LastMoveLightTint = new( 0.80f, 0.78f, 0.45f );
-	static readonly Color LastMoveDarkTint = new( 0.35f, 0.33f, 0.10f );
-	static readonly Color CheckTint = new( 0.85f, 0.20f, 0.15f );
-	static readonly Color HoverLightTint = new( 0.95f, 0.90f, 0.62f );
-	static readonly Color HoverDarkTint = new( 0.34f, 0.30f, 0.14f );
+	// Highlight tints over the cell boxes. Deliberately the SAME on light and
+	// dark squares, and kept saturated + medium-low in value: the overhead table
+	// spotlight (ChessRing.MarqueeBrightness ~3.3) multiplies these before
+	// tonemapping, so a bright/pale tint on an already-light square blows out to
+	// white and loses its hue (that's why light-square highlights were
+	// invisible). Tiers by hue: selected = gold, legal target = green (brighter
+	// under the cursor = "click to move here"), hover = blue (cursor square),
+	// check = red, last move = dim olive.
+	static readonly Color SelectedTint = new( 0.90f, 0.62f, 0.05f );
+	static readonly Color TargetTint = new( 0.15f, 0.55f, 0.12f );
+	static readonly Color TargetHoverTint = new( 0.28f, 0.85f, 0.22f );
+	static readonly Color HoverTint = new( 0.20f, 0.45f, 0.90f );
+	static readonly Color LastMoveTint = new( 0.45f, 0.38f, 0.10f );
+	static readonly Color CheckTint = new( 0.85f, 0.14f, 0.10f );
 
 	const string StartPlacement = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
 
@@ -462,7 +462,6 @@ public sealed class ChessBoardView : Component
 			var renderer = _cells[sq];
 			if ( renderer == null ) continue;
 
-			bool light = ( ( sq >> 3 ) + ( sq & 7 ) ) % 2 != 0; // matches ChessRing parity
 			string name = SquareNames[sq];
 			bool hovered = sq == _hoverSquare;
 
@@ -471,18 +470,17 @@ public sealed class ChessBoardView : Component
 				tint = SelectedTint;
 			else if ( interactive && _targets.Contains( name ) )
 				// Legal move target — brighter under the cursor ("click to move here")
-				tint = hovered
-					? ( light ? TargetHoverLightTint : TargetHoverDarkTint )
-					: ( light ? TargetLightTint : TargetDarkTint );
+				tint = hovered ? TargetHoverTint : TargetTint;
 			else if ( checkedKing == name )
 				tint = CheckTint;
 			else if ( hovered )
 				// The square under the cursor — constant "you're pointing here" feedback
-				tint = light ? HoverLightTint : HoverDarkTint;
+				tint = HoverTint;
 			else if ( lastFrom == name || lastTo == name )
-				tint = light ? LastMoveLightTint : LastMoveDarkTint;
+				tint = LastMoveTint;
 			else
-				tint = light ? ChessRing.LightSquare : ChessRing.DarkSquare;
+				// Restore the square's own checker color
+				tint = ( ( sq >> 3 ) + ( sq & 7 ) ) % 2 != 0 ? ChessRing.LightSquare : ChessRing.DarkSquare;
 
 			if ( renderer.Tint != tint )
 				renderer.Tint = tint;
