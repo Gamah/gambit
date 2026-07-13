@@ -54,8 +54,8 @@ public static class SettingsModel
 	public static readonly float[] PopRates =
 		{ 0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.25f, 2.5f, 2.75f, 3f };
 
-	public const int MinCabinets = 2;
-	public const int MaxCabinets = 16;
+	public const int MinBoards = 2;
+	public const int MaxBoards = 16;
 
 	public static List<SettingRow> BuildLocalRows()
 	{
@@ -68,23 +68,17 @@ public static class SettingsModel
 			hex => Mutate( d => d.WorldLightColor = hex ) ) );
 		rows.Add( TickRow( "ROOM LIGHT BRIGHTNESS", data.WorldLightBrightness,
 			v => Mutate( d => d.WorldLightBrightness = v ) ) );
-		// Marquee colour is fixed to pure white now (MarqueeGlow); only brightness is tunable.
-		rows.Add( TickRow( "MARQUEE LIGHT BRIGHTNESS", data.MarqueeLightBrightness,
+		// Table light colour is fixed to pure white (MarqueeGlow); only brightness is tunable.
+		rows.Add( TickRow( "TABLE LIGHT BRIGHTNESS", data.MarqueeLightBrightness,
 			v => Mutate( d => d.MarqueeLightBrightness = v ) ) );
 		rows.Add( ToggleRow( "CHECKERBOARD FLOOR", data.CheckerboardFloor,
 			v => Mutate( d => d.CheckerboardFloor = v ) ) );
 		rows.Add( RateRow( "POP FREQUENCY", PlayerData.ClampPopRate( data.FloorPopRate ), PopRates,
 			v => Mutate( d => d.FloorPopRate = v ) ) );
-		rows.Add( ToggleRow( "MY CABINET SOUNDS", data.MyCabinetSounds,
+		rows.Add( ToggleRow( "MY BOARD SOUNDS", data.MyCabinetSounds,
 			v => Mutate( d => d.MyCabinetSounds = v ) ) );
-		rows.Add( ToggleRow( "OTHER CABINET SOUNDS", data.RemoteCabinetSounds,
+		rows.Add( ToggleRow( "OTHER BOARD SOUNDS", data.RemoteCabinetSounds,
 			v => Mutate( d => d.RemoteCabinetSounds = v ) ) );
-		rows.Add( ToggleRow( "SKIP ATTRACT DEMO", data.DemoSkip,
-			v => Mutate( d => d.DemoSkip = v ) ) );
-		// Spectator board — giant cube board mirroring cabinet 0's active game over
-		// the leaderboard wall. Per-client (each player chooses whether to see it).
-		rows.Add( ToggleRow( "SPECTATOR BOARD", data.SpectatorBoard,
-			v => Mutate( d => d.SpectatorBoard = v ) ) );
 		return rows;
 	}
 
@@ -98,16 +92,16 @@ public static class SettingsModel
 			return rows;
 		}
 
-		var ring = ArcadeRing.Instance;
+		var ring = ChessRing.Instance;
 		bool locked = AnyStationOccupied( scene ) || ( ring?.Rebuilding ?? false );
 		int current = ring?.StationCount ?? 0;
 		int pending = ring?.PendingStationCount ?? current;
 
 		var row = new SettingRow
 		{
-			Label = pending != current ? $"CABINETS — {current} → {pending}" : $"CABINETS — {current}",
+			Label = pending != current ? $"BOARDS — {current} → {pending}" : $"BOARDS — {current}",
 		};
-		for ( int n = MinCabinets; n <= MaxCabinets; n++ )
+		for ( int n = MinBoards; n <= MaxBoards; n++ )
 		{
 			int count = n;
 			row.Cells.Add( new SettingCell
@@ -126,51 +120,13 @@ public static class SettingsModel
 		rows.Add( row );
 
 		if ( AnyStationOccupied( scene ) )
-			rows.Add( new SettingRow { Label = "Cabinet count locked while cabinets are occupied" } );
+			rows.Add( new SettingRow { Label = "Board count locked while seats are taken" } );
 		else if ( pending != current )
 			rows.Add( new SettingRow { Label = "Applies when you close this panel" } );
 		else if ( ring?.Rebuilding ?? false )
 			rows.Add( new SettingRow { Label = "Rebuilding the ring…" } );
 
-		rows.Add( TargetUrlRow( scene ) );
 		return rows;
-	}
-
-	// Host picks the backend every client talks to (replicated via LobbyNetworkManager.TargetUrl).
-	static readonly (string Label, string Url)[] Instances =
-	{
-		("LIVE", Gambit.Api.ApiClient.ProdUrl),
-		("TEST", Gambit.Api.ApiClient.TestUrl),
-	};
-
-	/// <summary>Label for the active backend, for the read-only wall board.</summary>
-	public static string TargetServerLabel()
-	{
-		foreach ( var (label, url) in Instances )
-			if ( Gambit.Api.ApiClient.BaseUrl == url ) return label;
-		return "CUSTOM";
-	}
-
-	static SettingRow TargetUrlRow( Scene scene )
-	{
-		var net = LobbyNetworkManager.Instance;
-		var row = new SettingRow { Label = "TARGET SERVER" };
-		foreach ( var (label, url) in Instances )
-		{
-			var target = url;
-			row.Cells.Add( new SettingCell
-			{
-				Label = label,
-				Selected = Gambit.Api.ApiClient.BaseUrl == target,
-				Activate = net == null ? null : () =>
-				{
-					// Host-routed: the server is authoritative, then [Sync] fans it back to everyone.
-					net.RequestSetTargetUrl( target );
-					SettingsVersion++;
-				},
-			} );
-		}
-		return row;
 	}
 
 	static SettingRow SwatchRow( string label, string current, Action<string> set )
@@ -251,8 +207,8 @@ public static class SettingsModel
 	public static bool AnyStationOccupied( Scene scene )
 	{
 		if ( scene == null ) return false;
-		foreach ( var station in scene.GetAllComponents<ArcadeStation>() )
-			if ( station.Occupied ) return true;
+		foreach ( var station in scene.GetAllComponents<ChessStation>() )
+			if ( station.AnySeatTaken ) return true;
 		return false;
 	}
 

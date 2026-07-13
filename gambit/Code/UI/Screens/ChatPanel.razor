@@ -257,7 +257,7 @@
 		StateHasChanged();
 	}
 
-	// Same binding-resolution rule as GameController.IsActionPressed.
+	// Binding resolution: PlayerData override first, then the action default.
 	static bool IsChatPressed()
 	{
 		var bindings = PlayerData.Load()?.Bindings;

@@ -15,14 +15,14 @@
 <root>
 	@if ( LobbyPlayer.Local?.Engaged ?? false )
 	{
-		<div class="leave-btn" onclick="@Leave">✕  Leave Screen</div>
+		<div class="leave-btn" onclick="@Leave">✕  @( ChessStation.Active != null ? "Stand Up" : "Close" )</div>
 	}
 	else if ( LobbyPlayer.Local?.NearbyStation != null )
 	{
 		<div class="prompt">
 			<div>Press</div>
 			<div class="key">E</div>
-			<div>to use the screen</div>
+			<div>to play as @( LobbyPlayer.Local.NearbySeat == ChessSeat.White ? "White" : "Black" )</div>
 		</div>
 	}
 	else if ( LobbyPlayer.Local?.NearbyBoard != null )
@@ -31,14 +31,6 @@
 			<div>Press</div>
 			<div class="key">E</div>
 			<div>@BoardPrompt( LobbyPlayer.Local.NearbyBoard )</div>
-		</div>
-	}
-	else if ( LobbyPlayer.Local?.NearbyLeaderboard != null )
-	{
-		<div class="prompt">
-			<div>Press</div>
-			<div class="key">E</div>
-			<div>to view leaderboards</div>
 		</div>
 	}
 	else if ( LobbyPlayer.Local?.NearbyInfo != null )
@@ -54,14 +46,6 @@
 		<div class="prompt">
 			<div class="key">✓</div>
 			<div>Discord invite copied to clipboard</div>
-		</div>
-	}
-	else if ( SpectatorBoard.Replaying )
-	{
-		<div class="prompt">
-			<div>Press</div>
-			<div class="key">E</div>
-			<div>to stop replay</div>
 		</div>
 	}
 </root>
@@ -129,6 +113,7 @@
 
 	protected override int BuildHash() =>
 		System.HashCode.Combine( LobbyPlayer.Local?.Engaged, LobbyPlayer.Local?.NearbyStation != null,
-			LobbyPlayer.Local?.NearbyBoard?.Kind, LobbyPlayer.Local?.NearbyLeaderboard != null,
-			LobbyPlayer.Local?.NearbyInfo?.Kind, DiscordButton.SinceCopied < 2f, SpectatorBoard.Replaying );
+			LobbyPlayer.Local?.NearbySeat, ChessStation.Active != null,
+			LobbyPlayer.Local?.NearbyBoard?.Kind,
+			LobbyPlayer.Local?.NearbyInfo?.Kind, DiscordButton.SinceCopied < 2f );
 }

@@ -92,13 +92,38 @@ Lichess is libre (AGPL code) but its bundled art/sounds carry per-set licenses:
 
 ## Milestones (future sessions; every gate is user-tested in-editor)
 
-- **M0 — Repo bootstrap** *(done on approval this session)*: copy, strip, rename, PLAN.md, allowlist, commit, push private. Gate: project opens and compiles in the user's s&box editor. Compile strategy: delete dead call sites rather than stubbing.
-- **M1 — Chess board world**: `ChessRing.BuildChessTable`, `ChessSetBuilder`, `ChessStation` two-seat occupancy + camera lock (no game logic — sit down at either side, see a set-up board, stand up). User re-wires `lobby.scene` components once. Gate: walk lobby, 8 boards render with pieces, both seats work, slide-rebuild works.
+- **M0 — Repo bootstrap** *(done)*: copy, strip, rename, PLAN.md, allowlist, commit, push private. Gate: project opens and compiles in the user's s&box editor. Compile strategy: delete dead call sites rather than stubbing.
+- **M1 — Chess board world** *(code complete — gate pending user test)*: `ChessRing.BuildChessTable`, `ChessSetBuilder`, `ChessStation` two-seat occupancy + camera lock (no game logic — sit down at either side, see a set-up board, stand up). Legacy Go-backend gameplay code deleted per the file mapping above. User re-wires `lobby.scene` components once — see "M1 scene rewire" below. Gate: walk lobby, 8 boards render with pieces, both seats work, slide-rebuild works.
 - **M2 — Local anonymous chess**: vendor/patch chess lib (or fallback) + perft debug command; `ChessBoardView` input/render; `LocalGameController` + seat/turn RPCs; FEN spectator relay + late-join; PGN build + `POST /api/import` (first lichess call — validates allowlist); minimal GameHud. Gate: two clients play a full legal game at one board, third client spectates, import link opens on lichess.
 - **M3 — Lichess auth**: Spike 1 FIRST: ndjson streaming via `/api/tv/feed` (D4 — project-critical). Spike 2: browser-open + loopback feasibility (D3). Then `LichessAuth`, token storage, SplashScreen, `GET /api/account` name/rating in name tag. Gate: sign in, token persists across restart, 401 → re-prompt.
 - **M4 — Board API play**: hardened `NdjsonClient`; `LichessGameController` (event stream, held-open seek, game stream, moves, clocks, chat, draw/resign/abort); ModePicker seek/challenge/AI UI (rapid/classical seeks; blitz only direct; no bullet — say so); spectator relay of live lichess games. Gate: play a rated rapid game vs a random lichess opponent from inside the lobby while another client watches.
 - **M5 — Spectate / TV / puzzles**: SpectatorBoard wall rewrite (featured station + TV via `/api/tv/channels`+`feed`); puzzles (`daily`/`next`, local solve with retry/reveal, "doesn't affect your lichess puzzle rating" copy); watch a specific game by ID (delay noted in UI). Gate: TV on the wall; puzzles solvable at any board.
 - **M6 — Floor glyph pops + polish**: glyph atlas + shader rewrite (D6, user-machine-heavy); optional Poly Haven piece import + swap; sound mapping; new thumbnail/branding; settings trim; rate-limit audit (single-flight + 429 everywhere); token-hygiene audit (grep logs/RPCs). Gate: full playtest.
+
+## M1 scene rewire (one-time editor pass)
+
+Component renames/deletions can't be applied to `lobby.scene` from this host (the
+editor owns the format); do this once in the s&box editor, then save the scene:
+
+1. **Room** GO: remove the missing `ArcadeRing`, `LeaderboardWall`, and
+   `SpectatorBoard` components. Add **`ChessRing`** (was ArcadeRing; scene had
+   `Radius: 180`, `StationCount: 8` — new defaults are Radius 160 / 8 stations,
+   retune to taste; all cabinet-era properties are gone).
+2. **GameController** GO: remove the missing `GameController` and
+   `MultiplayerController` components. Keep `SkafinityPlayer` (consider renaming
+   the GO to "Music").
+3. **UI** GO: remove the missing `SplashScreen`, `ModePickerScreen`,
+   `MultiplayerScreen`, `GameHud`, and `LeaderboardScreen` components. Keep
+   `ScreenPanel`, `LobbyOverlay`, `SettingsScreen`, `InfoScreen`, `ChatPanel`,
+   `SkafinityMusicPanel`, `MusicBoardScreen`.
+4. **Network** GO (`LobbyNetworkManager`): raise `MaxPlayers` from 8 to 16 — two
+   players per table now.
+5. **PlayerTemplate** (`LobbyPlayer`): scene overrides `InteractRange: 90`; the
+   new seat-proximity default is 55 — lower it to ~55–60 so the "Press E" prompt
+   doesn't reach across the table to the far seat.
+
+Nothing else changed shape: walls, floor, music, chat, and the player template are
+untouched, and station geometry (tables, signs, number panels) is runtime-built.
 
 ## Risks / open questions
 

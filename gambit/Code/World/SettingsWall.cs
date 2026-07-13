@@ -6,7 +6,7 @@ namespace Gambit.World;
 /// <summary>
 /// Hangs the two settings boards (WallSettingsPanel: local world settings + host
 /// settings, issue #49) on the lobby's south wall. Same editor-preview pattern as
-/// LeaderboardWall: OnEnabled/OnValidate rebuild NotSaved GOs, plus a
+/// the other walls: OnEnabled/OnValidate rebuild NotSaved GOs, plus a
 /// wall-dimension watch in OnUpdate. Boards are client-side only and display-only;
 /// interaction is the cabinet-style engage flow — each board gets a SettingsStation
 /// + camera anchor, and the editable UI is the SettingsScreen ScreenPanel shown

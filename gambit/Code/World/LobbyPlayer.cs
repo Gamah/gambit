@@ -1,34 +1,35 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using Gambit.UI.Screens;
 using Sandbox;
 
 namespace Gambit.World;
 
 /// <summary>
 /// Lives on the Player GameObject next to the PlayerController.
-/// Handles walking up to an ArcadeStation, pressing Use (E) to lock into it,
-/// and Escape / the Leave button to get back out.
-/// While locked in, the PlayerController is disabled (no movement, no mouselook)
-/// and this component drives the camera to the station's anchor.
+/// Handles walking up to a chess table seat, pressing Use (E) to sit down,
+/// and Escape / the Leave button to stand back up.
+/// While seated, the PlayerController is disabled (no movement, no mouselook)
+/// and this component drives the camera to the seat's anchor over the board.
 /// </summary>
 public sealed class LobbyPlayer : Component
 {
 	public static LobbyPlayer Local { get; private set; }
 
-	[Property] public float InteractRange { get; set; } = 90f;
+	/// <summary>How close (horizontally) a player must stand to a seat spot for
+	/// "Press E" to offer it.</summary>
+	[Property] public float InteractRange { get; set; } = 55f;
 
 	/// <summary>Z below which the player has "fallen off the map": respawns them at
-	/// their spawn point and grants the adventurer achievement. The floor top is at
-	/// Z=0, so this is the catch-volume a couple hundred units below the room.</summary>
+	/// their spawn point. The floor top is at Z=0, so this is the catch-volume a
+	/// couple hundred units below the room.</summary>
 	[Property] public float FallKillZ { get; set; } = -150f;
 
 	Vector3 _spawnPos;
 
-	/// <summary>This player's Gambit username, synced by the owner so everyone
+	/// <summary>This player's Gambit display name, synced by the owner so everyone
 	/// can render it on the name tag (issue #51) — Steam name comes from the
-	/// owning connection, but the Gambit identity only exists in the owner's
+	/// owning connection, but the display name only exists in the owner's
 	/// local FileSystem.Data.</summary>
 	[Sync] public string GambitName { get; set; }
 
@@ -38,22 +39,22 @@ public sealed class LobbyPlayer : Component
 	/// <summary>WorldPanel scale of the name tag — tune in editor if mis-sized.</summary>
 	[Property] public float NameTagScale { get; set; } = 6f;
 
-	/// <summary>Station in range that "Press E" would activate, null if none.</summary>
-	public ArcadeStation NearbyStation { get; private set; }
+	/// <summary>Station whose seat "Press E" would take, null if none in range.</summary>
+	public ChessStation NearbyStation { get; private set; }
+
+	/// <summary>The seat at <see cref="NearbyStation"/> that would be taken.</summary>
+	public ChessSeat NearbySeat { get; private set; }
 
 	/// <summary>Settings board in range that "Press E" would activate, null if none.</summary>
 	public SettingsStation NearbyBoard { get; private set; }
 
-	/// <summary>Leaderboard station in range that "Press E" would activate, null if none.</summary>
-	public LeaderboardStation NearbyLeaderboard { get; private set; }
-
 	/// <summary>Info/dev-notes station in range that "Press E" would activate, null if none.</summary>
 	public InfoStation NearbyInfo { get; private set; }
 
-	public bool Engaged => ArcadeStation.Active != null || SettingsStation.Active != null || LeaderboardStation.Active != null || InfoStation.Active != null;
+	public bool Engaged => ChessStation.Active != null || SettingsStation.Active != null || InfoStation.Active != null;
 
-	/// <summary>True once the camera has finished blending to the station anchor —
-	/// the game screens wait for this so the swoop to the wall screen stays visible.</summary>
+	/// <summary>True once the camera has finished blending to the seat anchor —
+	/// engaged screens wait for this so the swoop down to the board stays visible.</summary>
 	public bool CameraSettled => Engaged && _engageTime >= CamBlendTime;
 
 	PlayerController _controller;
@@ -71,7 +72,7 @@ public sealed class LobbyPlayer : Component
 	TimeSince _engageTime;
 	const float CamBlendTime = 0.35f;
 
-	// Blend-out state: camera eases from the station anchor back to the pose
+	// Blend-out state: camera eases from the seat anchor back to the pose
 	// captured at Engage; the controller stays disabled until it lands
 	bool _leaving;
 	TimeSince _leaveTime;
@@ -107,17 +108,16 @@ public sealed class LobbyPlayer : Component
 		_spawnPos = WorldPosition;
 	}
 
-	/// <summary>Teleport back to spawn after falling off the map and record the death
-	/// (the deaths stat drives the adventurer achievement). PlayerController.Velocity is
-	/// read-only; landing on the floor at spawn bleeds off the fall velocity anyway.</summary>
+	/// <summary>Teleport back to spawn after falling off the map.
+	/// PlayerController.Velocity is read-only; landing on the floor at spawn
+	/// bleeds off the fall velocity anyway.</summary>
 	void Respawn()
 	{
 		WorldPosition = _spawnPos;
-		Gambit.Game.PlayerStats.Increment( Gambit.Game.PlayerStats.Deaths );
 	}
 
 	/// <summary>Floating name tag over remote players (issue #51): Steam name with
-	/// the Gambit username underneath. Proxies only — the local player never
+	/// the Gambit display name underneath. Proxies only — the local player never
 	/// sees their own.</summary>
 	void CreateNameTag()
 	{
@@ -143,8 +143,8 @@ public sealed class LobbyPlayer : Component
 		if ( !Engaged && !_leaving && WorldPosition.z < FallKillZ )
 			Respawn();
 
-		// Publish the Gambit username for everyone's name tags; it can appear
-		// (enrollment) or change (Profile rename) at any time. Load() is cached.
+		// Publish the display name for everyone's name tags; it can appear or change
+		// at any time. Load() is cached.
 		var uname = Gambit.Game.PlayerData.Load()?.Username ?? "";
 		if ( GambitName != uname ) GambitName = uname;
 
@@ -156,29 +156,17 @@ public sealed class LobbyPlayer : Component
 
 		if ( Engaged )
 		{
-			// Escape is two-stage: in play/replay (or on the results overlay) it
-			// returns to the main menu screen; on the menu screens it leaves the
-			// station as before. The Settings rebind listener still consumes
-			// Escape itself.
-			// Start (SwitchRightMenu) auto-sets EscapePressed; the Back button
-			// (SwitchLeftMenu) is wired through the "Back" action to match.
-			if ( (Input.EscapePressed || Input.Pressed( "Back" )) && !ModePickerScreen.IsRebinding )
+			// Escape or Back stands up / closes the wall board. (Start auto-sets
+			// EscapePressed; the Back button is wired through the "Back" action.)
+			if ( Input.EscapePressed || Input.Pressed( "Back" ) )
 			{
 				Input.EscapePressed = false;
-
-				var game = Gambit.Game.GameController.Instance;
-				var mp   = Gambit.Game.MultiplayerController.Instance;
-				if ( game != null && game.State != Gambit.Game.GameState.Idle )
-					game.ReturnToMenu();
-				else if ( mp != null && (mp.State == Gambit.Game.MpState.Playing || mp.State == Gambit.Game.MpState.GameOver) )
-					mp.ReturnToMenu();
-				else
-					Disengage();
+				Disengage();
 				return;
 			}
 
-			// Only the cabinet drives the camera; wall boards leave it where it is.
-			if ( ArcadeStation.Active != null )
+			// Only the chess seat drives the camera; wall boards leave it where it is.
+			if ( ChessStation.Active != null )
 				UpdateLockedCamera();
 			return;
 		}
@@ -195,8 +183,7 @@ public sealed class LobbyPlayer : Component
 			return;
 		}
 		// Re-enabling the controller resets its EyeAngles to yaw 0 (camera snaps to
-		// world-forward — the info-board wall); re-apply the captured angles like the
-		// engage-leave path does.
+		// world-forward); re-apply the captured angles like the engage-leave path does.
 		if ( _controller != null && !_controller.Enabled )
 		{
 			_controller.Enabled = true;
@@ -208,22 +195,14 @@ public sealed class LobbyPlayer : Component
 		if ( !_infoPopDone )
 			TryAutoShowInfo();
 
-		NearbyStation = FindNearbyStation();
+		FindNearbySeat();
 		NearbyBoard = NearbyStation == null ? FindNearbyBoard() : null;
-		NearbyLeaderboard = NearbyStation == null && NearbyBoard == null ? FindNearbyLeaderboard() : null;
-		NearbyInfo = NearbyStation == null && NearbyBoard == null && NearbyLeaderboard == null ? FindNearbyInfo() : null;
-
-		// E stops a playing spectator replay — on its own when nothing's in reach, or as
-		// a side effect of engaging anything below (the same press still engages).
-		if ( SpectatorBoard.Replaying && Input.Pressed( "use" ) )
-			SpectatorBoard.StopReplay();
+		NearbyInfo = NearbyStation == null && NearbyBoard == null ? FindNearbyInfo() : null;
 
 		if ( NearbyStation != null && Input.Pressed( "use" ) )
-			Engage( NearbyStation );
+			Engage( NearbyStation, NearbySeat );
 		else if ( NearbyBoard != null && Input.Pressed( "use" ) )
 			EngageBoard( NearbyBoard );
-		else if ( NearbyLeaderboard != null && Input.Pressed( "use" ) )
-			EngageLeaderboard( NearbyLeaderboard );
 		else if ( NearbyInfo != null && Input.Pressed( "use" ) )
 			EngageInfo( NearbyInfo );
 	}
@@ -244,25 +223,6 @@ public sealed class LobbyPlayer : Component
 			if ( dist < board.InteractRange && dist < bestDist )
 			{
 				best = board;
-				bestDist = dist;
-			}
-		}
-
-		return best;
-	}
-
-	LeaderboardStation FindNearbyLeaderboard()
-	{
-		LeaderboardStation best = null;
-		float bestDist = float.MaxValue;
-
-		foreach ( var station in Scene.GetAllComponents<LeaderboardStation>() )
-		{
-			var delta = station.WorldPosition - GameObject.WorldPosition;
-			float dist = new Vector2( delta.x, delta.y ).Length;
-			if ( dist < station.InteractRange && dist < bestDist )
-			{
-				best = station;
 				bestDist = dist;
 			}
 		}
@@ -364,54 +324,44 @@ public sealed class LobbyPlayer : Component
 		}
 	}
 
-	ArcadeStation FindNearbyStation()
+	/// <summary>Nearest free seat within InteractRange: each table offers two seat
+	/// spots (ChessStation.SeatWorldPosition), and the closest free one wins.</summary>
+	void FindNearbySeat()
 	{
-		ArcadeStation best = null;
+		NearbyStation = null;
 		float bestDist = InteractRange;
 
-		foreach ( var station in Scene.GetAllComponents<ArcadeStation>() )
+		foreach ( var station in Scene.GetAllComponents<ChessStation>() )
 		{
-			if ( station.Occupied ) continue;
-
-			float dist = station.GameObject.WorldPosition.Distance( GameObject.WorldPosition );
-			if ( dist < bestDist )
+			foreach ( var seat in new[] { ChessSeat.White, ChessSeat.Black } )
 			{
-				best = station;
-				bestDist = dist;
+				if ( station.SeatTaken( seat ) ) continue;
+
+				var delta = station.SeatWorldPosition( seat ) - GameObject.WorldPosition;
+				float dist = new Vector2( delta.x, delta.y ).Length;
+				if ( dist < bestDist )
+				{
+					NearbyStation = station;
+					NearbySeat = seat;
+					bestDist = dist;
+				}
 			}
 		}
-
-		return best;
 	}
 
-	public void Engage( ArcadeStation station )
+	public void Engage( ChessStation station, ChessSeat seat )
 	{
-		station.Enter();
-		if ( ArcadeStation.Active != station ) return; // someone else has it
+		station.Enter( seat );
+		if ( ChessStation.Active != station ) return; // someone else has it
 		BeginEngage();
 	}
 
 	/// <summary>Open a south-wall settings board. Its UI is a screen-space ScreenPanel,
-	/// so the camera doesn't move (unlike the cabinets) — just free the mouse for the
+	/// so the camera doesn't move (unlike the chess seats) — just free the mouse for the
 	/// cursor by disabling look. No occupancy (boards are local-only).</summary>
 	public void EngageBoard( SettingsStation board )
 	{
 		board.Enter();
-		BeginBoardEngage();
-
-		// Achievements for opening each settings panel.
-		Gambit.Game.Achievements.Unlock( board.Kind switch
-		{
-			SettingsStation.StationKind.Host  => Gambit.Game.Achievements.DiscordMod,
-			SettingsStation.StationKind.Music => Gambit.Game.Achievements.Dj,
-			_                                 => Gambit.Game.Achievements.Comfy,
-		} );
-	}
-
-	/// <summary>Open a north-wall leaderboard pair — screen-space UI, same as EngageBoard.</summary>
-	public void EngageLeaderboard( LeaderboardStation station )
-	{
-		station.Enter();
 		BeginBoardEngage();
 	}
 
@@ -430,7 +380,7 @@ public sealed class LobbyPlayer : Component
 			_controller.UseLookControls = false;
 	}
 
-	bool BoardEngaged => SettingsStation.Active != null || LeaderboardStation.Active != null || InfoStation.Active != null;
+	bool BoardEngaged => SettingsStation.Active != null || InfoStation.Active != null;
 
 	void BeginEngage()
 	{
@@ -449,7 +399,7 @@ public sealed class LobbyPlayer : Component
 
 		// Stop the movement rigidbody dead. The PlayerController is the only thing that
 		// brakes it, and with the controller now disabled (and LinearDamping = 0) any
-		// velocity left from walking into the cabinet would coast frictionlessly forever.
+		// velocity left from walking into the table would coast frictionlessly forever.
 		// We don't see it (camera locked, body hidden) but our networked position keeps
 		// drifting, so everyone else watches our avatar slide across the room.
 		if ( _rigidbody != null )
@@ -471,7 +421,7 @@ public sealed class LobbyPlayer : Component
 		}
 
 		// Hide our avatar so it doesn't stand between the locked camera and the
-		// screen — collected here (not OnStart) so dresser-spawned renderers are included
+		// board — collected here (not OnStart) so dresser-spawned renderers are included
 		_hiddenRenderers.Clear();
 		foreach ( var r in Components.GetAll<ModelRenderer>( FindMode.EverythingInSelfAndDescendants ) )
 		{
@@ -484,21 +434,17 @@ public sealed class LobbyPlayer : Component
 	public void Disengage()
 	{
 		// Wall boards never moved the camera — just re-enable look and close the panel.
-		if ( ArcadeStation.Active == null && BoardEngaged )
+		if ( ChessStation.Active == null && BoardEngaged )
 		{
 			SettingsStation.Active?.Leave();
-			LeaderboardStation.Active?.Leave();
 			InfoStation.Active?.Leave();
 			if ( _controller != null )
 				_controller.UseLookControls = true;
 			return;
 		}
 
-		CameraBackoff = 0f;
-		_cameraRise = 0f;
-		ArcadeStation.Active?.Leave();
+		ChessStation.Active?.Leave();
 		SettingsStation.Active?.Leave();
-		LeaderboardStation.Active?.Leave();
 		InfoStation.Active?.Leave();
 
 		foreach ( var r in _hiddenRenderers )
@@ -549,52 +495,17 @@ public sealed class LobbyPlayer : Component
 		_controller.EyeAngles = _eyeFrom;
 	}
 
-	/// <summary>Current play-mode camera pull-back from the anchor, smoothed.
-	/// ArcadeRing.ScreenFractionRect adds it so the UI rect tracks the camera.</summary>
-	public static float CameraBackoff { get; private set; }
-
-	float _cameraRise; // play-mode camera lift, smoothed alongside CameraBackoff
-
-	static bool BoardIsOut()
-	{
-		var game = Gambit.Game.GameController.Instance;
-		if ( game != null && (game.State == Gambit.Game.GameState.Playing || game.State == Gambit.Game.GameState.Complete) )
-			return true;
-		var mp = Gambit.Game.MultiplayerController.Instance;
-		return mp != null && (mp.State == Gambit.Game.MpState.Playing || mp.State == Gambit.Game.MpState.GameOver);
-	}
-
+	/// <summary>Ease the camera to the local player's seat anchor. The anchor is
+	/// pre-aimed down at the board center by ChessRing, so no target math here.</summary>
 	void UpdateLockedCamera()
 	{
-		var anchor = ArcadeStation.Active?.CameraAnchor;
+		var anchor = ChessStation.Active?.SeatAnchor( ChessStation.ActiveSeat );
 		if ( anchor == null || _cameraObject == null ) return;
 
-		// Back the camera up and lift it a bit while the cube board is out of the
-		// cabinet, tilting down so it keeps aiming at the board center
-		var ring = ArcadeRing.Instance;
-		bool boardOut = BoardIsOut();
-		float blend = Math.Clamp( Time.Delta * 6f, 0f, 1f );
-		var data = Gambit.Game.PlayerData.Load();
-		float want = boardOut
-			? (ring?.PlayCameraBackoff ?? 10f) * Gambit.Game.PlayerData.ClampCameraScale( data?.CameraBackoffScale ?? 1f )
-			: 0f;
-		CameraBackoff = MathX.Lerp( CameraBackoff, want, blend );
-		float wantRise = boardOut
-			? (ring?.PlayCameraRise ?? 8f) * Gambit.Game.PlayerData.ClampCameraScale( data?.CameraRiseScale ?? 1f )
-			: 0f;
-		_cameraRise = MathX.Lerp( _cameraRise, wantRise, blend );
-
-		var anchorPos = anchor.WorldPosition - anchor.WorldRotation.Forward * CameraBackoff
-			+ Vector3.Up * _cameraRise;
-		// Aiming at the screen center keeps the tilted view (and the UI rect trig,
-		// which assumes a centered screen) consistent with the square-on case
-		var lookTarget = anchor.WorldPosition + anchor.WorldRotation.Forward * (ring?.CameraDistance ?? 75f);
-		var anchorRot = Rotation.LookAt( lookTarget - anchorPos, Vector3.Up );
-
 		float t = Math.Clamp( _engageTime / CamBlendTime, 0f, 1f );
-		t = 1f - MathF.Pow( 1f - t, 3f ); // ease-out cubic, same curve as board rotation
+		t = 1f - MathF.Pow( 1f - t, 3f ); // ease-out cubic, same curve as the leave blend
 
-		_cameraObject.WorldPosition = Vector3.Lerp( _camFromPos, anchorPos, t );
-		_cameraObject.WorldRotation = Rotation.Slerp( _camFromRot, anchorRot, t );
+		_cameraObject.WorldPosition = Vector3.Lerp( _camFromPos, anchor.WorldPosition, t );
+		_cameraObject.WorldRotation = Rotation.Slerp( _camFromRot, anchor.WorldRotation, t );
 	}
 }

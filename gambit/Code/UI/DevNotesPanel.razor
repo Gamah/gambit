@@ -1,13 +1,12 @@
 @using System.Collections.Generic;
 @using System.Linq;
-@using System.Text.Json;
 @using Sandbox;
 @using Sandbox.UI;
 @namespace Gambit.UI
 @inherits PanelComponent
 
 @* Display-only dev-notes board mounted next to the info panel (see InfoWall).
-   Fetches /api/v1/devnotes; hidden entirely while there are no notes. *@
+   Hidden entirely while there are no notes (currently always — see OnStart). *@
 
 <root>
 	@if ( _devNotes.Count > 0 )
@@ -94,21 +93,11 @@
 
 	protected override int BuildHash() => System.HashCode.Combine( _devNotes.Count, Gambit.UI.SettingsModel.SettingsVersion );
 
-	protected override async void OnStart()
+	protected override void OnStart()
 	{
-		try
-		{
-			var json = await Http.RequestStringAsync( Gambit.Api.ApiClient.BaseUrl + "/api/v1/devnotes" );
-			using var doc = JsonDocument.Parse( json );
-			if ( doc.RootElement.TryGetProperty( "notes", out var arr ) && arr.ValueKind == JsonValueKind.Array )
-			{
-				foreach ( var el in arr.EnumerateArray() )
-					_devNotes.Add( el.GetString() ?? string.Empty );
-			}
-			Notes = _devNotes;
-			StateHasChanged();
-		}
-		catch { /* network unavailable — show nothing */ }
+		// The Rotaliate backend that served /api/v1/devnotes is gone; there is no
+		// notes source yet, so the board stays hidden (HasNotes false). If wanted
+		// later, notes could come from a static file in the repo or a gist.
 	}
 
 	protected override void OnUpdate()

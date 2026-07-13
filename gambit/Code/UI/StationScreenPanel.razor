@@ -1,0 +1,85 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.World;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	Floating status sign over each chess table (WorldPanel, camera-billboarded by
+	ChessRing). Display-only — seat claiming is the walk-up "Press E" flow, and
+	the future game UI is the fullscreen ScreenPanel shown while seated. No
+	pointer-events — input never goes to it.
+*@
+
+<root>
+	@if ( _station != null && ( _station.WhiteSteamId != 0 || _station.BlackSteamId != 0 ) )
+	{
+		<div class="frame seats">
+			<div class="seat">⬜ @( _station.WhiteName ?? "—" )</div>
+			<div class="seat">⬛ @( _station.BlackName ?? "—" )</div>
+		</div>
+	}
+	else if ( _station != null && ChessStation.Active != _station )
+	{
+		<div class="frame">
+			<div class="title">TERRY'S GAMBIT</div>
+			<div class="subtitle">Press E at either side to sit</div>
+		</div>
+	}
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	.frame {
+		width: 100%;
+		height: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+	}
+
+	.title {
+		font-size: 22px;
+		font-weight: bold;
+		color: white;
+		letter-spacing: 5px;
+		text-shadow: 0px 0px 12px rgba(255, 255, 255, 0.9);
+	}
+
+	.subtitle {
+		font-size: 10px;
+		color: rgba(255, 255, 255, 0.55);
+		letter-spacing: 2px;
+		text-shadow: 0px 0px 8px rgba(255, 255, 255, 0.55);
+	}
+
+	.seat {
+		font-size: 13px;
+		color: rgba(255, 255, 255, 0.85);
+		letter-spacing: 2px;
+		text-shadow: 0px 0px 8px rgba(0, 0, 0, 0.8);
+	}
+</style>
+
+@code
+{
+	ChessStation _station;
+
+	protected override void OnStart()
+	{
+		_station = Components.Get<ChessStation>( FindMode.Enabled | FindMode.InSelf | FindMode.InAncestors );
+	}
+
+	protected override int BuildHash() =>
+		System.HashCode.Combine( _station?.WhiteSteamId, _station?.WhiteName,
+			_station?.BlackSteamId, _station?.BlackName,
+			ChessStation.Active == _station );
+}

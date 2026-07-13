@@ -16,7 +16,7 @@ namespace Gambit.World;
 /// here and point-sampled by the shader (one texel per cell), so the pop count is
 /// unbounded and palette/pops are a single mechanism. The texture is rebuilt when the
 /// pops change, when the colour scheme changes (read from <see cref="PlayerData"/> the
-/// same way GameHud/CubeBoardView do — so palette changes update live), or when a
+/// so palette changes update live), or when a
 /// property like BoardDim changes.
 ///
 /// Geometry builds in OnEnabled/OnValidate (NotSaved preview, like LobbyRoom); the pop

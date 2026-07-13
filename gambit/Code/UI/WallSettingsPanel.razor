@@ -135,12 +135,10 @@
 		return new List<string>
 		{
 			$"ROOM THEME — {SettingsModel.ColorName( data.WorldLightColor )} · {SettingsModel.Pct( data.WorldLightBrightness )}%",
-			$"MARQUEE LIGHT — {SettingsModel.Pct( data.MarqueeLightBrightness )}%",
+			$"TABLE LIGHT — {SettingsModel.Pct( data.MarqueeLightBrightness )}%",
 			$"CHECKERBOARD — {floor}",
-			$"MY CABINET SOUNDS — {OnOff( data.MyCabinetSounds )}",
-			$"OTHER CABINET SOUNDS — {OnOff( data.RemoteCabinetSounds )}",
-			$"ATTRACT DEMO — {( data.DemoSkip ? "SKIPPED" : "ON" )}",
-			$"SPECTATOR BOARD — {OnOff( data.SpectatorBoard )}",
+			$"MY BOARD SOUNDS — {OnOff( data.MyCabinetSounds )}",
+			$"OTHER BOARD SOUNDS — {OnOff( data.RemoteCabinetSounds )}",
 		};
 	}
 
@@ -153,15 +151,14 @@
 			return lines;
 		}
 
-		var ring = ArcadeRing.Instance;
+		var ring = ChessRing.Instance;
 		int current = ring?.StationCount ?? 0;
 		int pending = ring?.PendingStationCount ?? current;
-		lines.Add( pending != current ? $"CABINETS — {current} → {pending}" : $"CABINETS — {current}" );
+		lines.Add( pending != current ? $"BOARDS — {current} → {pending}" : $"BOARDS — {current}" );
 		if ( SettingsModel.AnyStationOccupied( Scene ) )
-			lines.Add( "Count locked while cabinets are occupied" );
+			lines.Add( "Count locked while seats are taken" );
 		else if ( ring?.Rebuilding ?? false )
 			lines.Add( "Rebuilding the ring…" );
-		lines.Add( $"TARGET SERVER — {SettingsModel.TargetServerLabel()}" );
 		return lines;
 	}
 
@@ -169,9 +166,8 @@
 
 	protected override int BuildHash() =>
 		HashCode.Combine( Kind, SettingsModel.SettingsVersion, LobbyNetworkManager.LocalIsAdmin,
-			ArcadeRing.Instance?.StationCount ?? 0, ArcadeRing.Instance?.PendingStationCount ?? 0,
-			ArcadeRing.Instance?.Rebuilding ?? false,
+			ChessRing.Instance?.StationCount ?? 0, ChessRing.Instance?.PendingStationCount ?? 0,
+			ChessRing.Instance?.Rebuilding ?? false,
 			Host && SettingsModel.AnyStationOccupied( Scene ),
-			HashCode.Combine( Gambit.Api.ApiClient.BaseUrl,
-				Scene.GetAllComponents<Skafinity.SkafinityPlayer>().FirstOrDefault()?.CurrentSeed ) );
+			Scene.GetAllComponents<Skafinity.SkafinityPlayer>().FirstOrDefault()?.CurrentSeed );
 }

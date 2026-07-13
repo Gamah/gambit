@@ -11,11 +11,14 @@ anonymous play via PGN import), the rotaliate→gambit file mapping, milestones
 M0–M6, and risks. This file carries the s&box engineering lore inherited from the
 parent project — hard-won gotchas that still apply.
 
-Current status: **M0 done** (repo bootstrap: copy, renames, plan). Legacy
-Rotaliate gameplay code (`Code/Game/Board.cs`, `GameController`,
-`MultiplayerController`, `Api/ApiClient.cs`, `Ws/`, `CubeBoardView`, leaderboards)
-is still present and compiles, but is scheduled for deletion/replacement per the
-PLAN.md file mapping — don't build on it.
+Current status: **M0 done; M1 code complete, gate pending user test.** All legacy
+Rotaliate gameplay code (Go-backend API/WS, cube game, leaderboards, demo, arcade
+screens) is deleted. The world is chess now: `ChessRing` builds tables with
+procedural piece sets (`ChessSetBuilder`), `ChessStation` holds two-seat
+occupancy (White/Black, `[Sync(FromHost)]` + `[Rpc.Host]` first-wins), and
+`LobbyPlayer` engages the nearest free seat. The one-time `lobby.scene` rewire
+checklist is in PLAN.md ("M1 scene rewire"). Next: M2 — vendored chess rules,
+move input/rendering, local anonymous games, PGN import.
 
 ---
 

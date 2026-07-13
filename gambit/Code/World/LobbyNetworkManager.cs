@@ -13,8 +13,8 @@ namespace Gambit.World;
 ///   is create-or-join with no extra logic.
 /// - Spawns a player clone for every connection (including the local one) from the disabled
 ///   PlayerTemplate GameObject in the scene — no .prefab asset needed.
-/// - Network-spawns every ArcadeStation so their [Sync] occupancy replicates, and clears
-///   occupancy when the occupant disconnects.
+/// - Network-spawns every ChessStation so their [Sync] seat occupancy replicates, and
+///   clears seats when the occupant disconnects.
 /// </summary>
 public sealed class LobbyNetworkManager : Component, Component.INetworkListener, ISceneStartup
 {
@@ -24,16 +24,9 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 	/// <summary>Sideways gap between consecutive spawn positions so players don't stack.</summary>
 	[Property] public float SpawnSpacing { get; set; } = 40f;
 
-	/// <summary>Player cap for the hosted lobby. Should be at least the arcade ring's StationCount.</summary>
-	[Property] public int MaxPlayers { get; set; } = 8;
-
-	/// <summary>Backend URL the host has chosen for the whole lobby. Replicated host→client;
-	/// every peer applies it to <see cref="Gambit.Api.ApiClient.BaseUrl"/> in OnUpdate.
-	/// Empty until the host picks one, leaving each client on its own default.
-	/// The next cabinet entry re-validates the player against the new backend
-	/// (ArcadeStation.ValidateIdentity), so switching instances re-enrolls if needed.
-	/// Only ever one of the trusted endpoints below — see <see cref="IsTrustedUrl"/>.</summary>
-	[Sync( SyncFlags.FromHost )] public string TargetUrl { get; set; }
+	/// <summary>Player cap for the hosted lobby. Two players can share each chess
+	/// table, so this can exceed the ring's StationCount.</summary>
+	[Property] public int MaxPlayers { get; set; } = 16;
 
 	/// <summary>Permission claim that marks a connection as allowed to run host settings.
 	/// On a dedicated server, grant it per-SteamId in the server's <c>config/users.json</c>
@@ -87,49 +80,13 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 		}
 	}
 
-	// TEMP host-settings diagnostics — remove once the dedi admin works.
-	float _nextAdminLog;
-
-	protected override void OnUpdate()
-	{
-		if ( !string.IsNullOrEmpty( TargetUrl ) && TargetUrl != Gambit.Api.ApiClient.BaseUrl )
-			Gambit.Api.ApiClient.BaseUrl = TargetUrl;
-
-		// Unconditional heartbeat on every peer so we can tell "code not running" from
-		// "value never replicates". Throttled to once every 2s.
-		if ( Time.Now >= _nextAdminLog )
-		{
-			_nextAdminLog = Time.Now + 2f;
-			Log.Info( $"[Gambit] heartbeat AdminSteamIds='{AdminSteamIds}' " +
-				$"local={Connection.Local?.SteamId} LocalIsAdmin={LocalIsAdmin} " +
-				$"dedicated={Application.IsDedicatedServer}" );
-		}
-	}
-
-	/// <summary>An admin can only redirect the whole lobby to one of the known Gambit
-	/// backends. Admin is a low bar in a *public* lobby, so an arbitrary URL would let a
-	/// hostile admin harvest every peer's X-Player-ID GUID and a freshly minted (replayable)
-	/// Facepunch auth token by pointing them at their own server. Restricting it to the
-	/// trusted prod/test endpoints removes that path.</summary>
-	static bool IsTrustedUrl( string url ) =>
-		url == Gambit.Api.ApiClient.ProdUrl || url == Gambit.Api.ApiClient.TestUrl;
-
-	// Host-validated entry points — host settings are triggered by an admin player, who
+	// Host-validated entry point — host settings are triggered by an admin player, who
 	// is not the network host on a dedicated server, so the writes must run host-side.
-	[Rpc.Host]
-	public void RequestSetTargetUrl( string url )
-	{
-		// Permissions are authoritative host-side, so gate on the caller's actual claim.
-		if ( !CanChangeHostSettings( Rpc.Caller ) ) return;
-		if ( !IsTrustedUrl( url ) ) return; // never send credentials to a host-chosen endpoint
-		TargetUrl = url; // [Sync] replicates; OnUpdate applies it on every peer
-	}
-
 	[Rpc.Host]
 	public void RequestSetStationCount( int count )
 	{
 		if ( !CanChangeHostSettings( Rpc.Caller ) ) return;
-		foreach ( var ring in Scene.GetAllComponents<ArcadeRing>() )
+		foreach ( var ring in Scene.GetAllComponents<ChessRing>() )
 			ring.HostSetStationCount( count );
 	}
 
@@ -155,14 +112,6 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 			.ToList();
 
 		AdminSteamIds = string.Join( ' ', ids );
-
-		// TEMP host-settings diagnostics — remove once the dedi admin works.
-		Log.Info( $"[Gambit] RefreshAdmins: dedicated={Application.IsDedicatedServer} " +
-			$"conns={_conns.Count} host={Connection.Host?.SteamId} -> admins='{AdminSteamIds}'" );
-		foreach ( var c in _conns )
-			Log.Info( $"[Gambit]   conn '{c.DisplayName}' steam={c.SteamId} " +
-				$"isHost={c == Connection.Host} hasClaim={c.HasPermission( HostSettingsClaim )} " +
-				$"allowed={CanChangeHostSettings( c )}" );
 	}
 
 	void ISceneStartup.OnHostInitialize()
@@ -180,8 +129,8 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 		// Stations only exist once the ring builds them — host-only, so joining clients
 		// get exactly one copy of each via NetworkSpawn instead of building their own.
 		// [Sync] occupancy only replicates on NetworkMode.Object, so each station is
-		// network-spawned after the build (shared with the cabinet-count rebuild).
-		foreach ( var ring in Scene.GetAllComponents<ArcadeRing>() )
+		// network-spawned after the build (shared with the board-count rebuild).
+		foreach ( var ring in Scene.GetAllComponents<ChessRing>() )
 		{
 			ring.Build();
 			ring.NetworkSpawnStations();
@@ -213,10 +162,10 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 		player.NetworkSpawn( connection );
 	}
 
-	/// <summary>Called on the host when a connection drops — free any station they occupied.</summary>
+	/// <summary>Called on the host when a connection drops — free any seat they occupied.</summary>
 	public void OnDisconnected( Connection connection )
 	{
-		foreach ( var station in Scene.GetAllComponents<ArcadeStation>() )
+		foreach ( var station in Scene.GetAllComponents<ChessStation>() )
 			station.HostHandleDisconnect( connection.SteamId );
 
 		// Drop the leaver from the admin set.

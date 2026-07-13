@@ -5,7 +5,7 @@ namespace Gambit.World;
 
 /// <summary>
 /// Discord invite copy helper. There is no documented API to open a URL in-game, but
-/// Clipboard.SetText works (proven in ModePickerScreen), so the Discord link is
+/// Clipboard.SetText works (proven in the old arcade menus), so the Discord link is
 /// click-to-copy instead — the clickable link lives in InfoScreen (the east-wall info
 /// board's engage-flow viewer). LobbyOverlay shows brief "copied" feedback via
 /// <see cref="SinceCopied"/>.

@@ -8,8 +8,8 @@ namespace Gambit.World;
 /// up and pressing E opens the interactive InfoScreen ("Press E to view"; the Discord
 /// link there is click-to-copy). Replaces the old
 /// spinning FacePlayer board at the ring center: the panels are statically
-/// wall-mounted like the LeaderboardWall boards. Same editor-preview pattern as
-/// LeaderboardWall: OnEnabled/OnValidate rebuild NotSaved GOs, plus a
+/// wall-mounted boards. Same editor-preview pattern as
+/// the other walls: OnEnabled/OnValidate rebuild NotSaved GOs, plus a
 /// wall-dimension watch in OnUpdate. Client-side only — nothing is networked.
 /// Both panels keep their content-measured floor anchor (their own OnUpdate
 /// drives local Z), so this component only places them along the wall.

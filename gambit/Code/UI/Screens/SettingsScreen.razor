@@ -189,9 +189,8 @@
 		HashCode.Combine( SettingsStation.Active != null && !( SettingsStation.Active?.Music ?? false ),
 			SettingsStation.Active?.Host,
 			SettingsModel.SettingsVersion, LobbyNetworkManager.LocalIsAdmin,
-			HashCode.Combine( ArcadeRing.Instance?.StationCount ?? 0,
-				ArcadeRing.Instance?.PendingStationCount ?? 0,
-				ArcadeRing.Instance?.Rebuilding ?? false ),
-			SettingsModel.AnyStationOccupied( Scene ),
-			Gambit.Api.ApiClient.BaseUrl );
+			HashCode.Combine( ChessRing.Instance?.StationCount ?? 0,
+				ChessRing.Instance?.PendingStationCount ?? 0,
+				ChessRing.Instance?.Rebuilding ?? false ),
+			SettingsModel.AnyStationOccupied( Scene ) );
 }
