@@ -83,6 +83,12 @@ public sealed class LobbyPlayer : Component
 	Vector3 _leaveFromPos;
 	Rotation _leaveFromRot;
 
+	// Seated-body plant: where our avatar stood when we sat, restored on stand-up so
+	// the camera/controller hand-back lands exactly where the blend-out targets (no snap).
+	bool _movedForSeat;
+	Vector3 _seatReturnPos;
+	Rotation _seatReturnRot;
+
 	// Deferred "join by link" (M4): when a pasted lichess URL assigns a side we
 	// aren't currently on, we Disengage first and take the seat once the leave
 	// blend finishes (processed in OnUpdate's roaming section).
@@ -598,6 +604,33 @@ public sealed class LobbyPlayer : Component
 			_bodyRenderer.Set( "move_z", 0f );
 		}
 
+		// Physically plant our avatar at our side of the board. We only ever see the
+		// locked overhead camera with our own avatar hidden, so this is invisible to
+		// *us* — but the transform is networked from us (the owner), so every OTHER
+		// client's copy of our avatar snaps to the seat instead of standing wherever we
+		// walked up. And because the body then stops moving, their PlayerController
+		// derives zero speed and drops it out of the walk cycle into a plain idle — no
+		// more sliding/strafing across the room (the parent-project bug). We keep our
+		// own standing height and only slide horizontally to the seat, then face the
+		// board so we read as sitting down to it.
+		if ( ChessStation.Active is { } seatStation )
+		{
+			_seatReturnPos = WorldPosition;
+			_seatReturnRot = WorldRotation;
+			_movedForSeat = true;
+
+			var seatPos = seatStation.SeatWorldPosition( ChessStation.ActiveSeat );
+			seatPos.z = WorldPosition.z; // slide to the seat side only; keep our own height
+
+			var boardFlat = seatStation.WorldPosition;
+			boardFlat.z = seatPos.z;
+			var toBoard = boardFlat - seatPos;
+
+			WorldPosition = seatPos;
+			if ( toBoard.Length > 0.01f )
+				WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
+		}
+
 		// Hide our avatar so it doesn't stand between the locked camera and the
 		// board — collected here (not OnStart) so dresser-spawned renderers are included
 		_hiddenRenderers.Clear();
@@ -619,6 +652,17 @@ public sealed class LobbyPlayer : Component
 			if ( _controller != null )
 				_controller.UseLookControls = true;
 			return;
+		}
+
+		// Un-plant: put the body back where we stood when we sat, so the controller
+		// hand-back below lands exactly where the camera blend-out targets (the pose
+		// captured at Engage) instead of snapping from the seat spot. Remote clients see
+		// us pop back to standing as we get up — the natural "stand up" moment.
+		if ( _movedForSeat )
+		{
+			WorldPosition = _seatReturnPos;
+			WorldRotation = _seatReturnRot;
+			_movedForSeat = false;
 		}
 
 		ChessStation.Active?.Leave();
