@@ -11,8 +11,10 @@ anonymous play via PGN import), the rotaliate→gambit file mapping, milestones
 M0–M6, and risks. This file carries the s&box engineering lore inherited from the
 parent project — hard-won gotchas that still apply.
 
-Current status: **M0–M1 done** (gate passed 2026-07-13); **M2 code-complete,
-gate pending in-editor test**. All legacy Rotaliate gameplay code is deleted.
+Current status: **M0–M3 done**; **M4a + M4b (Board API play) code-complete and
+merged** (PR #2, 2026-07-13) — in-sbox lichess play via polling + the
+browser-link flow. **`PLAN.md` is the authoritative milestone status and holds
+the M4 remaining work (the next branch).** All legacy Rotaliate gameplay code is deleted.
 The world is chess: `ChessRing` builds tables (LobbyRoom auto-adds the ring
 component if the scene lacks one), pieces are lathed runtime meshes in
 `ChessSetBuilder` (`models/chess/{type}.vmdl` is a drop-in upgrade path), and
@@ -32,8 +34,8 @@ the only seam callers may touch (D2); it caches `Fen`/`LastMoveUci`/
 station GO (added by ChessRing, replicate with the network spawn); the relay
 is `NetChessMove(uci, fenAfter)` + host-folded `[Sync] BoardFen`/`Phase`
 (D7). GameHud attaches itself to the scene ScreenPanel at runtime (no scene
-rewire needed). First sitter always gets White (D1); leaving a live game is
-a two-stage resign (Escape/Leave twice).
+rewire needed). You take the side you walk up to (the D1 first-sitter-always-White
+override was dropped in M4a); leaving a live game is a two-stage resign (Escape/Leave twice).
 
 M2 gate (user, in-editor): `gambit_perft` all PASS → two clients play a full
 game at one table (castle, promote via picker, capture pop) → third client
