@@ -11,17 +11,37 @@ anonymous play via PGN import), the rotaliate→gambit file mapping, milestones
 M0–M6, and risks. This file carries the s&box engineering lore inherited from the
 parent project — hard-won gotchas that still apply.
 
-Current status: **M0–M1 done** (gate passed 2026-07-13). All legacy Rotaliate
-gameplay code is deleted. The world is chess: `ChessRing` builds tables
-(LobbyRoom auto-adds the ring component if the scene lacks one), pieces are
-lathed runtime meshes in `ChessSetBuilder` (Mesh + Model.Builder surfaces of
-revolution; `models/chess/{type}.vmdl` is a drop-in upgrade path), and
-`ChessStation` holds two-seat occupancy (White/Black, `[Sync(FromHost)]` +
-`[Rpc.Host]` first-wins, loser-side reconciliation). Seat cameras orbit the
-board center (`SeatOrbitRadius`/`SeatPitch`/`SeatSideAngle` — range and tilt
-deliberately decoupled). Next: **M2** — vendored chess rules + perft,
-`ChessBoardView` move input/render, `LocalGameController` + seat/turn RPCs,
-FEN spectator relay, PGN build + `POST /api/import`, minimal GameHud.
+Current status: **M0–M1 done** (gate passed 2026-07-13); **M2 code-complete,
+gate pending in-editor test**. All legacy Rotaliate gameplay code is deleted.
+The world is chess: `ChessRing` builds tables (LobbyRoom auto-adds the ring
+component if the scene lacks one), pieces are lathed runtime meshes in
+`ChessSetBuilder` (`models/chess/{type}.vmdl` is a drop-in upgrade path), and
+`ChessStation` holds two-seat occupancy (`[Sync(FromHost)]` + `[Rpc.Host]`
+first-wins, loser-side reconciliation). Seat cameras orbit the board center
+(`SeatOrbitRadius`/`SeatPitch`/`SeatSideAngle`).
+
+M2 (this pass): Gera Chess Library vendored+patched in `Code/Chess/Vendor/`
+(regex/Task/Span/reflection stripped for the whitelist, every change marked
+`GAMBIT VENDOR PATCH`; verified on this host via a dotnet harness mirroring
+s&box compile settings — perft depths 1–4 on six reference positions,
+upstream's 67 xunit tests, 32 wrapper tests). `Code/Chess/ChessGame.cs` is
+the only seam callers may touch (D2); it caches `Fen`/`LastMoveUci`/
+`MoveCount` between moves so per-frame polling is free. `gambit_perft
+[depth]` re-proves the rules in-sandbox — run it before trusting the gate.
+`LocalGameController` + `ChessBoardView` sit beside `ChessStation` on each
+station GO (added by ChessRing, replicate with the network spawn); the relay
+is `NetChessMove(uci, fenAfter)` + host-folded `[Sync] BoardFen`/`Phase`
+(D7). GameHud attaches itself to the scene ScreenPanel at runtime (no scene
+rewire needed). First sitter always gets White (D1); leaving a live game is
+a two-stage resign (Escape/Leave twice).
+
+M2 gate (user, in-editor): `gambit_perft` all PASS → two clients play a full
+game at one table (castle, promote via picker, capture pop) → third client
+watches live and a late joiner sees the mid-game position → import link
+opens the game on lichess → click-to-copy works. Expected tuning: GameHud px
+sizes/position, and verify the first board click lands (the `Select`/mouse1
+action must reach the world past the HUD panels — if clicks die, a panel is
+eating them).
 
 ---
 
