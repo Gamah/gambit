@@ -11,14 +11,17 @@ anonymous play via PGN import), the rotaliate→gambit file mapping, milestones
 M0–M6, and risks. This file carries the s&box engineering lore inherited from the
 parent project — hard-won gotchas that still apply.
 
-Current status: **M0 done; M1 code complete, gate pending user test.** All legacy
-Rotaliate gameplay code (Go-backend API/WS, cube game, leaderboards, demo, arcade
-screens) is deleted. The world is chess now: `ChessRing` builds tables with
-procedural piece sets (`ChessSetBuilder`), `ChessStation` holds two-seat
-occupancy (White/Black, `[Sync(FromHost)]` + `[Rpc.Host]` first-wins), and
-`LobbyPlayer` engages the nearest free seat. The one-time `lobby.scene` rewire
-checklist is in PLAN.md ("M1 scene rewire"). Next: M2 — vendored chess rules,
-move input/rendering, local anonymous games, PGN import.
+Current status: **M0–M1 done** (gate passed 2026-07-13). All legacy Rotaliate
+gameplay code is deleted. The world is chess: `ChessRing` builds tables
+(LobbyRoom auto-adds the ring component if the scene lacks one), pieces are
+lathed runtime meshes in `ChessSetBuilder` (Mesh + Model.Builder surfaces of
+revolution; `models/chess/{type}.vmdl` is a drop-in upgrade path), and
+`ChessStation` holds two-seat occupancy (White/Black, `[Sync(FromHost)]` +
+`[Rpc.Host]` first-wins, loser-side reconciliation). Seat cameras orbit the
+board center (`SeatOrbitRadius`/`SeatPitch`/`SeatSideAngle` — range and tilt
+deliberately decoupled). Next: **M2** — vendored chess rules + perft,
+`ChessBoardView` move input/render, `LocalGameController` + seat/turn RPCs,
+FEN spectator relay, PGN build + `POST /api/import`, minimal GameHud.
 
 ---
 
