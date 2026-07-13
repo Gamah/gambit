@@ -477,10 +477,17 @@ public sealed class LobbyPlayer : Component
 	/// forfeit a live game.</summary>
 	public void RequestLeave()
 	{
-		var controller = Gambit.Game.LocalGameController.For( ChessStation.Active );
-		bool forfeits = controller is { Playing: true }
+		var station = ChessStation.Active;
+		var controller = Gambit.Game.LocalGameController.For( station );
+		var lichess = Gambit.Game.LichessPlayController.For( station );
+
+		// Standing up mid-game forfeits it — true for both the local two-seat game and
+		// a live in-sbox lichess game, so both arm the two-stage confirm.
+		bool localForfeits = controller is { Playing: true }
 			&& controller.LocalSeat != null
 			&& ( controller.Game?.MoveCount ?? 0 ) > 0;
+		bool lichessForfeits = lichess is { Playing: true };
+		bool forfeits = localForfeits || lichessForfeits;
 
 		if ( forfeits && !LeaveArmed )
 		{
@@ -489,8 +496,12 @@ public sealed class LobbyPlayer : Component
 		}
 
 		_leaveArm = 999f;
-		if ( forfeits )
+		if ( localForfeits )
 			controller.ResignLocal();
+		// Reset the lichess controller in every non-idle phase, not just Playing:
+		// resign a live game, cancel a pending challenge/seek/open link, or clear the
+		// game-over screen — so the board returns to "not playing" for the next sitter.
+		lichess?.LeaveSeat();
 		Disengage();
 	}
 

@@ -157,6 +157,15 @@ public sealed class LichessPlayController : Component, IBoardGame
 		// Watchers (Idle here) keep a read-only board built from the relayed FEN.
 		SyncSpectator();
 
+		// Host recycle: if the table has emptied but a relay is still live, the player
+		// left without a clean LeaveSeat (an abrupt disconnect) — drop it so watchers
+		// don't stare at a frozen board and the next sitter starts fresh. Mirrors
+		// LichessGameController's auto-recycle. The graceful stand-up path clears the
+		// relay itself via LeaveSeat → ClearPlay, so this is only the safety net.
+		if ( Networking.IsHost && RelayLive && Station != null
+			&& Station.WhiteSteamId == 0 && Station.BlackSteamId == 0 )
+			ClearRelayFields();
+
 		// Only the client that started a game here is non-Idle; everyone else no-ops.
 		if ( _phase != PlayPhase.Challenging && _phase != PlayPhase.Playing ) return;
 
@@ -235,6 +244,13 @@ public sealed class LichessPlayController : Component, IBoardGame
 	void HostRelayClear()
 	{
 		if ( !Networking.IsHost ) return;
+		ClearRelayFields();
+	}
+
+	/// <summary>Host-side field reset — reached inline from the auto-recycle path and
+	/// via <see cref="HostRelayClear"/>'s RPC (only the host writes FromHost syncs).</summary>
+	void ClearRelayFields()
+	{
 		RelayLive = false;
 		RelayFen = null;
 		RelayLastMove = null;
@@ -665,6 +681,24 @@ public sealed class LichessPlayController : Component, IBoardGame
 		StatusText = null;
 		OverText = null;
 		_error = null;
+	}
+
+	/// <summary>The seated player stood up / left the board (or a dev reset). Tear down
+	/// whatever this controller was doing so the table is free for the next person:
+	/// forfeit a live game, cancel a pending challenge/seek/open game, drop the
+	/// spectator relay, and return to <see cref="PlayPhase.Idle"/>. No-op on every
+	/// client except the one that owns the game (everyone else is already Idle).</summary>
+	public void LeaveSeat()
+	{
+		if ( _phase == PlayPhase.Idle ) return;
+
+		// Walking away from a live game is a resignation on lichess. Fire it directly
+		// (not ResignGame, which waits for the next poll) since we clear to Idle below
+		// and stop polling immediately.
+		if ( _phase == PlayPhase.Playing && !string.IsNullOrEmpty( _gameId ) )
+			_ = LichessApi.BoardResign( _gameId, LichessAuth.Token );
+
+		ClearPlay(); // cancels a pending challenge/seek/open, drops the relay, → Idle
 	}
 
 	public void CopyGameUrl() => Copy( GameUrl );

@@ -182,6 +182,19 @@ public static class LichessSpikes
 		pc.QuickSeek( rated );
 	}
 
+	/// <summary>Force the in-sbox lichess controller on the board you're at back to
+	/// "not playing" — resigns a live game, cancels a pending challenge/seek/open link,
+	/// or clears the game-over screen. The same reset standing up performs; handy to
+	/// un-stick a board during testing.</summary>
+	[ConCmd( "gambit_play_reset" )]
+	public static void PlayReset()
+	{
+		var pc = Gambit.Game.LichessPlayController.For( Gambit.World.ChessStation.Active );
+		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_play_reset" ); return; }
+		pc.LeaveSeat();
+		Log.Info( "[Gambit] lichess play state reset to idle." );
+	}
+
 	/// <summary>Create an open game vs an anonymous browser and sit in on it in sbox
 	/// on the side you're seated at — we self-seat via the API (accept?color=), so you
 	/// just share the opponent link. Sit down first; the HUD then shows the link.</summary>
