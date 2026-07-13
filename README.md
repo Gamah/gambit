@@ -1,24 +1,21 @@
-# rotaliate-client
+# gambit
 
-s&box reimplementation of [Rotaliate](https://github.com/Gamah/rotaliate) — a competitive puzzle game built in C# on the Source 2 engine.
+Chess in a social s&box lobby, backed by [lichess](https://lichess.org).
 
-## What is Rotaliate?
+Walk around a shared room with up to 8 players. Sit down at one of the chess
+boards arranged in a ring and:
 
-Players rotate 2×2 blocks on a 10×10 grid to form same-color groups. Matched groups go black (solved). Race the clock, minimize moves, or clear your color before opponents do.
+- **Play real lichess games** — sign in with your lichess account and seek/challenge
+  anyone on lichess (Board API), with clocks, chat, and spectators at your board.
+- **Play anonymously** — two players share a board in the lobby, no account needed;
+  when the game ends you get a shareable lichess link (PGN import).
+- **Watch** — other boards in the room, or Lichess TV on the big wall board.
+- **Solve puzzles** — lichess puzzles at any board (local solving; doesn't affect
+  your lichess puzzle rating).
 
-- 10×10 grid, 4 active colors (24 cells each): Red, Blue, Green, Yellow
-- A 2×2 block of identical active color → all four cells become solved (black)
-- CW or CCW rotation of any 2×2 selection
-
-## Game Modes
-
-| Mode | Description |
-|---|---|
-| Daily Puzzle | Shared daily board; compete for time or moves |
-| Hourly Puzzle | Shared hourly board; compete for time or moves |
-| Free Play | Seeded solo session |
-| 2-Player | WebSocket — each player owns 2 colors; first to clear both wins |
-| 4-Player | WebSocket — each player owns 1 color; first to clear theirs wins |
+Forked from rotaliate-client; the lobby/station scaffolding is inherited, the game
+and backend are being replaced. See **[PLAN.md](PLAN.md)** for the full design,
+lichess API notes, milestones, and current status.
 
 ## Stack
 
@@ -26,34 +23,18 @@ Players rotate 2×2 blocks on a 10×10 grid to form same-color groups. Matched g
 |---|---|
 | Engine | s&box (Source 2) |
 | Language | C# |
-| UI | s&box Razor Panels + HudPainter |
-| Networking | `Http` (REST) + `WebSocket` (s&box built-ins) |
-| Backend | [rotaliate](https://github.com/Gamah/rotaliate) (Go) |
+| UI | s&box Razor Panels |
+| Chess backend | lichess API (OAuth2 PKCE, Board API, NDJSON streams) |
+| Lobby networking | s&box multiplayer (`[Sync]`/`[Rpc]`) |
 
-## 3D Lobby
+## Assets
 
-The game boots into a third-person lobby room (`Assets/scenes/lobby.scene`). Walk up to the
-wall screen and press **E** to play Rotaliate on it; **Escape** or the Leave button returns
-you to the room. Movement/camera use the built-in s&box `PlayerController`.
+All art is CC0 — procedural geometry from engine primitives, with the
+[Poly Haven chess set](https://polyhaven.com/a/chess_set) (CC0) as a planned model
+upgrade and the portablejim CC0 2D piece set for floor glyphs. Provenance is
+recorded in `Assets/ATTRIBUTION.md` as assets land.
 
-## Project Setup
+## Development
 
-s&box's package manager tracks local projects in its own registry — cloning and opening the `.sbproj` directly will fail.
-
-1. Open the s&box editor → **New Project** → Game (Empty), pointed at this repo folder
-2. The editor registers the project and writes its own `.sbproj`; use that file going forward
-3. C# changes hotload in milliseconds — check the error list for compile errors
-
-## Scripts
-
-**`scripts/gen_sounds.py`** — regenerates the synthesized WAV source files for all sound effects. Run from the repo root; requires `numpy`.
-
-```
-python scripts/gen_sounds.py
-```
-
-After running, open the s&box asset browser so it recompiles the WAVs to `.vsnd`. The `.sound` event files in `rotaliate/Assets/sounds/` already reference the correct `.vsnd` paths.
-
-## License
-
-GamahCode License v1.2 — see [LICENSE](LICENSE).
+Open `gambit/gambit.sbproj` in the s&box editor (first time on a new machine: see
+"Project Setup" in `CLAUDE.md`). Startup scene is `scenes/lobby.scene`.

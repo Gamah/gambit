@@ -1,0 +1,177 @@
+@using System;
+@using System.Collections.Generic;
+@using System.Linq;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.Game;
+@using Gambit.World;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	South-wall settings board (issue #49) — read-only status summary, mounted by
+	SettingsWall. Editing happens in SettingsScreen: walking up and pressing E
+	locks the camera onto the board (SettingsStation, same flow as the cabinets)
+	and the interactive ScreenPanel UI opens with a cursor. No pointer events here.
+*@
+
+<root>
+	<div class="board" style="background-color:@WallTheme.Bg; border:2px solid @WallTheme.Border;">
+		<div class="title" style="color:@WallTheme.Text;">@Title()</div>
+		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+		@{ var lines = Lines(); }
+		@for ( int i = 0; i < lines.Count; i++ )
+		{
+			<div class="line" style="color:@( i == 0 ? WallTheme.AccentCss : WallTheme.TextDim );">@lines[i]</div>
+		}
+		@if ( Kind != SettingsStation.StationKind.Host || LobbyNetworkManager.LocalIsAdmin )
+		{
+			<div class="hint" style="color:@WallTheme.TextFaint;">Press E to change</div>
+		}
+	</div>
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	/* Colours are runtime-driven (WallTheme.cs, bound inline above); only layout +
+	   static tokens live here. Layout in the WorldPanel's fixed intrinsic pixel space,
+	   fixed px font sizes, uniform GO scale. */
+	.board {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		flex-direction: column;
+		align-items: stretch;
+		justify-content: flex-start;
+		padding: 12px 16px;
+		border-radius: $wall-radius;
+		font-family: $wall-font;
+		gap: 6px;
+	}
+
+	.board > div {
+		flex-shrink: 0;
+	}
+
+	.title {
+		justify-content: center;
+		white-space: nowrap;
+		font-size: 15px;
+		font-weight: bold;
+		letter-spacing: 4px;
+	}
+
+	.divider {
+		height: 1.5px;
+		margin: 3px 0;
+	}
+
+	.line {
+		font-size: 12px;
+		letter-spacing: 1px;
+		white-space: nowrap;
+	}
+
+	.hint {
+		justify-content: center;
+		font-size: 11px;
+		letter-spacing: 1px;
+		margin-top: 8px;
+	}
+</style>
+
+@code
+{
+	/// <summary>Which board this is (world / host / music).</summary>
+	[Property] public SettingsStation.StationKind Kind { get; set; }
+
+	bool Host => Kind == SettingsStation.StationKind.Host;
+
+	string Title() => Kind switch
+	{
+		SettingsStation.StationKind.Host => "HOST SETTINGS",
+		SettingsStation.StationKind.Music => "♪ MUSIC",
+		_ => "WORLD SETTINGS",
+	};
+
+	List<string> Lines() => Kind switch
+	{
+		SettingsStation.StationKind.Host => HostLines(),
+		SettingsStation.StationKind.Music => MusicLines(),
+		_ => LocalLines(),
+	};
+
+	List<string> MusicLines()
+	{
+		var player = Scene.GetAllComponents<Skafinity.SkafinityPlayer>().FirstOrDefault();
+		string tag = string.IsNullOrEmpty( player?.Tag ) ? "default" : player.Tag;
+		int n = player?.N ?? 0;
+		bool on = player?.Enabled ?? true;
+		// Short tag:n here — the full shareable vibe:tag:n lives on the engaged screen.
+		return new List<string>
+		{
+			$"NOW PLAYING — {tag}:{n}",
+			$"MUSIC — {OnOff( on )}",
+			"Press E for songs, vibe &",
+			"volume",
+		};
+	}
+
+	List<string> LocalLines()
+	{
+		var data = PlayerData.Load() ?? new PlayerData();
+		string floor = data.CheckerboardFloor
+			? $"ON · {PlayerData.ClampPopRate( data.FloorPopRate ):0.##}×"
+			: "OFF";
+		return new List<string>
+		{
+			$"ROOM THEME — {SettingsModel.ColorName( data.WorldLightColor )} · {SettingsModel.Pct( data.WorldLightBrightness )}%",
+			$"MARQUEE LIGHT — {SettingsModel.Pct( data.MarqueeLightBrightness )}%",
+			$"CHECKERBOARD — {floor}",
+			$"MY CABINET SOUNDS — {OnOff( data.MyCabinetSounds )}",
+			$"OTHER CABINET SOUNDS — {OnOff( data.RemoteCabinetSounds )}",
+			$"ATTRACT DEMO — {( data.DemoSkip ? "SKIPPED" : "ON" )}",
+			$"SPECTATOR BOARD — {OnOff( data.SpectatorBoard )}",
+		};
+	}
+
+	List<string> HostLines()
+	{
+		var lines = new List<string>();
+		if ( !LobbyNetworkManager.LocalIsAdmin )
+		{
+			lines.Add( "Only the lobby admin can change these" );
+			return lines;
+		}
+
+		var ring = ArcadeRing.Instance;
+		int current = ring?.StationCount ?? 0;
+		int pending = ring?.PendingStationCount ?? current;
+		lines.Add( pending != current ? $"CABINETS — {current} → {pending}" : $"CABINETS — {current}" );
+		if ( SettingsModel.AnyStationOccupied( Scene ) )
+			lines.Add( "Count locked while cabinets are occupied" );
+		else if ( ring?.Rebuilding ?? false )
+			lines.Add( "Rebuilding the ring…" );
+		lines.Add( $"TARGET SERVER — {SettingsModel.TargetServerLabel()}" );
+		return lines;
+	}
+
+	static string OnOff( bool v ) => v ? "ON" : "OFF";
+
+	protected override int BuildHash() =>
+		HashCode.Combine( Kind, SettingsModel.SettingsVersion, LobbyNetworkManager.LocalIsAdmin,
+			ArcadeRing.Instance?.StationCount ?? 0, ArcadeRing.Instance?.PendingStationCount ?? 0,
+			ArcadeRing.Instance?.Rebuilding ?? false,
+			Host && SettingsModel.AnyStationOccupied( Scene ),
+			HashCode.Combine( Gambit.Api.ApiClient.BaseUrl,
+				Scene.GetAllComponents<Skafinity.SkafinityPlayer>().FirstOrDefault()?.CurrentSeed ) );
+}

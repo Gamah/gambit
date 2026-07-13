@@ -1,0 +1,45 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	Single rotate-direction arrow (↻ / ↺) drawn on the tiny WorldPanel sitting on
+	top of a cabinet button. Display only — no pointer-events.
+*@
+
+<root>
+	<div class="glyph">@Glyph</div>
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	.glyph {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+		height: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		text-align: center;
+		/* arrow glyphs sit below their cell's visual center — lift them */
+		padding-bottom: 90px;
+		font-size: 420px;
+		font-weight: bold;
+		color: #1a1408;
+	}
+</style>
+
+@code {
+	[Property] public string Glyph { get; set; } = "↻";
+
+	protected override int BuildHash() => Glyph?.GetHashCode() ?? 0;
+}

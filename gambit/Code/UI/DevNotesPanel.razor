@@ -1,0 +1,128 @@
+@using System.Collections.Generic;
+@using System.Linq;
+@using System.Text.Json;
+@using Sandbox;
+@using Sandbox.UI;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@* Display-only dev-notes board mounted next to the info panel (see InfoWall).
+   Fetches /api/v1/devnotes; hidden entirely while there are no notes. *@
+
+<root>
+	@if ( _devNotes.Count > 0 )
+	{
+		<div class="board" style="background-color:@WallTheme.Bg;">
+			<div class="title">DEV NOTES</div>
+			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+			@foreach ( var note in _devNotes )
+			{
+				<div class="dev-notice">⚠  @note</div>
+			}
+		</div>
+	}
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	/* Shared WallTheme green-black base (see WallTheme.scss); the amber title/notices are
+	   kept deliberately — this is the dev-notes WARNING board. Same intrinsic-pixel-space
+	   layout rules as CenterInfoPanel: tune px values, not the GO scale, to fix overflow. */
+	.board {
+		width: 100%;
+		height: auto;
+		flex-direction: column;
+		align-items: stretch;
+		justify-content: flex-start;
+		padding: 9px 12px;
+		border: 1.5px solid rgba(255, 165, 0, 0.25);
+		border-radius: 7.5px;
+		font-family: $wall-font;
+		gap: 4px;
+	}
+
+	.board > div {
+		flex-shrink: 0;
+	}
+
+	.title {
+		font-size: 10px;
+		font-weight: bold;
+		color: rgba(255, 165, 0, 0.9);
+		letter-spacing: 3px;
+		text-align: center;
+	}
+
+	.divider {
+		height: 0.75px;
+		margin: 1.5px 0;
+	}
+
+	.dev-notice {
+		font-size: 5px;
+		color: rgba(255, 165, 0, 0.85);
+		background-color: rgba(255, 165, 0, 0.08);
+		border-radius: 3.75px;
+		padding: 3px 5px;
+	}
+</style>
+
+@code
+{
+	/// <summary>World half-height of the panel's intrinsic rect per unit of GO Z-scale
+	/// (same calibration constant as CenterInfoPanel).</summary>
+	[Property] public float HalfHeightPerScale { get; set; } = 18f;
+
+	/// <summary>World units to keep between the content's bottom edge and the floor.</summary>
+	[Property] public float FloorClearance { get; set; } = 60f;
+
+	private List<string> _devNotes = new();
+
+	/// <summary>The fetched dev notes, shared with InfoScreen (the engage-flow viewer)
+	/// and the "Press E to read dev notes" prompt so neither has to refetch.</summary>
+	public static IReadOnlyList<string> Notes { get; private set; } = new List<string>();
+
+	/// <summary>Whether there are any dev notes — gates the dev-notes engage station.</summary>
+	public static bool HasNotes => Notes.Count > 0;
+
+	protected override int BuildHash() => System.HashCode.Combine( _devNotes.Count, Gambit.UI.SettingsModel.SettingsVersion );
+
+	protected override async void OnStart()
+	{
+		try
+		{
+			var json = await Http.RequestStringAsync( Gambit.Api.ApiClient.BaseUrl + "/api/v1/devnotes" );
+			using var doc = JsonDocument.Parse( json );
+			if ( doc.RootElement.TryGetProperty( "notes", out var arr ) && arr.ValueKind == JsonValueKind.Array )
+			{
+				foreach ( var el in arr.EnumerateArray() )
+					_devNotes.Add( el.GetString() ?? string.Empty );
+			}
+			Notes = _devNotes;
+			StateHasChanged();
+		}
+		catch { /* network unavailable — show nothing */ }
+	}
+
+	protected override void OnUpdate()
+	{
+		// Same content-measured floor anchor as CenterInfoPanel: lift the GO so the
+		// content's bottom edge sits FloorClearance above z=0.
+		var board = Panel?.Children.FirstOrDefault();
+		if ( board is null || Panel.Box.Rect.Height <= 0f ) return;
+
+		float rootHalf = HalfHeightPerScale * WorldScale.z;
+		float contentHeight = 1.5f * rootHalf * ( board.Box.Rect.Height / Panel.Box.Rect.Height );
+
+		var pos = LocalPosition;
+		pos.z = FloorClearance + contentHeight - rootHalf;
+		LocalPosition = pos;
+	}
+}

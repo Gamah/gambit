@@ -1,0 +1,67 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	Bare rollover countdown (UTC) — just the timestamp, no label. One instance per
+	daily/hourly leaderboard pair, floated in the gap between the pair's two boards.
+	Display only.
+*@
+
+<root>
+	<div class="time" style="color:@WallTheme.AccentCss;">@CountdownText()</div>
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	/* Layout happens in the WorldPanel's fixed intrinsic pixel space; px values are
+	   tuned so "16:53:12" fits the gap between the boards — see LeaderboardWall. */
+	.time {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+		height: 100%;
+		align-items: center;
+		justify-content: center;
+		white-space: nowrap;
+		font-family: $wall-font;
+		font-size: 26px;
+		font-weight: bold;
+		letter-spacing: 2px;
+	}
+</style>
+
+@code {
+	/// <summary>Count down to the next UTC hour instead of the next UTC day.</summary>
+	[Property] public bool Hourly { get; set; }
+
+	TimeSpan TimeToRollover()
+	{
+		var now = DateTime.UtcNow;
+		var next = Hourly
+			? new DateTime( now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc ).AddHours( 1 )
+			: now.Date.AddDays( 1 );
+		return next - now;
+	}
+
+	string CountdownText()
+	{
+		var t = TimeToRollover();
+		return t.TotalHours >= 1
+			? $"{(int)t.TotalHours}:{t.Minutes:D2}:{t.Seconds:D2}"
+			: $"{t.Minutes:D2}:{t.Seconds:D2}";
+	}
+
+	protected override int BuildHash() =>
+		HashCode.Combine( Hourly, (int)TimeToRollover().TotalSeconds );
+}

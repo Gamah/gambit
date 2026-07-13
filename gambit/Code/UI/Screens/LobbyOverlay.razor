@@ -1,0 +1,134 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.World;
+@namespace Gambit.UI.Screens
+@inherits PanelComponent
+
+@*
+	Always-on-top lobby overlay:
+	- "Press E" prompt when near an unoccupied screen
+	- "Leave Screen" button that is always visible and clickable while locked in,
+	  no matter what state the game UI underneath is in
+*@
+
+<root>
+	@if ( LobbyPlayer.Local?.Engaged ?? false )
+	{
+		<div class="leave-btn" onclick="@Leave">✕  Leave Screen</div>
+	}
+	else if ( LobbyPlayer.Local?.NearbyStation != null )
+	{
+		<div class="prompt">
+			<div>Press</div>
+			<div class="key">E</div>
+			<div>to use the screen</div>
+		</div>
+	}
+	else if ( LobbyPlayer.Local?.NearbyBoard != null )
+	{
+		<div class="prompt">
+			<div>Press</div>
+			<div class="key">E</div>
+			<div>@BoardPrompt( LobbyPlayer.Local.NearbyBoard )</div>
+		</div>
+	}
+	else if ( LobbyPlayer.Local?.NearbyLeaderboard != null )
+	{
+		<div class="prompt">
+			<div>Press</div>
+			<div class="key">E</div>
+			<div>to view leaderboards</div>
+		</div>
+	}
+	else if ( LobbyPlayer.Local?.NearbyInfo != null )
+	{
+		<div class="prompt">
+			<div>Press</div>
+			<div class="key">E</div>
+			<div>@InfoPrompt( LobbyPlayer.Local.NearbyInfo )</div>
+		</div>
+	}
+	else if ( DiscordButton.SinceCopied < 2f )
+	{
+		<div class="prompt">
+			<div class="key">✓</div>
+			<div>Discord invite copied to clipboard</div>
+		</div>
+	}
+	else if ( SpectatorBoard.Replaying )
+	{
+		<div class="prompt">
+			<div>Press</div>
+			<div class="key">E</div>
+			<div>to stop replay</div>
+		</div>
+	}
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		z-index: 100;
+	}
+
+	.leave-btn {
+		position: absolute;
+		top: 16px;
+		right: 16px;
+		padding: 10px 18px;
+		background-color: rgba(255, 45, 85, 0.85);
+		color: white;
+		font-size: 15px;
+		font-weight: bold;
+		border-radius: 8px;
+		cursor: pointer;
+		pointer-events: all;
+		z-index: 100;
+	}
+
+	.leave-btn:hover {
+		background-color: #ff2d55;
+	}
+
+	.prompt {
+		position: absolute;
+		bottom: 120px;
+		left: 0;
+		right: 0;
+		flex-direction: row;
+		justify-content: center;
+		gap: 8px;
+		font-size: 22px;
+		color: rgba(255, 255, 255, 0.85);
+		text-shadow: 0px 2px 4px rgba(0, 0, 0, 0.8);
+		pointer-events: none;
+	}
+
+	.key {
+		color: #ffd60a;
+		font-weight: bold;
+	}
+</style>
+
+@code
+{
+	void Leave() => LobbyPlayer.Local?.Disengage();
+
+	static string BoardPrompt( Gambit.World.SettingsStation b ) => b.Kind switch
+	{
+		Gambit.World.SettingsStation.StationKind.Host => "to change host settings",
+		Gambit.World.SettingsStation.StationKind.Music => "to change music",
+		_ => "to change world settings",
+	};
+
+	static string InfoPrompt( Gambit.World.InfoStation s ) =>
+		s.Kind == Gambit.World.InfoStation.StationKind.DevNotes ? "to read the dev notes" : "to view info";
+
+	protected override int BuildHash() =>
+		System.HashCode.Combine( LobbyPlayer.Local?.Engaged, LobbyPlayer.Local?.NearbyStation != null,
+			LobbyPlayer.Local?.NearbyBoard?.Kind, LobbyPlayer.Local?.NearbyLeaderboard != null,
+			LobbyPlayer.Local?.NearbyInfo?.Kind, DiscordButton.SinceCopied < 2f, SpectatorBoard.Replaying );
+}

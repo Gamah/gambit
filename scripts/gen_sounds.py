@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generates synthesized WAV sound effects for Rotaliate.
+Generates synthesized WAV sound effects for Gambit.
 Run from the repo root: python scripts/gen_sounds.py
 Requires: numpy
 
@@ -167,7 +167,7 @@ SLIDE_VARIANTS = {
 }
 
 
-out = "rotaliate/Assets/sounds/sfx"
+out = "gambit/Assets/sounds/sfx"
 print("Generating sound effects…")
 write_wav(f"{out}/tick.wav", gen_tick())
 write_wav(f"{out}/tock.wav", gen_tock())

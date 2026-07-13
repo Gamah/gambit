@@ -1,0 +1,55 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	Rotate-direction arrow (↻ / ↺) that pops up centered on the selector for the
+	duration of a rotation, riding the spin and fading out over the animation.
+	Driven by CubeBoardView (a WorldPanel raised just past the cube front faces).
+	Display only — no pointer-events.
+*@
+
+<root style="opacity: @Alpha.ToString( "0.###" )">
+	<div class="glyph">@Glyph</div>
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	.glyph {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+		height: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		text-align: center;
+		/* arrow glyphs sit low in their em-box; smaller font + lift so the whole
+		   arrow fits the panel's intrinsic box instead of being clipped (matches
+		   ButtonGlyphPanel's 420px/90px ratio). */
+		font-size: 360px;
+		padding-bottom: 78px;
+		font-weight: bold;
+		color: #ffffff;
+		text-shadow: 0px 0px 24px rgba(0, 0, 0, 0.9);
+	}
+</style>
+
+@code {
+	[Property] public string Glyph { get; set; } = "↻";
+
+	/// <summary>0..1 panel opacity, driven each frame by CubeBoardView's fade.</summary>
+	[Property] public float Alpha { get; set; } = 1f;
+
+	// Quantize alpha so the ~90ms fade re-renders smoothly without churning every frame.
+	protected override int BuildHash() =>
+		System.HashCode.Combine( Glyph, (int)MathF.Round( Alpha * 20f ) );
+}

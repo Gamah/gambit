@@ -1,0 +1,84 @@
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.World;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@* Demo-mode caption floating in front of the demo cabinet (the screen-mounted
+   WorldPanel sits behind the slid-out cube board, so text there is hidden).
+   Spawned/destroyed by ArcadeStation while DemoActive. No pointer events. *@
+
+<root>
+	<div class="demo-fit">
+		<div class="demo-overlay">
+			<div class="demo-badge">DEMO</div>
+			<div class="demo-info">@Caption</div>
+			<div class="demo-hint">Press E to play</div>
+		</div>
+	</div>
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	/* Centering must live on an absolutely-positioned full-panel child, NOT on
+	   root — root with align/justify alone pins content top-left at content size
+	   (the caption floated up/left of the board). Mirrors WallTextPanel/.text. */
+	.demo-fit {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+		height: 100%;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.demo-overlay {
+		flex-direction: column;
+		align-items: center;
+		gap: 3px;
+	}
+
+	.demo-badge {
+		font-size: 14px;
+		font-weight: bold;
+		color: #ffd60a;
+		letter-spacing: 3px;
+		background-color: rgba(7,5,26,0.7);
+		padding: 2px 8px;
+		border-radius: 4px;
+	}
+
+	.demo-info {
+		font-size: 13px;
+		color: rgba(255,255,255,0.6);
+		letter-spacing: 1px;
+		background-color: rgba(7,5,26,0.5);
+		padding: 1px 6px;
+		border-radius: 3px;
+	}
+
+	.demo-hint {
+		font-size: 11px;
+		color: rgba(255,255,255,0.35);
+		letter-spacing: 1px;
+	}
+</style>
+
+@code
+{
+	public ArcadeStation Station { get; set; }
+
+	// Build the caption as one plain string — mixing literal text with multiple
+	// @() expressions in a div makes each piece its own flex item (the · and the
+	// name/mode garbled together on screen).
+	string Caption => $"{Station?.DemoUsername} · {Station?.DemoMode}";
+
+	protected override int BuildHash() =>
+		System.HashCode.Combine( Station?.DemoUsername, Station?.DemoMode );
+}

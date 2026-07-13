@@ -1,0 +1,71 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.World;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	Floating name tag above a remote player (issue #51): their Steam display name
+	first, their Gambit username from the API in a smaller font underneath.
+	Spawned by LobbyPlayer on proxies only (never on the local avatar), on a
+	FacePlayer-billboarded WorldPanel. No pointer events.
+*@
+
+<root>
+	<div class="tag">
+		<div class="steam">@SteamName()</div>
+		@if ( ShowGambitName() )
+		{
+			<div class="rota">@Player.GambitName</div>
+		}
+	</div>
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		justify-content: center;
+		align-items: center;
+		pointer-events: none;
+	}
+
+	.tag {
+		flex-direction: column;
+		align-items: center;
+		gap: 1px;
+	}
+
+	.steam {
+		font-size: 16px;
+		font-weight: bold;
+		color: white;
+		text-shadow: 0px 1px 3px rgba(0, 0, 0, 0.9);
+		white-space: nowrap;
+	}
+
+	.rota {
+		font-size: 11px;
+		color: rgba(255, 255, 255, 0.65);
+		text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.9);
+		white-space: nowrap;
+	}
+</style>
+
+@code
+{
+	public LobbyPlayer Player { get; set; }
+
+	string SteamName() =>
+		Player?.Network?.Owner?.DisplayName ?? "";
+
+	// The Gambit username can be empty (not yet enrolled) or identical to the
+	// Steam name — only show the second line when it adds information.
+	bool ShowGambitName() =>
+		!string.IsNullOrWhiteSpace( Player?.GambitName ) &&
+		!string.Equals( Player.GambitName, SteamName(), StringComparison.OrdinalIgnoreCase );
+
+	protected override int BuildHash() =>
+		HashCode.Combine( SteamName(), Player?.GambitName );
+}

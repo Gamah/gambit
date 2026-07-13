@@ -1,0 +1,2102 @@
+@using System;
+@using System.Collections.Generic;
+@using System.Linq;
+@using System.Threading.Tasks;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.Api;
+@using Gambit.Game;
+@using Gambit.Theme;
+@using Gambit.World;
+@namespace Gambit.UI.Screens
+@inherits PanelComponent
+
+<root>
+	<div class="arcade-fit" style="@Gambit.World.ArcadeRing.UiRectStyle()">
+	@if ( _visible && ArcadeStation.Active != null && ( Gambit.World.LobbyPlayer.Local?.CameraSettled ?? true ) )
+	{
+		@if ( _view == MenuView.Main )
+		{
+			<div class="screen">
+				<div class="title">ROTALIATE</div>
+				<div class="modes">
+					<div class="mode-btn primary @( IsFocused(0) ? "focused" : "" )" onclick="@(() => Play( GameMode.Daily ))">Daily Puzzle</div>
+					<div class="mode-btn primary @( IsFocused(1) ? "focused" : "" )" onclick="@(() => Play( GameMode.Hourly ))">Hourly Puzzle</div>
+					<div class="mode-btn primary @( IsFocused(2) ? "focused" : "" )" onclick="@(() => Play( GameMode.Freeplay ))">Free Play</div>
+					<div class="mp-row">
+						<div class="mode-btn primary mp @( IsFocused(3) ? "focused" : "" )" onclick="@(() => PlayMultiplayer( false ))">4-Player</div>
+						<div class="mode-btn primary mp @( IsFocused(4) ? "focused" : "" )" onclick="@(() => PlayMultiplayer( true ))">2-Player</div>
+					</div>
+				</div>
+				<div class="secondary-row">
+					<div class="mode-btn secondary @( IsFocused(5) ? "focused" : "" )" onclick="@OpenProfile">Profile</div>
+					<div class="mode-btn secondary @( IsFocused(6) ? "focused" : "" )" onclick="@OpenSettings">Settings</div>
+					<div class="mode-btn secondary @( IsFocused(7) ? "focused" : "" )" onclick="@OpenFeedback">Feedback</div>
+				</div>
+				@if ( CanDeleteGuid )
+				{
+					<div class="mode-btn danger @( IsFocused(8) ? "focused" : "" )" onclick="@DeleteGuid">Delete Gambit GUID</div>
+				}
+			</div>
+		}
+		else if ( _view == MenuView.Leaderboard )
+		{
+			<div class="screen subscreen">
+				<div class="nav-bar">
+					<div class="back-btn @( IsFocused(3) ? "focused" : "" )" onclick="@BackToMain">← Back</div>
+					<div class="screen-title">LEADERBOARD</div>
+				</div>
+
+				<div class="toggle-row">
+					<div class="toggle-btn @( !_lbMp && _lbDaily ? "active" : "" ) @( IsFocused(0) ? "focused" : "" )" onclick="@(() => SetLbType( true ))">Daily</div>
+					<div class="toggle-btn @( !_lbMp && !_lbDaily ? "active" : "" ) @( IsFocused(1) ? "focused" : "" )" onclick="@(() => SetLbType( false ))">Hourly</div>
+					<div class="toggle-btn @( _lbMp ? "active" : "" ) @( IsFocused(2) ? "focused" : "" )" onclick="@SwitchToMpLb">Multiplayer</div>
+				</div>
+
+				@if ( !_lbMp )
+				{
+					@if ( _recentLoading )
+					{
+						<div class="loading-msg">Loading…</div>
+					}
+					else
+					{
+						var puzzles = _lbDaily ? _recentDaily : _recentHourly;
+						@if ( puzzles != null && puzzles.Count > 0 )
+						{
+							<div class="puzzle-tabs">
+								@for ( int i = 0; i < puzzles.Count; i++ )
+								{
+									var idx = i;
+									<div class="puzzle-tab @( _lbPuzzleIdx == idx ? "active" : "" )"
+									     onclick="@(() => SetLbPuzzle( idx ))">
+										@PuzzleTabLabel( puzzles[idx], _lbDaily )
+									</div>
+								}
+							</div>
+						}
+					}
+
+					<div class="toggle-row">
+						<div class="toggle-btn @( _lbTime ? "active" : "" )" onclick="@(() => SetLbMetric( true ))">Time</div>
+						<div class="toggle-btn @( !_lbTime ? "active" : "" )" onclick="@(() => SetLbMetric( false ))">Moves</div>
+					</div>
+
+					@if ( _lbLoading )
+					{
+						<div class="loading-msg">Loading…</div>
+					}
+					else if ( _lb != null )
+					{
+						<div class="lb-list">
+							@if ( _lb.Count == 0 )
+							{
+								<div class="loading-msg">No entries yet.</div>
+							}
+							else
+							{
+								@foreach ( var e in _lb )
+								{
+									<div class="lb-row @( e.Username == _playerUsername ? "lb-row-me" : "" )">
+										<span class="lb-rank">#@e.Rank</span>
+										<span class="lb-name @( string.IsNullOrEmpty( e.PlayerTag ) ? "" : "lb-name-link" )" onclick="@(() => OpenPlayerProfile( e.PlayerTag, OpenLeaderboard ))">@LbDisplayName( e.Username, e.PlayerTag )</span>
+										<span class="lb-score">@FormatLbScore( e )</span>
+									</div>
+								}
+							}
+						</div>
+					}
+				}
+				else
+				{
+					<div class="toggle-row">
+						<div class="toggle-btn @( _lbMp2p ? "active" : "" )" onclick="@(() => SetMpSize( true ))">2-Player</div>
+						<div class="toggle-btn @( !_lbMp2p ? "active" : "" )" onclick="@(() => SetMpSize( false ))">4-Player</div>
+					</div>
+
+					@if ( _mpLbLoading )
+					{
+						<div class="loading-msg">Loading…</div>
+					}
+					else
+					{
+						var mpLb = _lbMp2p ? _mpLb2p : _mpLb4p;
+						<div class="lb-list">
+							@if ( mpLb == null || mpLb.Count == 0 )
+							{
+								<div class="loading-msg">No entries yet.</div>
+							}
+							else
+							{
+								@for ( int i = 0; i < mpLb.Count; i++ )
+								{
+									var e   = mpLb[i];
+									var pos = i;
+									<div class="lb-row @( e.Username == _playerUsername ? "lb-row-me" : "" )">
+										<span class="lb-rank">#@(pos + 1)</span>
+										<span class="lb-name @( string.IsNullOrEmpty( e.PlayerTag ) ? "" : "lb-name-link" )" onclick="@(() => OpenPlayerProfile( e.PlayerTag, OpenLeaderboard ))">@LbDisplayName( e.Username, e.PlayerTag )</span>
+										<span class="lb-score">@e.Wins wins</span>
+									</div>
+								}
+							}
+						</div>
+					}
+				}
+			</div>
+		}
+		else if ( _view == MenuView.PlayerProfile )
+		{
+			<div class="screen subscreen">
+				<div class="nav-bar">
+					<div class="back-btn @( IsFocused(0) ? "focused" : "" )" onclick="@ProfileBack">← Back</div>
+					<div class="screen-title">PLAYER</div>
+				</div>
+
+				@if ( _ppLoading )
+				{
+					<div class="loading-msg">Loading…</div>
+				}
+				else if ( _ppError != null )
+				{
+					<div class="loading-msg">@_ppError</div>
+				}
+				else if ( _ppProfile != null )
+				{
+					<div class="pp-head">
+						<div class="pp-name">@( string.IsNullOrEmpty( _ppProfile.Username ) ? "Anonymous" : _ppProfile.Username )</div>
+						<div class="pp-tag">@_ppProfile.PlayerTag</div>
+					</div>
+
+					<div class="lb-list">
+						@if ( _ppProfile.Games == null || _ppProfile.Games.Count == 0 )
+						{
+							<div class="loading-msg">No games yet.</div>
+						}
+						else
+						{
+							@foreach ( var g in _ppProfile.Games )
+							{
+								<div class="lb-row">
+									<span class="pp-type">@ProfileTypeLabel( g.GameType )</span>
+									<span class="pp-meta">@ProfileGameMeta( g )</span>
+									<span class="pp-date">@ProfileGameDate( g.CompletedAt )</span>
+									@if ( !string.IsNullOrEmpty( g.SessionId ) )
+									{
+										<span class="pp-share" onclick="@(() => WatchOnSpectator( g.SessionId ))">▶ watch</span>
+									}
+								</div>
+							}
+						}
+					</div>
+				}
+			</div>
+		}
+		else if ( _view == MenuView.MpLobby )
+		{
+			var mp = MultiplayerController.Instance;
+			<div class="screen subscreen">
+				<div class="nav-bar">
+					<div class="back-btn @( IsFocused(0) ? "focused" : "" )" onclick="@MpCancel">← Back</div>
+					<div class="screen-title">@( mp?.Is2P == true ? "2-PLAYER" : "4-PLAYER" )</div>
+				</div>
+				@if ( mp?.State == MpState.Connecting )
+				{
+					<div class="loading-msg">Connecting…</div>
+				}
+				else if ( mp?.LobbyCode == null )
+				{
+					<div class="input-row" style="margin-top:12px;">
+						<div class="mode-btn primary @( IsFocused(1) ? "focused" : "" )" style="width:200px;" onclick="@( () => MpCreate( true ) )">Public Match</div>
+						<div class="mode-btn primary @( IsFocused(2) ? "focused" : "" )" style="width:200px;" onclick="@( () => MpCreate( false ) )">Private Match</div>
+					</div>
+					<div class="loading-msg" style="margin:4px 0;">— or —</div>
+					<div class="input-row">
+						<TextEntry @ref="_mpJoinEntry" placeholder="Lobby code" class="text-input" style="width:210px;" />
+						<div class="action-btn @( IsFocused(3) ? "focused" : "" )" onclick="@MpJoin">Join</div>
+					</div>
+					<div class="mp-open-title">
+						<div class="label">PUBLIC MATCHES</div>
+						<div class="mp-open-refresh @( IsFocused(4) ? "focused" : "" )" onclick="@MpRefreshOpen">⟳</div>
+					</div>
+					@if ( _openLobbies == null )
+					{
+						<div class="loading-msg">Loading…</div>
+					}
+					else if ( _openLobbies.Count == 0 )
+					{
+						<div class="loading-msg">No public matches right now — create one!</div>
+					}
+					else
+					{
+						@foreach ( var ol in _openLobbies )
+						{
+							var code = ol.Code;
+							<div class="mp-open-row">
+								<div class="mp-open-code">@ol.Code</div>
+								<div class="mp-open-host">@( string.IsNullOrEmpty( ol.Host ) ? "Anonymous" : ol.Host )</div>
+								<div class="mp-open-count">@ol.Count/@ol.Max</div>
+								<div class="action-btn mp-open-join" onclick="@( () => MpJoinCode( code ) )">Join</div>
+							</div>
+						}
+					}
+				}
+				else
+				{
+					<div class="label" style="margin-top:12px;">LOBBY CODE</div>
+					<div class="mp-code" onclick="@MpCopy">@mp.LobbyCode  @_mpCopyLabel</div>
+					<div class="loading-msg">@mp.LobbyCount / @mp.LobbyMax players</div>
+					@foreach ( var lp in mp.LobbyPlayers )
+					{
+						<div class="mp-player-row"><div class="mp-player-name @( string.IsNullOrEmpty( lp.PlayerTag ) ? "" : "lb-name-link" )" onclick="@(() => OpenPlayerProfile( lp.PlayerTag, RestoreMpView ))">@MpDisplayName( lp.PlayerTag, lp.Username )</div></div>
+					}
+					<div class="loading-msg">@( mp.LobbyPublic ? "Public match — waiting for players…" : "Waiting for players…" )</div>
+				}
+				@if ( mp?.Error != null )
+				{
+					<div class="status msg-error">@mp.Error</div>
+				}
+			</div>
+		}
+		else if ( _view == MenuView.MpWaiting )
+		{
+			var mp = MultiplayerController.Instance;
+			<div class="screen subscreen">
+				<div class="nav-bar">
+					<div class="back-btn @( IsFocused(1) ? "focused" : "" )" onclick="@MpCancel">← Back</div>
+					<div class="screen-title">MATCH FOUND</div>
+				</div>
+				<div class="label" style="margin-top:16px;">YOUR COLOR@( mp?.MyColors?.Length > 1 ? "S" : "" )</div>
+				<div class="input-row" style="gap:10px;margin-top:4px;">
+					@if ( mp?.MyColors != null )
+					{
+						@foreach ( var cid in mp.MyColors )
+						{
+							<div style="width:26px;height:26px;border-radius:50%;background-color:@MpColorHex(cid);"></div>
+						}
+					}
+				</div>
+				<div class="loading-msg">@mp?.LobbyMax players matched</div>
+				@if ( mp?.RoomPlayers != null )
+				{
+					@foreach ( var rp in mp.RoomPlayers )
+					{
+						var ready = mp.ReadyIds.Contains( rp.PlayerTag );
+						<div class="mp-player-row">
+							@foreach ( var cid in rp.Colors ?? new[] { rp.Color } )
+							{
+								<div style="width:14px;height:14px;border-radius:50%;background-color:@MpColorHex(cid);"></div>
+							}
+							<div class="mp-player-name @( string.IsNullOrEmpty( rp.PlayerTag ) ? "" : "lb-name-link" )" onclick="@(() => OpenPlayerProfile( rp.PlayerTag, RestoreMpView ))">@MpDisplayName( rp.PlayerTag, rp.Username )</div>
+							<div class="mp-player-ready @( ready ? "is-ready" : "" )">@( ready ? "✓ ready" : "…" )</div>
+						</div>
+					}
+				}
+				@if ( mp?.SentReady == true )
+				{
+					<div class="mode-btn primary disabled" style="width:200px;margin-top:12px;">Waiting…</div>
+				}
+				else
+				{
+					<div class="mode-btn primary" style="width:200px;margin-top:12px;" onclick="@MpReady">Ready</div>
+				}
+			</div>
+		}
+		else if ( _view == MenuView.Profile )
+		{
+			<div class="screen subscreen">
+				<div class="nav-bar">
+					<div class="back-btn @( IsFocused(4) ? "focused" : "" )" onclick="@BackToMain">← Back</div>
+					<div class="screen-title">PROFILE</div>
+				</div>
+
+				<div class="profile-section">
+					<div class="label">USERNAME</div>
+					@if ( !string.IsNullOrEmpty( _profileUsername ) )
+					{
+						<div class="current-value">@_profileUsername</div>
+					}
+					<div class="input-row">
+						<TextEntry @ref="_nameEntry" placeholder="New username" class="text-input" />
+						<div class="action-btn" onclick="@SaveUsername">Save</div>
+					</div>
+					@if ( _saveMsg != null )
+					{
+						<div class="status @( _saveFailed ? "msg-error" : "msg-ok" )">@_saveMsg</div>
+					}
+				</div>
+
+				<div class="profile-section">
+					<div class="label">PLAYER ID</div>
+					<div class="input-row">
+						<div class="guid-box">@_profileGuid</div>
+						<div class="action-btn" onclick="@CopyGuid">@_copyLabel</div>
+					</div>
+					<div class="input-row">
+						<TextEntry @ref="_guidEntry" placeholder="Paste ID from the web client" class="text-input" />
+						<div class="action-btn" onclick="@ImportGuid">Import</div>
+					</div>
+					@if ( _importMsg != null )
+					{
+						<div class="status @( _importFailed ? "msg-error" : "msg-ok" )">@_importMsg</div>
+					}
+				</div>
+
+				<div class="profile-section">
+					<div class="label">COLOR SCHEME</div>
+					<div class="scheme-row">
+						@{ int _si = 0; }
+						@foreach ( var s in _schemeOptions )
+						{
+							var key = s.Key;
+							var si  = _si++;
+							<div class="scheme-card @( _profileScheme == key ? "active" : "" ) @( IsFocused(si) ? "focused" : "" )"
+							     onclick="@(() => SetScheme( key ))">
+								<div class="swatches">
+									@foreach ( var hex in s.Swatches )
+									{
+										<div class="dot" style="background-color: @hex;"></div>
+									}
+								</div>
+								<div class="scheme-label">@key</div>
+							</div>
+						}
+					</div>
+				</div>
+			</div>
+		}
+		else if ( _view == MenuView.Feedback )
+		{
+			<div class="screen subscreen">
+				<div class="nav-bar">
+					<div class="back-btn" onclick="@BackToMain">← Back</div>
+					<div class="screen-title">FEEDBACK</div>
+				</div>
+				<div class="profile-section">
+					<div class="label">MESSAGE</div>
+					<TextEntry @ref="_feedbackEntry" placeholder="Tell us anything… (max 2000 chars)" class="text-input feedback-entry" multiline="true" />
+					@if ( _feedbackMsg != null )
+					{
+						<div class="status @( _feedbackFailed ? "msg-error" : "msg-ok" )">@_feedbackMsg</div>
+					}
+					<div class="action-btn" style="align-self:flex-end;" onclick="@SendFeedback">Send Feedback</div>
+				</div>
+			</div>
+		}
+		else if ( _view == MenuView.Settings )
+		{
+			<div class="screen subscreen">
+				<div class="nav-bar">
+					<div class="back-btn @( IsFocused(1) ? "focused" : "" )" onclick="@BackToMain">← Back</div>
+					<div class="screen-title">SETTINGS</div>
+				</div>
+
+				<div class="settings-section">
+					<div class="label">CABINET (% OF DEFAULT)</div>
+					<div class="bind-row">
+						<div class="bind-label">Cube size</div>
+						<div class="slider-track">
+							@for ( int p = 75; p <= 125; p += 5 )
+							{
+								int pct = p;
+								<div class="slider-tick @( CubeSizePct >= pct ? "filled" : "" )" onclick="@(() => CubeSizePct = pct)"></div>
+							}
+						</div>
+						<div class="slider-value">@(CubeSizePct)%</div>
+					</div>
+					<div class="bind-row">
+						<div class="bind-label">Camera backoff</div>
+						<div class="slider-track">
+							@for ( int p = 0; p <= 1000; p += 100 )
+							{
+								int pct = p;
+								<div class="slider-tick @( CameraBackoffPct >= pct ? "filled" : "" )" onclick="@(() => CameraBackoffPct = pct)"></div>
+							}
+						</div>
+						<div class="slider-value">@(CameraBackoffPct)%</div>
+					</div>
+					<div class="bind-row">
+						<div class="bind-label">Camera rise</div>
+						<div class="slider-track">
+							@for ( int p = 0; p <= 1000; p += 100 )
+							{
+								int pct = p;
+								<div class="slider-tick @( CameraRisePct >= pct ? "filled" : "" )" onclick="@(() => CameraRisePct = pct)"></div>
+							}
+						</div>
+						<div class="slider-value">@(CameraRisePct)%</div>
+					</div>
+				</div>
+
+				<div class="settings-section">
+					<div class="label">KEYBINDINGS</div>
+					<div class="bind-row bind-head">
+						<div class="bind-label"></div>
+						<div class="bind-col-head bind-col-kb">Keyboard</div>
+						<div class="bind-col-head bind-col-pad">Controller</div>
+					</div>
+					@foreach ( var entry in _bindableActions )
+					{
+						var action = entry.Action;
+						bool kbListening  = _rebindingAction == action && !_rebindingController;
+						bool padListening = _rebindingAction == action && _rebindingController;
+						<div class="bind-row">
+							<div class="bind-label">@entry.Label</div>
+							<div class="bind-col bind-col-kb">
+								<div class="bind-key @( kbListening ? "bind-key-listening" : "" )">
+									@( kbListening ? "Press a key\u2026" : GetKeyboardDisplay( action ) )
+								</div>
+								<div class="action-btn bind-btn" onclick="@(() => ToggleRebind( action ))">
+									@( kbListening ? "Cancel" : "Rebind" )
+								</div>
+							</div>
+							<div class="bind-col bind-col-pad">
+								<div class="bind-key @( padListening ? "bind-key-listening" : "" )">
+									@( padListening ? "Press a button\u2026" : GetGamepadDisplay( action ) )
+								</div>
+								<div class="action-btn bind-btn" onclick="@(() => ToggleRebindController( action ))">
+									@( padListening ? "Cancel" : "Rebind" )
+								</div>
+							</div>
+						</div>
+					}
+				</div>
+
+				<div class="action-btn @( IsFocused(0) ? "focused" : "" )" style="margin-top:8px;" onclick="@ResetBindings">Reset to Defaults</div>
+			</div>
+		}
+		@* CRT dressing over whatever view is up — scanlines + vignette, no input *@
+		<div class="crt-scan"></div>
+		<div class="crt-vignette"></div>
+	}
+	</div>
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	// confines the UI to the cabinet-screen region (transform: scale misplaces
+	// content, so it's an explicitly sized box)
+	.arcade-fit {
+		// left/top/width/height come from ArcadeRing.UiRectStyle() inline
+		position: absolute;
+		pointer-events: none;
+	}
+
+	.screen {
+		width: 100%;
+		height: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 34px;
+		// translucent so the cabinet's lit glass slab shows through (#33)
+		background-color: rgba(7, 5, 26, 0.55);
+		border-radius: 18px;
+		pointer-events: all;
+	}
+
+	.subscreen {
+		justify-content: flex-start;
+		padding-top: 24px;
+		gap: 16px;
+	}
+
+	// CRT dressing over the whole screen rect — emissive content only, no input
+	.crt-scan {
+		position: absolute;
+		left: 0px; top: 0px; right: 0px; bottom: 0px;
+		background-image: linear-gradient(rgba(2, 1, 10, 0.45), rgba(2, 1, 10, 0));
+		background-size: 100% 5px;
+		background-repeat: repeat;
+		border-radius: 18px;
+		pointer-events: none;
+		animation-name: crt-flicker;
+		animation-duration: 3.7s;
+		animation-iteration-count: infinite;
+	}
+
+	.crt-vignette {
+		position: absolute;
+		left: 0px; top: 0px; right: 0px; bottom: 0px;
+		background-image: radial-gradient(rgba(7, 5, 26, 0), rgba(2, 1, 12, 0.55));
+		background-size: 100% 100%;
+		background-repeat: no-repeat;
+		border-radius: 18px;
+		pointer-events: none;
+	}
+
+	@@keyframes crt-flicker {
+		0% { opacity: 1; }
+		50% { opacity: 0.82; }
+		100% { opacity: 1; }
+	}
+
+	/* ── Main ── */
+
+	.title {
+		font-size: 62px;
+		font-weight: bold;
+		color: white;
+		letter-spacing: 8px;
+		text-shadow: 0px 0px 18px rgba(255, 255, 255, 0.9);
+	}
+
+	.modes {
+		display: flex;
+		flex-direction: column;
+		gap: 15px;
+		align-items: center;
+	}
+
+	.secondary-row {
+		display: flex;
+		flex-direction: row;
+		gap: 12px;
+	}
+
+	.mode-btn {
+		text-align: center;
+		border-radius: 8px;
+		cursor: pointer;
+		transition: background-color 0.12s;
+		pointer-events: all;
+	}
+
+	.mode-btn.primary {
+		width: 350px;
+		padding: 18px 0px;
+		font-size: 26px;
+		color: white;
+		background-color: rgba(255,255,255,0.08);
+	}
+
+	.mode-btn.secondary {
+		width: 168px;
+		padding: 13px 0px;
+		font-size: 19px;
+		color: white;
+		background-color: rgba(255,255,255,0.08);
+	}
+
+	.mode-btn.danger {
+		width: 350px;
+		padding: 13px 0px;
+		font-size: 18px;
+		color: #ff2d55;
+		background-color: rgba(255,45,85,0.12);
+		margin-top: 4px;
+	}
+
+	.mp-row {
+		display: flex;
+		flex-direction: row;
+		gap: 10px;
+		margin-top: 2px;
+	}
+
+	.mode-btn.mp {
+		width: 168px;
+		padding: 15px 0px;
+		font-size: 20px;
+	}
+
+	.mode-btn:hover,
+	.mode-btn.focused {
+		background-color: rgba(255,255,255,0.18);
+		color: white;
+		outline: 2px solid rgba(255,255,255,0.65);
+		outline-offset: 2px;
+	}
+
+	/* ── Shared nav ── */
+
+	.nav-bar {
+		width: 100%;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		gap: 16px;
+		padding: 0px 24px;
+		margin-bottom: 8px;
+	}
+
+	.back-btn {
+		font-size: 19px;
+		color: white;
+		cursor: pointer;
+		padding: 8px 16px;
+		border-radius: 6px;
+		background-color: rgba(255,255,255,0.1);
+		pointer-events: all;
+	}
+
+	.back-btn:hover,
+	.back-btn.focused {
+		background-color: rgba(255,255,255,0.2);
+		outline: 2px solid rgba(255,255,255,0.65);
+		outline-offset: 2px;
+	}
+
+	.screen-title {
+		font-size: 23px;
+		font-weight: bold;
+		color: white;
+		letter-spacing: 4px;
+	}
+
+	.loading-msg {
+		color: rgba(255,255,255,0.5);
+		font-size: 18px;
+	}
+
+	/* ── Leaderboard ── */
+
+	.lb-screen {
+		gap: 16px;
+	}
+
+	.toggle-row {
+		display: flex;
+		flex-direction: row;
+		gap: 8px;
+	}
+
+	.toggle-btn {
+		padding: 9px 30px;
+		font-size: 18px;
+		color: rgba(255,255,255,0.6);
+		background-color: rgba(255,255,255,0.08);
+		border-radius: 6px;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.toggle-btn:hover,
+	.toggle-btn.focused {
+		color: white;
+		background-color: rgba(255,255,255,0.15);
+		outline: 2px solid rgba(255,255,255,0.65);
+		outline-offset: 2px;
+	}
+
+	.toggle-btn.active {
+		color: white;
+		background-color: rgba(255,255,255,0.2);
+	}
+
+	.puzzle-tabs {
+		display: flex;
+		flex-direction: row;
+		gap: 6px;
+	}
+
+	.puzzle-tab {
+		padding: 8px 18px;
+		font-size: 16px;
+		color: rgba(255,255,255,0.6);
+		background-color: rgba(255,255,255,0.08);
+		border-radius: 6px;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.puzzle-tab:hover {
+		color: white;
+		background-color: rgba(255,255,255,0.15);
+	}
+
+	.puzzle-tab.active {
+		color: white;
+		background-color: rgba(255,255,255,0.2);
+	}
+
+	.lb-list {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		width: 480px;
+	}
+
+	.lb-row {
+		display: flex;
+		flex-direction: row;
+		gap: 8px;
+		align-items: center;
+		font-size: 19px;
+		color: white;
+	}
+
+	.lb-row-me {
+		color: #ffd60a;
+	}
+
+	.lb-rank {
+		width: 38px;
+		text-align: right;
+		font-size: 15px;
+		color: rgba(255,255,255,0.5);
+	}
+
+	.lb-name {
+		flex-grow: 1;
+	}
+
+	.lb-score {
+		font-size: 18px;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.lb-name-link {
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.lb-name-link:hover {
+		color: #80d4ff;
+		text-decoration: underline;
+	}
+
+	/* ── Player profile ── */
+
+	.pp-head {
+		display: flex;
+		flex-direction: row;
+		align-items: baseline;
+		gap: 12px;
+		margin-bottom: 6px;
+	}
+
+	.pp-name {
+		font-size: 26px;
+		color: white;
+	}
+
+	.pp-tag {
+		font-size: 15px;
+		color: rgba(255,255,255,0.45);
+		font-family: monospace;
+	}
+
+	.pp-type {
+		width: 92px;
+		color: white;
+	}
+
+	.pp-meta {
+		flex-grow: 1;
+		font-size: 16px;
+		color: rgba(255,255,255,0.8);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.pp-date {
+		font-size: 15px;
+		color: rgba(255,255,255,0.5);
+	}
+
+	.pp-share {
+		font-size: 14px;
+		color: #80d4ff;
+		padding: 2px 8px;
+		border-radius: 6px;
+		background-color: rgba(128,212,255,0.12);
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	/* ── Profile ── */
+
+	.profile-screen {
+		gap: 24px;
+	}
+
+	.profile-section {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		width: 560px;
+	}
+
+	.label {
+		font-size: 14px;
+		color: rgba(255,255,255,0.6);
+		letter-spacing: 3px;
+	}
+
+	.current-value {
+		font-size: 20px;
+		color: white;
+	}
+
+	.input-row {
+		display: flex;
+		flex-direction: row;
+		gap: 10px;
+		align-items: center;
+	}
+
+	.text-input {
+		flex-grow: 1;
+		padding: 13px 18px;
+		background-color: rgba(255,255,255,0.08);
+		color: white;
+		font-size: 20px;
+		border-radius: 8px;
+		border: 1px solid rgba(255,255,255,0.15);
+		pointer-events: all;
+	}
+
+	.action-btn {
+		padding: 13px 24px;
+		background-color: rgba(255,255,255,0.1);
+		color: white;
+		font-size: 18px;
+		border-radius: 8px;
+		cursor: pointer;
+		white-space: nowrap;
+		pointer-events: all;
+	}
+
+	.action-btn:hover,
+	.action-btn.focused {
+		background-color: rgba(255,255,255,0.2);
+		outline: 2px solid rgba(255,255,255,0.65);
+		outline-offset: 2px;
+	}
+
+	.guid-box {
+		flex-grow: 1;
+		padding: 13px 18px;
+		background-color: rgba(255,255,255,0.04);
+		color: rgba(255,255,255,0.5);
+		font-size: 16px;
+		border-radius: 8px;
+		border: 1px solid rgba(255,255,255,0.08);
+	}
+
+	.status {
+		font-size: 16px;
+	}
+
+	.msg-ok    { color: #06d6a0; }
+	.msg-error { color: #ff2d55; }
+
+	.feedback-entry {
+		height: 150px;
+	}
+
+	.mp-code {
+		font-size: 36px;
+		font-weight: bold;
+		color: white;
+		letter-spacing: 6px;
+		cursor: pointer;
+		padding: 6px 14px;
+		border-radius: 8px;
+		pointer-events: all;
+	}
+	.mp-code:hover { background-color: rgba(255,255,255,0.07); }
+
+	.mp-player-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		gap: 8px;
+		padding: 4px 12px;
+		background-color: rgba(255,255,255,0.05);
+		border-radius: 6px;
+	}
+
+	.mp-player-name {
+		font-size: 18px;
+		color: white;
+	}
+
+	.mp-player-ready {
+		font-size: 15px;
+		color: rgba(255,255,255,0.35);
+	}
+
+	.mp-player-ready.is-ready { color: #06d6a0; }
+
+	/* ── Public match browser ── */
+
+	.mp-open-title {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		gap: 10px;
+		margin-top: 14px;
+	}
+
+	.mp-open-refresh {
+		font-size: 18px;
+		color: rgba(255,255,255,0.6);
+		padding: 2px 10px;
+		border-radius: 6px;
+		background-color: rgba(255,255,255,0.08);
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.mp-open-refresh:hover,
+	.mp-open-refresh.focused {
+		background-color: rgba(255,255,255,0.2);
+		outline: 2px solid rgba(255,255,255,0.65);
+		outline-offset: 2px;
+	}
+
+	.mp-open-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		gap: 12px;
+		width: 480px;
+		padding: 4px 12px;
+		background-color: rgba(255,255,255,0.05);
+		border-radius: 6px;
+	}
+
+	.mp-open-code {
+		font-size: 18px;
+		font-weight: bold;
+		color: white;
+		letter-spacing: 3px;
+	}
+
+	.mp-open-host {
+		flex-grow: 1;
+		font-size: 17px;
+		color: rgba(255,255,255,0.75);
+	}
+
+	.mp-open-count {
+		font-size: 16px;
+		color: rgba(255,255,255,0.5);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.mp-open-join {
+		padding: 5px 16px;
+		font-size: 16px;
+	}
+
+	.mode-btn.primary.disabled {
+		opacity: 0.5;
+		pointer-events: none;
+	}
+
+	.scheme-row {
+		display: flex;
+		flex-direction: row;
+		gap: 10px;
+	}
+
+	.scheme-card {
+		flex-grow: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+		padding: 15px 8px;
+		background-color: rgba(255,255,255,0.05);
+		border-radius: 8px;
+		border: 2px solid transparent;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.scheme-card:hover,
+	.scheme-card.focused {
+		background-color: rgba(255,255,255,0.1);
+		outline: 2px solid rgba(255,255,255,0.65);
+		outline-offset: 2px;
+	}
+
+	.scheme-card.active {
+		border-color: rgba(255,255,255,0.4);
+		background-color: rgba(255,255,255,0.1);
+	}
+
+	.swatches {
+		display: flex;
+		flex-direction: row;
+		gap: 3px;
+	}
+
+	.dot {
+		width: 17px;
+		height: 17px;
+		border-radius: 50%;
+	}
+
+	.scheme-label {
+		font-size: 13px;
+		color: rgba(255,255,255,0.55);
+	}
+
+	/* ── Settings ── */
+
+	.settings-section {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		width: 620px;
+	}
+
+	.bind-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.bind-label {
+		flex-grow: 1;
+		font-size: 19px;
+		color: white;
+	}
+
+	.bind-head {
+		margin-bottom: 2px;
+	}
+
+	.bind-col-head {
+		text-align: center;
+		font-size: 14px;
+		letter-spacing: 1px;
+		color: rgba(255,255,255,0.55);
+	}
+
+	.bind-col {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.bind-col-kb,
+	.bind-col-pad {
+		width: 215px;
+		justify-content: center;
+	}
+
+	.bind-key {
+		width: 100px;
+		text-align: center;
+		padding: 10px 12px;
+		background-color: rgba(255,255,255,0.08);
+		border-radius: 6px;
+		font-size: 17px;
+		color: white;
+		border: 1px solid rgba(255,255,255,0.1);
+	}
+
+	.bind-btn {
+		padding: 10px 14px;
+		font-size: 16px;
+	}
+
+	.bind-key-listening {
+		color: #ffd60a;
+		border-color: rgba(255,214,10,0.5);
+		background-color: rgba(255,214,10,0.06);
+	}
+
+	.slider-track {
+		display: flex;
+		flex-direction: row;
+		gap: 3px;
+	}
+
+	.slider-tick {
+		width: 20px;
+		height: 23px;
+		background-color: rgba(255,255,255,0.08);
+		border-radius: 3px;
+		pointer-events: all;
+	}
+
+	.slider-tick:hover {
+		background-color: rgba(255,255,255,0.3);
+	}
+
+	.slider-tick.filled {
+		background-color: #0a84ff;
+	}
+
+	.slider-value {
+		width: 70px;
+		text-align: right;
+		font-size: 18px;
+		color: white;
+	}
+</style>
+
+@code
+{
+	enum MenuView { Main, Leaderboard, Profile, PlayerProfile, MpLobby, MpWaiting, Settings, Feedback }
+
+	readonly struct SchemeOption
+	{
+		public string Key     { get; init; }
+		public string[] Swatches { get; init; }
+	}
+
+	static readonly SchemeOption[] _schemeOptions = new[]
+	{
+		new SchemeOption { Key = "normal",       Swatches = new[] { "#AA0000","#0000AA","#00AA00","#AAAA00" } },
+		new SchemeOption { Key = "deuteranopia", Swatches = new[] { "#8E3F00","#004C77","#00694D","#AAAA00" } },
+		new SchemeOption { Key = "protanopia",   Swatches = new[] { "#8E3F00","#004C77","#1F8379","#AAAA00" } },
+		new SchemeOption { Key = "tritanopia",   Swatches = new[] { "#AA0000","#0000AA","#00AA00","#AA8F07" } },
+	};
+
+	static readonly string[] _monthNames = new[]
+		{ "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec" };
+
+	// ── Visibility / nav ──
+	bool _visible;
+	MenuView _view = MenuView.Main;
+
+	// ── Keyboard navigation ──
+	int    _navIdx;
+	Action[] _navActions = Array.Empty<Action>();
+
+	// _navIdx -1 = nothing focused: the outline only appears once the keyboard is
+	// used, so mouse users never see a stuck "selected" item (e.g. Settings "None")
+	void SetNav( params Action[] actions ) { _navActions = actions; _navIdx = -1; }
+	bool IsFocused( int i ) => _navIdx == i;
+
+	// ── Leaderboard ──
+	bool _lbDaily = true;
+	bool _lbTime  = true;
+	int  _lbPuzzleIdx = 0;
+	List<RecentPuzzle>     _recentDaily;
+	List<RecentPuzzle>     _recentHourly;
+	List<LeaderboardEntry> _lb;
+	bool _recentLoading;
+	bool _lbLoading;
+	string _playerUsername;
+
+	// Multiplayer leaderboard
+	bool _lbMp    = false;
+	bool _lbMp2p  = true;
+	List<MpWinEntry> _mpLb2p;
+	List<MpWinEntry> _mpLb4p;
+	bool _mpLbLoading;
+
+	// ── Multiplayer ──
+	TextEntry _mpJoinEntry;
+	bool      _mpJoinEntryInit;
+	string    _mpCopyLabel = "copy";
+	static readonly string[] _mpColorHex = { "#07051a", "#AA0000", "#0000AA", "#00AA00", "#AAAA00" };
+	static string MpColorHex( int id ) => ( id >= 0 && id < _mpColorHex.Length ) ? _mpColorHex[id] : "#fff";
+
+	// Public match browser — polled every 5s while on the create/join screen
+	List<OpenLobby> _openLobbies;
+	RealTimeSince   _openLobbiesAge;
+	bool            _openLobbiesBusy;
+	int             _openLobbiesVersion;
+
+	// ── Profile ──
+	TextEntry _nameEntry;
+	bool      _nameEntryInit;
+	string _profileUsername;
+	string _profileGuid;
+	string _profileScheme;
+	string _saveMsg;
+	bool   _saveFailed;
+	string _copyLabel = "Copy";
+	TextEntry _guidEntry;
+	bool      _guidEntryInit;
+	string _importMsg;
+	bool   _importFailed;
+
+	// ── Feedback ──
+	TextEntry _feedbackEntry;
+	bool      _feedbackEntryInit;
+	string    _feedbackMsg;
+	bool      _feedbackFailed;
+
+	// ── Settings ──
+	/// <summary>True while the Settings screen is waiting for a rebind keypress —
+	/// LobbyPlayer skips its Escape-to-leave handling so Escape cancels the rebind instead.</summary>
+	public static bool IsRebinding { get; private set; }
+
+	string _rebindingAction;
+	bool   _rebindingController; // true = listening for a gamepad button, false = a key
+	int    _bindingsVersion;
+
+	static readonly (string Action, string Label)[] _bindableActions =
+	{
+		("MoveUp",    "Move Up"),
+		("MoveDown",  "Move Down"),
+		("MoveLeft",  "Move Left"),
+		("MoveRight", "Move Right"),
+		("RotateCCW", "Rotate CCW"),
+		("RotateCW",  "Rotate CW"),
+		("Chat",      "Open Chat"),
+	};
+
+	static readonly string[] _scanKeys =
+	{
+		"a","b","c","d","e","f","g","h","i","j","k","l","m",
+		"n","o","p","q","r","s","t","u","v","w","x","y","z",
+		"0","1","2","3","4","5","6","7","8","9",
+		"UPARROW","DOWNARROW","LEFTARROW","RIGHTARROW",
+		"SPACE","ENTER","BACKSPACE","TAB",
+		",",".","/" ,"-","=","[","]","SEMICOLON",
+		"KP_0","KP_1","KP_2","KP_3","KP_4",
+		"KP_5","KP_6","KP_7","KP_8","KP_9",
+	};
+
+	// ── Lifecycle ──
+
+	protected override void OnStart()
+	{
+		SplashScreen.OnPlayerReady += Show;
+		GameEvents.OnReturnToMenu  += Show;
+		PlayerData.OnIdentityCleared += Hide;
+
+		if ( PlayerData.Load()?.Guid != null )
+			Show();
+	}
+
+	protected override void OnDestroy()
+	{
+		SplashScreen.OnPlayerReady -= Show;
+		GameEvents.OnReturnToMenu  -= Show;
+		PlayerData.OnIdentityCleared -= Hide;
+		var mp = MultiplayerController.Instance;
+		if ( mp != null ) mp.OnStateChanged -= OnMpStateChanged;
+	}
+
+	void Hide()
+	{
+		_visible = false;
+		StateHasChanged();
+	}
+
+	void Show()
+	{
+		_playerUsername  = PlayerData.Load()?.Username;
+		_visible         = true;
+		_view            = MenuView.Main;
+		SetMainNav();
+		StateHasChanged();
+	}
+
+	/// <summary>A Steam-linked account is recoverable from the SteamID, so deleting the
+	/// GUID just re-mints/re-recovers and drops the player into a confusing half-enrolled
+	/// state — hide the button for them. Web/non-Steam players (no linked SteamID) keep it.</summary>
+	static bool CanDeleteGuid => string.IsNullOrEmpty( PlayerData.Load()?.LinkedSteamId );
+
+	void SetMainNav()
+	{
+		var nav = new List<Action>
+		{
+			() => Play( GameMode.Daily ),    // 0
+			() => Play( GameMode.Hourly ),   // 1
+			() => Play( GameMode.Freeplay ), // 2
+			() => PlayMultiplayer( false ),  // 3
+			() => PlayMultiplayer( true ),   // 4
+			OpenProfile,                     // 5
+			OpenSettings,                    // 6
+			OpenFeedback,                    // 7
+		};
+		if ( CanDeleteGuid ) nav.Add( DeleteGuid ); // 8
+		SetNav( nav.ToArray() );
+	}
+
+	void DeleteGuid()
+	{
+		_visible = false;
+		StateHasChanged();
+		PlayerData.ClearIdentity(); // SplashScreen re-shows enrollment via OnIdentityCleared
+	}
+
+	void BackToMain()
+	{
+		_view = MenuView.Main;
+		SetMainNav();
+		StateHasChanged();
+	}
+
+	// ── Main view ──
+
+	async void Play( GameMode mode )
+	{
+		_visible = false;
+		StateHasChanged();
+		var ctrl = GameController.Instance;
+		if ( ctrl == null ) return;
+		await ctrl.StartGame( mode );
+	}
+
+	async void PlayMultiplayer( bool is2p )
+	{
+		var mpCtrl = MultiplayerController.Instance
+			?? GameObject.Components.GetOrCreate<MultiplayerController>();
+		mpCtrl.OnStateChanged -= OnMpStateChanged;
+		mpCtrl.OnStateChanged += OnMpStateChanged;
+		_mpJoinEntryInit = false;
+		_mpCopyLabel     = "copy";
+		_openLobbies     = null;
+		_view            = MenuView.MpLobby;
+		SetNav( MpCancel ); // connecting view: Back only; browse nav installed on Lobby state
+		StateHasChanged();
+		_ = RefreshOpenLobbies( is2p ? 2 : 4 );
+		await mpCtrl.Connect( is2p );
+	}
+
+	void OnMpStateChanged()
+	{
+		var mp = MultiplayerController.Instance;
+		if ( mp == null ) return;
+		switch ( mp.State )
+		{
+			case MpState.Lobby:
+				// Nav follows the rendered view: full browse nav while picking, Back
+				// only once in a lobby — Enter can't fire hidden create/join buttons
+				if ( _view == MenuView.MpLobby )
+				{
+					if ( mp.LobbyCode == null )
+						SetNav( MpCancel, () => MpCreate( true ), () => MpCreate( false ), MpJoin, MpRefreshOpen ); // 0: Back, 1: Public, 2: Private, 3: Join, 4: Refresh
+					else
+						SetNav( MpCancel ); // 0: Back
+				}
+				break;
+			case MpState.WaitingRoom: _view = MenuView.MpWaiting; SetNav( MpReady, MpCancel ); break; // 0: Ready, 1: Back
+			case MpState.Playing:
+			case MpState.GameOver:    _visible = false; break;
+		}
+		StateHasChanged();
+	}
+
+	void MpCreate( bool isPublic ) => MultiplayerController.Instance?.CreateLobby( isPublic );
+	void MpJoin()
+	{
+		var code = _mpJoinEntry?.Text?.Trim() ?? "";
+		if ( !string.IsNullOrEmpty( code ) ) MultiplayerController.Instance?.JoinLobby( code );
+	}
+	void MpJoinCode( string code ) => MultiplayerController.Instance?.JoinLobby( code );
+
+	void MpRefreshOpen()
+	{
+		var mp = MultiplayerController.Instance;
+		if ( mp != null ) _ = RefreshOpenLobbies( mp.Is2P ? 2 : 4 );
+	}
+
+	async Task RefreshOpenLobbies( int mode )
+	{
+		if ( _openLobbiesBusy ) return;
+		_openLobbiesBusy = true;
+		_openLobbiesAge  = 0;
+		try
+		{
+			var list = await ApiClient.GetOpenLobbies( mode );
+			if ( _view == MenuView.MpLobby )
+			{
+				_openLobbies = list ?? new List<OpenLobby>();
+				_openLobbiesVersion++;
+				StateHasChanged();
+			}
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( $"[Gambit] Open lobby list failed: {e.Message}" );
+		}
+		_openLobbiesBusy = false;
+	}
+	void MpReady()  => MultiplayerController.Instance?.SendReady();
+
+	static string MpDisplayName( string playerTag, string username )
+	{
+		var myTag = MultiplayerController.Instance?.MyTag;
+		if ( playerTag != null && !string.IsNullOrEmpty( myTag ) && playerTag == myTag ) return "You";
+		if ( !string.IsNullOrEmpty( username ) ) return username;
+		return playerTag ?? "?";
+	}
+	void MpCancel() => MultiplayerController.Instance?.ReturnToMenu();
+	void MpCopy()
+	{
+		var code = MultiplayerController.Instance?.LobbyCode;
+		if ( code == null ) return;
+		try { Clipboard.SetText( code ); _mpCopyLabel = "✓"; } catch { _mpCopyLabel = "—"; }
+		StateHasChanged();
+	}
+
+	// ── Leaderboard view ──
+
+	void OpenLeaderboard()
+	{
+		_lbDaily     = true;
+		_lbTime      = true;
+		_lbPuzzleIdx = 0;
+		_lb          = null;
+		_lbMp        = false;
+		_lbMp2p      = true;
+		_view        = MenuView.Leaderboard;
+		SetNav( () => SetLbType( true ), () => SetLbType( false ), SwitchToMpLb, BackToMain );
+		StateHasChanged();
+		_ = LoadLeaderboardView();
+	}
+
+	async Task LoadLeaderboardView()
+	{
+		if ( _recentDaily == null || _recentHourly == null )
+		{
+			_recentLoading = true;
+			StateHasChanged();
+			try
+			{
+				_recentDaily  = await ApiClient.GetRecentDaily();
+				_recentHourly = await ApiClient.GetRecentHourly();
+			}
+			catch ( Exception e )
+			{
+				Log.Warning( $"[Gambit] Recent puzzles failed: {e.Message}" );
+				_recentDaily  ??= new List<RecentPuzzle>();
+				_recentHourly ??= new List<RecentPuzzle>();
+			}
+			_recentLoading = false;
+			StateHasChanged();
+		}
+		await LoadLeaderboard();
+	}
+
+	async void SetLbPuzzle( int idx )
+	{
+		if ( _lbPuzzleIdx == idx ) return;
+		_lbPuzzleIdx = idx;
+		_lb          = null;
+		StateHasChanged();
+		await LoadLeaderboard();
+	}
+
+	async void SetLbMetric( bool time )
+	{
+		if ( _lbTime == time ) return;
+		_lbTime = time;
+		_lb     = null;
+		StateHasChanged();
+		await LoadLeaderboard();
+	}
+
+	async Task LoadLeaderboard()
+	{
+		var puzzles = _lbDaily ? _recentDaily : _recentHourly;
+		string puzzleId = ( puzzles != null && puzzles.Count > _lbPuzzleIdx )
+			? puzzles[_lbPuzzleIdx].PuzzleId
+			: null;
+		string metric = _lbTime ? "time" : "moves";
+
+		_lbLoading = true;
+		StateHasChanged();
+		try
+		{
+			_lb = _lbDaily
+				? await ApiClient.GetDailyLeaderboard( metric, puzzleId )
+				: await ApiClient.GetHourlyLeaderboard( metric, puzzleId );
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( $"[Gambit] Leaderboard failed: {e.Message}" );
+			_lb = new List<LeaderboardEntry>();
+		}
+		_lbLoading = false;
+		StateHasChanged();
+	}
+
+	void SwitchToMpLb()
+	{
+		if ( _lbMp ) return;
+		_lbMp    = true;
+		_lbMp2p  = true;
+		StateHasChanged();
+		_ = LoadMpLeaderboard();
+	}
+
+	async void SetLbType( bool daily )
+	{
+		if ( !_lbMp && _lbDaily == daily ) return;
+		_lbMp        = false;
+		_lbDaily     = daily;
+		_lbPuzzleIdx = 0;
+		_lb          = null;
+		StateHasChanged();
+		await LoadLeaderboard();
+	}
+
+	async void SetMpSize( bool is2p )
+	{
+		if ( _lbMp2p == is2p ) return;
+		_lbMp2p = is2p;
+		StateHasChanged();
+		if ( is2p ? _mpLb2p == null : _mpLb4p == null )
+			await LoadMpLeaderboard();
+	}
+
+	async Task LoadMpLeaderboard()
+	{
+		_mpLbLoading = true;
+		StateHasChanged();
+		try
+		{
+			_mpLb2p = await ApiClient.GetMultiplayerLeaderboard( 2 );
+			_mpLb4p = await ApiClient.GetMultiplayerLeaderboard( 4 );
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( $"[Gambit] MP leaderboard failed: {e.Message}" );
+			_mpLb2p ??= new List<MpWinEntry>();
+			_mpLb4p ??= new List<MpWinEntry>();
+		}
+		_mpLbLoading = false;
+		StateHasChanged();
+	}
+
+	static string PuzzleTabLabel( RecentPuzzle p, bool daily )
+	{
+		// ActiveFrom is RFC3339 like "2026-06-08T14:00:00Z"
+		if ( p.ActiveFrom == null || p.ActiveFrom.Length < 10 ) return "?";
+		var dateStr  = p.ActiveFrom.Substring( 0, 10 ); // "2026-06-08"
+		var dateParts = dateStr.Split( '-' );
+		if ( dateParts.Length == 3
+			&& int.TryParse( dateParts[1], out int mo )
+			&& int.TryParse( dateParts[2], out int dy )
+			&& mo >= 1 && mo <= 12 )
+		{
+			if ( daily ) return $"{_monthNames[mo - 1]} {dy}";
+			// Hourly: show "HH:mm"
+			if ( p.ActiveFrom.Length >= 16 )
+				return p.ActiveFrom.Substring( 11, 5 );
+			return $"{_monthNames[mo - 1]} {dy}";
+		}
+		return p.ActiveFrom.Substring( 0, 10 );
+	}
+
+	// Legacy rows from players who never set a name fall back to their player_tag
+	static string LbDisplayName( string username, string playerTag ) =>
+		!string.IsNullOrEmpty( username ) ? username : ( playerTag ?? "Anonymous" );
+
+	static string FormatLbScore( LeaderboardEntry e )
+	{
+		if ( e.TotalMoves > 0 && e.DurationMs == 0 )
+			return e.TotalMoves.ToString();
+		long ms   = e.DurationMs;
+		int  secs = (int)(ms / 1000);
+		int  frac = (int)(ms % 1000) / 100;
+		int  mins = secs / 60;
+		secs %= 60;
+		return $"{mins}:{secs:D2}.{frac}";
+	}
+
+	// ── Public player profile view ──
+
+	ProfileResponse _ppProfile;
+	bool            _ppLoading;
+	string          _ppError;
+	Action          _ppBack;         // restores the view the profile was opened from
+	int             _ppGen;          // cancels a stale fetch when the view changes
+
+	void OpenPlayerProfile( string playerTag, Action back )
+	{
+		if ( string.IsNullOrEmpty( playerTag ) ) return;
+		_ppBack    = back;
+		_ppProfile = null;
+		_ppError   = null;
+		_ppLoading = true;
+		_view      = MenuView.PlayerProfile;
+		SetNav( ProfileBack ); // 0: Back
+		StateHasChanged();
+		_ = LoadPlayerProfile( playerTag, ++_ppGen );
+	}
+
+	async Task LoadPlayerProfile( string playerTag, int gen )
+	{
+		try
+		{
+			var profile = await ApiClient.GetProfile( playerTag );
+			if ( gen != _ppGen ) return;
+			_ppProfile = profile;
+			_ppError   = profile == null ? "Profile unavailable." : null;
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( $"[Gambit] Profile load failed: {e.Message}" );
+			if ( gen != _ppGen ) return;
+			_ppError = "Profile unavailable.";
+		}
+		_ppLoading = false;
+		StateHasChanged();
+	}
+
+	void ProfileBack()
+	{
+		_ppGen++; // drop any in-flight fetch
+		if ( _ppBack != null ) _ppBack();
+		else BackToMain();
+	}
+
+	// Back target when a profile was opened from a multiplayer roster: re-derive the
+	// lobby/waiting view + nav from the current MP state.
+	void RestoreMpView()
+	{
+		var mp = MultiplayerController.Instance;
+		if ( mp == null ) { BackToMain(); return; }
+		_view = mp.State == MpState.WaitingRoom ? MenuView.MpWaiting : MenuView.MpLobby;
+		OnMpStateChanged();
+	}
+
+	// Play the recorded game on the giant spectator board, then leave the cabinet so
+	// the player can watch it from the room (engaging anything stops the replay).
+	void WatchOnSpectator( string sessionId )
+	{
+		if ( string.IsNullOrEmpty( sessionId ) ) return;
+		Gambit.World.SpectatorBoard.StartReplay( sessionId );
+		Gambit.World.LobbyPlayer.Local?.Disengage();
+	}
+
+	static string ProfileTypeLabel( string t ) => t switch
+	{
+		"daily"    => "Daily",
+		"hourly"   => "Hourly",
+		"freeplay" => "Free Play",
+		"2p"       => "2-Player",
+		"4p"       => "4-Player",
+		_          => t ?? "Game",
+	};
+
+	static string ProfileGameMeta( ProfileGame g )
+	{
+		var parts = new List<string>();
+		if ( g.Rank.HasValue )       parts.Add( g.Rank.Value == 1 ? "Winner" : $"#{g.Rank.Value}" );
+		if ( g.DurationMs.HasValue ) parts.Add( FormatMs( g.DurationMs.Value ) );
+		if ( g.TotalMoves.HasValue ) parts.Add( $"{g.TotalMoves.Value} moves" );
+		return parts.Count > 0 ? string.Join( "  ·  ", parts ) : "—";
+	}
+
+	static string FormatMs( long ms )
+	{
+		int secs = (int)(ms / 1000);
+		int frac = (int)(ms % 1000) / 100;
+		int mins = secs / 60;
+		secs %= 60;
+		return $"{mins}:{secs:D2}.{frac}";
+	}
+
+	// completed_at is RFC3339 like "2026-06-17T12:00:00Z" → "Jun 17"
+	static string ProfileGameDate( string completedAt )
+	{
+		if ( completedAt == null || completedAt.Length < 10 ) return "";
+		var parts = completedAt.Substring( 0, 10 ).Split( '-' );
+		if ( parts.Length == 3
+			&& int.TryParse( parts[1], out int mo )
+			&& int.TryParse( parts[2], out int dy )
+			&& mo >= 1 && mo <= 12 )
+			return $"{_monthNames[mo - 1]} {dy}";
+		return completedAt.Substring( 0, 10 );
+	}
+
+	// ── Profile view ──
+
+	void OpenProfile()
+	{
+		var data       = PlayerData.Load();
+		_profileUsername = data?.Username ?? "";
+		_profileGuid     = data?.Guid ?? "(no player ID)";
+		_profileScheme   = data?.ColorScheme ?? "normal";
+		_saveMsg         = null;
+		_copyLabel       = "Copy";
+		_importMsg       = null;
+		_nameEntryInit   = false;
+		_guidEntryInit   = false;
+		_view = MenuView.Profile;
+		SetNav(
+			() => SetScheme( "normal" ),      // 0
+			() => SetScheme( "deuteranopia" ), // 1
+			() => SetScheme( "protanopia" ),   // 2
+			() => SetScheme( "tritanopia" ),   // 3
+			BackToMain                         // 4
+		);
+		StateHasChanged();
+	}
+
+	protected override void OnUpdate()
+	{
+		IsRebinding = _rebindingAction != null && _view == MenuView.Settings;
+
+		if ( _view == MenuView.Profile && !_nameEntryInit && _nameEntry != null )
+		{
+			_nameEntry.Text = _profileUsername;
+			_nameEntryInit  = true;
+		}
+		if ( _view == MenuView.Profile && !_guidEntryInit && _guidEntry != null )
+		{
+			_guidEntry.Text = "";
+			_guidEntryInit  = true;
+		}
+		if ( _view == MenuView.MpLobby && !_mpJoinEntryInit && _mpJoinEntry != null )
+		{
+			_mpJoinEntry.Text = "";
+			_mpJoinEntryInit  = true;
+		}
+		// Poll the public match browser every 5s while on the create/join screen
+		if ( _view == MenuView.MpLobby && _openLobbiesAge > 5f )
+		{
+			var mpc = MultiplayerController.Instance;
+			if ( mpc != null && mpc.State == MpState.Lobby && mpc.LobbyCode == null )
+				_ = RefreshOpenLobbies( mpc.Is2P ? 2 : 4 );
+			else
+				_openLobbiesAge = 0;
+		}
+		if ( _view == MenuView.Feedback && !_feedbackEntryInit && _feedbackEntry != null )
+		{
+			_feedbackEntry.Text = "";
+			_feedbackEntryInit  = true;
+		}
+		if ( _rebindingAction != null && _view == MenuView.Settings )
+		{
+			if ( Input.EscapePressed )
+			{
+				Input.EscapePressed = false;
+				_rebindingAction = null;
+				StateHasChanged();
+				return;
+			}
+			if ( _rebindingController )
+			{
+				// Scan the per-button probe actions; the one that fired is the button
+				// the player just pressed (all readable via the public Input API).
+				foreach ( var (probe, _) in GamepadBinds.Buttons )
+				{
+					if ( Input.Pressed( probe ) )
+					{
+						CommitGamepadBinding( _rebindingAction, probe );
+						_rebindingAction = null;
+						StateHasChanged();
+						break;
+					}
+				}
+			}
+			else
+			{
+				foreach ( var key in _scanKeys )
+				{
+					if ( Input.Keyboard.Pressed( key ) )
+					{
+						CommitBinding( _rebindingAction, key );
+						_rebindingAction = null;
+						StateHasChanged();
+						break;
+					}
+				}
+			}
+			return; // don't process nav while rebinding
+		}
+
+		if ( _visible && _navActions.Length > 0 )
+		{
+			bool changed = false;
+			// Action-based so the gamepad d-pad (DpadNorth/South/West/East) drives the
+			// menu too, not just the arrow keys; one Pressed call per direction covers
+			// both the keyboard arrow and the d-pad without double-stepping.
+			if ( Input.Pressed( "MoveUp" )   || Input.Pressed( "MoveLeft" )  || GamepadBinds.Pressed( "MoveUp" )   || GamepadBinds.Pressed( "MoveLeft" ) )  { _navIdx = Math.Max( 0, _navIdx - 1 ); changed = true; }
+			if ( Input.Pressed( "MoveDown" ) || Input.Pressed( "MoveRight" ) || GamepadBinds.Pressed( "MoveDown" ) || GamepadBinds.Pressed( "MoveRight" ) ) { _navIdx = Math.Min( _navActions.Length - 1, _navIdx + 1 ); changed = true; }
+			if ( changed ) StateHasChanged();
+			// Confirm: Enter, or the gamepad A button (the "Jump" action's gamepad code).
+			if ( _navIdx >= 0 && (Input.Keyboard.Pressed( "ENTER" ) || Input.Keyboard.Pressed( "SPACE" ) || Input.Pressed( "Jump" )) )
+				_navActions[_navIdx]?.Invoke();
+		}
+	}
+
+	async void SaveUsername()
+	{
+		var newName = _nameEntry?.Text?.Trim() ?? "";
+		if ( string.IsNullOrEmpty( newName ) ) return;
+		var data = PlayerData.Load();
+		if ( data?.Guid == null ) return;
+		try
+		{
+			var resp = await ApiClient.SetUsername( data.Guid, newName );
+			data.Username    = newName;
+			// The tag is derived from the username, so a rename changes it
+			if ( !string.IsNullOrEmpty( resp?.PlayerTag ) ) data.PlayerTag = resp.PlayerTag;
+			data.Save();
+			_profileUsername = newName;
+			_saveMsg         = "Saved!";
+			_saveFailed      = false;
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( $"[Gambit] SetUsername failed: {e.Message}" );
+			_saveMsg    = string.IsNullOrEmpty( e.Message ) ? "Failed to save." : e.Message;
+			_saveFailed = true;
+		}
+		StateHasChanged();
+	}
+
+	void CopyGuid()
+	{
+		try
+		{
+			Clipboard.SetText( _profileGuid );
+			_copyLabel = "Copied!";
+		}
+		catch
+		{
+			_copyLabel = "—";
+		}
+		StateHasChanged();
+	}
+
+	/// <summary>Adopt an existing account by pasting its GUID from the web client.
+	/// Validated against the server before overwriting the local identity; the
+	/// account's username comes along with it.</summary>
+	async void ImportGuid()
+	{
+		var guid = _guidEntry?.Text?.Trim() ?? "";
+		if ( string.IsNullOrEmpty( guid ) ) return;
+		try
+		{
+			var player = await ApiClient.GetPlayer( guid );
+			if ( string.IsNullOrEmpty( player?.Guid ) ) throw new Exception( "unknown player" );
+
+			var data = PlayerData.Load() ?? new PlayerData();
+			data.Guid      = player.Guid;
+			data.Username  = player.Username;
+			data.PlayerTag = player.PlayerTag ?? "";
+			data.Save();
+
+			_profileGuid     = player.Guid;
+			_profileUsername = player.Username ?? "";
+			if ( _nameEntry != null ) _nameEntry.Text = _profileUsername;
+			Gambit.World.ArcadeStation.Active?.RefreshOccupant();
+			_importMsg    = "Imported!";
+			_importFailed = false;
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( $"[Gambit] GUID import failed: {e.Message}" );
+			_importMsg    = "Invalid player ID.";
+			_importFailed = true;
+		}
+		StateHasChanged();
+	}
+
+	void SetScheme( string scheme )
+	{
+		_profileScheme = scheme;
+		var data = PlayerData.Load();
+		if ( data == null ) return;
+		data.ColorScheme = scheme;
+		data.Save();
+		StateHasChanged();
+	}
+
+	// ── Feedback view ──
+
+	void OpenFeedback()
+	{
+		_feedbackMsg       = null;
+		_feedbackEntryInit = false;
+		_view = MenuView.Feedback;
+		StateHasChanged();
+	}
+
+	async void SendFeedback()
+	{
+		var msg = _feedbackEntry?.Text?.Trim() ?? "";
+		if ( string.IsNullOrEmpty( msg ) ) return;
+		if ( msg.Length > 2000 ) msg = msg.Substring( 0, 2000 );
+		try
+		{
+			await ApiClient.SubmitFeedback( msg );
+			_feedbackMsg    = "Thanks for the feedback!";
+			_feedbackFailed = false;
+			if ( _feedbackEntry != null ) _feedbackEntry.Text = "";
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( $"[Gambit] Feedback failed: {e.Message}" );
+			_feedbackMsg    = "Error sending — please try again.";
+			_feedbackFailed = true;
+		}
+		StateHasChanged();
+	}
+
+	// ── Settings view ──
+
+	void OpenSettings()
+	{
+		_rebindingAction = null;
+		_view = MenuView.Settings;
+		SetNav(
+			ResetBindings,  // 0
+			BackToMain      // 1
+		);
+		StateHasChanged();
+	}
+
+	// ArcadeRing tuning sliders (issue #15) — segmented click-track storing percent
+	// of the scene default as a 0.75–1.25 multiplier. Cube size applies on the next
+	// board slide-out (CubeBoardView.ComputeGeometry); camera values apply live.
+
+	int CubeSizePct
+	{
+		get => (int)MathF.Round( (PlayerData.Load()?.CubeSizeScale ?? 1f) * 100f );
+		set
+		{
+			var data = PlayerData.Load() ?? new PlayerData();
+			data.CubeSizeScale = PlayerData.ClampScale( value / 100f );
+			data.Save();
+			StateHasChanged();
+		}
+	}
+
+	int CameraBackoffPct
+	{
+		get => (int)MathF.Round( (PlayerData.Load()?.CameraBackoffScale ?? 1f) * 100f );
+		set
+		{
+			var data = PlayerData.Load() ?? new PlayerData();
+			data.CameraBackoffScale = PlayerData.ClampCameraScale( value / 100f );
+			data.Save();
+			StateHasChanged();
+		}
+	}
+
+	int CameraRisePct
+	{
+		get => (int)MathF.Round( (PlayerData.Load()?.CameraRiseScale ?? 1f) * 100f );
+		set
+		{
+			var data = PlayerData.Load() ?? new PlayerData();
+			data.CameraRiseScale = PlayerData.ClampCameraScale( value / 100f );
+			data.Save();
+			StateHasChanged();
+		}
+	}
+
+	void ToggleRebind( string action )
+	{
+		bool same = _rebindingAction == action && !_rebindingController;
+		_rebindingAction     = same ? null : action;
+		_rebindingController = false;
+		StateHasChanged();
+	}
+
+	void ToggleRebindController( string action )
+	{
+		bool same = _rebindingAction == action && _rebindingController;
+		_rebindingAction     = same ? null : action;
+		_rebindingController = !same;
+		StateHasChanged();
+	}
+
+	void CommitBinding( string action, string key )
+	{
+		var data = PlayerData.Load() ?? new PlayerData();
+		data.Bindings[action] = key;
+		data.Save();
+		_bindingsVersion++;
+	}
+
+	void CommitGamepadBinding( string action, string probe )
+	{
+		var data = PlayerData.Load() ?? new PlayerData();
+		data.GamepadBindings[action] = probe;
+		data.Save();
+		_bindingsVersion++;
+	}
+
+	void ResetBindings()
+	{
+		var data = PlayerData.Load();
+		if ( data == null ) return;
+		data.Bindings.Clear();
+		data.GamepadBindings.Clear();
+		data.Save();
+		_bindingsVersion++;
+		_rebindingAction = null;
+		_rebindingController = false;
+		StateHasChanged();
+	}
+
+	static string GetKeyboardDisplay( string action )
+	{
+		var data = PlayerData.Load();
+		if ( data?.Bindings != null && data.Bindings.TryGetValue( action, out var key ) && !string.IsNullOrEmpty( key ) )
+			return KeyDisplayName( key );
+		return action switch
+		{
+			"MoveUp"    => "↑",
+			"MoveDown"  => "↓",
+			"MoveLeft"  => "←",
+			"MoveRight" => "→",
+			"RotateCCW" => "Z",
+			"RotateCW"  => "X",
+			"Chat"      => "T",
+			_           => "?",
+		};
+	}
+
+	/// <summary>The controller button currently mapped to an action (rebindable via
+	/// the per-button probe actions — see <see cref="GamepadBinds"/>).</summary>
+	static string GetGamepadDisplay( string action ) => GamepadBinds.DisplayFor( action );
+
+	static string KeyDisplayName( string key ) => key switch
+	{
+		"UPARROW"   => "↑",
+		"DOWNARROW" => "↓",
+		"LEFTARROW" => "←",
+		"RIGHTARROW" => "→",
+		"SPACE"     => "Space",
+		"ENTER"     => "Enter",
+		"BACKSPACE" => "Backspace",
+		"TAB"       => "Tab",
+		"SEMICOLON" => ";",
+		"KP_0"      => "Num 0",
+		"KP_1"      => "Num 1",
+		"KP_2"      => "Num 2",
+		"KP_3"      => "Num 3",
+		"KP_4"      => "Num 4",
+		"KP_5"      => "Num 5",
+		"KP_6"      => "Num 6",
+		"KP_7"      => "Num 7",
+		"KP_8"      => "Num 8",
+		"KP_9"      => "Num 9",
+		_           => key.Length == 1 ? key.ToUpper() : key,
+	};
+
+	protected override int BuildHash()
+	{
+		var h = new System.HashCode();
+		h.Add( _visible );      h.Add( (int)_view );
+		h.Add( _lbDaily );      h.Add( _lbTime );    h.Add( _lbPuzzleIdx );
+		h.Add( _lb?.Count );    h.Add( _lbLoading );  h.Add( _recentLoading );
+		h.Add( _lbMp );         h.Add( _lbMp2p );
+		h.Add( _mpLb2p?.Count ); h.Add( _mpLb4p?.Count ); h.Add( _mpLbLoading );
+		h.Add( _saveMsg );      h.Add( _copyLabel );  h.Add( _profileScheme );
+		h.Add( _feedbackMsg );
+		h.Add( _ppLoading );    h.Add( _ppError );    h.Add( _ppProfile?.PlayerTag );
+		h.Add( _ppProfile?.Games?.Count );
+		var mp = MultiplayerController.Instance;
+		h.Add( mp?.State ); h.Add( mp?.LobbyCode ); h.Add( mp?.LobbyCount ); h.Add( mp?.Error ); h.Add( _mpCopyLabel );
+		h.Add( mp?.LobbyPlayers?.Count ); h.Add( mp?.RoomPlayers?.Count ); h.Add( mp?.ReadyIds?.Count ); h.Add( mp?.SentReady );
+		h.Add( _openLobbiesVersion );
+		h.Add( _rebindingAction ); h.Add( _rebindingController ); h.Add( _bindingsVersion );
+		h.Add( ArcadeStation.Active != null );
+		h.Add( Gambit.World.LobbyPlayer.Local?.CameraSettled );
+		h.Add( Gambit.World.ArcadeRing.UiRectStyle() );
+		h.Add( _navIdx );
+		h.Add( CanDeleteGuid );
+		return h.ToHashCode();
+	}
+}
