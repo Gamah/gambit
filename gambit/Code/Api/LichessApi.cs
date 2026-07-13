@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Sandbox;
 
@@ -211,6 +212,38 @@ public static class LichessApi
 	/// account/playing drops a game the moment it ends, so this fills in the result.</summary>
 	public static Task<Result> GameExport( string gameId ) =>
 		Send( $"{Base}/game/export/{gameId}", "GET", null, null );
+
+	/// <summary>
+	/// Hold the game-stream connection open for the length of a game so lichess sees
+	/// this Board-API player as <b>present</b>. Without a held-open connection lichess
+	/// treats the player as disconnected — the opponent's client shows "left the game"
+	/// after every move and can claim victory. We can't read the stream incrementally
+	/// (Http buffers the body — PLAN.md risk 1), but presence only needs the
+	/// connection <i>established</i>, so we fire it and hold it, ignoring the body.
+	///
+	/// <para>Deliberately bypasses the single-flight <see cref="Send"/> gate — this
+	/// connection stays open for minutes and must coexist with polling + move POSTs
+	/// (lichess allows ~8 concurrent streams/IP). It returns when lichess closes the
+	/// stream (game over) or when <paramref name="ct"/> is cancelled. The buffered
+	/// body is tiny for real-time games (a few moves + ~7s keep-alives).</para>
+	/// </summary>
+	public static async Task HoldGameStream( string gameId, string token, CancellationToken ct )
+	{
+		try
+		{
+			var headers = new Dictionary<string, string>
+			{
+				["Authorization"] = "Bearer " + token,
+				["Accept"] = "application/x-ndjson",
+			};
+			using var resp = await Http.RequestAsync( $"{Base}/api/board/game/stream/{gameId}", "GET", null, headers, ct );
+			// Reached only when the server closes the stream (game finished). Body ignored.
+		}
+		catch ( Exception )
+		{
+			// Cancelled (game over / left) or the connection dropped — both expected.
+		}
+	}
 
 	// ── Helpers ──
 

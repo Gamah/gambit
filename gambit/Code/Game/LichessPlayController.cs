@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Gambit.Api;
 using Gambit.Chess;
@@ -117,10 +118,45 @@ public sealed class LichessPlayController : Component, IBoardGame
 	{
 		// Only the client that started a game here is non-Idle; everyone else no-ops.
 		if ( _phase != PlayPhase.Challenging && _phase != PlayPhase.Playing ) return;
+
+		// While a game is live, hold the game stream open so lichess sees us present —
+		// without it the opponent's client shows us as having left after every move
+		// (and can claim victory). Re-armed here if the connection ever drops.
+		if ( _phase == PlayPhase.Playing ) EnsurePresence();
+
 		if ( _polling || _moveInFlight || LichessApi.Busy ) return;
 		if ( _sincePoll < PollInterval ) return;
 		_sincePoll = 0f;
 		Poll();
+	}
+
+	protected override void OnDestroy() => StopPresence();
+
+	// ── Presence (held-open game stream) ──
+
+	CancellationTokenSource _presenceCts;
+	Task _presenceTask;
+	RealTimeSince _sincePresenceStart = 999f;
+
+	void EnsurePresence()
+	{
+		if ( string.IsNullOrEmpty( _gameId ) ) return;
+		if ( _presenceTask is { IsCompleted: false } ) return; // already holding one open
+		// If the stream keeps closing instantly (e.g. the game just ended, a beat
+		// before the poll notices), don't reconnect every frame and trip rate limits.
+		if ( _sincePresenceStart < 3f ) return;
+
+		_presenceCts?.Cancel();
+		_presenceCts = new CancellationTokenSource();
+		_presenceTask = LichessApi.HoldGameStream( _gameId, LichessAuth.Token, _presenceCts.Token );
+		_sincePresenceStart = 0f;
+	}
+
+	void StopPresence()
+	{
+		_presenceCts?.Cancel();
+		_presenceCts = null;
+		_presenceTask = null;
 	}
 
 	// ── Starting a game ──
@@ -173,6 +209,7 @@ public sealed class LichessPlayController : Component, IBoardGame
 
 	void BeginChallenge( ChessSeat seat, string expectOpponent, bool ai )
 	{
+		StopPresence(); // drop any leftover held stream from a previous game
 		_myColor = seat;
 		_expectOpponent = expectOpponent;
 		_expectAi = ai;
@@ -389,6 +426,7 @@ public sealed class LichessPlayController : Component, IBoardGame
 		_phase = PlayPhase.Over;
 		IsMyTurn = false;
 		StatusText = null;
+		StopPresence(); // game's over — release the held-open game stream
 
 		var res = await LichessApi.GameExport( _gameId );
 		var st = res.Ok ? LichessApi.Deserialize<LichessGameStatus>( res.Body ) : null;
@@ -423,6 +461,8 @@ public sealed class LichessPlayController : Component, IBoardGame
 	/// screen — back to the idle panel so the board can be reused.</summary>
 	public async void ClearPlay()
 	{
+		StopPresence();
+
 		if ( _phase == PlayPhase.Challenging && !string.IsNullOrEmpty( _challengeId ) )
 			await LichessApi.CancelChallenge( _challengeId, LichessAuth.Token );
 
