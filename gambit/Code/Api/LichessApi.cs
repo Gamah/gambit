@@ -195,6 +195,18 @@ public static class LichessApi
 	public static Task<Result> CancelChallenge( string challengeId, string token ) =>
 		Send( $"{Base}/api/challenge/{challengeId}/cancel", "POST", null, token );
 
+	/// <summary>Accept a challenge. With <paramref name="color"/> set, this seats the
+	/// caller in an <b>open</b> challenge as that colour — the API way to sit in on
+	/// your own open game with no browser (the accept endpoint's <c>color</c> query is
+	/// documented as "only valid if this is an open challenge"). color = white/black.</summary>
+	public static Task<Result> AcceptChallenge( string challengeId, string color, string token )
+	{
+		var url = $"{Base}/api/challenge/{challengeId}/accept";
+		if ( !string.IsNullOrEmpty( color ) )
+			url += "?color=" + color;
+		return Send( url, "POST", null, token );
+	}
+
 	/// <summary>Export a finished game as JSON to read its final status/winner —
 	/// account/playing drops a game the moment it ends, so this fills in the result.</summary>
 	public static Task<Result> GameExport( string gameId ) =>

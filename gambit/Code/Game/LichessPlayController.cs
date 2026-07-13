@@ -222,14 +222,33 @@ public sealed class LichessPlayController : Component, IBoardGame
 		_challengeId = oc.id;
 		SeatUrl = seat == ChessSeat.White ? oc.urlWhite : oc.urlBlack;
 		ShareUrl = seat == ChessSeat.White ? oc.urlBlack : oc.urlWhite;
-		StatusText = null;
+		StatusText = "Taking your seat…";
 
-		// You must open SeatUrl once in a browser to take your seat: lichess has no
-		// API to seat the creator, and a token-authenticated GET of the seat URL does
-		// NOT claim it (confirmed in-editor — the join needs the web client's socket).
-		// Once seated (and the opponent joins ShareUrl), the poll below picks the game
-		// up and it plays out in sbox.
+		// Seat ourselves in our own open challenge via the API — accept it with our
+		// colour (the accept endpoint's `color` query works on open challenges). No
+		// browser needed on our side; SeatUrl is kept only as a fallback if this
+		// fails. The opponent joins ShareUrl from any browser (incl. anonymous), and
+		// the poll below takes the game live once both sides are in.
+		SelfSeat( ColorWord( seat ) );
+
 		_sincePoll = 999f;
+	}
+
+	async void SelfSeat( string color )
+	{
+		var res = await LichessApi.AcceptChallenge( _gameId, color, LichessAuth.Token );
+		if ( res.Ok )
+		{
+			StatusText = null;
+			Log.Info( "[Gambit] seated in the open game via API — share the opponent link." );
+		}
+		else
+		{
+			// Non-fatal: the player can still take the seat by opening SeatUrl in a
+			// browser once (the HUD offers it), and the poll will pick the game up.
+			StatusText = "Couldn't take your seat automatically — open your seat link once in a browser.";
+			Log.Warning( $"[Gambit] self-seat via accept failed ({res.Status}): {LichessApi.Truncate( res.Body, 160 )}" );
+		}
 	}
 
 	void FailStart( LichessApi.Result res )
