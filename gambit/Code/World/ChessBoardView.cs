@@ -49,8 +49,11 @@ public sealed class ChessBoardView : Component
 	// under the cursor = "click to move here"), hover = blue (cursor square),
 	// check = red, last move = dim olive.
 	static readonly Color SelectedTint = new( 0.90f, 0.62f, 0.05f );
-	static readonly Color TargetTint = new( 0.15f, 0.55f, 0.12f );
-	static readonly Color TargetHoverTint = new( 0.28f, 0.85f, 0.22f );
+	// Legal targets read as a set of lighter greens; the one under the cursor
+	// (the square you'd actually move to) is a darker, deeper green so it's
+	// unmistakably "this one" rather than just another option or the teal cursor.
+	static readonly Color TargetTint = new( 0.22f, 0.68f, 0.17f );
+	static readonly Color TargetHoverTint = new( 0.05f, 0.26f, 0.05f );
 	static readonly Color HoverTint = new( 0.20f, 0.45f, 0.90f );
 	static readonly Color LastMoveTint = new( 0.45f, 0.38f, 0.10f );
 	static readonly Color CheckTint = new( 0.85f, 0.14f, 0.10f );
