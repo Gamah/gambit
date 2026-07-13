@@ -83,8 +83,8 @@ public sealed class LichessPlayController : Component, IBoardGame
 	/// (drives the "share this / take your seat" HUD instead of "waiting to accept").</summary>
 	public bool IsOpenGame { get; private set; }
 
-	/// <summary>Colour-pinned URL the player opens once in a browser to take their
-	/// own seat (lichess has no API to seat yourself in an open challenge).</summary>
+	/// <summary>Colour-pinned seat URL — a fallback only. We normally seat the player
+	/// via the API (accept?color=), so this is offered just in case that ever fails.</summary>
 	public string SeatUrl { get; private set; }
 
 	/// <summary>Colour-pinned URL to hand the anonymous opponent's browser.</summary>

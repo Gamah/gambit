@@ -170,8 +170,8 @@ public static class LichessSpikes
 	}
 
 	/// <summary>Create an open game vs an anonymous browser and sit in on it in sbox
-	/// on the side you're seated at (you open your own seat link once — lichess has
-	/// no API to seat the creator). Sit down first; the HUD then shows both links.</summary>
+	/// on the side you're seated at — we self-seat via the API (accept?color=), so you
+	/// just share the opponent link. Sit down first; the HUD then shows the link.</summary>
 	[ConCmd( "gambit_play_open" )]
 	public static void PlayOpen()
 	{
