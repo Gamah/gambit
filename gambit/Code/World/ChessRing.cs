@@ -49,8 +49,10 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// <summary>Straight-line distance (world units) from the board center to each
 	/// seat's locked-camera anchor. The camera orbits the board center at this
 	/// radius — SeatPitch rotates it up/down WITHOUT changing how close the board
-	/// looks, unlike the old horizontal-distance + height pair.</summary>
-	[Property] public float SeatOrbitRadius { get; set; } = 41f;
+	/// looks. Needs enough range that the NEAR back rank fits below screen center:
+	/// perspective makes the near half of a tilted board subtend far more vertical
+	/// FOV than the far half, so it's the first thing to clip when too close.</summary>
+	[Property] public float SeatOrbitRadius { get; set; } = 56f;
 
 	/// <summary>Camera elevation in degrees on that orbit: 0 = level with the
 	/// board, 90 = straight overhead. Rotates around the board center, so range
