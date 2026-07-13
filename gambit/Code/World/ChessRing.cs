@@ -47,13 +47,15 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	[Property] public float BoardSize { get; set; } = 26f;
 
 	/// <summary>Horizontal distance (world units) from the board center to each
-	/// seat's locked-camera anchor.</summary>
-	[Property] public float SeatDistance { get; set; } = 48f;
+	/// seat's locked-camera anchor. Small on purpose: the seated view hangs
+	/// mostly over the board so square picking (M2) has a clear look at all
+	/// eight ranks.</summary>
+	[Property] public float SeatDistance { get; set; } = 28f;
 
 	/// <summary>Height (world units above the station floor) of the seat camera
 	/// anchors. With SeatDistance this sets the downward pitch over the board
-	/// (~33° at the defaults).</summary>
-	[Property] public float SeatCameraHeight { get; set; } = 66f;
+	/// (~62° at the defaults — high and near-centered for play).</summary>
+	[Property] public float SeatCameraHeight { get; set; } = 88f;
 
 	/// <summary>Calibration multiplier on the computed UI rect (see ScreenFractionRect) —
 	/// nudge until engaged UI lines up with the board on screen.</summary>
