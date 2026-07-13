@@ -197,6 +197,10 @@ public sealed class ChessBoardView : Component
 				int toSquare = added[to];
 				added.RemoveAt( to );
 				removed.Remove( from );
+				// On a capture the destination is ALSO in `removed` (it held the
+				// captured piece); drop it too, or the leftover-removals pass below
+				// would destroy the piece we're about to slide onto it.
+				removed.Remove( toSquare );
 
 				var piece = _pieces[from];
 				_pieces[from] = null;
