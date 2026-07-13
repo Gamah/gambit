@@ -4,7 +4,7 @@ A self-contained **s&box code library** that streams an endless, deterministic p
 ska / reggae-rock track, generated entirely from a short shareable seed. No audio assets —
 the music is synthesised from scratch and scheduled over a `SoundStream`.
 
-This is the sound-generator core of [skafinity](../../) / the Gambit music engine, with
+This is the sound-generator core of [skafinity](../../) / the Rotaliate music engine, with
 every game-specific dependency (player data, networking) stripped out.
 
 It ships as **two pieces** you can mix and match:
@@ -88,10 +88,12 @@ If you want players to tweak the music in-game, add a **`SkafinityMusicPanel`**:
 2. A child GameObject with **`SkafinityMusicPanel`** on it.
 
 That's it. The panel auto-finds a `SkafinityPlayer` in the scene (or set its `Player`
-property explicitly). A floating ♪ button toggles the settings board: now-playing seed +
-copy, prev/next, paste-a-seed, mute, volume, genre, per-instrument vibe mixer, global knobs,
-reroll, "random every song", and save-to-`.wav`. Every control just calls the player's public
-API, so anything the panel does you can do from code too.
+property explicitly). The board's visibility is **host-driven** — it ships no launcher of its
+own, so it imposes nothing on your HUD. Show it by setting `IsOpen` (or calling `Toggle()`)
+from your game; bind that to a hotkey, your pause menu, or your own button. When open it
+offers: now-playing seed + copy, prev/next, paste-a-seed, mute, volume, genre, per-instrument
+vibe mixer, global knobs, reroll, "random every song", and save-to-`.wav`. Every control just
+calls the player's public API, so anything the panel does you can do from code too.
 
 **Re-theming.** The whole palette is a block of SCSS variables at the top of
 `UI/SkafinityMusicPanel.razor.scss` (`$bg`, `$btn`, `$accent`, …). Override those to restyle —
@@ -105,7 +107,7 @@ against the same `SkafinityPlayer` API.
 | **Music** | Master `Enabled` / `Volume`, `LiveReload` (regenerate on knob change), `MixerName`, `AutoPlay`, `RandomEverySong` (shuffle) |
 | **Seed** | `Tag`, `StartN`, `Vibe` override, `PersistProgress` + `SaveSlot` (resume across sessions) |
 | **Output** | `SampleRate`, `TargetSeconds`, `RenderThreads` (synthesis is split across worker threads) |
-| **Crossfade** | `Crossfade` window, `CrossfadeOverlap`, `LoopsPerSong`, `AheadCount` (look-ahead depth) |
+| **Crossfade** | `Crossfade` window, `CrossfadeOverlap`, `AheadCount` (look-ahead depth) |
 | Tempo / Mix / Tone / Feel / Stereo / Instrument / Horns | The full generator knob set — see `MusicGen.Config` |
 
 ## House-mix config

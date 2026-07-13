@@ -488,7 +488,7 @@ public static class VibeCodec
 
 	/// <summary>True if <paramref name="s"/> looks like a vibe token: all base-36 and within
 	/// the vibe length band. The floor stays well above an 8-char player tag (and the 9-char
-	/// default "gambit") so the two never collide in <c>vibe:tag:n</c>.</summary>
+	/// default "rotaliate") so the two never collide in <c>vibe:tag:n</c>.</summary>
 	public static bool LooksLikeVibe( string s )
 	{
 		if ( string.IsNullOrEmpty( s ) || s.Length < 16 || s.Length > MaxLength ) return false;

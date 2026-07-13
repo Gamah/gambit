@@ -544,7 +544,7 @@ public sealed class MusicGen
 	void ComposePlan( string tag )
 	{
 		_events.Clear();
-		_tag = string.IsNullOrEmpty( tag ) ? "gambit" : tag;
+		_tag = string.IsNullOrEmpty( tag ) ? "rotaliate" : tag;
 		_genre = Math.Clamp( _c.Genre, 0, 5 );
 		var rng = new Rng( Xmur3( _tag.ToLowerInvariant() ) );
 

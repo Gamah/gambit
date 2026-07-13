@@ -157,7 +157,9 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	public IReadOnlyList<GameObject> Build()
 	{
 		_runtimeBuilt = true;
-		return BuildInternal();
+		var stations = BuildInternal();
+		Log.Info( $"[Gambit] ChessRing built {stations.Count} chess tables (radius {RingRadius( StationCount ):0})" );
+		return stations;
 	}
 
 	/// <summary>Network-spawn every station in the scene so its [Sync] seat occupancy

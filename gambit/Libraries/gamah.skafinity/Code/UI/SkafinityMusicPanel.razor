@@ -11,7 +11,10 @@
 
 	Add this PanelComponent to a GameObject under a ScreenPanel (or WorldPanel). It finds a
 	SkafinityPlayer in the scene (or set Player explicitly) and offers the whole knob surface
-	as UI — you don't have to wire anything. A floating ♪ button toggles the board open/closed.
+	as UI — you don't have to wire anything. The board's visibility is host-driven: set IsOpen
+	(or call Toggle()) from your game — e.g. bind it to a hotkey or your own pause/menu UI.
+	This component intentionally ships no launcher of its own, so it imposes nothing on the
+	host's HUD.
 
 	The engine needs nothing from this: SkafinityPlayer plays on its own. This panel is pure
 	convenience for players who want to tweak the vibe rather than tune it in the inspector.
@@ -28,11 +31,7 @@
 *@
 
 <root class="@( IsOpen ? "open" : "" )">
-	@if ( !IsOpen )
-	{
-		<div class="fab" onclick="@Toggle">♪</div>
-	}
-	else
+	@if ( IsOpen )
 	{
 	@{ var cfg = Player?.EffectiveConfig(); int genre = cfg?.Genre ?? 0; }
 	<div class="music">
@@ -86,6 +85,44 @@
 							 onclick="@( () => SetVolume( vv ) )">@VolLabel( vv )</div>
 					}
 				</div>
+			</div>
+		</div>
+
+		<div class="divider"></div>
+
+		@if ( Player?.IsBuffering == true )
+		{
+			<div class="row">
+				<div class="label">STATUS — waiting on the song you skipped to</div>
+				<div class="buffering">
+					<div class="buffering-label">Generating…</div>
+					<div class="bar"><div class="bar-fill" style="width:@( Pct( BufferingProgress ) )"></div></div>
+				</div>
+			</div>
+		}
+
+		<div class="row">
+			<div class="label">QUEUE — past · now · up next (click to jump)</div>
+			<div class="queue">
+				@foreach ( var e in Queue() )
+				{
+					var ee = e;
+					<div class="qitem @( e.Current ? "current" : "" ) @( e.Cached ? "cached" : "" ) @( e.Progress >= 0 ? "gen" : "" )"
+						 onclick="@( () => Player?.SetN( ee.N ) )">
+						<div class="qn">@e.N</div>
+						<div class="qgenre">@GenreName( e.Genre )</div>
+						<div class="qstate">
+							@if ( e.Progress >= 0 )
+							{
+								<div class="bar"><div class="bar-fill" style="width:@( Pct( e.Progress ) )"></div></div>
+							}
+							else
+							{
+								@( e.Current ? "▶ now" : e.Cached ? "ready" : "—" )
+							}
+						</div>
+					</div>
+				}
 			</div>
 		</div>
 
@@ -164,8 +201,10 @@
 	// Volume control steps over the player's 0..2 range.
 	static readonly float[] VolumeSteps = { 0f, 0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f };
 
-	/// <summary>Whether the settings board is showing (toggled by the ♪ button).</summary>
-	public bool IsOpen { get; private set; }
+	/// <summary>Whether the settings board is showing. Host-driven — set it from your game (or
+	/// call <see cref="Toggle"/>) to wire the board to a hotkey / pause menu / your own button.
+	/// This component ships no launcher of its own.</summary>
+	[Property] public bool IsOpen { get; set; }
 
 	TextEntry _tagEntry;
 	bool _tagInit;
@@ -188,7 +227,8 @@
 
 	string Seed() => Player?.CurrentSeed ?? "—";
 
-	/// <summary>Open/close the settings board.</summary>
+	/// <summary>Open/close the settings board. Convenience for hosts that want to bind a single
+	/// action; you can also set <see cref="IsOpen"/> directly.</summary>
 	public void Toggle()
 	{
 		IsOpen = !IsOpen;
@@ -312,13 +352,47 @@
 	{
 		if ( Player == null ) return;
 		bool on = !Player.RandomEverySong;
-		Player.RandomEverySong = on;
-		if ( on ) Player.RerollVibe();
-		_msg = on ? "Shuffle: every new song re-rolls the vibe (keeps your volumes)" : "Shuffle off";
+		Player.SetRandomEverySong( on );
+		_msg = on ? "Shuffle: every new song freezes a fresh vibe + genre (keeps your volumes)" : "Shuffle off";
 	}
 
-	protected override int BuildHash() =>
-		HashCode.Combine(
-			IsOpen, Player?.CurrentSeed, Player?.CurrentVibe, Player?.Enabled ?? true,
-			Player?.Volume ?? 1f, Player?.RandomEverySong ?? false, _msg, _copyLabel );
+	// ── Queue view ──
+	// How many history / look-ahead entries to show either side of the current song.
+	static int QueueBack => 3;
+	static int QueueFwd => 5;
+	IEnumerable<SkafinityPlayer.QueueEntry> Queue() =>
+		Player?.Timeline( QueueBack, QueueFwd ) ?? Enumerable.Empty<SkafinityPlayer.QueueEntry>();
+
+	static string GenreName( int g ) =>
+		g >= 0 && g < VibeCodec.GenreCount ? VibeCodec.Genres[g] : "?";
+
+	static string Pct( float f ) => $"{(int)MathF.Round( Math.Clamp( f, 0f, 1f ) * 100 )}%";
+
+	// Progress of the song a foreground seek is buffering (the current index, mid-regenerate).
+	float BufferingProgress
+	{
+		get
+		{
+			var here = Player?.Timeline( 0, 0 );
+			return here != null && here.Count > 0 && here[0].Progress >= 0f ? here[0].Progress : 0f;
+		}
+	}
+
+	protected override int BuildHash()
+	{
+		// Fold in the queue's cached/generating state so the view animates as songs render. The
+		// quantised progress keeps the bars moving without re-rendering on every sub-percent tick.
+		var q = new HashCode();
+		q.Add( IsOpen ); q.Add( Player?.CurrentSeed ); q.Add( Player?.CurrentVibe );
+		q.Add( Player?.Enabled ?? true ); q.Add( Player?.Volume ?? 1f );
+		q.Add( Player?.RandomEverySong ?? false ); q.Add( Player?.IsBuffering ?? false );
+		q.Add( _msg ); q.Add( _copyLabel );
+		if ( IsOpen )
+			foreach ( var e in Queue() )
+			{
+				q.Add( e.N ); q.Add( e.Cached ); q.Add( e.Current ); q.Add( e.Genre );
+				q.Add( e.Progress >= 0 ? (int)MathF.Round( e.Progress * 20 ) : -1 );
+			}
+		return q.ToHashCode();
+	}
 }

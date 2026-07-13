@@ -59,8 +59,10 @@ public static class ChessSetBuilder
 
 		// Drop-in real-model path (PLAN D5): import pieces as models/chess/*.vmdl
 		// on the user's machine and the procedural fallback below never runs.
+		// Model.Load never returns null for a missing path — it hands back the
+		// engine ERROR model — so gate on IsError, not null.
 		var model = Model.Load( $"models/chess/{type.ToString().ToLowerInvariant()}.vmdl" );
-		if ( model != null )
+		if ( model != null && !model.IsError )
 		{
 			var renderer = root.AddComponent<ModelRenderer>();
 			renderer.Model = model;
