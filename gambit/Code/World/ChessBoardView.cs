@@ -52,8 +52,13 @@ public sealed class ChessBoardView : Component
 	// Legal targets read as a set of lighter greens; the one under the cursor
 	// (the square you'd actually move to) is a darker, deeper green so it's
 	// unmistakably "this one" rather than just another option or the teal cursor.
-	static readonly Color TargetTint = new( 0.22f, 0.68f, 0.17f );
-	static readonly Color TargetHoverTint = new( 0.05f, 0.26f, 0.05f );
+	// Each keeps a light/dark VALUE variant — saturated enough that the hue
+	// survives the table light, but bright on light squares and dim on dark ones
+	// so the board's own checker color still reads through the green.
+	static readonly Color TargetLightTint = new( 0.24f, 0.72f, 0.18f );
+	static readonly Color TargetDarkTint = new( 0.12f, 0.44f, 0.09f );
+	static readonly Color TargetHoverLightTint = new( 0.10f, 0.36f, 0.08f );
+	static readonly Color TargetHoverDarkTint = new( 0.04f, 0.19f, 0.04f );
 	static readonly Color HoverTint = new( 0.20f, 0.45f, 0.90f );
 	static readonly Color LastMoveTint = new( 0.45f, 0.38f, 0.10f );
 	static readonly Color CheckTint = new( 0.85f, 0.14f, 0.10f );
@@ -465,6 +470,7 @@ public sealed class ChessBoardView : Component
 			var renderer = _cells[sq];
 			if ( renderer == null ) continue;
 
+			bool light = ( ( sq >> 3 ) + ( sq & 7 ) ) % 2 != 0; // matches ChessRing parity
 			string name = SquareNames[sq];
 			bool hovered = sq == _hoverSquare;
 
@@ -472,8 +478,11 @@ public sealed class ChessBoardView : Component
 			if ( Selected == name )
 				tint = SelectedTint;
 			else if ( interactive && _targets.Contains( name ) )
-				// Legal move target — brighter under the cursor ("click to move here")
-				tint = hovered ? TargetHoverTint : TargetTint;
+				// Legal move target — deeper green under the cursor ("move here");
+				// light/dark variant keeps the square's checker color reading through
+				tint = hovered
+					? ( light ? TargetHoverLightTint : TargetHoverDarkTint )
+					: ( light ? TargetLightTint : TargetDarkTint );
 			else if ( checkedKing == name )
 				tint = CheckTint;
 			else if ( hovered )
@@ -483,7 +492,7 @@ public sealed class ChessBoardView : Component
 				tint = LastMoveTint;
 			else
 				// Restore the square's own checker color
-				tint = ( ( sq >> 3 ) + ( sq & 7 ) ) % 2 != 0 ? ChessRing.LightSquare : ChessRing.DarkSquare;
+				tint = light ? ChessRing.LightSquare : ChessRing.DarkSquare;
 
 			if ( renderer.Tint != tint )
 				renderer.Tint = tint;
