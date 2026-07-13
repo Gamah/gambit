@@ -17,6 +17,9 @@ public sealed class PlayerData
 	public string LichessToken { get; set; } = "";
 	/// <summary>Account name the token belongs to (from GET /api/account).</summary>
 	public string LichessUsername { get; set; } = "";
+	/// <summary>A representative rating for the name tag (rapid → classical → blitz),
+	/// 0 when unknown/unrated. Not a secret — safe to show and sync.</summary>
+	public int LichessRating { get; set; } = 0;
 
 	/// <summary>Board/piece color theme (Theme/Colors.cs; also keys the floor pops).</summary>
 	public string ColorScheme { get; set; } = "normal";

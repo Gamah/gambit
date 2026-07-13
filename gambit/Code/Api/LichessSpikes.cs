@@ -1,0 +1,104 @@
+using System.Threading.Tasks;
+using Sandbox;
+
+namespace Gambit.Api;
+
+/// <summary>
+/// Developer console commands for M3 — the import self-test plus sign-in helpers
+/// the user runs in the s&amp;box editor. (The riskier D4 streaming spike lives
+/// alone in <see cref="LichessTvSpike"/> so a whitelist rejection there can't take
+/// these down.) Everything here uses only APIs already proven in the repo.
+///
+///   gambit_lichess_import_test — self-test the POST /api/import mechanism
+///   gambit_signin [token]      — paste a token (or open the splash with no arg)
+///   gambit_signout             — forget + revoke the stored token
+///   gambit_whoami              — print the current lichess identity (redacted)
+/// </summary>
+public static class LichessSpikes
+{
+	// ── Import mechanism self-test (isolates HTTP from our PGN builder) ──
+
+	/// <summary>POST a tiny hand-written, definitely-valid PGN to lichess and log
+	/// the full response. If this works but a real game import doesn't, the fault
+	/// is our PGN output, not the HTTP path (PLAN.md M2 carry-in).</summary>
+	[ConCmd( "gambit_lichess_import_test" )]
+	public static void ImportTest() => _ = RunImportTest();
+
+	static async Task RunImportTest()
+	{
+		const string pgn =
+			"[Event \"Gambit import self-test\"]\n" +
+			"[Site \"Terry's Gambit\"]\n" +
+			"[Result \"1-0\"]\n\n" +
+			"1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0\n";
+
+		Log.Info( "[Gambit] import self-test → POST https://lichess.org/api/import (known-good PGN)" );
+		var res = await LichessApi.ImportPgn( pgn );
+		Log.Info( $"[Gambit]   HTTP {res.Status}, ok={res.Ok}" );
+		if ( !string.IsNullOrEmpty( res.Error ) ) Log.Warning( $"[Gambit]   error: {res.Error}" );
+		Log.Info( $"[Gambit]   body: {LichessApi.Truncate( res.Body, 300 )}" );
+
+		var url = LichessApi.Deserialize<LichessImport>( res.Body )?.url;
+		if ( !string.IsNullOrEmpty( url ) )
+			Log.Info( $"[Gambit]   ✓ imported OK: {url}  (HTTP path + allowlist are good)" );
+		else
+			Log.Error( "[Gambit]   ✗ no url — a 4xx means the POST body/allowlist is wrong; a 2xx with no url means the reply shape changed." );
+	}
+
+	// ── Sign-in helpers ──
+
+	/// <summary>Paste a lip_ token to sign in, or run with no argument to open the
+	/// splash screen. Prefer the splash — a token on the command line lands in the
+	/// console history in the clear.</summary>
+	[ConCmd( "gambit_signin" )]
+	public static void SignIn( string token = null )
+	{
+		if ( string.IsNullOrWhiteSpace( token ) )
+		{
+			Gambit.UI.Screens.SplashScreen.Open();
+			return;
+		}
+		_ = DoSignIn( token );
+	}
+
+	static async Task DoSignIn( string token )
+	{
+		var (ok, error) = await LichessAuth.SignInWithToken( token );
+		if ( ok ) Log.Info( $"[Gambit] signed in as {LichessAuth.Username}" );
+		else Log.Warning( $"[Gambit] sign-in failed: {error}" );
+	}
+
+	/// <summary>Begin the OAuth code-paste flow from the console: logs the authorize
+	/// URL. Open it, authorize, then run <c>gambit_oauth_complete</c> with the URL
+	/// your browser lands on (it won't load — the code is in the address bar).</summary>
+	[ConCmd( "gambit_oauth" )]
+	public static void OAuthStart()
+	{
+		var url = LichessOAuth.Start();
+		Log.Info( "[Gambit] OAuth: open this URL, click Authorize, then run" );
+		Log.Info( "[Gambit]   gambit_oauth_complete <the-address-bar-url-you-land-on>" );
+		Log.Info( url );
+	}
+
+	[ConCmd( "gambit_oauth_complete" )]
+	public static void OAuthComplete( string redirect ) => _ = DoOAuth( redirect );
+
+	static async Task DoOAuth( string redirect )
+	{
+		var (ok, error) = await LichessOAuth.Complete( redirect );
+		if ( ok ) Log.Info( $"[Gambit] OAuth signed in as {LichessAuth.Username}" );
+		else Log.Warning( $"[Gambit] OAuth failed: {error}" );
+	}
+
+	[ConCmd( "gambit_signout" )]
+	public static void SignOut() => LichessAuth.SignOut();
+
+	[ConCmd( "gambit_whoami" )]
+	public static void WhoAmI()
+	{
+		if ( LichessAuth.SignedIn )
+			Log.Info( $"[Gambit] signed in to lichess as {LichessAuth.Username} (token {LichessApi.Redact( LichessAuth.Token )})" );
+		else
+			Log.Info( "[Gambit] not signed in to lichess" );
+	}
+}
