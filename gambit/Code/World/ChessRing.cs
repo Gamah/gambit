@@ -366,8 +366,8 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			component.WhiteAnchor = BuildSeatAnchor( station, "WhiteAnchor", -1f );
 			component.BlackAnchor = BuildSeatAnchor( station, "BlackAnchor", +1f );
 
-			// Floating status sign over the table: title / seat occupancy. Billboarded
-			// per-viewer, so it reads from anywhere in the room.
+			// Floating occupancy sign over the table (blank while the table is
+			// empty). Billboarded per-viewer, so it reads from anywhere in the room.
 			var sign = new GameObject( true, "Sign" );
 			sign.Parent = station;
 			sign.LocalPosition = new Vector3( 0, 0, 78f );
@@ -375,10 +375,11 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			sign.AddComponent<WorldPanel>().LookAtCamera = true;
 			sign.AddComponent<Gambit.UI.StationScreenPanel>();
 
-			// Board number above the sign (same panel the cabinets wore).
+			// Board number, floated well clear of the table so it reads across the
+			// room (same panel the cabinets wore).
 			var number = new GameObject( true, $"BoardNumber {i}" );
 			number.Parent = station;
-			number.LocalPosition = new Vector3( 0, 0, 94f );
+			number.LocalPosition = new Vector3( 0, 0, 116f );
 			number.LocalScale = 0.35f * TableScale;
 			number.AddComponent<WorldPanel>().LookAtCamera = true;
 			number.AddComponent<Gambit.UI.MarqueeNumberPanel>().Number = i.ToString();
