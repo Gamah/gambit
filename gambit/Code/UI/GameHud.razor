@@ -37,13 +37,13 @@
 						<div class="lc-head">LICHESS · RAPID 10+0</div>
 						@if ( lp.IsOpenGame )
 						{
-							<div class="lc-you">1. Open the opponent link in your anonymous browser:</div>
+							<div class="lc-you">Open the opponent link in your anonymous browser:</div>
 							<div class="url">@lp.ShareUrl</div>
 							<div class="button" onclick="@( () => lp.Copy( lp.ShareUrl ) )">@( lp.SinceCopied < 2f ? "✓ Copied" : "Copy opponent link" )</div>
-							<div class="lc-sub">2. Take your own seat — open this once in a browser (lichess has no API to seat you):</div>
+							<div class="lc-note">Tried to claim your seat with your token — the board goes live here once the opponent joins.</div>
+							<div class="lc-sub">Didn't activate? Open your seat link once in a browser (lichess has no seat API):</div>
 							<div class="url">@lp.SeatUrl</div>
 							<div class="button ghost" onclick="@( () => lp.Copy( lp.SeatUrl ) )">Copy my seat link</div>
-							<div class="lc-note">The board goes live here once both sides have joined.</div>
 						}
 						else
 						{

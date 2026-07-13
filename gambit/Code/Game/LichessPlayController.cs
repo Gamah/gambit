@@ -187,6 +187,7 @@ public sealed class LichessPlayController : Component, IBoardGame
 		IsOpenGame = false;
 		SeatUrl = null;
 		ShareUrl = null;
+		SelfSeatTried = false;
 		_phase = PlayPhase.Challenging;
 	}
 
@@ -223,8 +224,26 @@ public sealed class LichessPlayController : Component, IBoardGame
 		SeatUrl = seat == ChessSeat.White ? oc.urlWhite : oc.urlBlack;
 		ShareUrl = seat == ChessSeat.White ? oc.urlBlack : oc.urlWhite;
 		StatusText = null;
+
+		// Best-effort: try to claim our own seat with the token so no browser is
+		// needed on our side. Unverified (lichess has no seat API) — if it doesn't
+		// take, the HUD's seat link is the one-click fallback; either way the poll
+		// below picks up the game once both sides are in.
+		TrySelfSeat( SeatUrl );
+
 		_sincePoll = 999f;      // poll; goes live once both seats fill
 	}
+
+	async void TrySelfSeat( string seatUrl )
+	{
+		var res = await LichessApi.SeatOpenChallenge( seatUrl, LichessAuth.Token );
+		SelfSeatTried = true;
+		Log.Info( $"[Gambit] self-seat attempt → HTTP {res.Status} (if this claimed the seat, the board goes live once the opponent joins — no browser needed)" );
+	}
+
+	/// <summary>The token-based self-seat attempt has completed (the HUD softens the
+	/// "open your seat link" instruction to a fallback once we've tried).</summary>
+	public bool SelfSeatTried { get; private set; }
 
 	void FailStart( LichessApi.Result res )
 	{
