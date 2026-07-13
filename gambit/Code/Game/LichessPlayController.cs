@@ -79,6 +79,17 @@ public sealed class LichessPlayController : Component, IBoardGame
 	public string Error => _error;
 	public string GameUrl => string.IsNullOrEmpty( _gameId ) ? null : $"https://lichess.org/{_gameId}";
 
+	/// <summary>This game was started as an open challenge vs an anonymous browser
+	/// (drives the "share this / take your seat" HUD instead of "waiting to accept").</summary>
+	public bool IsOpenGame { get; private set; }
+
+	/// <summary>Colour-pinned URL the player opens once in a browser to take their
+	/// own seat (lichess has no API to seat yourself in an open challenge).</summary>
+	public string SeatUrl { get; private set; }
+
+	/// <summary>Colour-pinned URL to hand the anonymous opponent's browser.</summary>
+	public string ShareUrl { get; private set; }
+
 	public RealTimeSince SinceCopied { get; private set; } = 999f;
 
 	// ── Internals ──
@@ -173,7 +184,46 @@ public sealed class LichessPlayController : Component, IBoardGame
 		OpponentName = null;
 		OverText = null;
 		_error = null;
+		IsOpenGame = false;
+		SeatUrl = null;
+		ShareUrl = null;
 		_phase = PlayPhase.Challenging;
+	}
+
+	/// <summary>Create an open challenge vs an anonymous browser and sit in on it in
+	/// sbox on the side we're seated at. The open challenge is joinable by anyone
+	/// (incl. logged-out) via a colour URL — but lichess has NO API to seat the
+	/// creator, so the player opens <see cref="SeatUrl"/> once in a browser to take
+	/// their own seat; the anon opponent opens <see cref="ShareUrl"/>. The moment
+	/// both sides are seated the game appears in account/playing and goes live on
+	/// the board (matched by id — an open challenge's id is also the game id).</summary>
+	public async void PlayOpenGame()
+	{
+		if ( !CanStart( out var seat ) ) return;
+
+		BeginChallenge( seat, expectOpponent: null, ai: false );
+		IsOpenGame = true;
+		StatusText = "Creating an open game…";
+
+		var res = await LichessApi.CreateOpenChallenge( 600, 0, "Terry's Gambit", LichessAuth.Token );
+		if ( !res.Ok ) { FailStart( res ); return; }
+
+		var oc = LichessApi.Deserialize<LichessOpenChallenge>( res.Body );
+		if ( oc == null || string.IsNullOrEmpty( oc.id )
+			|| string.IsNullOrEmpty( oc.urlWhite ) || string.IsNullOrEmpty( oc.urlBlack ) )
+		{
+			_error = "lichess sent an unexpected reply";
+			Log.Warning( $"[Gambit] open-game reply missing urls: {LichessApi.Truncate( res.Body, 200 )}" );
+			_phase = PlayPhase.Idle;
+			return;
+		}
+
+		_gameId = oc.id;        // open-challenge id == the game id it becomes
+		_challengeId = oc.id;
+		SeatUrl = seat == ChessSeat.White ? oc.urlWhite : oc.urlBlack;
+		ShareUrl = seat == ChessSeat.White ? oc.urlBlack : oc.urlWhite;
+		StatusText = null;
+		_sincePoll = 999f;      // poll; goes live once both seats fill
 	}
 
 	void FailStart( LichessApi.Result res )
@@ -361,10 +411,14 @@ public sealed class LichessPlayController : Component, IBoardGame
 		_error = null;
 	}
 
-	public void CopyGameUrl()
+	public void CopyGameUrl() => Copy( GameUrl );
+
+	/// <summary>Click-to-copy any of the play/seat/share URLs (no in-game browser
+	/// open API — CLAUDE.md).</summary>
+	public void Copy( string url )
 	{
-		if ( string.IsNullOrEmpty( GameUrl ) ) return;
-		Sandbox.UI.Clipboard.SetText( GameUrl );
+		if ( string.IsNullOrEmpty( url ) ) return;
+		Sandbox.UI.Clipboard.SetText( url );
 		SinceCopied = 0f;
 	}
 }

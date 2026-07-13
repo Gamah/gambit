@@ -168,4 +168,15 @@ public static class LichessSpikes
 		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_challenge_ai [level]" ); return; }
 		pc.ChallengeAi( level );
 	}
+
+	/// <summary>Create an open game vs an anonymous browser and sit in on it in sbox
+	/// on the side you're seated at (you open your own seat link once — lichess has
+	/// no API to seat the creator). Sit down first; the HUD then shows both links.</summary>
+	[ConCmd( "gambit_play_open" )]
+	public static void PlayOpen()
+	{
+		var pc = Gambit.Game.LichessPlayController.For( Gambit.World.ChessStation.Active );
+		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_play_open" ); return; }
+		pc.PlayOpenGame();
+	}
 }

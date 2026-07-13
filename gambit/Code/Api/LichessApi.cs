@@ -130,12 +130,15 @@ public static class LichessApi
 	/// so it is always casual/unrated — exactly what we want. Clocks are in seconds
 	/// (10+0 rapid = 600/0). The reply carries <c>urlWhite</c>/<c>urlBlack</c>,
 	/// which pin the colours.</summary>
-	public static Task<Result> CreateOpenChallenge( int clockLimitSeconds, int clockIncrementSeconds, string name = null )
+	public static Task<Result> CreateOpenChallenge( int clockLimitSeconds, int clockIncrementSeconds, string name = null, string token = null )
 	{
 		var body = $"rated=false&clock.limit={clockLimitSeconds}&clock.increment={clockIncrementSeconds}&variant=standard";
 		if ( !string.IsNullOrEmpty( name ) )
 			body += "&name=" + Uri.EscapeDataString( name );
-		return PostForm( "/api/challenge/open", body );
+		// Created with the player's token when they intend to sit in on it in sbox,
+		// so it's cancellable and tied to their session; unauthenticated (token null)
+		// for the pure browser-link flow (M4a).
+		return Send( Base + "/api/challenge/open", "POST", Form( body ), token );
 	}
 
 	/// <summary>POST an <c>x-www-form-urlencoded</c> body to a lichess path,

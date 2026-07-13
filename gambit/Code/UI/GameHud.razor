@@ -35,8 +35,21 @@
 					@if ( lp.Challenging )
 					{
 						<div class="lc-head">LICHESS · RAPID 10+0</div>
-						<div class="lc-you">@( lp.StatusText ?? "Waiting for the opponent…" )</div>
-						<div class="lc-note">They accept on lichess.org; the game then appears here.</div>
+						@if ( lp.IsOpenGame )
+						{
+							<div class="lc-you">1. Open the opponent link in your anonymous browser:</div>
+							<div class="url">@lp.ShareUrl</div>
+							<div class="button" onclick="@( () => lp.Copy( lp.ShareUrl ) )">@( lp.SinceCopied < 2f ? "✓ Copied" : "Copy opponent link" )</div>
+							<div class="lc-sub">2. Take your own seat — open this once in a browser (lichess has no API to seat you):</div>
+							<div class="url">@lp.SeatUrl</div>
+							<div class="button ghost" onclick="@( () => lp.Copy( lp.SeatUrl ) )">Copy my seat link</div>
+							<div class="lc-note">The board goes live here once both sides have joined.</div>
+						}
+						else
+						{
+							<div class="lc-you">@( lp.StatusText ?? "Waiting for the opponent…" )</div>
+							<div class="lc-note">They accept on lichess.org; the game then appears here.</div>
+						}
 						<div class="button ghost" onclick="@( () => lp.ClearPlay() )">Cancel</div>
 					}
 					else if ( lp.Playing )
@@ -97,6 +110,7 @@
 							<div class="lc-you">Play a lichess user right here — you'll be @SeatWord( mySeat ), Rapid 10+0.</div>
 							<TextEntry @ref="_oppEntry" class="lc-input" placeholder="opponent lichess username" />
 							<div class="button" onclick="@( () => ChallengeUser() )">Challenge & play here</div>
+							<div class="button ghost" onclick="@( () => PlayOpen() )">vs anonymous browser (open link)</div>
 							<div class="button ghost" onclick="@( () => ChallengeAi() )">vs Stockfish (level 3)</div>
 						}
 
@@ -350,6 +364,7 @@
 	TextEntry _oppEntry;
 	void ChallengeUser() => LichessPlay()?.ChallengeUser( _oppEntry?.Text?.Trim() );
 	void ChallengeAi() => LichessPlay()?.ChallengeAi( 3 );
+	void PlayOpen() => LichessPlay()?.PlayOpenGame();
 
 	static string LichessTurnText( LichessPlayController lp ) =>
 		lp.IsMyTurn
@@ -422,7 +437,8 @@
 			System.HashCode.Combine( lc?.HasOpenGame, lc?.UrlWhite, lc?.Creating, lc?.Error, lc?.SinceCopied < 2f, _joinError ),
 			System.HashCode.Combine( lp?.Active, lp?.Playing, lp?.Challenging, lp?.IsMyTurn, lp?.Game?.Fen,
 				lp?.StatusText, lp?.OverText ),
-			System.HashCode.Combine( lp?.Error, lp?.OpponentName, lp?.SinceCopied < 2f, SignedIn() ) );
+			System.HashCode.Combine( lp?.Error, lp?.OpponentName, lp?.SinceCopied < 2f, SignedIn(),
+				lp?.IsOpenGame, lp?.ShareUrl ) );
 		return System.HashCode.Combine(
 			Visible(), ctrl?.GameId, ctrl?.Game?.MoveCount, ctrl?.GameOver, lichessHash,
 			System.HashCode.Combine( ctrl?.Importing, ctrl?.LichessUrl, ctrl?.ImportError,
