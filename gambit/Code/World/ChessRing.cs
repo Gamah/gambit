@@ -484,10 +484,11 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		lightGo.AddComponent<MarqueeGlow>();
 	}
 
-	// Square/frame tints: fixed warm wood pair with strong light/dark contrast so
-	// both piece colors read on both square colors.
-	static readonly Color LightSquare = new( 0.70f, 0.62f, 0.48f );
-	static readonly Color DarkSquare = new( 0.30f, 0.21f, 0.14f );
+	// Square tints: neutral black and white (matching the room's checkerboard
+	// floor). The pieces stay warm ivory/walnut, so they still read against
+	// same-color squares. Frame keeps a dark wood tone.
+	static readonly Color LightSquare = new( 0.85f, 0.85f, 0.85f );
+	static readonly Color DarkSquare = new( 0.09f, 0.09f, 0.09f );
 	static readonly Color FrameColor = new( 0.12f, 0.08f, 0.05f );
 
 	/// <summary>Board frame slab + 64 tinted cells on the tabletop.</summary>
