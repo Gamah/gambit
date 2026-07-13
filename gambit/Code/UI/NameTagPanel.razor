@@ -17,7 +17,7 @@
 		<div class="steam">@SteamName()</div>
 		@if ( ShowGambitName() )
 		{
-			<div class="rota">@Player.GambitName</div>
+			<div class="rota">@GambitLine()</div>
 		}
 	</div>
 </root>
@@ -66,6 +66,12 @@
 		!string.IsNullOrWhiteSpace( Player?.GambitName ) &&
 		!string.Equals( Player.GambitName, SteamName(), StringComparison.OrdinalIgnoreCase );
 
+	// Append the lichess rating when signed in, e.g. "MagnusFan  (1834)".
+	string GambitLine() =>
+		string.IsNullOrEmpty( Player?.GambitRating )
+			? Player?.GambitName
+			: $"{Player.GambitName}  ({Player.GambitRating})";
+
 	protected override int BuildHash() =>
-		HashCode.Combine( SteamName(), Player?.GambitName );
+		HashCode.Combine( SteamName(), Player?.GambitName, Player?.GambitRating );
 }

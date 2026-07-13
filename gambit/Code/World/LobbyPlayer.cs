@@ -33,6 +33,10 @@ public sealed class LobbyPlayer : Component
 	/// local FileSystem.Data.</summary>
 	[Sync] public string GambitName { get; set; }
 
+	/// <summary>Lichess rating for the name tag as a string ("" when not signed in
+	/// or unrated). A rating is public info, so unlike the token it's fine to sync.</summary>
+	[Sync] public string GambitRating { get; set; }
+
 	/// <summary>Name tag height above the player origin (the avatar is ~72 tall).</summary>
 	[Property] public float NameTagHeight { get; set; } = 82f;
 
@@ -107,6 +111,11 @@ public sealed class LobbyPlayer : Component
 		Local = this;
 		_spawnPos = WorldPosition;
 		EnsureGameHud();
+		EnsureSplash();
+
+		// Re-validate any stored lichess token; a 401 clears it and re-prompts
+		// (PLAN.md M3 gate: "401 → re-prompt"). No-op when signed out.
+		Gambit.Api.LichessAuth.ValidateStoredToken();
 	}
 
 	/// <summary>Attach the seated-game HUD to the scene's ScreenPanel at runtime
@@ -118,6 +127,19 @@ public sealed class LobbyPlayer : Component
 		{
 			if ( screen.Components.Get<Gambit.UI.GameHud>() == null )
 				screen.GameObject.AddComponent<Gambit.UI.GameHud>();
+			return; // first ScreenPanel is the scene UI root
+		}
+	}
+
+	/// <summary>Attach the lichess sign-in modal to the scene ScreenPanel at
+	/// runtime (local player only) — same self-heal as EnsureGameHud, so M3 needs
+	/// no scene rewire.</summary>
+	void EnsureSplash()
+	{
+		foreach ( var screen in Scene.GetAllComponents<ScreenPanel>() )
+		{
+			if ( screen.Components.Get<Gambit.UI.Screens.SplashScreen>() == null )
+				screen.GameObject.AddComponent<Gambit.UI.Screens.SplashScreen>();
 			return; // first ScreenPanel is the scene UI root
 		}
 	}
@@ -158,9 +180,16 @@ public sealed class LobbyPlayer : Component
 			Respawn();
 
 		// Publish the display name for everyone's name tags; it can appear or change
-		// at any time. Load() is cached.
-		var uname = Gambit.Game.PlayerData.Load()?.Username ?? "";
+		// at any time. Load() is cached. A signed-in lichess account name wins over
+		// the free-form anonymous name (PLAN.md M3).
+		var data = Gambit.Game.PlayerData.Load();
+		var uname = !string.IsNullOrEmpty( data?.LichessUsername ) ? data.LichessUsername
+			: ( data?.Username ?? "" );
 		if ( GambitName != uname ) GambitName = uname;
+
+		var rating = ( !string.IsNullOrEmpty( data?.LichessUsername ) && data.LichessRating > 0 )
+			? data.LichessRating.ToString() : "";
+		if ( GambitRating != rating ) GambitRating = rating;
 
 		if ( _leaving )
 		{
@@ -186,6 +215,30 @@ public sealed class LobbyPlayer : Component
 			return;
 		}
 
+		// Sign-in modal: free the mouse for clicking and lock movement, without
+		// touching the camera — a screen-space overlay, same idea as the wall boards
+		// (UseLookControls=false), plus UseInputControls=false so WASD can't walk the
+		// avatar out from under the modal. Restored when it closes.
+		if ( Gambit.UI.Screens.SplashScreen.IsOpen )
+		{
+			if ( _controller != null && !_splashLock )
+			{
+				_splashLock = true;
+				_controller.UseLookControls = false;
+				_controller.UseInputControls = false;
+			}
+			return;
+		}
+		if ( _splashLock )
+		{
+			_splashLock = false;
+			if ( _controller != null )
+			{
+				_controller.UseLookControls = true;
+				_controller.UseInputControls = true;
+			}
+		}
+
 		// Chat typing: keep the controller off so WASD keystrokes don't walk the
 		// avatar, and skip interaction handling until the box closes.
 		if ( Gambit.UI.Screens.ChatPanel.IsOpen )
@@ -203,6 +256,16 @@ public sealed class LobbyPlayer : Component
 		{
 			_controller.Enabled = true;
 			_controller.EyeAngles = _eyeFrom;
+		}
+
+		// Brand-new player (no name, never signed in): open the sign-in / name modal
+		// first. The welcome board waits until it's closed (TryAutoShowInfo guards on it).
+		if ( !_splashPopDone )
+		{
+			_splashPopDone = true;
+			var pd = Gambit.Game.PlayerData.Load();
+			if ( string.IsNullOrEmpty( pd?.LichessToken ) && string.IsNullOrEmpty( pd?.Username ) )
+				Gambit.UI.Screens.SplashScreen.Open();
 		}
 
 		// First-ever load: pop the welcome/info board up automatically until the player
@@ -269,12 +332,17 @@ public sealed class LobbyPlayer : Component
 	}
 
 	bool _infoPopDone;
+	bool _splashPopDone;
+	bool _splashLock; // controller look/input suppressed while the sign-in modal is up
 
 	/// <summary>Auto-open the welcome/info board the first time a player ever loads the
 	/// lobby (until they dismiss it once — PlayerData.InfoPanelSeen). Retries each frame
 	/// until the InfoStation exists (InfoWall builds it at runtime).</summary>
 	void TryAutoShowInfo()
 	{
+		// Let the sign-in modal go first on a brand-new profile; it retries next frame.
+		if ( Gambit.UI.Screens.SplashScreen.IsOpen ) return;
+
 		if ( Gambit.Game.PlayerData.Load()?.InfoPanelSeen == true )
 		{
 			_infoPopDone = true;

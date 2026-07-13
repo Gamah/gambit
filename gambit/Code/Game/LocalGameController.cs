@@ -1,6 +1,5 @@
 using System;
-using System.Net.Http;
-using System.Text;
+using Gambit.Api;
 using Gambit.Chess;
 using Gambit.World;
 using Sandbox;
@@ -396,76 +395,45 @@ public sealed class LocalGameController : Component
 	/// (same pattern as DiscordButton).</summary>
 	public RealTimeSince SinceUrlCopied { get; private set; } = 999f;
 
-	// Lichess rate discipline (CLAUDE.md): one REST request at a time across the
-	// whole client, and a full 60s back-off after any HTTP 429.
-	static bool _lichessRequestInFlight;
-	static RealTimeUntil _lichess429Backoff;
-
 	/// <summary>POST the finished game's PGN to lichess (unauthenticated import,
-	/// 100 games/hour/IP) and keep the returned URL for click-to-copy.</summary>
+	/// 100 games/hour/IP) and keep the returned URL for click-to-copy. Routed
+	/// through <see cref="LichessApi"/>, which owns the single-flight + 60s-429
+	/// rate discipline and the request shape (the 4-arg form that actually sends
+	/// the body — the M2 import was dead because the 3-arg form didn't; PLAN.md
+	/// M2 carry-in).</summary>
 	public async void ImportToLichess()
 	{
 		if ( Game == null || !Game.IsGameOver || Importing || LichessUrl != null ) return;
 		if ( Game.MoveCount == 0 ) { _importError = "No move history on this client to import"; return; }
 
-		if ( _lichessRequestInFlight ) { _importError = "Another lichess request is running — try again"; return; }
-		if ( !_lichess429Backoff ) { _importError = "lichess told us to slow down — try again in a minute"; return; }
-
 		var pgn = BuildPgn();
 		Importing = true;
 		_importError = null;
-		_lichessRequestInFlight = true;
 		try
 		{
-			var content = new StringContent(
-				"pgn=" + Uri.EscapeDataString( pgn ),
-				Encoding.UTF8, "application/x-www-form-urlencoded" );
-
-			var response = await Http.RequestAsync( "https://lichess.org/api/import", "POST", content );
-
-			if ( (int)response.StatusCode == 429 )
+			var res = await LichessApi.ImportPgn( pgn );
+			if ( !res.Ok )
 			{
-				_lichess429Backoff = 60f; // full minute, per lichess guidance
-				_importError = "lichess rate limit hit — wait a minute and retry";
+				_importError = res.Error ?? "lichess import failed";
+				Log.Warning( $"[Gambit] import failed ({res.Status}): {LichessApi.Truncate( res.Body, 200 )}" );
 				return;
 			}
 
-			var body = await response.Content.ReadAsStringAsync();
-			if ( !response.IsSuccessStatusCode )
-			{
-				_importError = $"lichess import failed ({(int)response.StatusCode})";
-				Log.Warning( $"[Gambit] import failed {(int)response.StatusCode}: {Truncate( body, 200 )}" );
-				return;
-			}
-
-			var url = System.Text.Json.JsonSerializer.Deserialize<ImportResponse>( body )?.url;
+			var url = LichessApi.Deserialize<LichessImport>( res.Body )?.url;
 			if ( string.IsNullOrEmpty( url ) )
 			{
 				_importError = "lichess sent an unexpected reply";
-				Log.Warning( $"[Gambit] import reply had no url: {Truncate( body, 200 )}" );
+				Log.Warning( $"[Gambit] import reply had no url: {LichessApi.Truncate( res.Body, 200 )}" );
 				return;
 			}
 
 			LichessUrl = url;
 			Log.Info( $"[Gambit] game imported: {url}" );
 		}
-		catch ( Exception e )
-		{
-			_importError = "couldn't reach lichess";
-			Log.Warning( $"[Gambit] import request failed: {e.Message}" );
-		}
 		finally
 		{
 			Importing = false;
-			_lichessRequestInFlight = false;
 		}
-	}
-
-	class ImportResponse
-	{
-		// lowercase to match the JSON without needing serializer attributes
-		public string id { get; set; }
-		public string url { get; set; }
 	}
 
 	/// <summary>Copy the imported game URL — no API exists to open a browser
@@ -487,7 +455,4 @@ public sealed class LocalGameController : Component
 		Game.SetHeader( "Result", Game.ResultString );
 		return Game.Pgn;
 	}
-
-	static string Truncate( string s, int max ) =>
-		s == null ? "" : s.Length <= max ? s : s[..max] + "…";
 }
