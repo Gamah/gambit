@@ -149,6 +149,10 @@ public sealed class LocalGameController : Component
 
 	// ── Host game lifecycle ──
 
+	/// <summary>True when this board is hosting an open lichess game (M4) — the
+	/// local two-seat match steps aside so the two sides can be colour URLs.</summary>
+	bool LichessBusy => LichessGameController.For( Station )?.HasOpenGame ?? false;
+
 	void HostUpdate()
 	{
 		if ( Station == null ) return;
@@ -160,8 +164,10 @@ public sealed class LocalGameController : Component
 		switch ( Phase )
 		{
 			case PhaseIdle:
-				// A game starts the moment both seats fill
-				if ( whiteSeated && blackSeated )
+				// A game starts the moment both seats fill — unless this board is
+				// hosting an open lichess game (M4), where the two sides are colour
+				// URLs, not a local two-player match.
+				if ( whiteSeated && blackSeated && !LichessBusy )
 					HostStartFresh();
 				break;
 

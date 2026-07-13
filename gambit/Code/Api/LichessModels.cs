@@ -30,6 +30,21 @@ public sealed class LichessImport
 	public string url { get; set; }
 }
 
+/// <summary>Reply from <c>POST /api/challenge/open</c> — an open-ended challenge
+/// anyone can join by opening a URL (M4). The fields are top-level (this endpoint
+/// does not wrap them under a <c>challenge</c> key, unlike the direct-challenge
+/// endpoints). <c>urlWhite</c>/<c>urlBlack</c> each pin a colour: whoever opens
+/// that URL plays that side, so they double as our side-assignment source. These
+/// URLs are public (no token) — safe to <c>[Sync]</c> across the lobby.</summary>
+public sealed class LichessOpenChallenge
+{
+	public string id { get; set; }
+	public string url { get; set; }
+	public string speed { get; set; }        // "rapid" for 10+0
+	public string urlWhite { get; set; }
+	public string urlBlack { get; set; }
+}
+
 /// <summary>Reply from <c>POST /api/token</c> — the OAuth code exchange.</summary>
 public sealed class LichessTokenResponse
 {

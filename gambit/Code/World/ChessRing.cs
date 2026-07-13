@@ -387,6 +387,12 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			view.Station = component;
 			view.Controller = controller;
 
+			// Open lichess game (M4): generates a shareable Rapid 10+0 link for the
+			// side a player sits at; the game plays on lichess.org (no streaming yet).
+			// Replicates with the station GO like the others for its [Sync] URLs.
+			var lichess = station.AddComponent<Gambit.Game.LichessGameController>();
+			lichess.Station = component;
+
 			// Floating occupancy sign over the table (blank while the table is
 			// empty). Billboarded per-viewer, so it reads from anywhere in the room.
 			var sign = new GameObject( true, "Sign" );

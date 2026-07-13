@@ -125,6 +125,19 @@ public static class LichessApi
 	public static Task<Result> ImportPgn( string pgn ) =>
 		PostForm( "/api/import", "pgn=" + Uri.EscapeDataString( pgn ) );
 
+	/// <summary>Create an open-ended challenge anyone can join by opening a URL
+	/// (M4 — no streaming needed; the game plays on lichess.org). Unauthenticated,
+	/// so it is always casual/unrated — exactly what we want. Clocks are in seconds
+	/// (10+0 rapid = 600/0). The reply carries <c>urlWhite</c>/<c>urlBlack</c>,
+	/// which pin the colours.</summary>
+	public static Task<Result> CreateOpenChallenge( int clockLimitSeconds, int clockIncrementSeconds, string name = null )
+	{
+		var body = $"rated=false&clock.limit={clockLimitSeconds}&clock.increment={clockIncrementSeconds}&variant=standard";
+		if ( !string.IsNullOrEmpty( name ) )
+			body += "&name=" + Uri.EscapeDataString( name );
+		return PostForm( "/api/challenge/open", body );
+	}
+
 	/// <summary>POST an <c>x-www-form-urlencoded</c> body to a lichess path,
 	/// unauthenticated (used by import and the OAuth token exchange).</summary>
 	public static Task<Result> PostForm( string path, string formBody )

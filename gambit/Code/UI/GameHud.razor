@@ -22,7 +22,7 @@
 		var view = View();
 
 		<div class="hud">
-			<div class="title">LOCAL GAME</div>
+			<div class="title">@BoardTitle( ctrl )</div>
 			<div class="names">
 				<div class="name">⬜ @( Station().WhiteName ?? "—" )</div>
 				<div class="name">⬛ @( Station().BlackName ?? "—" )</div>
@@ -30,7 +30,53 @@
 
 			@if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
 			{
-				<div class="status wait">Waiting for an opponent to take the @( OpenSeatName() ) seat…</div>
+				var lc = Lichess();
+				var mySeat = ChessStation.ActiveSeat;
+
+				<div class="lichess">
+					@if ( lc != null && lc.HasOpenGame )
+					{
+						var myUrl = lc.PlayUrlFor( mySeat );
+						var oppSeat = mySeat == ChessSeat.White ? ChessSeat.Black : ChessSeat.White;
+						var oppUrl = lc.PlayUrlFor( oppSeat );
+
+						<div class="lc-head">LICHESS · RAPID 10+0 · UNRATED</div>
+						<div class="lc-you">You play @SeatWord( mySeat ) — open your link in a browser to play.</div>
+						<div class="url">@myUrl</div>
+						<div class="button" onclick="@( () => lc.CopyUrl( myUrl ) )">@( lc.SinceCopied < 2f ? "✓ Copied" : "Copy my link" )</div>
+						<div class="lc-sub">Opponent link (@SeatWord( oppSeat )) — share it:</div>
+						<div class="url">@oppUrl</div>
+						<div class="button" onclick="@( () => lc.CopyUrl( oppUrl ) )">Copy opponent link</div>
+						<div class="button ghost" onclick="@( () => lc.ClearOpenGame() )">New link</div>
+					}
+					else
+					{
+						<div class="lc-head">PLAY ON LICHESS</div>
+						<div class="lc-you">Create an unrated Rapid 10+0 game — you'll play @SeatWord( mySeat ).</div>
+						@if ( lc?.Creating ?? false )
+						{
+							<div class="button disabled">Creating…</div>
+						}
+						else
+						{
+							<div class="button" onclick="@( () => lc?.CreateOpenGame() )">Create Rapid 10+0 game</div>
+						}
+						@if ( lc?.Error != null )
+						{
+							<div class="error">@lc.Error</div>
+						}
+
+						<div class="lc-sub">Have a game link? Take your assigned side:</div>
+						<TextEntry @ref="_joinEntry" class="lc-input" placeholder="paste lichess URL" />
+						<div class="button" onclick="@( () => JoinByLink() )">Take my assigned side</div>
+						@if ( _joinError != null )
+						{
+							<div class="error">@_joinError</div>
+						}
+
+						<div class="lc-note">Rapid only — no Blitz/Bullet. Or wait for someone to sit across for a local game.</div>
+					}
+				</div>
 			}
 			else if ( ctrl.GameOver )
 			{
@@ -175,6 +221,23 @@
 	}
 	.error { font-size: 12px; color: #ff8080; }
 
+	.lichess { flex-direction: column; gap: 6px; }
+	.lc-head { font-size: 12px; letter-spacing: 2px; color: rgba(255, 255, 255, 0.45); }
+	.lc-you { font-size: 13px; color: #7fd47f; }
+	.lc-sub { font-size: 12px; color: rgba(255, 255, 255, 0.6); margin-top: 4px; }
+	.lc-note { font-size: 11px; color: rgba(255, 255, 255, 0.4); margin-top: 4px; }
+	.lc-input {
+		pointer-events: all;
+		background-color: rgba(255, 255, 255, 0.08);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 6px;
+		padding: 6px 8px;
+		font-size: 12px;
+		color: white;
+	}
+	.button.ghost { background-color: rgba(255, 255, 255, 0.08); }
+	.button.ghost:hover { background-color: rgba(255, 255, 255, 0.18); }
+
 	.promo-veil {
 		position: absolute;
 		left: 0; top: 0;
@@ -217,16 +280,40 @@
 {
 	static ChessStation Station() => ChessStation.Active;
 	static LocalGameController Controller() => LocalGameController.For( ChessStation.Active );
+	static LichessGameController Lichess() => LichessGameController.For( ChessStation.Active );
 	static ChessBoardView View() => ChessStation.Active?.Components.Get<ChessBoardView>();
+
+	static string SeatWord( ChessSeat seat ) => seat == ChessSeat.White ? "White" : "Black";
+
+	static string BoardTitle( LocalGameController ctrl ) =>
+		( Lichess()?.HasOpenGame ?? false ) ? "LICHESS GAME"
+		: ( ctrl?.HasGame ?? false ) ? "LOCAL GAME"
+		: "CHESS BOARD";
+
+	// Join-by-link (M4): read the side a pasted lichess URL pins and route the
+	// camera there. The gambit_join console command is the guaranteed-working
+	// twin if this field's focus ever misbehaves while seated.
+	TextEntry _joinEntry;
+	string _joinError;
+
+	void JoinByLink()
+	{
+		var url = _joinEntry?.Text?.Trim();
+		var seat = LichessGameController.SeatFromUrl( url );
+		if ( seat is not { } s )
+		{
+			_joinError = "Couldn't read a side from that link — use a ?color= URL.";
+			return;
+		}
+		_joinError = null;
+		LobbyPlayer.Local?.JoinLichessSide( s );
+	}
 
 	static bool Visible() =>
 		ChessStation.Active != null && ( LobbyPlayer.Local?.CameraSettled ?? false );
 
 	static bool BothSeated() =>
 		Station() is { } s && s.WhiteSteamId != 0 && s.BlackSteamId != 0;
-
-	static string OpenSeatName() =>
-		Station()?.WhiteSteamId == 0 ? "White" : "Black";
 
 	static string TurnText( LocalGameController ctrl )
 	{
@@ -257,8 +344,11 @@
 	protected override int BuildHash()
 	{
 		var ctrl = Controller();
+		var lc = Lichess();
+		var lichessHash = System.HashCode.Combine( lc?.HasOpenGame, lc?.UrlWhite, lc?.Creating,
+			lc?.Error, lc?.SinceCopied < 2f, _joinError );
 		return System.HashCode.Combine(
-			Visible(), ctrl?.GameId, ctrl?.Game?.MoveCount, ctrl?.GameOver,
+			Visible(), ctrl?.GameId, ctrl?.Game?.MoveCount, ctrl?.GameOver, lichessHash,
 			System.HashCode.Combine( ctrl?.Importing, ctrl?.LichessUrl, ctrl?.ImportError,
 				ctrl?.SinceUrlCopied < 2f, ctrl?.IsMyTurn, View()?.PendingPromotion != null,
 				LobbyPlayer.Local?.LeaveArmed, BothSeated() ) );

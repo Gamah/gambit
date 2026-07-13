@@ -83,6 +83,12 @@ public sealed class LobbyPlayer : Component
 	Vector3 _leaveFromPos;
 	Rotation _leaveFromRot;
 
+	// Deferred "join by link" (M4): when a pasted lichess URL assigns a side we
+	// aren't currently on, we Disengage first and take the seat once the leave
+	// blend finishes (processed in OnUpdate's roaming section).
+	ChessStation _pendingJoinStation;
+	ChessSeat? _pendingJoinSeat;
+
 	protected override void OnDestroy()
 	{
 		_dressCts?.Cancel();
@@ -258,6 +264,20 @@ public sealed class LobbyPlayer : Component
 			_controller.EyeAngles = _eyeFrom;
 		}
 
+		// Deferred join-by-link (M4): a pasted lichess URL asked us to take a
+		// specific side. If we were seated elsewhere we've since Disengaged; now the
+		// leave blend is done and we're roaming, so take the assigned seat and let
+		// Engage swoop the camera to it.
+		if ( _pendingJoinSeat is { } pendingSeat )
+		{
+			var station = _pendingJoinStation;
+			_pendingJoinStation = null;
+			_pendingJoinSeat = null;
+			if ( station != null && !station.SeatTaken( pendingSeat ) )
+				Engage( station, pendingSeat );
+			return;
+		}
+
 		// Brand-new player (no name, never signed in): open the sign-in / name modal
 		// first. The welcome board waits until it's closed (TryAutoShowInfo guards on it).
 		if ( !_splashPopDone )
@@ -408,9 +428,10 @@ public sealed class LobbyPlayer : Component
 	}
 
 	/// <summary>Nearest free seat within InteractRange: each table offers two seat
-	/// spots (ChessStation.SeatWorldPosition), and the closest free one wins —
-	/// except at an empty table, where the first sitter always gets White (PLAN
-	/// D1), whichever side they walked up to.</summary>
+	/// spots (ChessStation.SeatWorldPosition), and the closest free one wins. You
+	/// take the side you actually walk up to — the lichess open game (M4) colours
+	/// you by that side, so we no longer override the first sitter to White (the old
+	/// PLAN D1 convention). White still moves first regardless of who sat first.</summary>
 	void FindNearbySeat()
 	{
 		NearbyStation = null;
@@ -418,8 +439,6 @@ public sealed class LobbyPlayer : Component
 
 		foreach ( var station in Scene.GetAllComponents<ChessStation>() )
 		{
-			bool tableEmpty = !station.AnySeatTaken;
-
 			foreach ( var seat in new[] { ChessSeat.White, ChessSeat.Black } )
 			{
 				if ( station.SeatTaken( seat ) ) continue;
@@ -429,7 +448,7 @@ public sealed class LobbyPlayer : Component
 				if ( dist < bestDist )
 				{
 					NearbyStation = station;
-					NearbySeat = tableEmpty ? ChessSeat.White : seat;
+					NearbySeat = seat;
 					bestDist = dist;
 				}
 			}
@@ -474,6 +493,45 @@ public sealed class LobbyPlayer : Component
 		station.Enter( seat );
 		if ( ChessStation.Active != station ) return; // someone else has it
 		BeginEngage();
+	}
+
+	/// <summary>Take a specific side and swoop the camera there — the "join by link"
+	/// path (M4), where lichess (not proximity) picks the colour. Uses the board the
+	/// player is at / nearest to. If already seated on the other side of that board,
+	/// leaves first and takes the assigned seat once the blend finishes
+	/// (<see cref="_pendingJoinSeat"/>, handled in OnUpdate).</summary>
+	public void JoinLichessSide( ChessSeat seat )
+	{
+		var station = ChessStation.Active ?? NearestStation();
+		if ( station == null ) return;
+
+		if ( ChessStation.Active == station && ChessStation.ActiveSeat == seat )
+			return; // already on the assigned side
+
+		if ( ChessStation.Active != null )
+		{
+			_pendingJoinStation = station;
+			_pendingJoinSeat = seat;
+			Disengage();
+			return;
+		}
+
+		Engage( station, seat );
+	}
+
+	/// <summary>Nearest chess table by planar distance, ignoring seat occupancy —
+	/// the board a "join by link" seats you at when you aren't already at one.</summary>
+	ChessStation NearestStation()
+	{
+		ChessStation best = null;
+		float bestDist = float.MaxValue;
+		foreach ( var station in Scene.GetAllComponents<ChessStation>() )
+		{
+			var delta = station.WorldPosition - GameObject.WorldPosition;
+			float dist = new Vector2( delta.x, delta.y ).Length;
+			if ( dist < bestDist ) { best = station; bestDist = dist; }
+		}
+		return best;
 	}
 
 	/// <summary>Open a south-wall settings board. Its UI is a screen-space ScreenPanel,

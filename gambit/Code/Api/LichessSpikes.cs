@@ -101,4 +101,48 @@ public static class LichessSpikes
 		else
 			Log.Info( "[Gambit] not signed in to lichess" );
 	}
+
+	// ── M4: open-game link flow ──
+
+	/// <summary>Self-test POST /api/challenge/open (unrated Rapid 10+0) and log the
+	/// raw reply so the URL shape can be confirmed in-editor. If this returns
+	/// urlWhite/urlBlack, the in-game "Create Rapid 10+0 game" button will too.</summary>
+	[ConCmd( "gambit_open_challenge" )]
+	public static void OpenChallenge() => _ = RunOpenChallenge();
+
+	static async Task RunOpenChallenge()
+	{
+		Log.Info( "[Gambit] open-challenge test → POST https://lichess.org/api/challenge/open (unrated Rapid 10+0)" );
+		var res = await LichessApi.CreateOpenChallenge( 600, 0, "Terry's Gambit test" );
+		Log.Info( $"[Gambit]   HTTP {res.Status}, ok={res.Ok}" );
+		if ( !string.IsNullOrEmpty( res.Error ) ) Log.Warning( $"[Gambit]   error: {res.Error}" );
+		Log.Info( $"[Gambit]   body: {LichessApi.Truncate( res.Body, 400 )}" );
+
+		var oc = LichessApi.Deserialize<LichessOpenChallenge>( res.Body );
+		if ( !string.IsNullOrEmpty( oc?.urlWhite ) )
+		{
+			Log.Info( $"[Gambit]   ✓ speed={oc.speed}  white={oc.urlWhite}  black={oc.urlBlack}" );
+			Log.Info( "[Gambit]   open either URL in a browser to play that side." );
+		}
+		else
+		{
+			Log.Error( "[Gambit]   ✗ no urlWhite — a 4xx means the body/allowlist is wrong; a 2xx with no urls means the reply shape changed (check body above)." );
+		}
+	}
+
+	/// <summary>Join a lichess game by link from the console: reads the colour the
+	/// URL pins (?color=white|black) and swoops the local player's camera to that
+	/// side of the nearest board — the same routing the in-game paste field uses.</summary>
+	[ConCmd( "gambit_join" )]
+	public static void Join( string url )
+	{
+		var seat = Gambit.Game.LichessGameController.SeatFromUrl( url );
+		if ( seat is not { } s )
+		{
+			Log.Warning( "[Gambit] couldn't read a side from that link — use a ?color=white or ?color=black URL." );
+			return;
+		}
+		Log.Info( $"[Gambit] joining as {s} — moving camera to that seat." );
+		Gambit.World.LobbyPlayer.Local?.JoinLichessSide( s );
+	}
 }
