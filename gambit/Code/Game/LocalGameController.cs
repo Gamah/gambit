@@ -1,8 +1,10 @@
 using System;
+using System.Net.Http;
 using System.Text;
 using Gambit.Chess;
 using Gambit.World;
 using Sandbox;
+using Sandbox.UI; // Clipboard
 
 namespace Gambit.Game;
 

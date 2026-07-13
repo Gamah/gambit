@@ -114,7 +114,7 @@ public sealed class LobbyPlayer : Component
 	/// as LobbyRoom.EnsureChessRing.</summary>
 	void EnsureGameHud()
 	{
-		foreach ( var screen in Scene.GetAllComponents<Sandbox.UI.ScreenPanel>() )
+		foreach ( var screen in Scene.GetAllComponents<ScreenPanel>() )
 		{
 			if ( screen.Components.Get<Gambit.UI.GameHud>() == null )
 				screen.GameObject.AddComponent<Gambit.UI.GameHud>();
