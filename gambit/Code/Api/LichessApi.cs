@@ -59,7 +59,7 @@ public static class LichessApi
 	/// to seconds-remaining: positive while pending, negative once elapsed.)</summary>
 	public static float BackoffRemaining => Math.Max( 0f, (float)_backoff );
 
-	static async Task<Result> Send( string url, string method, HttpContent content, string bearer, string accept = "application/json" )
+	static async Task<Result> Send( string url, string method, HttpContent content, string bearer )
 	{
 		if ( _inFlight )
 			return new Result { Error = "Another lichess request is running — try again in a moment." };
@@ -69,15 +69,13 @@ public static class LichessApi
 		_inFlight = true;
 		try
 		{
-			// Accept: application/json is REQUIRED on the JSON APIs, not cosmetic.
-			// lichess content-negotiates on shared paths: POST /api/import without it
-			// returns 200 + the imported game's HTML page (the web-form response), not
-			// {id,url} — that was M2's dead import (confirmed in-editor: HTTP 200, HTML
-			// body, no url). /api/account happens to be JSON-only, which is why sign-in
-			// worked regardless. Send it on every request so no endpoint can surprise
-			// us — except the self-seat attempt, which overrides to text/html to mimic
-			// a browser loading the challenge page.
-			var headers = new Dictionary<string, string> { ["Accept"] = accept };
+			// Accept: application/json is REQUIRED, not cosmetic. lichess content-
+			// negotiates on shared paths: POST /api/import without it returns 200 +
+			// the imported game's HTML page (the web-form response), not {id,url} —
+			// that was M2's dead import (confirmed in-editor: HTTP 200, HTML body, no
+			// url). /api/account happens to be JSON-only, which is why sign-in worked
+			// regardless. Send it on every request so no endpoint can surprise us.
+			var headers = new Dictionary<string, string> { ["Accept"] = "application/json" };
 			if ( !string.IsNullOrEmpty( bearer ) )
 				headers["Authorization"] = "Bearer " + bearer;
 
@@ -196,14 +194,6 @@ public static class LichessApi
 	/// <summary>Cancel a challenge we created that hasn't been accepted yet.</summary>
 	public static Task<Result> CancelChallenge( string challengeId, string token ) =>
 		Send( $"{Base}/api/challenge/{challengeId}/cancel", "POST", null, token );
-
-	/// <summary>Best-effort, UNDOCUMENTED: GET a colour-pinned open-challenge URL
-	/// with our bearer token to try to claim that seat without a browser. lichess
-	/// has no API to seat the creator of an open challenge, so this only works if
-	/// loading the URL server-side claims the seat (unverified). Sends
-	/// <c>Accept: text/html</c> to mimic a browser rather than the JSON API view.</summary>
-	public static Task<Result> SeatOpenChallenge( string seatUrl, string token ) =>
-		Send( seatUrl, "GET", null, token, accept: "text/html" );
 
 	/// <summary>Export a finished game as JSON to read its final status/winner —
 	/// account/playing drops a game the moment it ends, so this fills in the result.</summary>
