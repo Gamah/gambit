@@ -1,0 +1,466 @@
+@using System;
+@using System.Collections.Generic;
+@using System.Threading.Tasks;
+@using Sandbox;
+@using Sandbox.UI;
+@using Rotaliate.Api;
+@using Rotaliate.Game;
+@using Rotaliate.Theme;
+@namespace Rotaliate.UI
+@inherits PanelComponent
+
+<root>
+	@{
+		var ctrl   = GameController.Instance;
+		var mpCtrl = MultiplayerController.Instance;
+	}
+	<div class="arcade-fit" style="@Rotaliate.World.ArcadeRing.UiRectStyle()">
+
+	@* ── Solo HUD ── *@
+	@if ( ctrl?.State == GameState.Playing )
+	{
+		<div class="game-hud">
+			<div class="hud-back" onclick="@BackToMenu">← Menu</div>
+			<div class="hud-center">
+				<div class="hud-time">@FormatTime( ctrl.DisplayTime )</div>
+				<div class="hud-moves">@ctrl.MoveCount moves</div>
+			</div>
+		</div>
+	}
+	@if ( ctrl?.State == GameState.Complete && !Rotaliate.World.CubeBoardView.OutroBlocking )
+	{
+		<div class="complete-overlay">
+			<div class="crt-scan"></div>
+			<div class="crt-vignette"></div>
+			<div class="complete-panel">
+				<div class="complete-title">COMPLETE</div>
+				<div class="complete-stats">
+					<div class="stat-row">
+						<span class="stat-label">Time</span>
+						<span class="stat-value">@FormatTime( ctrl.CompletedTime )</span>
+					</div>
+					<div class="stat-row">
+						<span class="stat-label">Moves</span>
+						<span class="stat-value">@ctrl.CompletedMoves</span>
+					</div>
+				</div>
+				@if ( _leaderboardLoading )
+				{
+					<div class="lb-loading">Loading leaderboard…</div>
+				}
+				else if ( _leaderboard != null && _leaderboard.Count > 0 )
+				{
+					<div class="lb-title">@_leaderboardTitle</div>
+					<div class="lb-table">
+						@foreach ( var e in _leaderboard )
+						{
+							<div class="lb-row @( e.Username == _playerUsername ? "lb-row-me" : "" )">
+								<span class="lb-rank">#@e.Rank</span>
+								<span class="lb-name">@( !string.IsNullOrEmpty( e.Username ) ? e.Username : ( e.PlayerTag ?? "Anonymous" ) )</span>
+								<span class="lb-score">@FormatScore( e )</span>
+							</div>
+						}
+					</div>
+				}
+				<div class="back-btn" onclick="@BackToMenu">Back to Menu</div>
+			</div>
+		</div>
+	}
+
+	@* ── Multiplayer HUD ── *@
+	@if ( mpCtrl?.State == MpState.Playing )
+	{
+		<div class="game-hud">
+			<div class="hud-back" onclick="@MpBackToMenu">← Menu</div>
+			<div class="hud-center">
+				<div class="hud-time">@FormatTime( (float)mpCtrl.GameElapsed )</div>
+				<div class="hud-moves">@mpCtrl.MoveCount moves</div>
+				@{
+					var palette = Colors.GetPalette( PlayerData.Load()?.ColorScheme ?? "normal" );
+					var myColors = mpCtrl.MyColors ?? ( mpCtrl.MyColor > 0 ? new[] { mpCtrl.MyColor } : null );
+				}
+				@if ( myColors != null && myColors.Length > 0 )
+				{
+					<div class="hud-my-colors">
+						@foreach ( var c in myColors )
+						{
+							@if ( c > 0 && c < palette.Length )
+							{
+								var col = palette[c];
+								<div class="hud-color-swatch" style="background-color: rgba(@((int)(col.r*255)),@((int)(col.g*255)),@((int)(col.b*255)),1);"></div>
+							}
+						}
+					</div>
+				}
+			</div>
+		</div>
+	}
+	@if ( mpCtrl?.State == MpState.GameOver && !Rotaliate.World.CubeBoardView.OutroBlocking )
+	{
+		<div class="complete-overlay">
+			<div class="crt-scan"></div>
+			<div class="crt-vignette"></div>
+			<div class="complete-panel">
+				<div class="complete-title">GAME OVER</div>
+				<div class="complete-stats">
+					<div class="stat-row">
+						<span class="stat-label">Result</span>
+						<span class="stat-value">@MpResultText( mpCtrl )</span>
+					</div>
+					<div class="stat-row">
+						<span class="stat-label">Duration</span>
+						<span class="stat-value">@FormatTimeMs( mpCtrl.DurationMs )</span>
+					</div>
+					<div class="stat-row">
+						<span class="stat-label">Moves</span>
+						<span class="stat-value">@mpCtrl.MoveCount</span>
+					</div>
+				</div>
+				<div class="back-btn" onclick="@MpBackToMenu">Back to Menu</div>
+			</div>
+		</div>
+	}
+	</div>
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	// confines the UI to the cabinet-screen region (transform: scale misplaces
+	// content, so it's an explicitly sized box)
+	.arcade-fit {
+		// left/top/width/height come from ArcadeRing.UiRectStyle() inline
+		position: absolute;
+		pointer-events: none;
+	}
+
+	.game-hud {
+		position: absolute;
+		top: 20px;
+		left: 0;
+		right: 0;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 0px 24px;
+		pointer-events: none;
+	}
+
+	.hud-back {
+		font-size: 19px;
+		color: rgba(255,255,255,0.45);
+		cursor: pointer;
+		padding: 6px 12px;
+		border-radius: 6px;
+		pointer-events: all;
+	}
+
+	.hud-back:hover {
+		color: white;
+		background-color: rgba(255,255,255,0.1);
+	}
+
+	.hud-center {
+		flex-grow: 1;
+		display: flex;
+		flex-direction: row;
+		justify-content: center;
+		gap: 48px;
+		pointer-events: none;
+	}
+
+	.hud-time, .hud-moves {
+		font-size: 28px;
+		color: rgba(255,255,255,0.85);
+		font-weight: bold;
+		letter-spacing: 2px;
+		text-shadow: 0px 0px 10px rgba(255, 255, 255, 0.6);
+	}
+
+	.hud-my-colors {
+		display: flex;
+		flex-direction: row;
+		gap: 6px;
+		align-items: center;
+	}
+
+	.hud-color-swatch {
+		width: 22px;
+		height: 22px;
+		border-radius: 4px;
+	}
+
+	.complete-overlay {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		// translucent so the cabinet's lit glass slab shows through (#33)
+		background-color: rgba(7,5,26,0.66);
+		border-radius: 18px;
+		pointer-events: all;
+	}
+
+	// CRT dressing — emissive overlay only, no input
+	.crt-scan {
+		position: absolute;
+		left: 0px; top: 0px; right: 0px; bottom: 0px;
+		background-image: linear-gradient(rgba(2, 1, 10, 0.45), rgba(2, 1, 10, 0));
+		background-size: 100% 5px;
+		background-repeat: repeat;
+		border-radius: 18px;
+		pointer-events: none;
+		animation-name: crt-flicker;
+		animation-duration: 3.7s;
+		animation-iteration-count: infinite;
+	}
+
+	.crt-vignette {
+		position: absolute;
+		left: 0px; top: 0px; right: 0px; bottom: 0px;
+		background-image: radial-gradient(rgba(7, 5, 26, 0), rgba(2, 1, 12, 0.55));
+		background-size: 100% 100%;
+		background-repeat: no-repeat;
+		border-radius: 18px;
+		pointer-events: none;
+	}
+
+	@@keyframes crt-flicker {
+		0% { opacity: 1; }
+		50% { opacity: 0.82; }
+		100% { opacity: 1; }
+	}
+
+	.complete-panel {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 20px;
+		background-color: rgba(255,255,255,0.06);
+		border-radius: 16px;
+		padding: 44px 58px;
+		min-width: 420px;
+		max-width: 600px;
+	}
+
+	.complete-title {
+		font-size: 42px;
+		font-weight: bold;
+		color: white;
+		letter-spacing: 6px;
+		text-shadow: 0px 0px 16px rgba(255, 255, 255, 0.9);
+	}
+
+	.complete-stats {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		width: 100%;
+	}
+
+	.stat-row {
+		display: flex;
+		flex-direction: row;
+		justify-content: space-between;
+	}
+
+	.stat-label {
+		color: rgba(255,255,255,0.55);
+		font-size: 20px;
+	}
+
+	.stat-value {
+		color: white;
+		font-size: 20px;
+		font-weight: bold;
+	}
+
+	.lb-loading {
+		color: rgba(255,255,255,0.45);
+		font-size: 18px;
+	}
+
+	.lb-title {
+		font-size: 16px;
+		color: rgba(255,255,255,0.45);
+		letter-spacing: 2px;
+		margin-top: 4px;
+	}
+
+	.lb-table {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		width: 100%;
+		max-height: 260px;
+		overflow: hidden;
+	}
+
+	.lb-row {
+		display: flex;
+		flex-direction: row;
+		gap: 8px;
+		align-items: center;
+		font-size: 18px;
+		color: rgba(255,255,255,0.7);
+	}
+
+	.lb-row-me {
+		color: #ffd60a;
+	}
+
+	.lb-rank {
+		width: 28px;
+		text-align: right;
+		color: rgba(255,255,255,0.35);
+		font-size: 15px;
+	}
+
+	.lb-name {
+		flex-grow: 1;
+	}
+
+	.lb-score {
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.back-btn {
+		margin-top: 8px;
+		padding: 13px 40px;
+		background-color: rgba(255,255,255,0.1);
+		color: white;
+		font-size: 20px;
+		border-radius: 8px;
+		cursor: pointer;
+		transition: background-color 0.12s;
+		pointer-events: all;
+	}
+
+	.back-btn:hover {
+		background-color: rgba(255,255,255,0.2);
+	}
+</style>
+
+@code
+{
+	// The board itself is physical now — CubeBoardView renders it in the cabinet's
+	// screen slot. This panel only carries the raw HUD text and the result overlays.
+
+	List<LeaderboardEntry> _leaderboard;
+	bool _leaderboardLoading;
+	string _leaderboardTitle;
+	string _playerUsername;
+	GameState _prevState = GameState.Idle;
+
+	static string FormatTime( float seconds )
+	{
+		int mins = (int)seconds / 60;
+		int secs = (int)seconds % 60;
+		int ms   = (int)(seconds * 1000f) % 1000;
+		return $"{mins}:{secs:D2}.{ms:D3}";
+	}
+
+	static string FormatScore( LeaderboardEntry e )
+	{
+		if ( e.DurationMs > 0 )
+		{
+			int secs = (int)(e.DurationMs / 1000);
+			int ms   = (int)(e.DurationMs % 1000) / 100;
+			int mins = secs / 60;
+			secs = secs % 60;
+			return $"{mins}:{secs:D2}.{ms}";
+		}
+		return e.TotalMoves.ToString();
+	}
+
+	void BackToMenu()
+	{
+		_leaderboard = null;
+		_leaderboardLoading = false;
+		GameController.Instance?.ReturnToMenu();
+	}
+
+	void MpBackToMenu() => MultiplayerController.Instance?.ReturnToMenu();
+
+	static string MpResultText( MultiplayerController mpCtrl )
+	{
+		var myTag = mpCtrl.MyTag;
+		return !string.IsNullOrEmpty( myTag ) && mpCtrl.WinnerTag == myTag ? "You win!" : "Opponent wins";
+	}
+
+	static string FormatTimeMs( long ms )
+	{
+		int secs = (int)(ms / 1000);
+		int mins = secs / 60;
+		secs %= 60;
+		return $"{mins}:{secs:D2}";
+	}
+
+	async Task LoadLeaderboard( GameMode mode )
+	{
+		_leaderboardLoading = true;
+		_leaderboardTitle = "LEADERBOARD — TIME";
+		_playerUsername = PlayerData.Load()?.Username;
+		StateHasChanged();
+		try
+		{
+			// Without a puzzle_id the endpoint returns entries across all puzzles,
+			// so resolve the current puzzle from the recent list first.
+			if ( mode == GameMode.Daily )
+			{
+				var recent = await ApiClient.GetRecentDaily();
+				string puzzleId = recent is { Count: > 0 } ? recent[0].PuzzleId : null;
+				_leaderboard = await ApiClient.GetDailyLeaderboard( "time", puzzleId );
+			}
+			else if ( mode == GameMode.Hourly )
+			{
+				var recent = await ApiClient.GetRecentHourly();
+				string puzzleId = recent is { Count: > 0 } ? recent[0].PuzzleId : null;
+				_leaderboard = await ApiClient.GetHourlyLeaderboard( "time", puzzleId );
+			}
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( $"[Rotaliate] Leaderboard fetch failed: {e.Message}" );
+		}
+		_leaderboardLoading = false;
+		StateHasChanged();
+	}
+
+	protected override void OnUpdate()
+	{
+		var ctrl = GameController.Instance;
+
+		// Detect transition to Complete and kick off leaderboard fetch
+		if ( ctrl != null && ctrl.State != _prevState )
+		{
+			if ( ctrl.State == GameState.Complete && (ctrl.Mode == GameMode.Daily || ctrl.Mode == GameMode.Hourly) )
+			{
+				_leaderboard = null;
+				_ = LoadLeaderboard( ctrl.Mode );
+			}
+			_prevState = ctrl.State;
+		}
+	}
+
+	protected override int BuildHash()
+	{
+		var ctrl   = GameController.Instance;
+		var mpCtrl = MultiplayerController.Instance;
+		// Rebuilds only happen when the hash CHANGES, so a live timer needs a
+		// per-frame value — a constant froze the time/move HUD at 0:00 (cabinet bug)
+		if ( ctrl?.State == GameState.Playing || mpCtrl?.State == MpState.Playing )
+			return RealTime.Now.GetHashCode();
+		return System.HashCode.Combine( ctrl?.State, mpCtrl?.State, _leaderboard?.Count, _leaderboardLoading,
+			Rotaliate.World.CubeBoardView.OutroBlocking, Rotaliate.World.ArcadeRing.UiRectStyle() );
+	}
+}

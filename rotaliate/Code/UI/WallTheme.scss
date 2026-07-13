@@ -1,0 +1,7 @@
+// ── Lobby wall theme — static tokens ──────────────────────────────────────────
+// The COLOURS are runtime-driven (see WallTheme.cs — they follow the world light
+// colour) and bound by each panel as inline style= values. Only the non-colour tokens
+// live here; @@import this and use them for font/radius. (Cabinet UI is not themed.)
+
+$wall-radius:  4px;                              // near-square corners
+$wall-font:    Consolas, 'Roboto Mono', monospace;

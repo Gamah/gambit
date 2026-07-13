@@ -1,0 +1,30 @@
+# s&box build output
+.addon/
+bin/
+obj/
+
+# s&box editor state + compiled assets
+.sbox/
+*_c
+*_d
+
+# s&box editor state (machine-specific)
+.sbox/
+rotaliate/.sbox/
+
+# s&box compiled assets
+Assets/scenes/*_c
+rotaliate/Assets/scenes/*_c
+
+# Launch settings contain machine-specific absolute paths
+**/Properties/launchSettings.json
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# OS
+.DS_Store
+Thumbs.db

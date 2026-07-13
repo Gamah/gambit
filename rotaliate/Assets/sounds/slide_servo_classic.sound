@@ -1,0 +1,12 @@
+{
+  "UI": false,
+  "Volume": "1",
+  "Pitch": "1",
+  "Decibels": 75,
+  "SelectionMode": "Random",
+  "Sounds": [
+    "sounds/sfx/slide_servo_classic.vsnd"
+  ],
+  "__references": [],
+  "__version": 1
+}

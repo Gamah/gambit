@@ -1,0 +1,524 @@
+@using System;
+@using System.Collections.Generic;
+@using System.Linq;
+@using Sandbox;
+@using Sandbox.UI;
+@using Rotaliate.Api;
+@using Rotaliate.World;
+@using Rotaliate.UI;
+@namespace Rotaliate.UI.Screens
+@inherits PanelComponent
+
+@*
+	Interactive leaderboard ScreenPanel opened when the player engages a LeaderboardStation
+	(issue #53). Shown (centered on screen) while LeaderboardStation.Active != null; the
+	camera doesn't move for boards.
+	Presents the pair's two boards (moves + time, or 2P + 4P wins) with clickable
+	rows; clicking a name opens that player's public profile in an in-panel popup
+	(recent games + a copy-link share affordance for solo runs).
+*@
+
+<root>
+@if ( LeaderboardStation.Active != null )
+{
+	<div class="screen-fit">
+	<div class="lb-fit" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
+		@if ( _profileTag != null )
+		{
+			<div class="header">
+				<div class="back-btn" style="color:@WallTheme.TextDim;" onclick="@CloseProfile">← Back</div>
+				<div class="pair-title" style="color:@WallTheme.Text;">PLAYER</div>
+			</div>
+			@if ( _profileLoading )
+			{
+				<div class="empty" style="color:@WallTheme.TextFaint;">Loading…</div>
+			}
+			else if ( _profileError != null )
+			{
+				<div class="empty" style="color:@WallTheme.TextFaint;">@_profileError</div>
+			}
+			else if ( _profile != null )
+			{
+				<div class="pp-head">
+					<div class="pp-name" style="color:@WallTheme.Text;">@( string.IsNullOrEmpty( _profile.Username ) ? "Anonymous" : _profile.Username )</div>
+					<div class="pp-tag" style="color:@WallTheme.TextFaint;">@_profile.PlayerTag</div>
+				</div>
+				@if ( _profile.Games == null || _profile.Games.Count == 0 )
+				{
+					<div class="empty" style="color:@WallTheme.TextFaint;">No games yet</div>
+				}
+				else
+				{
+					<div class="pp-list">
+						@foreach ( var g in _profile.Games )
+						{
+							<div class="pp-row" style="color:@WallTheme.TextDim;">
+								<div class="pp-type" style="color:@WallTheme.Text;">@ProfileTypeLabel( g.GameType )</div>
+								<div class="pp-meta">@ProfileGameMeta( g )</div>
+								<div class="pp-date" style="color:@WallTheme.TextFaint;">@ProfileGameDate( g.CompletedAt )</div>
+								@if ( !string.IsNullOrEmpty( g.SessionId ) )
+								{
+									<div class="pp-share" style="color:@WallTheme.AccentCss; background-color:@WallTheme.AccentBg;" onclick="@(() => WatchOnSpectator( g.SessionId ))">▶ watch</div>
+								}
+							</div>
+						}
+					</div>
+				}
+			}
+		}
+		else
+		{
+			<div class="header">
+				<div class="pair-title" style="color:@WallTheme.Text;">@PairTitle()</div>
+				<div class="copy-hint" style="color:@WallTheme.TextFaint;">Click a name to view their profile</div>
+			</div>
+			<div class="columns">
+				<div class="col">
+					<div class="col-title" style="color:@WallTheme.TextDim;">@ColTitle( false )</div>
+					<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+					@Rows( false )
+				</div>
+				@if ( !IsMultiplayer() )
+				{
+					<div class="col-gap"></div>
+				}
+				<div class="col">
+					<div class="col-title" style="color:@WallTheme.TextDim;">@ColTitle( true )</div>
+					<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+					@Rows( true )
+				</div>
+			</div>
+		}
+	</div>
+	</div>
+}
+</root>
+
+<style>
+	@@import "../WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	/* Centering must happen on an absolutely-positioned full-screen child, NOT on
+	   root — align/justify on root alone leaves the panel pinned top-left. Same
+	   pattern as SettingsScreen (its .board-fit). */
+	.screen-fit {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		align-items: center;
+		justify-content: center;
+		pointer-events: none;
+	}
+
+	.lb-fit {
+		/* Explicit width so the two columns lay out wide — without it the panel
+		   shrinks to its row content and reads as a skinny, over-tall strip.
+		   Colours are runtime-driven (WallTheme.cs), bound inline. */
+		width: 620px;
+		flex-direction: column;
+		border-radius: $wall-radius;
+		font-family: $wall-font;
+		padding: 14px 16px;
+		gap: 10px;
+		pointer-events: all;
+	}
+
+	.header {
+		position: relative;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.copy-hint {
+		font-size: 11px;
+		margin-top: 2px;
+	}
+
+	.pair-title {
+		font-size: 18px;
+		font-weight: bold;
+		letter-spacing: 1px;
+	}
+
+	.columns {
+		flex-direction: row;
+		flex-grow: 1;
+		gap: 0;
+	}
+
+	.col {
+		flex-grow: 1;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.col-gap {
+		width: 12px;
+	}
+
+	.col-title {
+		font-size: 13px;
+		font-weight: bold;
+		justify-content: center;
+		margin-bottom: 4px;
+	}
+
+	.divider {
+		height: 1px;
+		margin-bottom: 4px;
+	}
+
+	.row {
+		flex-direction: row;
+		align-items: center;
+		font-size: 13px;
+		padding: 3px 5px;
+		border-radius: $wall-radius;
+		cursor: pointer;
+	}
+
+	.row:hover {
+		background-color: rgba(255, 255, 255, 0.12);
+	}
+
+	.row.no-copy {
+		cursor: default;
+	}
+
+	.rank {
+		width: 22px;
+		font-size: 12px;
+	}
+
+	.name {
+		flex-grow: 1;
+		overflow: hidden;
+		white-space: nowrap;
+		font-size: 13px;
+	}
+
+	.score {
+		font-weight: bold;
+		font-size: 13px;
+	}
+
+	.empty {
+		justify-content: center;
+		font-size: 13px;
+		margin-top: 8px;
+	}
+
+	/* ── Profile popup ── */
+
+	.back-btn {
+		position: absolute;
+		left: 0;
+		font-size: 13px;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.pp-head {
+		flex-direction: row;
+		align-items: baseline;
+		justify-content: center;
+		gap: 10px;
+		margin-bottom: 4px;
+	}
+
+	.pp-name {
+		font-size: 18px;
+	}
+
+	.pp-tag {
+		font-size: 12px;
+		font-family: $wall-font;
+	}
+
+	.pp-list {
+		flex-direction: column;
+		gap: 3px;
+	}
+
+	.pp-row {
+		flex-direction: row;
+		align-items: center;
+		font-size: 13px;
+		padding: 3px 5px;
+		border-radius: $wall-radius;
+	}
+
+	.pp-type {
+		width: 78px;
+	}
+
+	.pp-meta {
+		flex-grow: 1;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.pp-date {
+		font-size: 12px;
+		margin-right: 8px;
+	}
+
+	.pp-share {
+		font-size: 12px;
+		padding: 2px 7px;
+		border-radius: $wall-radius;
+		cursor: pointer;
+		pointer-events: all;
+	}
+</style>
+
+@code
+{
+	List<LeaderboardEntry> _movesEntries;
+	List<LeaderboardEntry> _timeEntries;
+	List<MpWinEntry> _mp2Entries;
+	List<MpWinEntry> _mp4Entries;
+	bool _loading;
+	int _loadedPair = -1;
+	long _loadedPeriod = -1; // UTC hour/day index the current daily/hourly data was fetched for
+
+	// Profile popup (opened by clicking a leaderboard name)
+	ProfileResponse _profile;
+	string _profileTag;
+	bool _profileLoading;
+	string _profileError;
+	int _profileGen;  // cancels a stale fetch when the popup closes/changes
+
+	bool IsMultiplayer() => LeaderboardStation.Active?.PairIndex == 2;
+
+	string PairTitle() => LeaderboardStation.Active?.PairIndex switch
+	{
+		0 => "DAILY LEADERBOARD",
+		1 => "HOURLY LEADERBOARD",
+		_ => "MULTIPLAYER WINS",
+	};
+
+	string ColTitle( bool second ) => LeaderboardStation.Active?.PairIndex switch
+	{
+		0 => second ? "TIME" : "MOVES",
+		1 => second ? "TIME" : "MOVES",
+		_ => second ? "4-PLAYER" : "2-PLAYER",
+	};
+
+	RenderFragment Rows( bool second )
+	{
+		if ( IsMultiplayer() )
+		{
+			var list = second ? _mp4Entries : _mp2Entries;
+			if ( list == null || list.Count == 0 )
+				return @<div class="empty" style="color:@WallTheme.TextFaint;">@( _loading ? "Loading…" : "No scores yet" )</div>;
+
+			return @<text>@foreach ( var e in list )
+			{
+				var captured = e;
+				<div class="row @( string.IsNullOrEmpty( captured.PlayerTag ) ? "no-copy" : "" )" style="color:@WallTheme.TextDim;" onclick="@(() => OpenProfile( captured.PlayerTag ))">
+					<div class="rank" style="color:@WallTheme.TextFaint;">@(list.IndexOf( e ) + 1)</div>
+					<div class="name">@DisplayName( e.Username, e.PlayerTag )</div>
+					<div class="score" style="color:@WallTheme.AccentCss;">@e.Wins</div>
+				</div>
+			}</text>;
+		}
+
+		var entries = second ? _timeEntries : _movesEntries;
+		if ( entries == null || entries.Count == 0 )
+			return @<div class="empty" style="color:@WallTheme.TextFaint;">@( _loading ? "Loading…" : "No scores yet" )</div>;
+
+		return @<text>@foreach ( var e in entries )
+		{
+			var captured = e;
+			<div class="row @( string.IsNullOrEmpty( captured.PlayerTag ) ? "no-copy" : "" )" style="color:@WallTheme.TextDim;" onclick="@(() => OpenProfile( captured.PlayerTag ))">
+				<div class="rank" style="color:@WallTheme.TextFaint;">@e.Rank</div>
+				<div class="name">@DisplayName( e.Username, e.PlayerTag )</div>
+				<div class="score" style="color:@WallTheme.AccentCss;">@FormatScore( e )</div>
+			</div>
+		}</text>;
+	}
+
+	void OpenProfile( string playerTag )
+	{
+		if ( string.IsNullOrEmpty( playerTag ) ) return;
+		_profileTag     = playerTag;
+		_profile        = null;
+		_profileError   = null;
+		_profileLoading = true;
+		StateHasChanged();
+		_ = LoadProfile( playerTag, ++_profileGen );
+	}
+
+	async System.Threading.Tasks.Task LoadProfile( string playerTag, int gen )
+	{
+		try
+		{
+			var profile = await ApiClient.GetProfile( playerTag );
+			if ( gen != _profileGen ) return;
+			_profile      = profile;
+			_profileError = profile == null ? "Profile unavailable" : null;
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( $"[Rotaliate] Profile load failed: {e.Message}" );
+			if ( gen != _profileGen ) return;
+			_profileError = "Profile unavailable";
+		}
+		_profileLoading = false;
+		StateHasChanged();
+	}
+
+	void CloseProfile()
+	{
+		_profileGen++; // drop any in-flight fetch
+		_profileTag = null;
+		StateHasChanged();
+	}
+
+	// Play the recorded game on the giant spectator board, then leave this board so the
+	// player can watch it from the room (engaging anything stops the replay).
+	void WatchOnSpectator( string sessionId )
+	{
+		if ( string.IsNullOrEmpty( sessionId ) ) return;
+		SpectatorBoard.StartReplay( sessionId );
+		Rotaliate.World.LobbyPlayer.Local?.Disengage();
+	}
+
+	static string ProfileTypeLabel( string t ) => t switch
+	{
+		"daily"    => "Daily",
+		"hourly"   => "Hourly",
+		"freeplay" => "Free Play",
+		"2p"       => "2-Player",
+		"4p"       => "4-Player",
+		_          => t ?? "Game",
+	};
+
+	static string ProfileGameMeta( ProfileGame g )
+	{
+		var parts = new List<string>();
+		if ( g.Rank.HasValue )       parts.Add( g.Rank.Value == 1 ? "Winner" : $"#{g.Rank.Value}" );
+		if ( g.DurationMs.HasValue ) parts.Add( FormatMs( g.DurationMs.Value ) );
+		if ( g.TotalMoves.HasValue ) parts.Add( $"{g.TotalMoves.Value} moves" );
+		return parts.Count > 0 ? string.Join( "  ·  ", parts ) : "—";
+	}
+
+	static string FormatMs( long ms )
+	{
+		int secs = (int)(ms / 1000);
+		int frac = (int)(ms % 1000) / 100;
+		int mins = secs / 60;
+		secs %= 60;
+		return $"{mins}:{secs:D2}.{frac}";
+	}
+
+	static readonly string[] _monthNames =
+		{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+	// completed_at is RFC3339 like "2026-06-17T12:00:00Z" → "Jun 17"
+	static string ProfileGameDate( string completedAt )
+	{
+		if ( completedAt == null || completedAt.Length < 10 ) return "";
+		var parts = completedAt.Substring( 0, 10 ).Split( '-' );
+		if ( parts.Length == 3
+			&& int.TryParse( parts[1], out int mo )
+			&& int.TryParse( parts[2], out int dy )
+			&& mo >= 1 && mo <= 12 )
+			return $"{_monthNames[mo - 1]} {dy}";
+		return completedAt.Substring( 0, 10 );
+	}
+
+	static string DisplayName( string name, string tag ) =>
+		!string.IsNullOrWhiteSpace( name ) ? name
+			: ( string.IsNullOrWhiteSpace( tag ) ? "anonymous" : tag );
+
+	static string FormatScore( LeaderboardEntry e )
+	{
+		if ( e.TotalMoves > 0 && e.DurationMs == 0 ) return e.TotalMoves.ToString();
+		long ms = e.DurationMs;
+		int secs = (int)(ms / 1000);
+		int frac = (int)(ms % 1000);
+		int mins = secs / 60;
+		secs %= 60;
+		return $"{mins}:{secs:D2}.{frac:D3}";
+	}
+
+	// Period index for rollover detection: hours (or days) since the Unix epoch, UTC.
+	// Mirrors WallLeaderboardPanel so the engaged board refetches when the puzzle rolls over.
+	long CurrentPeriod( int pair )
+	{
+		var now = DateTime.UtcNow;
+		long hours = (long)( now - DateTime.UnixEpoch ).TotalHours;
+		return pair == 1 ? hours : hours / 24; // pair 1 = hourly, pair 0 = daily
+	}
+
+	protected override void OnUpdate()
+	{
+		var station = LeaderboardStation.Active;
+		if ( station == null ) return;
+		if ( _loading ) return;
+
+		// Daily (0) and hourly (1) refetch when the puzzle period rolls over; MP (2) has none.
+		bool periodic = station.PairIndex != 2;
+		if ( station.PairIndex == _loadedPair
+			&& ( !periodic || CurrentPeriod( station.PairIndex ) == _loadedPeriod ) )
+			return;
+
+		_loadedPair = station.PairIndex;
+		_ = Refresh( station.PairIndex );
+	}
+
+	async System.Threading.Tasks.Task Refresh( int pair )
+	{
+		_loading = true;
+		_movesEntries = null;
+		_timeEntries = null;
+		_mp2Entries = null;
+		_mp4Entries = null;
+		_loadedPeriod = CurrentPeriod( pair );
+		StateHasChanged();
+
+		try
+		{
+			if ( pair == 2 )
+			{
+				_mp2Entries = await ApiClient.GetMultiplayerLeaderboard( 2 );
+				_mp4Entries = await ApiClient.GetMultiplayerLeaderboard( 4 );
+			}
+			else
+			{
+				bool hourly = pair == 1;
+				var recent = hourly ? await ApiClient.GetRecentHourly() : await ApiClient.GetRecentDaily();
+				string puzzleId = recent is { Count: > 0 } ? recent[0].PuzzleId : null;
+				_movesEntries = hourly
+					? await ApiClient.GetHourlyLeaderboard( "moves", puzzleId )
+					: await ApiClient.GetDailyLeaderboard( "moves", puzzleId );
+				_timeEntries = hourly
+					? await ApiClient.GetHourlyLeaderboard( "time", puzzleId )
+					: await ApiClient.GetDailyLeaderboard( "time", puzzleId );
+			}
+		}
+		catch ( Exception e )
+		{
+			Log.Warning( $"[Rotaliate] LeaderboardScreen fetch failed: {e.Message}" );
+		}
+		_loading = false;
+		StateHasChanged();
+	}
+
+	protected override int BuildHash() =>
+		HashCode.Combine(
+			HashCode.Combine( LeaderboardStation.Active != null, LeaderboardStation.Active?.PairIndex ?? -1,
+				_movesEntries?.Count, _timeEntries?.Count,
+				_mp2Entries?.Count, _mp4Entries?.Count, _loading ),
+			HashCode.Combine( _profileTag, _profileLoading, _profileError, _profile?.PlayerTag,
+				_profile?.Games?.Count, SettingsModel.SettingsVersion ) );
+}

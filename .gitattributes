@@ -1,0 +1,5 @@
+# s&box editor rewrites these files byte-for-byte (CRLF, .sbproj/.slnx without
+# a final newline). Store them raw so open/play/close produces no diff.
+*.csproj -text
+*.slnx -text
+*.sbproj -text

@@ -1,0 +1,288 @@
+@using System;
+@using System.Collections.Generic;
+@using Sandbox;
+@using Sandbox.UI;
+@using Sandbox.Platform;
+@using Rotaliate.Game;
+@using Rotaliate.World;
+@namespace Rotaliate.UI.Screens
+@inherits PanelComponent
+@implements IChatEvent
+
+@*
+	Lobby text chat on the platform chat system (ChatShowUI is off in Platform.config,
+	so this panel is the only chat UI; messages still route/filter through the host).
+	- Feed bottom-left: last few messages, fading out after a few seconds
+	- Chat key (default T, rebindable in Settings) opens the input box while roaming;
+	  movement is locked by LobbyPlayer while typing. Enter sends, Escape cancels.
+	- Closed + roaming: a small hint glyph shows the current chat key.
+*@
+
+<root>
+	@{
+		int visible = VisibleLineCount();
+	}
+	@if ( visible > 0 )
+	{
+		<div class="chat-feed">
+			@for ( int i = _feed.Count - visible; i < _feed.Count; i++ )
+			{
+				@* One div per physical line: an auto-height div doesn't grow for
+				   wrapped text in s&box (next line overlaps), so we pre-wrap. *@
+				foreach ( var line in WrapLines( _feed[i].Text ) )
+				{
+					<div class="chat-line">@line</div>
+				}
+			}
+		</div>
+	}
+	@if ( IsOpen )
+	{
+		<div class="chat-input-row">
+			@* maxlength is 256 (not 255) so a full-length message still has room for the
+			   Enter newline we use to send; SendChat clamps the message back to 255. *@
+			<TextEntry @ref="_entry" placeholder="Say something…" class="chat-entry" maxlength="256" multiline="true" />
+		</div>
+	}
+	@if ( !IsOpen && CanOpen )
+	{
+		<div class="chat-hint">
+			<div class="key">@ChatKeyLabel()</div>
+			<div>Chat</div>
+		</div>
+	}
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		z-index: 90;
+	}
+
+	/* ~21px per "line". Chat window: bottom edge 8 lines above screen bottom (= 2
+	   lines above the input's top edge at 6 lines), up to 30 lines tall, growing
+	   upward. justify-content: flex-end keeps the newest line just above the gap;
+	   overflow: hidden clips older lines off the top. */
+	.chat-feed {
+		position: absolute;
+		left: 16px;
+		bottom: 158px;   /* 8 lines, shifted down 10px */
+		max-width: 520px;
+		max-height: 630px;   /* 30 lines */
+		flex-direction: column;
+		justify-content: flex-end;
+		gap: 3px;
+		overflow: hidden;
+		pointer-events: none;
+	}
+
+	.chat-line {
+		color: rgba(255, 255, 255, 0.9);
+		font-size: 15px;
+		text-shadow: 0px 1px 3px rgba(0, 0, 0, 0.9);
+		white-space: nowrap;
+		overflow: hidden;
+	}
+
+	/* Fixed-height (6 lines) container pinned to the screen bottom, so the input's TOP
+	   edge is locked 6 lines above the bottom regardless of content. The multiline
+	   field sits at the top and grows downward into the reserved space (reaches ~5
+	   lines, the 6th is bottom margin) — it can never be pushed down by the feed. */
+	.chat-input-row {
+		position: absolute;
+		left: 16px;
+		bottom: 0px;
+		height: 116px;   /* 6 lines, shifted down 10px */
+		flex-direction: column;
+		justify-content: flex-start;
+		pointer-events: none;
+	}
+
+	.chat-entry {
+		width: 420px;
+		max-width: 420px;
+		height: auto;
+		padding: 8px 12px;
+		font-size: 15px;
+		color: white;
+		background-color: rgba(7, 5, 26, 0.85);
+		border: 1px solid rgba(255, 255, 255, 0.35);
+		border-radius: 6px;
+		pointer-events: all;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+
+	.chat-hint {
+		position: absolute;
+		left: 16px;
+		top: 50%;
+		flex-direction: row;
+		gap: 6px;
+		font-size: 14px;
+		color: rgba(255, 165, 0, 0.7);
+		text-shadow: 0px 1px 3px rgba(0, 0, 0, 0.8);
+		pointer-events: none;
+	}
+
+	.chat-hint .key {
+		color: rgba(255, 165, 0, 1);
+		font-weight: bold;
+	}
+</style>
+
+@code
+{
+	/// <summary>True while the chat input box is open — LobbyPlayer locks movement off this.</summary>
+	public static bool IsOpen { get; private set; }
+
+	class FeedLine
+	{
+		public string Text;
+		public TimeSince Age;
+	}
+
+	// Word-aware wrap to fixed-width lines. Char-based (not pixel) because s&box
+	// auto-height divs don't grow for wrapped text — each line is its own div.
+	// 44 chars at 15px fits inside the 520px stack with margin, so chat-line can be
+	// nowrap and never overflow (right-clipped) — 56 was too wide and got cut off.
+	const int WrapChars = 44;
+
+	static List<string> WrapLines( string text )
+	{
+		var lines = new List<string>();
+		if ( string.IsNullOrEmpty( text ) ) return lines;
+
+		var cur = "";
+		foreach ( var word in text.Split( ' ' ) )
+		{
+			var w = word;
+			// Hard-split words longer than a full line.
+			while ( w.Length > WrapChars )
+			{
+				if ( cur.Length > 0 ) { lines.Add( cur ); cur = ""; }
+				lines.Add( w.Substring( 0, WrapChars ) );
+				w = w.Substring( WrapChars );
+			}
+			if ( w.Length == 0 ) continue;
+
+			if ( cur.Length == 0 ) cur = w;
+			else if ( cur.Length + 1 + w.Length <= WrapChars ) cur += " " + w;
+			else { lines.Add( cur ); cur = w; }
+		}
+		if ( cur.Length > 0 ) lines.Add( cur );
+		return lines;
+	}
+
+	// History cap (messages). The feed window is clipped to ~30 lines of height via
+	// CSS; keep enough messages to fill it (wrapped messages span multiple lines).
+	const int   MaxLines     = 30;
+	const float LineLifetime = 10f;
+
+	readonly List<FeedLine> _feed = new();
+	TextEntry _entry;
+	bool _focused;
+
+	static bool CanOpen => LobbyPlayer.Local != null && !LobbyPlayer.Local.Engaged;
+
+	protected override void OnDestroy()
+	{
+		IsOpen = false;
+	}
+
+	public void OnChatMessage( ChatMessageEvent e )
+	{
+		var name = e.Sender?.DisplayName;
+		var text = name == null ? e.Message : $"{name}: {e.Message}";
+
+		// The event fires host-side pre-broadcast and again on delivery — the host
+		// would double-log its own feed without this guard.
+		if ( _feed.Count > 0 && _feed[^1].Text == text && _feed[^1].Age < 1f ) return;
+
+		_feed.Add( new FeedLine { Text = text, Age = 0 } );
+		if ( _feed.Count > MaxLines ) _feed.RemoveAt( 0 );
+		StateHasChanged();
+	}
+
+	protected override void OnUpdate()
+	{
+		if ( IsOpen )
+		{
+			if ( !CanOpen || Input.EscapePressed )
+			{
+				Input.EscapePressed = false;
+				Close();
+				return;
+			}
+			if ( !_focused && _entry != null )
+			{
+				_entry.Focus();
+				_focused = true;
+			}
+			// Multiline TextEntry wraps + grows; Enter inserts a newline into the text
+			// rather than firing onsubmit. Treat that newline as "send" — reading it
+			// from the text value sidesteps the focused field swallowing the keypress
+			// (and keeps a stray Enter from leaking into gameplay interaction).
+			if ( _entry != null && _entry.Text != null &&
+			     (_entry.Text.Contains( '\n' ) || _entry.Text.Contains( '\r' )) )
+				SendChat();
+			return;
+		}
+
+		if ( CanOpen && IsChatPressed() )
+		{
+			IsOpen = true;
+			_focused = false;
+			StateHasChanged();
+		}
+	}
+
+	void SendChat()
+	{
+		var text = _entry?.Text?.Replace( "\r", "" ).Replace( "\n", "" ).Trim();
+		if ( !string.IsNullOrEmpty( text ) )
+		{
+			if ( text.Length > 255 ) text = text.Substring( 0, 255 );
+			Chat.Say( text );
+		}
+		Close();
+	}
+
+	void Close()
+	{
+		IsOpen = false;
+		if ( _entry != null ) _entry.Text = "";
+		StateHasChanged();
+	}
+
+	// Same binding-resolution rule as GameController.IsActionPressed.
+	static bool IsChatPressed()
+	{
+		var bindings = PlayerData.Load()?.Bindings;
+		if ( bindings != null && bindings.TryGetValue( "Chat", out var key ) && !string.IsNullOrEmpty( key ) )
+			return Input.Keyboard.Pressed( key );
+		return Input.Pressed( "Chat" );
+	}
+
+	static string ChatKeyLabel()
+	{
+		var bindings = PlayerData.Load()?.Bindings;
+		if ( bindings != null && bindings.TryGetValue( "Chat", out var key ) && !string.IsNullOrEmpty( key ) )
+			return key.Length == 1 ? key.ToUpper() : key;
+		return "T";
+	}
+
+	int VisibleLineCount()
+	{
+		if ( IsOpen ) return _feed.Count;
+		int n = 0;
+		foreach ( var line in _feed )
+			if ( line.Age < LineLifetime ) n++;
+		return n;
+	}
+
+	protected override int BuildHash() =>
+		System.HashCode.Combine( IsOpen, CanOpen, _feed.Count, VisibleLineCount(), ChatKeyLabel() );
+}
