@@ -59,11 +59,13 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// (and apparent board size) stays fixed while the view tilts.</summary>
 	[Property, Range( 15f, 85f )] public float SeatPitch { get; set; } = 55f;
 
-	/// <summary>Sideways slew of each seat camera, in degrees of yaw around the
-	/// board center — positive moves the view to the seated player's left, so the
-	/// board reads at a slight angle instead of dead down the middle. Applied
-	/// symmetrically to both seats.</summary>
-	[Property] public float SeatSideAngle { get; set; } = 3f;
+	/// <summary>Extra downward tilt of the seat camera's AIM, in degrees, applied
+	/// as a pure rotation — the camera keeps its orbit position but pitches its
+	/// look direction below the board center. This lowers the view by rotating
+	/// the camera down rather than translating it, so use it (not SeatPitch/
+	/// height) to angle the board down in frame. 0 = aim straight at the board
+	/// center.</summary>
+	[Property, Range( -20f, 20f )] public float SeatLookDownAngle { get; set; } = 8f;
 
 	/// <summary>Calibration multiplier on the computed UI rect (see ScreenFractionRect) —
 	/// nudge until engaged UI lines up with the board on screen.</summary>
@@ -416,9 +418,8 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	GameObject BuildSeatAnchor( GameObject station, string name, float side )
 	{
 		// Spherical orbit around the board center: SeatOrbitRadius sets the range,
-		// SeatPitch the elevation on that sphere, SeatSideAngle a yaw slew around
-		// the same center. All three rotate the view without changing how close
-		// the board looks.
+		// SeatPitch the elevation on that sphere. The camera sits dead on the
+		// seat's own axis (no sideways slew) facing straight down the board.
 		var center = new Vector3( 0, 0, BoardSurfaceZ + 2f );
 		float pitch = SeatPitch * (MathF.PI / 180f);
 		var offset = new Vector3(
@@ -428,11 +429,11 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 		var anchor = new GameObject( true, name );
 		anchor.Parent = station;
-		// One shared negative yaw slews BOTH seats toward their occupant's left
-		// (White faces +X so left is +Y; Black faces −X so left is −Y). The center
-		// sits on the yaw axis, so this orbits the aim point exactly.
-		anchor.LocalPosition = center + Rotation.FromYaw( -SeatSideAngle ) * offset;
-		anchor.LocalRotation = Rotation.LookAt( center - anchor.LocalPosition, Vector3.Up );
+		anchor.LocalPosition = center + offset;
+		// Aim at the board center, then pitch the aim down by SeatLookDownAngle —
+		// a pure rotation of the view, position unchanged (positive = look lower).
+		anchor.LocalRotation = Rotation.LookAt( center - anchor.LocalPosition, Vector3.Up )
+			* Rotation.FromPitch( SeatLookDownAngle );
 		return anchor;
 	}
 

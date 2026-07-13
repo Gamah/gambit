@@ -18,7 +18,7 @@ component if the scene lacks one), pieces are lathed runtime meshes in
 `ChessSetBuilder` (`models/chess/{type}.vmdl` is a drop-in upgrade path), and
 `ChessStation` holds two-seat occupancy (`[Sync(FromHost)]` + `[Rpc.Host]`
 first-wins, loser-side reconciliation). Seat cameras orbit the board center
-(`SeatOrbitRadius`/`SeatPitch`/`SeatSideAngle`).
+(`SeatOrbitRadius`/`SeatPitch`/`SeatLookDownAngle`).
 
 M2 (this pass): Gera Chess Library vendored+patched in `Code/Chess/Vendor/`
 (regex/Task/Span/reflection stripped for the whitelist, every change marked
