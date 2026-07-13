@@ -34,6 +34,15 @@ public sealed class ChessBoardView : Component
 	/// <summary>Set by ChessRing at build.</summary>
 	[Property] public LocalGameController Controller { get; set; }
 
+	/// <summary>Set by ChessRing at build — the in-sbox lichess game for this table.</summary>
+	[Property] public LichessPlayController LichessPlay { get; set; }
+
+	/// <summary>Which controller currently owns the board: the lichess game whenever
+	/// one is active here (through the game-over screen, so the final position
+	/// stays), otherwise the local two-seat game. With no lichess game this is
+	/// exactly <see cref="Controller"/>, so M2 render/input is unchanged.</summary>
+	IBoardGame Source => ( LichessPlay?.Active ?? false ) ? LichessPlay : Controller;
+
 	/// <summary>Seconds a piece takes to slide to its new square.</summary>
 	[Property] public float MoveSeconds { get; set; } = 0.22f;
 
@@ -162,7 +171,7 @@ public sealed class ChessBoardView : Component
 		// ChessGame.Fen returns the same string instance until a move mutates
 		// the board, so this reference check makes idle tables (most of a big
 		// lobby, most frames) free.
-		var fen = Controller?.Game?.Fen;
+		var fen = Source?.Game?.Fen;
 		if ( _everSynced && ReferenceEquals( fen, _lastFen ) ) return;
 		_everSynced = true;
 		_lastFen = fen;
@@ -301,11 +310,12 @@ public sealed class ChessBoardView : Component
 
 		// Only the seated local player interacts, only while the game is live,
 		// only on their turn, and not while the promotion picker is up.
-		if ( Controller == null || !Controller.IsMyTurn || PendingPromotion != null )
+		var source = Source;
+		if ( source == null || !source.IsMyTurn || PendingPromotion != null )
 		{
 			// Game ended or reset from under us (resign/abandon produce no board
 			// diff) — drop any half-finished input state.
-			if ( !( Controller?.Playing ?? false ) )
+			if ( !( source?.Playing ?? false ) )
 			{
 				ClearSelection();
 				PendingPromotion = null;
@@ -320,7 +330,7 @@ public sealed class ChessBoardView : Component
 		if ( !Input.Pressed( "Select" ) || square < 0 )
 			return;
 
-		var game = Controller.Game;
+		var game = source.Game;
 		string clicked = SquareName( square );
 		bool ownPiece = IsOwnPiece( _rendered[square] );
 
@@ -342,7 +352,7 @@ public sealed class ChessBoardView : Component
 			}
 			else
 			{
-				Controller.TryMakeLocalMove( Selected + clicked );
+				source.TryMakeMove( Selected + clicked );
 				ClearSelection();
 			}
 		}
@@ -359,7 +369,7 @@ public sealed class ChessBoardView : Component
 	void Select( string square )
 	{
 		Selected = square;
-		_targets = Controller.Game.LegalTargets( square );
+		_targets = Source.Game.LegalTargets( square );
 	}
 
 	void ClearSelection()
@@ -373,7 +383,7 @@ public sealed class ChessBoardView : Component
 	{
 		if ( PendingPromotion is not { } pending ) return;
 		PendingPromotion = null;
-		Controller.TryMakeLocalMove( pending.From + pending.To + piece );
+		Source.TryMakeMove( pending.From + pending.To + piece );
 	}
 
 	/// <summary>GameHud promotion picker dismissed without choosing.</summary>
@@ -447,10 +457,11 @@ public sealed class ChessBoardView : Component
 
 		if ( _cells == null ) return;
 
-		var game = Controller?.Game;
-		string lastMove = game != null ? game.LastMoveUci ?? Controller.LastMoveUci : null;
+		var source = Source;
+		var game = source?.Game;
+		string lastMove = game != null ? game.LastMoveUci ?? source.LastMoveUci : null;
 		string checkedKing = game?.CheckedKingSquare;
-		bool interactive = Controller?.IsMyTurn == true && PendingPromotion == null;
+		bool interactive = source?.IsMyTurn == true && PendingPromotion == null;
 
 		// Repaint only when an input into the tint decision changed — idle
 		// tables (and non-hovered frames) skip the 64-cell walk entirely. While
@@ -505,7 +516,7 @@ public sealed class ChessBoardView : Component
 
 	/// <summary>The square holds one of the local seated player's pieces.</summary>
 	bool IsOwnPiece( char fenChar ) =>
-		fenChar != '\0' && Controller?.LocalSeat is { } seat
+		fenChar != '\0' && Source?.LocalSeat is { } seat
 		&& char.IsUpper( fenChar ) == ( seat == ChessSeat.White );
 
 	// ── Square helpers ──

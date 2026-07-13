@@ -26,7 +26,7 @@ namespace Gambit.Game;
 /// resync or late join keeps the position but loses the history, which only
 /// costs a shorter move list (spectators can't import anyway).
 /// </summary>
-public sealed class LocalGameController : Component
+public sealed class LocalGameController : Component, IBoardGame
 {
 	/// <summary>Occupancy/seat source for this table. Set by ChessRing at build.</summary>
 	[Property] public ChessStation Station { get; set; }
@@ -149,6 +149,10 @@ public sealed class LocalGameController : Component
 
 	// ── Host game lifecycle ──
 
+	/// <summary>True when this board is hosting an open lichess game (M4) — the
+	/// local two-seat match steps aside so the two sides can be colour URLs.</summary>
+	bool LichessBusy => LichessGameController.For( Station )?.HasOpenGame ?? false;
+
 	void HostUpdate()
 	{
 		if ( Station == null ) return;
@@ -160,8 +164,10 @@ public sealed class LocalGameController : Component
 		switch ( Phase )
 		{
 			case PhaseIdle:
-				// A game starts the moment both seats fill
-				if ( whiteSeated && blackSeated )
+				// A game starts the moment both seats fill — unless this board is
+				// hosting an open lichess game (M4), where the two sides are colour
+				// URLs, not a local two-player match.
+				if ( whiteSeated && blackSeated && !LichessBusy )
 					HostStartFresh();
 				break;
 
@@ -239,6 +245,10 @@ public sealed class LocalGameController : Component
 	/// Validates against the local rules first — an illegal or out-of-turn move
 	/// is refused without touching the network.
 	/// </summary>
+	/// <summary><see cref="IBoardGame"/> entry point — the board view calls this
+	/// without caring whether the game is local or lichess.</summary>
+	public bool TryMakeMove( string uci ) => TryMakeLocalMove( uci );
+
 	public bool TryMakeLocalMove( string uci )
 	{
 		if ( !IsMyTurn || Game == null ) return false;

@@ -20,17 +20,127 @@
 	{
 		var ctrl = Controller();
 		var view = View();
+		var lp = LichessPlay();
 
 		<div class="hud">
-			<div class="title">LOCAL GAME</div>
+			<div class="title">@BoardTitle( ctrl )</div>
 			<div class="names">
 				<div class="name">⬜ @( Station().WhiteName ?? "—" )</div>
 				<div class="name">⬛ @( Station().BlackName ?? "—" )</div>
 			</div>
 
-			@if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
+			@if ( lp != null && lp.Active )
 			{
-				<div class="status wait">Waiting for an opponent to take the @( OpenSeatName() ) seat…</div>
+				<div class="lichess">
+					@if ( lp.Challenging )
+					{
+						<div class="lc-head">LICHESS · RAPID 10+0</div>
+						@if ( lp.IsOpenGame )
+						{
+							<div class="lc-you">You're seated. Send this to your opponent (any browser, incl. anonymous):</div>
+							<div class="url">@lp.ShareUrl</div>
+							<div class="button" onclick="@( () => lp.Copy( lp.ShareUrl ) )">@( lp.SinceCopied < 2f ? "✓ Copied" : "Copy opponent link" )</div>
+							<div class="lc-note">The board goes live here the moment they join.</div>
+							<div class="lc-sub">Seat didn't take? Open this once in a browser instead:</div>
+							<div class="url">@lp.SeatUrl</div>
+							<div class="button ghost" onclick="@( () => lp.Copy( lp.SeatUrl ) )">Copy my seat link</div>
+						}
+						else
+						{
+							<div class="lc-you">@( lp.StatusText ?? "Waiting for the opponent…" )</div>
+							<div class="lc-note">They accept on lichess.org; the game then appears here.</div>
+						}
+						<div class="button ghost" onclick="@( () => lp.ClearPlay() )">Cancel</div>
+					}
+					else if ( lp.Playing )
+					{
+						<div class="lc-head">LICHESS · @( lp.OpponentName ?? "opponent" )</div>
+						<div class="status @( lp.IsMyTurn ? "turn" : "wait" )">@LichessTurnText( lp )</div>
+						<div class="lc-note">Clock @ClockText( lp.MyClockSeconds )</div>
+						<div class="button resign" onclick="@( () => lp.ResignGame() )">Resign</div>
+					}
+					else
+					{
+						<div class="status over">Game over</div>
+						<div class="reason">@lp.OverText</div>
+						@if ( lp.GameUrl != null )
+						{
+							<div class="url">@lp.GameUrl</div>
+							<div class="button" onclick="@( () => lp.CopyGameUrl() )">@( lp.SinceCopied < 2f ? "✓ Copied" : "View on lichess (copy)" )</div>
+						}
+						<div class="button ghost" onclick="@( () => lp.ClearPlay() )">Done</div>
+					}
+					@if ( lp.Error != null )
+					{
+						<div class="error">@lp.Error</div>
+					}
+				</div>
+			}
+			else if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
+			{
+				var lc = Lichess();
+				var mySeat = ChessStation.ActiveSeat;
+
+				<div class="lichess">
+					@if ( lc != null && lc.HasOpenGame )
+					{
+						var myUrl = lc.PlayUrlFor( mySeat );
+						var oppSeat = mySeat == ChessSeat.White ? ChessSeat.Black : ChessSeat.White;
+						var oppUrl = lc.PlayUrlFor( oppSeat );
+
+						<div class="lc-head">LICHESS · RAPID 10+0 · UNRATED</div>
+						<div class="lc-you">You play @SeatWord( mySeat ) — open your link in a browser to play.</div>
+						<div class="url">@myUrl</div>
+						<div class="button" onclick="@( () => lc.CopyUrl( myUrl ) )">@( lc.SinceCopied < 2f ? "✓ Copied" : "Copy my link" )</div>
+						<div class="lc-sub">Opponent link (@SeatWord( oppSeat )) — share it:</div>
+						<div class="url">@oppUrl</div>
+						<div class="button" onclick="@( () => lc.CopyUrl( oppUrl ) )">Copy opponent link</div>
+						<div class="button ghost" onclick="@( () => lc.ClearOpenGame() )">New link</div>
+					}
+					else
+					{
+						<div class="lc-head">PLAY IN SBOX</div>
+						@if ( !SignedIn() )
+						{
+							<div class="lc-you">Sign in to lichess to play on this board.</div>
+							<div class="button" onclick="@( () => OpenSplash() )">Sign in</div>
+						}
+						else
+						{
+							<div class="lc-you">Play a lichess user right here — you'll be @SeatWord( mySeat ), Rapid 10+0.</div>
+							<TextEntry @ref="_oppEntry" class="lc-input" placeholder="opponent lichess username" />
+							<div class="button" onclick="@( () => ChallengeUser() )">Challenge & play here</div>
+							<div class="button ghost" onclick="@( () => PlayOpen() )">vs anonymous browser (open link)</div>
+							<div class="button ghost" onclick="@( () => ChallengeAi() )">vs Stockfish (level 3)</div>
+						}
+
+						<div class="lc-divider">— or play in a browser —</div>
+						<div class="lc-head">PLAY IN BROWSER</div>
+						<div class="lc-you">Create an unrated Rapid 10+0 link — you'll play @SeatWord( mySeat ).</div>
+						@if ( lc?.Creating ?? false )
+						{
+							<div class="button disabled">Creating…</div>
+						}
+						else
+						{
+							<div class="button" onclick="@( () => lc?.CreateOpenGame() )">Create Rapid 10+0 game</div>
+						}
+						@if ( lc?.Error != null )
+						{
+							<div class="error">@lc.Error</div>
+						}
+
+						<div class="lc-sub">Have a game link? Take your assigned side:</div>
+						<TextEntry @ref="_joinEntry" class="lc-input" placeholder="paste lichess URL" />
+						<div class="button" onclick="@( () => JoinByLink() )">Take my assigned side</div>
+						@if ( _joinError != null )
+						{
+							<div class="error">@_joinError</div>
+						}
+
+						<div class="lc-note">Rapid only — no Blitz/Bullet. Or wait for someone to sit across for a local game.</div>
+					}
+				</div>
 			}
 			else if ( ctrl.GameOver )
 			{
@@ -175,6 +285,24 @@
 	}
 	.error { font-size: 12px; color: #ff8080; }
 
+	.lichess { flex-direction: column; gap: 6px; }
+	.lc-head { font-size: 12px; letter-spacing: 2px; color: rgba(255, 255, 255, 0.45); }
+	.lc-you { font-size: 13px; color: #7fd47f; }
+	.lc-sub { font-size: 12px; color: rgba(255, 255, 255, 0.6); margin-top: 4px; }
+	.lc-note { font-size: 11px; color: rgba(255, 255, 255, 0.4); margin-top: 4px; }
+	.lc-divider { font-size: 11px; color: rgba(255, 255, 255, 0.35); margin: 8px 0 2px 0; justify-content: center; }
+	.lc-input {
+		pointer-events: all;
+		background-color: rgba(255, 255, 255, 0.08);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 6px;
+		padding: 6px 8px;
+		font-size: 12px;
+		color: white;
+	}
+	.button.ghost { background-color: rgba(255, 255, 255, 0.08); }
+	.button.ghost:hover { background-color: rgba(255, 255, 255, 0.18); }
+
 	.promo-veil {
 		position: absolute;
 		left: 0; top: 0;
@@ -217,16 +345,62 @@
 {
 	static ChessStation Station() => ChessStation.Active;
 	static LocalGameController Controller() => LocalGameController.For( ChessStation.Active );
+	static LichessGameController Lichess() => LichessGameController.For( ChessStation.Active );
+	static LichessPlayController LichessPlay() => LichessPlayController.For( ChessStation.Active );
 	static ChessBoardView View() => ChessStation.Active?.Components.Get<ChessBoardView>();
+
+	static string SeatWord( ChessSeat seat ) => seat == ChessSeat.White ? "White" : "Black";
+
+	static string BoardTitle( LocalGameController ctrl ) =>
+		( LichessPlay()?.Active ?? false ) ? "LICHESS GAME"
+		: ( Lichess()?.HasOpenGame ?? false ) ? "LICHESS LINK"
+		: ( ctrl?.HasGame ?? false ) ? "LOCAL GAME"
+		: "CHESS BOARD";
+
+	// ── In-sbox lichess play (M4) ──
+	static bool SignedIn() => Gambit.Api.LichessAuth.SignedIn;
+	static void OpenSplash() => Gambit.UI.Screens.SplashScreen.Open();
+
+	TextEntry _oppEntry;
+	void ChallengeUser() => LichessPlay()?.ChallengeUser( _oppEntry?.Text?.Trim() );
+	void ChallengeAi() => LichessPlay()?.ChallengeAi( 3 );
+	void PlayOpen() => LichessPlay()?.PlayOpenGame();
+
+	static string LichessTurnText( LichessPlayController lp ) =>
+		lp.IsMyTurn
+			? ( ( lp.Game?.IsCheck ?? false ) ? "Your move — check!" : "Your move" )
+			: $"{lp.OpponentName ?? "Opponent"} is thinking…";
+
+	static string ClockText( int seconds )
+	{
+		if ( seconds <= 0 ) return "—";
+		return $"{seconds / 60}:{seconds % 60:00}";
+	}
+
+	// Join-by-link (M4): read the side a pasted lichess URL pins and route the
+	// camera there. The gambit_join console command is the guaranteed-working
+	// twin if this field's focus ever misbehaves while seated.
+	TextEntry _joinEntry;
+	string _joinError;
+
+	void JoinByLink()
+	{
+		var url = _joinEntry?.Text?.Trim();
+		var seat = LichessGameController.SeatFromUrl( url );
+		if ( seat is not { } s )
+		{
+			_joinError = "Couldn't read a side from that link — use a ?color= URL.";
+			return;
+		}
+		_joinError = null;
+		LobbyPlayer.Local?.JoinLichessSide( s );
+	}
 
 	static bool Visible() =>
 		ChessStation.Active != null && ( LobbyPlayer.Local?.CameraSettled ?? false );
 
 	static bool BothSeated() =>
 		Station() is { } s && s.WhiteSteamId != 0 && s.BlackSteamId != 0;
-
-	static string OpenSeatName() =>
-		Station()?.WhiteSteamId == 0 ? "White" : "Black";
 
 	static string TurnText( LocalGameController ctrl )
 	{
@@ -257,8 +431,16 @@
 	protected override int BuildHash()
 	{
 		var ctrl = Controller();
+		var lc = Lichess();
+		var lp = LichessPlay();
+		var lichessHash = System.HashCode.Combine(
+			System.HashCode.Combine( lc?.HasOpenGame, lc?.UrlWhite, lc?.Creating, lc?.Error, lc?.SinceCopied < 2f, _joinError ),
+			System.HashCode.Combine( lp?.Active, lp?.Playing, lp?.Challenging, lp?.IsMyTurn, lp?.Game?.Fen,
+				lp?.StatusText, lp?.OverText ),
+			System.HashCode.Combine( lp?.Error, lp?.OpponentName, lp?.SinceCopied < 2f, SignedIn(),
+				lp?.IsOpenGame, lp?.ShareUrl ) );
 		return System.HashCode.Combine(
-			Visible(), ctrl?.GameId, ctrl?.Game?.MoveCount, ctrl?.GameOver,
+			Visible(), ctrl?.GameId, ctrl?.Game?.MoveCount, ctrl?.GameOver, lichessHash,
 			System.HashCode.Combine( ctrl?.Importing, ctrl?.LichessUrl, ctrl?.ImportError,
 				ctrl?.SinceUrlCopied < 2f, ctrl?.IsMyTurn, View()?.PendingPromotion != null,
 				LobbyPlayer.Local?.LeaveArmed, BothSeated() ) );

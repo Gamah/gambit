@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Sandbox;
 
@@ -125,12 +126,123 @@ public static class LichessApi
 	public static Task<Result> ImportPgn( string pgn ) =>
 		PostForm( "/api/import", "pgn=" + Uri.EscapeDataString( pgn ) );
 
+	/// <summary>Create an open-ended challenge anyone can join by opening a URL
+	/// (M4 — no streaming needed; the game plays on lichess.org). Unauthenticated,
+	/// so it is always casual/unrated — exactly what we want. Clocks are in seconds
+	/// (10+0 rapid = 600/0). The reply carries <c>urlWhite</c>/<c>urlBlack</c>,
+	/// which pin the colours.</summary>
+	public static Task<Result> CreateOpenChallenge( int clockLimitSeconds, int clockIncrementSeconds, string name = null, string token = null )
+	{
+		var body = $"rated=false&clock.limit={clockLimitSeconds}&clock.increment={clockIncrementSeconds}&variant=standard";
+		if ( !string.IsNullOrEmpty( name ) )
+			body += "&name=" + Uri.EscapeDataString( name );
+		// Created with the player's token when they intend to sit in on it in sbox,
+		// so it's cancellable and tied to their session; unauthenticated (token null)
+		// for the pure browser-link flow (M4a).
+		return Send( Base + "/api/challenge/open", "POST", Form( body ), token );
+	}
+
 	/// <summary>POST an <c>x-www-form-urlencoded</c> body to a lichess path,
 	/// unauthenticated (used by import and the OAuth token exchange).</summary>
 	public static Task<Result> PostForm( string path, string formBody )
 	{
-		var content = new StringContent( formBody, Encoding.UTF8, "application/x-www-form-urlencoded" );
-		return Send( Base + path, "POST", content, null );
+		return Send( Base + path, "POST", Form( formBody ), null );
+	}
+
+	static StringContent Form( string body ) =>
+		new( body, Encoding.UTF8, "application/x-www-form-urlencoded" );
+
+	// ── Board API play (M4 in-sbox polling play) ──
+	// Live move streams are unavailable under s&box Http (PLAN.md risk 1), so play
+	// is driven by POLLING GetAccountPlaying instead of the ndjson game stream.
+	// All of these are token-authenticated (board:play scope); the token only ever
+	// rides in the Authorization header, never logged/synced (D3).
+
+	/// <summary>Challenge a specific lichess user to a casual game (Rapid 10+0 =
+	/// 600/0). They accept on lichess.org; the game then appears in
+	/// <see cref="GetAccountPlaying"/>. <paramref name="color"/> is "white"/"black"/
+	/// "random" (we pass the seat the challenger sat at).</summary>
+	public static Task<Result> ChallengeUser( string username, string color, int limit, int inc, string token )
+	{
+		var body = $"rated=false&clock.limit={limit}&clock.increment={inc}&color={color}&variant=standard";
+		return Send( $"{Base}/api/challenge/{Uri.EscapeDataString( username )}", "POST", Form( body ), token );
+	}
+
+	/// <summary>Challenge the Stockfish AI (level 1–8) — starts a game immediately
+	/// (no accept needed), so the reply is the game itself. Handy for testing the
+	/// play loop with no second party.</summary>
+	public static Task<Result> ChallengeAi( int level, string color, int limit, int inc, string token )
+	{
+		var body = $"level={level}&clock.limit={limit}&clock.increment={inc}&color={color}&variant=standard";
+		return Send( $"{Base}/api/challenge/ai", "POST", Form( body ), token );
+	}
+
+	/// <summary>The signed-in user's ongoing games (fen, lastMove, isMyTurn,
+	/// secondsLeft, opponent). A normal single-response endpoint — this is the
+	/// poll target that stands in for the unavailable ndjson game stream.</summary>
+	public static Task<Result> GetAccountPlaying( string token ) =>
+		Send( Base + "/api/account/playing", "GET", null, token );
+
+	/// <summary>Play a UCI move in a Board-API game (short request, works without
+	/// streaming). lichess rejects illegal/out-of-turn moves with 4xx.</summary>
+	public static Task<Result> BoardMove( string gameId, string uci, string token ) =>
+		Send( $"{Base}/api/board/game/{gameId}/move/{uci}", "POST", null, token );
+
+	/// <summary>Resign a Board-API game.</summary>
+	public static Task<Result> BoardResign( string gameId, string token ) =>
+		Send( $"{Base}/api/board/game/{gameId}/resign", "POST", null, token );
+
+	/// <summary>Cancel a challenge we created that hasn't been accepted yet.</summary>
+	public static Task<Result> CancelChallenge( string challengeId, string token ) =>
+		Send( $"{Base}/api/challenge/{challengeId}/cancel", "POST", null, token );
+
+	/// <summary>Accept a challenge. With <paramref name="color"/> set, this seats the
+	/// caller in an <b>open</b> challenge as that colour — the API way to sit in on
+	/// your own open game with no browser (the accept endpoint's <c>color</c> query is
+	/// documented as "only valid if this is an open challenge"). color = white/black.</summary>
+	public static Task<Result> AcceptChallenge( string challengeId, string color, string token )
+	{
+		var url = $"{Base}/api/challenge/{challengeId}/accept";
+		if ( !string.IsNullOrEmpty( color ) )
+			url += "?color=" + color;
+		return Send( url, "POST", null, token );
+	}
+
+	/// <summary>Export a finished game as JSON to read its final status/winner —
+	/// account/playing drops a game the moment it ends, so this fills in the result.</summary>
+	public static Task<Result> GameExport( string gameId ) =>
+		Send( $"{Base}/game/export/{gameId}", "GET", null, null );
+
+	/// <summary>
+	/// Hold the game-stream connection open for the length of a game so lichess sees
+	/// this Board-API player as <b>present</b>. Without a held-open connection lichess
+	/// treats the player as disconnected — the opponent's client shows "left the game"
+	/// after every move and can claim victory. We can't read the stream incrementally
+	/// (Http buffers the body — PLAN.md risk 1), but presence only needs the
+	/// connection <i>established</i>, so we fire it and hold it, ignoring the body.
+	///
+	/// <para>Deliberately bypasses the single-flight <see cref="Send"/> gate — this
+	/// connection stays open for minutes and must coexist with polling + move POSTs
+	/// (lichess allows ~8 concurrent streams/IP). It returns when lichess closes the
+	/// stream (game over) or when <paramref name="ct"/> is cancelled. The buffered
+	/// body is tiny for real-time games (a few moves + ~7s keep-alives).</para>
+	/// </summary>
+	public static async Task HoldGameStream( string gameId, string token, CancellationToken ct )
+	{
+		try
+		{
+			var headers = new Dictionary<string, string>
+			{
+				["Authorization"] = "Bearer " + token,
+				["Accept"] = "application/x-ndjson",
+			};
+			using var resp = await Http.RequestAsync( $"{Base}/api/board/game/stream/{gameId}", "GET", null, headers, ct );
+			// Reached only when the server closes the stream (game finished). Body ignored.
+		}
+		catch ( Exception )
+		{
+			// Cancelled (game over / left) or the connection dropped — both expected.
+		}
 	}
 
 	// ── Helpers ──
