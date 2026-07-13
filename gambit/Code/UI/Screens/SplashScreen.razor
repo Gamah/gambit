@@ -37,34 +37,34 @@
 				else
 				{
 					<div class="section">SIGN IN WITH LICHESS</div>
+					<div class="hint">Play real lichess games as yourself. Copy the sign-in link, open it in your browser, click <b>Create</b> (scopes are pre-filled), then paste the <span class="mono">lip_…</span> token here.</div>
+					<div class="btn ghost" onclick="@( () => CopyTokenLink() )">@( _tokenLinkCopied < 2f ? "✓ Sign-in link copied" : "Copy sign-in link" )</div>
+					<div class="row">
+						<TextEntry @ref="_tokenEntry" class="entry" placeholder="Paste lip_… token" />
+						<div class="btn primary @(_busy ? "disabled" : "")" onclick="@( () => BeginSignIn() )">@( _busy ? "…" : "Sign in" )</div>
+					</div>
+					@if ( !string.IsNullOrEmpty( _status ) )
+					{
+						<div class="status @(_ok ? "ok" : "err")">@_status</div>
+					}
+
+					<div class="or"><span>or use OAuth</span></div>
 					@if ( !LichessOAuth.Pending )
 					{
-						<div class="hint">Play real lichess games as yourself. This copies a sign-in link — open it in your browser and click <b>Authorize</b>.</div>
-						<div class="btn primary" onclick="@( () => StartOAuth() )">Start lichess sign-in</div>
+						<div class="btn ghost small" onclick="@( () => StartOAuth() )">Sign in with lichess (OAuth)</div>
 					}
 					else
 					{
-						<div class="hint">✓ Sign-in link copied. Open it, click <b>Authorize</b>, then paste the page you land on below — it won't load, that's expected; the code is in the address bar.</div>
+						<div class="hint">✓ Link copied. Authorize in your browser, then paste the page you land on (it won't load — the code is in the address bar):</div>
 						<div class="row">
 							<TextEntry @ref="_redirectEntry" class="entry" placeholder="Paste the address-bar URL" />
-							<div class="btn primary @(_busy ? "disabled" : "")" onclick="@( () => CompleteOAuth() )">@( _busy ? "…" : "Complete" )</div>
+							<div class="btn @(_busy ? "disabled" : "")" onclick="@( () => CompleteOAuth() )">@( _busy ? "…" : "Complete" )</div>
 						</div>
 						<div class="minor-row">
 							<div class="minor" onclick="@( () => CopyOAuthLink() )">copy link again</div>
 							<div class="minor" onclick="@( () => CancelOAuth() )">cancel</div>
 						</div>
 					}
-					@if ( !string.IsNullOrEmpty( _status ) )
-					{
-						<div class="status @(_ok ? "ok" : "err")">@_status</div>
-					}
-
-					<div class="or"><span>advanced</span></div>
-					<div class="btn ghost small" onclick="@( () => CopyTokenLink() )">@( _tokenLinkCopied < 2f ? "✓ Token link copied" : "Paste a personal token instead — copy token link" )</div>
-					<div class="row">
-						<TextEntry @ref="_tokenEntry" class="entry" placeholder="Paste lip_… token" />
-						<div class="btn @(_busy ? "disabled" : "")" onclick="@( () => BeginSignIn() )">Sign in</div>
-					</div>
 
 					<div class="or"><span>or</span></div>
 					<div class="section">PLAY ANONYMOUSLY</div>

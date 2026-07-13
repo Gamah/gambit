@@ -39,6 +39,14 @@ public static class LichessOAuth
 
 	const string Scopes = "board:play challenge:read challenge:write";
 
+	// PKCE method. S256 sends SHA-256(verifier) as the challenge; `plain` sends the
+	// raw random verifier as the challenge (no hashing — the "just send noise" idea)
+	// and lichess would compare it verbatim. `plain` is in RFC 7636 but most servers
+	// (lichess included, we believe) reject it and mandate S256. This stays true
+	// because S256 is confirmed working end-to-end; flip to false to test whether
+	// lichess accepts plain — if it does, the SHA-256 block below can be deleted.
+	const bool UseS256 = true;
+
 	// In-flight PKCE state for the one login attempt (single session, single flow).
 	static string _verifier;
 	static string _state;
