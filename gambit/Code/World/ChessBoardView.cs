@@ -40,15 +40,20 @@ public sealed class ChessBoardView : Component
 	/// <summary>Peak height of the slide arc, as a fraction of a square.</summary>
 	[Property] public float MoveArc { get; set; } = 0.35f;
 
-	// Highlight tints over the cell boxes (base colors come from ChessRing)
+	// Highlight tints over the cell boxes (base colors come from ChessRing).
+	// Distinct tiers: selected = strong yellow, legal targets = green (brighter
+	// under the cursor = "click to move here"), hover = pale warm glow on own
+	// pieces only, last move = muted olive, check = red.
 	static readonly Color SelectedTint = new( 0.95f, 0.85f, 0.25f );
-	static readonly Color TargetLightTint = new( 0.55f, 0.75f, 0.45f );
-	static readonly Color TargetDarkTint = new( 0.25f, 0.45f, 0.20f );
+	static readonly Color TargetLightTint = new( 0.50f, 0.85f, 0.40f );
+	static readonly Color TargetDarkTint = new( 0.12f, 0.48f, 0.10f );
+	static readonly Color TargetHoverLightTint = new( 0.65f, 1.00f, 0.55f );
+	static readonly Color TargetHoverDarkTint = new( 0.25f, 0.70f, 0.22f );
 	static readonly Color LastMoveLightTint = new( 0.80f, 0.78f, 0.45f );
 	static readonly Color LastMoveDarkTint = new( 0.35f, 0.33f, 0.10f );
 	static readonly Color CheckTint = new( 0.85f, 0.20f, 0.15f );
-	static readonly Color HoverLightTint = new( 0.75f, 0.80f, 0.85f );
-	static readonly Color HoverDarkTint = new( 0.18f, 0.22f, 0.26f );
+	static readonly Color HoverLightTint = new( 0.95f, 0.90f, 0.62f );
+	static readonly Color HoverDarkTint = new( 0.34f, 0.30f, 0.14f );
 
 	const string StartPlacement = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
 
@@ -222,18 +227,9 @@ public sealed class ChessBoardView : Component
 		if ( ring == null ) return null;
 
 		bool white = char.IsUpper( fenChar );
-		var type = char.ToLowerInvariant( fenChar ) switch
-		{
-			'p' => ChessPieceType.Pawn,
-			'n' => ChessPieceType.Knight,
-			'b' => ChessPieceType.Bishop,
-			'r' => ChessPieceType.Rook,
-			'q' => ChessPieceType.Queen,
-			_ => ChessPieceType.King,
-		};
 
 		// Same facing rule as the ring's preview set: pieces look at the enemy
-		var piece = ChessSetBuilder.BuildPiece( _piecesRoot, type, white, ring.PieceScale, yaw: white ? 0f : 180f );
+		var piece = ChessSetBuilder.BuildPiece( _piecesRoot, PieceTypeOf( fenChar ), white, ring.PieceScale, yaw: white ? 0f : 180f );
 		piece.LocalPosition = SquareLocal( square );
 		return piece;
 	}
@@ -296,9 +292,7 @@ public sealed class ChessBoardView : Component
 
 		var game = Controller.Game;
 		string clicked = SquareName( square );
-		char piece = _rendered[square];
-		bool ownPiece = piece != '\0'
-			&& char.IsUpper( piece ) == ( Controller.LocalSeat == ChessSeat.White );
+		bool ownPiece = IsOwnPiece( _rendered[square] );
 
 		if ( Selected == null )
 		{
@@ -355,9 +349,13 @@ public sealed class ChessBoardView : Component
 	/// <summary>GameHud promotion picker dismissed without choosing.</summary>
 	public void CancelPromotion() => PendingPromotion = null;
 
-	/// <summary>Board square under the mouse cursor: ray → board plane →
-	/// station-local file/rank. The cells are visuals without colliders, so
-	/// plane math beats scene tracing here.</summary>
+	/// <summary>
+	/// Board square under the mouse cursor: the cursor ray projected onto the
+	/// board-surface plane, in station-local space. Pieces deliberately do NOT
+	/// intercept the ray — the pick is always the square under the cursor on
+	/// the board itself, so tall pieces never block or divert selection. (The
+	/// cells are visuals without colliders; plane math beats scene tracing.)
+	/// </summary>
 	int SquareUnderCursor()
 	{
 		var ring = ChessRing.Instance;
@@ -365,13 +363,16 @@ public sealed class ChessBoardView : Component
 		if ( ring == null || camera == null || Station == null ) return -1;
 
 		var ray = camera.ScreenPixelToRay( Mouse.Position );
-		float planeZ = Station.WorldPosition.z + ring.BoardSurfaceZ;
-		if ( MathF.Abs( ray.Forward.z ) < 0.0001f ) return -1;
 
-		float t = ( planeZ - ray.Position.z ) / ray.Forward.z;
+		// Station-local ray (stations are unscaled, yaw-only)
+		var origin = Station.GameObject.WorldTransform.PointToLocal( ray.Position );
+		var dir = Station.GameObject.WorldRotation.Inverse * ray.Forward;
+
+		if ( MathF.Abs( dir.z ) < 0.0001f ) return -1;
+		float t = ( ring.BoardSurfaceZ - origin.z ) / dir.z;
 		if ( t <= 0f ) return -1;
 
-		var local = Station.GameObject.WorldTransform.PointToLocal( ray.Position + ray.Forward * t );
+		var local = origin + dir * t;
 		float cell = ring.CellWorldSize;
 
 		// Inverse of ChessRing.CellCenter (×TableScale): x = (rank-3.5)·cell, y = (3.5-file)·cell
@@ -380,6 +381,16 @@ public sealed class ChessBoardView : Component
 		if ( rank is < 0 or > 7 || file is < 0 or > 7 ) return -1;
 		return rank * 8 + file;
 	}
+
+	static ChessPieceType PieceTypeOf( char fenChar ) => char.ToLowerInvariant( fenChar ) switch
+	{
+		'p' => ChessPieceType.Pawn,
+		'n' => ChessPieceType.Knight,
+		'b' => ChessPieceType.Bishop,
+		'r' => ChessPieceType.Rook,
+		'q' => ChessPieceType.Queen,
+		_ => ChessPieceType.King,
+	};
 
 	// ── Highlights ──
 
@@ -408,6 +419,11 @@ public sealed class ChessBoardView : Component
 			lastTo = lastMove[2..4];
 		}
 
+		// Hover only glows on squares the player can act on: their own pieces
+		// (to pick up) and — handled in the target branch — legal destinations.
+		bool hoverOwnPiece = interactive && _hoverSquare >= 0
+			&& IsOwnPiece( _rendered[_hoverSquare] );
+
 		for ( int sq = 0; sq < 64; sq++ )
 		{
 			var renderer = _cells[sq];
@@ -420,10 +436,13 @@ public sealed class ChessBoardView : Component
 			if ( Selected == name )
 				tint = SelectedTint;
 			else if ( interactive && _targets.Contains( name ) )
-				tint = light ? TargetLightTint : TargetDarkTint;
+				// Legal move target — brighter under the cursor ("click to move here")
+				tint = sq == _hoverSquare
+					? ( light ? TargetHoverLightTint : TargetHoverDarkTint )
+					: ( light ? TargetLightTint : TargetDarkTint );
 			else if ( checkedKing == name )
 				tint = CheckTint;
-			else if ( interactive && sq == _hoverSquare )
+			else if ( hoverOwnPiece && sq == _hoverSquare )
 				tint = light ? HoverLightTint : HoverDarkTint;
 			else if ( lastFrom == name || lastTo == name )
 				tint = light ? LastMoveLightTint : LastMoveDarkTint;
@@ -434,6 +453,11 @@ public sealed class ChessBoardView : Component
 				renderer.Tint = tint;
 		}
 	}
+
+	/// <summary>The square holds one of the local seated player's pieces.</summary>
+	bool IsOwnPiece( char fenChar ) =>
+		fenChar != '\0' && Controller?.LocalSeat is { } seat
+		&& char.IsUpper( fenChar ) == ( seat == ChessSeat.White );
 
 	// ── Square helpers ──
 
