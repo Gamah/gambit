@@ -177,6 +177,39 @@ public static class LichessApi
 		return Send( $"{Base}/api/challenge/ai", "POST", Form( body ), token );
 	}
 
+	/// <summary>
+	/// Create a Board-API seek (<c>POST /api/board/seek</c>) and hold the connection
+	/// open. lichess pairs the caller with a random opponent looking for the same
+	/// time control and closes the connection when the game starts — <b>closing it
+	/// early cancels the seek</b>, so the request must stay open until matched. Like
+	/// <see cref="HoldGameStream"/> this deliberately bypasses the single-flight
+	/// <see cref="Send"/> gate (it can stay open for minutes and must coexist with the
+	/// poll that detects the pairing) and ignores the streamed body — the caller learns
+	/// it was paired by polling <see cref="GetAccountPlaying"/>. Rapid/Classical only
+	/// (lichess bars bullet on the Board API). <paramref name="minutes"/> is the clock
+	/// initial time in minutes, <paramref name="increment"/> in seconds (10+0 → 10/0).
+	/// Returns when lichess pairs us (stream closes) or <paramref name="ct"/> cancels.
+	/// </summary>
+	public static async Task HoldSeek( bool rated, int minutes, int increment, string token, CancellationToken ct )
+	{
+		try
+		{
+			var headers = new Dictionary<string, string>
+			{
+				["Authorization"] = "Bearer " + token,
+				["Accept"] = "application/x-ndjson",
+			};
+			var body = Form( $"rated={( rated ? "true" : "false" )}&time={minutes}&increment={increment}&variant=standard" );
+			using var resp = await Http.RequestAsync( $"{Base}/api/board/seek", "POST", body, headers, ct );
+			// Reached when lichess pairs us (it closes the stream) — the poll picks up
+			// the new game. Body ignored (we can't read it incrementally anyway, risk 1).
+		}
+		catch ( Exception )
+		{
+			// Cancelled (paired / user gave up) or the connection dropped — expected.
+		}
+	}
+
 	/// <summary>The signed-in user's ongoing games (fen, lastMove, isMyTurn,
 	/// secondsLeft, opponent). A normal single-response endpoint — this is the
 	/// poll target that stands in for the unavailable ndjson game stream.</summary>

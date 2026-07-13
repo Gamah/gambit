@@ -149,9 +149,13 @@ public sealed class LocalGameController : Component, IBoardGame
 
 	// ── Host game lifecycle ──
 
-	/// <summary>True when this board is hosting an open lichess game (M4) — the
-	/// local two-seat match steps aside so the two sides can be colour URLs.</summary>
-	bool LichessBusy => LichessGameController.For( Station )?.HasOpenGame ?? false;
+	/// <summary>True when this board is hosting a lichess game (M4) — the local
+	/// two-seat match steps aside. Covers both the open-link flow (the two sides are
+	/// colour URLs) and in-sbox polling play / a relayed spectator game (the board is
+	/// showing someone's real lichess game, not a fresh local match).</summary>
+	bool LichessBusy =>
+		( LichessGameController.For( Station )?.HasOpenGame ?? false )
+		|| ( LichessPlayController.For( Station )?.BlocksLocalGame ?? false );
 
 	void HostUpdate()
 	{

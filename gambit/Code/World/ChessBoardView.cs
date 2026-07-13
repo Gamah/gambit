@@ -38,10 +38,11 @@ public sealed class ChessBoardView : Component
 	[Property] public LichessPlayController LichessPlay { get; set; }
 
 	/// <summary>Which controller currently owns the board: the lichess game whenever
-	/// one is active here (through the game-over screen, so the final position
-	/// stays), otherwise the local two-seat game. With no lichess game this is
-	/// exactly <see cref="Controller"/>, so M2 render/input is unchanged.</summary>
-	IBoardGame Source => ( LichessPlay?.Active ?? false ) ? LichessPlay : Controller;
+	/// one is shown here — either we're playing it (through the game-over screen, so
+	/// the final position stays) or we're spectating the host-relayed game (D7) —
+	/// otherwise the local two-seat game. With no lichess game this is exactly
+	/// <see cref="Controller"/>, so M2 render/input is unchanged.</summary>
+	IBoardGame Source => ( LichessPlay?.ShowsBoard ?? false ) ? LichessPlay : Controller;
 
 	/// <summary>Seconds a piece takes to slide to its new square.</summary>
 	[Property] public float MoveSeconds { get; set; } = 0.22f;

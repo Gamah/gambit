@@ -169,6 +169,19 @@ public static class LichessSpikes
 		pc.ChallengeAi( level );
 	}
 
+	/// <summary>Quick match: seek a random lichess opponent at Rapid 10+0 on the board
+	/// you're seated at (the M4 gate item). Pass <c>casual</c> for an unrated seek;
+	/// anything else (or nothing) seeks rated. Sit down first, then wait for the pairing.</summary>
+	[ConCmd( "gambit_seek" )]
+	public static void Seek( string mode = "rated" )
+	{
+		var pc = Gambit.Game.LichessPlayController.For( Gambit.World.ChessStation.Active );
+		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_seek [rated|casual]" ); return; }
+		bool rated = !string.Equals( mode, "casual", System.StringComparison.OrdinalIgnoreCase );
+		Log.Info( $"[Gambit] seeking a {( rated ? "rated" : "casual" )} Rapid 10+0 opponent…" );
+		pc.QuickSeek( rated );
+	}
+
 	/// <summary>Create an open game vs an anonymous browser and sit in on it in sbox
 	/// on the side you're seated at — we self-seat via the API (accept?color=), so you
 	/// just share the opponent link. Sit down first; the HUD then shows the link.</summary>
