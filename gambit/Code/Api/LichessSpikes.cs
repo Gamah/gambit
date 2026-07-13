@@ -145,4 +145,27 @@ public static class LichessSpikes
 		Log.Info( $"[Gambit] joining as {s} — moving camera to that seat." );
 		Gambit.World.LobbyPlayer.Local?.JoinLichessSide( s );
 	}
+
+	// ── M4: in-sbox play (poll account/playing) ──
+
+	/// <summary>Challenge a lichess user to a Rapid 10+0 game played on the board
+	/// you're seated at. They accept on lichess.org; the game then streams onto the
+	/// sbox board via polling. Sit down first.</summary>
+	[ConCmd( "gambit_challenge" )]
+	public static void Challenge( string username )
+	{
+		var pc = Gambit.Game.LichessPlayController.For( Gambit.World.ChessStation.Active );
+		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_challenge <lichess-username>" ); return; }
+		pc.ChallengeUser( username );
+	}
+
+	/// <summary>Play Stockfish (level 1–8, default 3) on the board you're seated at —
+	/// zero-setup way to test the play loop.</summary>
+	[ConCmd( "gambit_challenge_ai" )]
+	public static void ChallengeAi( int level = 3 )
+	{
+		var pc = Gambit.Game.LichessPlayController.For( Gambit.World.ChessStation.Active );
+		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_challenge_ai [level]" ); return; }
+		pc.ChallengeAi( level );
+	}
 }

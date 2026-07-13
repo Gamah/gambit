@@ -387,6 +387,14 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			view.Station = component;
 			view.Controller = controller;
 
+			// In-sbox lichess play (M4): polls account/playing to render a real
+			// lichess game on this board and posts the seated player's moves. Local
+			// per-client (own token, nothing synced) — the board view renders it via
+			// IBoardGame whenever a game is live.
+			var lichessPlay = station.AddComponent<Gambit.Game.LichessPlayController>();
+			lichessPlay.Station = component;
+			view.LichessPlay = lichessPlay;
+
 			// Open lichess game (M4): generates a shareable Rapid 10+0 link for the
 			// side a player sits at; the game plays on lichess.org (no streaming yet).
 			// Replicates with the station GO like the others for its [Sync] URLs.

@@ -45,6 +45,53 @@ public sealed class LichessOpenChallenge
 	public string urlBlack { get; set; }
 }
 
+/// <summary>Reply from <c>POST /api/challenge/{user}</c> — the created challenge
+/// (id/url for reference; the game is identified later via account/playing).
+/// <c>POST /api/challenge/ai</c> reuses the same shape but is already a live game,
+/// so <c>id</c> is the game id.</summary>
+public sealed class LichessChallenge
+{
+	public string id { get; set; }
+	public string url { get; set; }
+	public string speed { get; set; }
+}
+
+/// <summary>Reply from <c>GET /api/account/playing</c> — the poll payload driving
+/// in-sbox play (PLAN.md M4). Only ongoing games are listed, so a game vanishing
+/// from here is how we detect it ended.</summary>
+public sealed class LichessNowPlaying
+{
+	public List<NowPlayingGame> nowPlaying { get; set; }
+}
+
+public sealed class NowPlayingGame
+{
+	public string gameId { get; set; }
+	public string fullId { get; set; }
+	public string color { get; set; }        // "white" / "black" — the signed-in player's side
+	public string fen { get; set; }          // current position (may be placement-only)
+	public string lastMove { get; set; }     // UCI of the last move, or ""
+	public bool isMyTurn { get; set; }
+	public int secondsLeft { get; set; }
+	public NowPlayingOpponent opponent { get; set; }
+}
+
+public sealed class NowPlayingOpponent
+{
+	public string username { get; set; }
+	public int? rating { get; set; }
+	public int? ai { get; set; }             // Stockfish level when the opponent is the AI
+}
+
+/// <summary>Subset of <c>GET /game/export/{id}</c> (JSON) — read a finished game's
+/// outcome, since account/playing has already dropped it.</summary>
+public sealed class LichessGameStatus
+{
+	public string id { get; set; }
+	public string status { get; set; }       // "mate","resign","outoftime","draw","stalemate",…
+	public string winner { get; set; }       // "white"/"black"/null
+}
+
 /// <summary>Reply from <c>POST /api/token</c> — the OAuth code exchange.</summary>
 public sealed class LichessTokenResponse
 {

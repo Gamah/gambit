@@ -26,7 +26,7 @@ namespace Gambit.Game;
 /// resync or late join keeps the position but loses the history, which only
 /// costs a shorter move list (spectators can't import anyway).
 /// </summary>
-public sealed class LocalGameController : Component
+public sealed class LocalGameController : Component, IBoardGame
 {
 	/// <summary>Occupancy/seat source for this table. Set by ChessRing at build.</summary>
 	[Property] public ChessStation Station { get; set; }
@@ -245,6 +245,10 @@ public sealed class LocalGameController : Component
 	/// Validates against the local rules first — an illegal or out-of-turn move
 	/// is refused without touching the network.
 	/// </summary>
+	/// <summary><see cref="IBoardGame"/> entry point — the board view calls this
+	/// without caring whether the game is local or lichess.</summary>
+	public bool TryMakeMove( string uci ) => TryMakeLocalMove( uci );
+
 	public bool TryMakeLocalMove( string uci )
 	{
 		if ( !IsMyTurn || Game == null ) return false;

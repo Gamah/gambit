@@ -142,9 +142,60 @@ public static class LichessApi
 	/// unauthenticated (used by import and the OAuth token exchange).</summary>
 	public static Task<Result> PostForm( string path, string formBody )
 	{
-		var content = new StringContent( formBody, Encoding.UTF8, "application/x-www-form-urlencoded" );
-		return Send( Base + path, "POST", content, null );
+		return Send( Base + path, "POST", Form( formBody ), null );
 	}
+
+	static StringContent Form( string body ) =>
+		new( body, Encoding.UTF8, "application/x-www-form-urlencoded" );
+
+	// ── Board API play (M4 in-sbox polling play) ──
+	// Live move streams are unavailable under s&box Http (PLAN.md risk 1), so play
+	// is driven by POLLING GetAccountPlaying instead of the ndjson game stream.
+	// All of these are token-authenticated (board:play scope); the token only ever
+	// rides in the Authorization header, never logged/synced (D3).
+
+	/// <summary>Challenge a specific lichess user to a casual game (Rapid 10+0 =
+	/// 600/0). They accept on lichess.org; the game then appears in
+	/// <see cref="GetAccountPlaying"/>. <paramref name="color"/> is "white"/"black"/
+	/// "random" (we pass the seat the challenger sat at).</summary>
+	public static Task<Result> ChallengeUser( string username, string color, int limit, int inc, string token )
+	{
+		var body = $"rated=false&clock.limit={limit}&clock.increment={inc}&color={color}&variant=standard";
+		return Send( $"{Base}/api/challenge/{Uri.EscapeDataString( username )}", "POST", Form( body ), token );
+	}
+
+	/// <summary>Challenge the Stockfish AI (level 1–8) — starts a game immediately
+	/// (no accept needed), so the reply is the game itself. Handy for testing the
+	/// play loop with no second party.</summary>
+	public static Task<Result> ChallengeAi( int level, string color, int limit, int inc, string token )
+	{
+		var body = $"level={level}&clock.limit={limit}&clock.increment={inc}&color={color}&variant=standard";
+		return Send( $"{Base}/api/challenge/ai", "POST", Form( body ), token );
+	}
+
+	/// <summary>The signed-in user's ongoing games (fen, lastMove, isMyTurn,
+	/// secondsLeft, opponent). A normal single-response endpoint — this is the
+	/// poll target that stands in for the unavailable ndjson game stream.</summary>
+	public static Task<Result> GetAccountPlaying( string token ) =>
+		Send( Base + "/api/account/playing", "GET", null, token );
+
+	/// <summary>Play a UCI move in a Board-API game (short request, works without
+	/// streaming). lichess rejects illegal/out-of-turn moves with 4xx.</summary>
+	public static Task<Result> BoardMove( string gameId, string uci, string token ) =>
+		Send( $"{Base}/api/board/game/{gameId}/move/{uci}", "POST", null, token );
+
+	/// <summary>Resign a Board-API game.</summary>
+	public static Task<Result> BoardResign( string gameId, string token ) =>
+		Send( $"{Base}/api/board/game/{gameId}/resign", "POST", null, token );
+
+	/// <summary>Cancel a challenge we created that hasn't been accepted yet.</summary>
+	public static Task<Result> CancelChallenge( string challengeId, string token ) =>
+		Send( $"{Base}/api/challenge/{challengeId}/cancel", "POST", null, token );
+
+	/// <summary>Export a finished game as JSON to read its final status/winner —
+	/// account/playing drops a game the moment it ends, so this fills in the result.</summary>
+	public static Task<Result> GameExport( string gameId ) =>
+		Send( $"{Base}/game/export/{gameId}", "GET", null, null );
 
 	// ── Helpers ──
 
