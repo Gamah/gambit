@@ -54,8 +54,14 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 	/// <summary>Height (world units above the station floor) of the seat camera
 	/// anchors. With SeatDistance this sets the downward pitch over the board
-	/// (~62° at the defaults — high and near-centered for play).</summary>
-	[Property] public float SeatCameraHeight { get; set; } = 88f;
+	/// (~59° at the defaults — high and near-centered for play).</summary>
+	[Property] public float SeatCameraHeight { get; set; } = 80f;
+
+	/// <summary>Sideways slew of each seat camera, in degrees of yaw around the
+	/// board center — positive moves the view to the seated player's left, so the
+	/// board reads at a slight angle instead of dead down the middle. Applied
+	/// symmetrically to both seats.</summary>
+	[Property] public float SeatSideAngle { get; set; } = 6f;
 
 	/// <summary>Calibration multiplier on the computed UI rect (see ScreenFractionRect) —
 	/// nudge until engaged UI lines up with the board on screen.</summary>
@@ -400,7 +406,10 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	{
 		var anchor = new GameObject( true, name );
 		anchor.Parent = station;
-		anchor.LocalPosition = new Vector3( side * SeatDistance, 0, SeatCameraHeight );
+		// One shared negative yaw slews BOTH seats toward their occupant's left
+		// (White faces +X so left is +Y; Black faces −X so left is −Y).
+		anchor.LocalPosition = Rotation.FromYaw( -SeatSideAngle )
+			* new Vector3( side * SeatDistance, 0, SeatCameraHeight );
 		var aim = new Vector3( 0, 0, BoardSurfaceZ + 2f ) - anchor.LocalPosition;
 		anchor.LocalRotation = Rotation.LookAt( aim, Vector3.Up );
 		return anchor;
