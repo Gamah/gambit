@@ -122,12 +122,15 @@ public static class LichessApi
 	/// <summary>Import a finished game's PGN (unauthenticated, 100/hour/IP). This
 	/// is the call M2 shipped broken; it lives here now so it shares the rate gate
 	/// and the proven 4-arg request shape.</summary>
-	public static Task<Result> ImportPgn( string pgn )
+	public static Task<Result> ImportPgn( string pgn ) =>
+		PostForm( "/api/import", "pgn=" + Uri.EscapeDataString( pgn ) );
+
+	/// <summary>POST an <c>x-www-form-urlencoded</c> body to a lichess path,
+	/// unauthenticated (used by import and the OAuth token exchange).</summary>
+	public static Task<Result> PostForm( string path, string formBody )
 	{
-		var content = new StringContent(
-			"pgn=" + Uri.EscapeDataString( pgn ),
-			Encoding.UTF8, "application/x-www-form-urlencoded" );
-		return Send( Base + "/api/import", "POST", content, null );
+		var content = new StringContent( formBody, Encoding.UTF8, "application/x-www-form-urlencoded" );
+		return Send( Base + path, "POST", content, null );
 	}
 
 	// ── Helpers ──

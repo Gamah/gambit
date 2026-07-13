@@ -37,20 +37,36 @@
 				else
 				{
 					<div class="section">SIGN IN WITH LICHESS</div>
-					<div class="hint">Play real lichess games as yourself. Copy the sign-in link, open it in your browser, create the token (scopes are pre-filled), then paste the <span class="mono">lip_…</span> string below.</div>
-					<div class="btn ghost" onclick="@( () => CopyLink() )">@( _linkCopied < 2f ? "✓ Link copied" : "Copy sign-in link" )</div>
-
-					<div class="row">
-						<TextEntry @ref="_tokenEntry" class="entry" placeholder="Paste lip_… token" />
-						<div class="btn primary @(_busy ? "disabled" : "")" onclick="@( () => BeginSignIn() )">@( _busy ? "…" : "Sign in" )</div>
-					</div>
+					@if ( !LichessOAuth.Pending )
+					{
+						<div class="hint">Play real lichess games as yourself. This copies a sign-in link — open it in your browser and click <b>Authorize</b>.</div>
+						<div class="btn primary" onclick="@( () => StartOAuth() )">Start lichess sign-in</div>
+					}
+					else
+					{
+						<div class="hint">✓ Sign-in link copied. Open it, click <b>Authorize</b>, then paste the page you land on below — it won't load, that's expected; the code is in the address bar.</div>
+						<div class="row">
+							<TextEntry @ref="_redirectEntry" class="entry" placeholder="Paste the address-bar URL" />
+							<div class="btn primary @(_busy ? "disabled" : "")" onclick="@( () => CompleteOAuth() )">@( _busy ? "…" : "Complete" )</div>
+						</div>
+						<div class="minor-row">
+							<div class="minor" onclick="@( () => CopyOAuthLink() )">copy link again</div>
+							<div class="minor" onclick="@( () => CancelOAuth() )">cancel</div>
+						</div>
+					}
 					@if ( !string.IsNullOrEmpty( _status ) )
 					{
 						<div class="status @(_ok ? "ok" : "err")">@_status</div>
 					}
 
-					<div class="or"><span>or</span></div>
+					<div class="or"><span>advanced</span></div>
+					<div class="btn ghost small" onclick="@( () => CopyTokenLink() )">@( _tokenLinkCopied < 2f ? "✓ Token link copied" : "Paste a personal token instead — copy token link" )</div>
+					<div class="row">
+						<TextEntry @ref="_tokenEntry" class="entry" placeholder="Paste lip_… token" />
+						<div class="btn @(_busy ? "disabled" : "")" onclick="@( () => BeginSignIn() )">Sign in</div>
+					</div>
 
+					<div class="or"><span>or</span></div>
 					<div class="section">PLAY ANONYMOUSLY</div>
 					<div class="hint">Just pick a display name — play locally at a board and get a shareable lichess link afterward.</div>
 					<div class="row">
@@ -156,7 +172,17 @@
 	.btn.primary { background-color: rgba(90, 140, 255, 0.35); }
 	.btn.primary:hover { background-color: rgba(90, 140, 255, 0.55); }
 	.btn.ghost { background-color: rgba(255, 255, 255, 0.06); }
+	.btn.small { padding: 6px 10px; font-size: 12px; }
 	.btn.disabled { color: rgba(255, 255, 255, 0.4); pointer-events: none; }
+
+	.minor-row { flex-direction: row; gap: 16px; }
+	.minor {
+		font-size: 12px;
+		color: rgba(255, 255, 255, 0.5);
+		cursor: pointer;
+		pointer-events: all;
+	}
+	.minor:hover { color: white; }
 
 	.status { font-size: 13px; }
 	.status.ok { color: #7fd47f; }
@@ -185,12 +211,14 @@
 	public static void Open() => IsOpen = true;
 
 	TextEntry _tokenEntry;
+	TextEntry _redirectEntry;
 	TextEntry _nameEntry;
 	bool _focused;
 	bool _busy;
 	bool _ok;
 	string _status;
-	RealTimeSince _linkCopied = 999f;
+	string _oauthUrl;                          // the pending authorize URL, for re-copy
+	RealTimeSince _tokenLinkCopied = 999f;
 
 	protected override void OnUpdate()
 	{
@@ -203,11 +231,17 @@
 			return;
 		}
 
-		// Focus the token field once when the modal opens (signed-out view only).
-		if ( !_focused && !LichessAuth.SignedIn && _tokenEntry != null )
+		// Focus the field the user is most likely to type/paste into next — the
+		// redirect box once OAuth is pending, otherwise the token box. _focused is
+		// reset by the OAuth start/cancel handlers so the target can change.
+		if ( !_focused && !LichessAuth.SignedIn )
 		{
-			_tokenEntry.Focus();
-			_focused = true;
+			var field = LichessOAuth.Pending ? _redirectEntry : _tokenEntry;
+			if ( field != null )
+			{
+				field.Focus();
+				_focused = true;
+			}
 		}
 	}
 
@@ -216,13 +250,58 @@
 		IsOpen = false;
 		_focused = false;
 		_status = null;
+		LichessOAuth.Cancel();
 		StateHasChanged();
 	}
 
-	void CopyLink()
+	// ── OAuth (primary) ──
+
+	void StartOAuth()
+	{
+		_oauthUrl = LichessOAuth.Start();
+		Clipboard.SetText( _oauthUrl );
+		_status = null;
+		_focused = false;                      // re-focus onto the redirect box
+		StateHasChanged();
+	}
+
+	void CopyOAuthLink()
+	{
+		if ( !string.IsNullOrEmpty( _oauthUrl ) ) Clipboard.SetText( _oauthUrl );
+	}
+
+	void CancelOAuth()
+	{
+		LichessOAuth.Cancel();
+		_status = null;
+		_focused = false;
+		StateHasChanged();
+	}
+
+	async void CompleteOAuth()
+	{
+		if ( _busy ) return;
+		var redirect = _redirectEntry?.Text?.Trim();
+		_busy = true;
+		_ok = false;
+		_status = "Finishing sign-in with lichess…";
+		StateHasChanged();
+
+		var (ok, error) = await LichessOAuth.Complete( redirect );
+
+		_busy = false;
+		_ok = ok;
+		_status = ok ? null : error;
+		if ( ok && _redirectEntry != null ) _redirectEntry.Text = "";
+		StateHasChanged();
+	}
+
+	// ── Personal-token paste (advanced) ──
+
+	void CopyTokenLink()
 	{
 		Clipboard.SetText( LichessAuth.TokenCreateUrl );
-		_linkCopied = 0f;
+		_tokenLinkCopied = 0f;
 		StateHasChanged();
 	}
 
@@ -271,5 +350,5 @@
 
 	protected override int BuildHash() =>
 		System.HashCode.Combine( IsOpen, LichessAuth.SignedIn, LichessAuth.Username,
-			_busy, _ok, _status, _linkCopied < 2f );
+			System.HashCode.Combine( _busy, _ok, _status, LichessOAuth.Pending, _tokenLinkCopied < 2f ) );
 }

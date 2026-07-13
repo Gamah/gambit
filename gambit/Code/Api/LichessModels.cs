@@ -29,3 +29,11 @@ public sealed class LichessImport
 	public string id { get; set; }
 	public string url { get; set; }
 }
+
+/// <summary>Reply from <c>POST /api/token</c> — the OAuth code exchange.</summary>
+public sealed class LichessTokenResponse
+{
+	public string token_type { get; set; }   // "Bearer"
+	public string access_token { get; set; }
+	public int expires_in { get; set; }
+}

@@ -68,6 +68,28 @@ public static class LichessSpikes
 		else Log.Warning( $"[Gambit] sign-in failed: {error}" );
 	}
 
+	/// <summary>Begin the OAuth code-paste flow from the console: logs the authorize
+	/// URL. Open it, authorize, then run <c>gambit_oauth_complete</c> with the URL
+	/// your browser lands on (it won't load — the code is in the address bar).</summary>
+	[ConCmd( "gambit_oauth" )]
+	public static void OAuthStart()
+	{
+		var url = LichessOAuth.Start();
+		Log.Info( "[Gambit] OAuth: open this URL, click Authorize, then run" );
+		Log.Info( "[Gambit]   gambit_oauth_complete <the-address-bar-url-you-land-on>" );
+		Log.Info( url );
+	}
+
+	[ConCmd( "gambit_oauth_complete" )]
+	public static void OAuthComplete( string redirect ) => _ = DoOAuth( redirect );
+
+	static async Task DoOAuth( string redirect )
+	{
+		var (ok, error) = await LichessOAuth.Complete( redirect );
+		if ( ok ) Log.Info( $"[Gambit] OAuth signed in as {LichessAuth.Username}" );
+		else Log.Warning( $"[Gambit] OAuth failed: {error}" );
+	}
+
 	[ConCmd( "gambit_signout" )]
 	public static void SignOut() => LichessAuth.SignOut();
 
