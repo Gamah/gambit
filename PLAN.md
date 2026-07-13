@@ -106,9 +106,10 @@ Component renames/deletions can't be applied to `lobby.scene` from this host (th
 editor owns the format); do this once in the s&box editor, then save the scene:
 
 1. **Room** GO: remove the missing `ArcadeRing`, `LeaderboardWall`, and
-   `SpectatorBoard` components. Add **`ChessRing`** (was ArcadeRing; scene had
-   `Radius: 180`, `StationCount: 8` — new defaults are Radius 160 / 8 stations,
-   retune to taste; all cabinet-era properties are gone).
+   `SpectatorBoard` components. **`ChessRing` adds itself** — LobbyRoom creates
+   it on this GO if absent (self-heal for the rename); just save the scene so it
+   persists. Defaults match the old tuning (Radius 180, 8 stations); retune in
+   the inspector to taste.
 2. **GameController** GO: remove the missing `GameController` and
    `MultiplayerController` components. Keep `SkafinityPlayer` (consider renaming
    the GO to "Music").

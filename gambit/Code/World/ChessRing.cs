@@ -25,8 +25,8 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// <summary>Distance from ring center to each table, as tuned for an 8-station
 	/// ring. The actual radius scales with StationCount to keep the spacing between
 	/// neighboring tables constant (see RingRadius), clamped so the seats stay
-	/// inside the room.</summary>
-	[Property] public float Radius { get; set; } = 160f;
+	/// inside the room. 180 matches the old arcade ring's scene tuning.</summary>
+	[Property] public float Radius { get; set; } = 180f;
 
 	/// <summary>Yaw added to the whole ring. Station 0 faces outward along
 	/// (baseAngle + this); the base angle aims station 0 at the player spawn.</summary>

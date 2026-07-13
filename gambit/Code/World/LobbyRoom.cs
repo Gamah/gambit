@@ -23,7 +23,22 @@ public sealed class LobbyRoom : Component, Component.ExecuteInEditor
 
 	readonly List<GameObject> _spawned = new();
 
-	protected override void OnEnabled() => Rebuild();
+	protected override void OnEnabled()
+	{
+		Rebuild();
+		EnsureChessRing();
+	}
+
+	/// <summary>Self-heal for the M1 rename: loading a scene saved with the old
+	/// ArcadeRing drops it as a missing component, leaving the room with no ring at
+	/// all ("BOARDS — 0"). The ring belongs on this GO (ChessRing.RingRadius reads
+	/// LobbyRoom.RoomSize from it), so create it here if it's absent — in the editor
+	/// this dirties the scene and saving persists it; in play it just works.</summary>
+	void EnsureChessRing()
+	{
+		if ( Components.Get<ChessRing>( FindMode.EverythingInSelf ) == null )
+			GameObject.AddComponent<ChessRing>();
+	}
 
 	// Fires on editor property changes and after deserialization (scene load),
 	// so the room regenerates in the editor without entering play mode
