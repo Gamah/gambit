@@ -174,7 +174,7 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 			MaxPlayers = MaxPlayers,
 			Privacy    = LobbyPrivacy.Public,
 			Hidden     = false,
-			Name       = "Gambit v0.1 alpha",
+			Name       = "Terry's Gambit v0.1 alpha",
 		} );
 
 		// Stations only exist once the ring builds them — host-only, so joining clients

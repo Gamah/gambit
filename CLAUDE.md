@@ -1,6 +1,6 @@
-# CLAUDE.md — Gambit s&box Client
+# CLAUDE.md — Terry's Gambit s&box Client
 
-Chess in a social s&box lobby, backed by lichess. Forked from rotaliate-client:
+**Terry's Gambit** (repo/ident: `gambit`) — chess in a social s&box lobby, backed by lichess. Forked from rotaliate-client:
 the walk-around lobby, station ring, and networking scaffolding are inherited;
 the arcade game and its Go backend are being replaced by chess boards and the
 lichess API.

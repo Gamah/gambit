@@ -1,4 +1,6 @@
-# Gambit — chess/lichess fork of rotaliate-client
+# Terry's Gambit — chess/lichess fork of rotaliate-client
+
+Published title: **Terry's Gambit**. Internal/repo/package name: `gambit` (s&box `Ident: gambit`, `Org: gamah`; code namespace `Gambit.*`).
 
 ## Context
 

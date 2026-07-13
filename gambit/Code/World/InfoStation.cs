@@ -3,7 +3,7 @@ using Sandbox;
 namespace Gambit.World;
 
 /// <summary>
-/// Engage target for an east-wall info board (the ROTALIATE info panel and the dev-notes
+/// Engage target for an east-wall info board (the TERRY'S GAMBIT info panel and the dev-notes
 /// panel). Walking up and pressing E opens the interactive InfoScreen as a screen-space
 /// ScreenPanel — the camera stays put (like the leaderboard stations); LobbyPlayer just
 /// disables look controls so the cursor is free (the Discord link is click-to-copy).

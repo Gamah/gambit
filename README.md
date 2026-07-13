@@ -1,6 +1,7 @@
-# gambit
+# Terry's Gambit
 
 Chess in a social s&box lobby, backed by [lichess](https://lichess.org).
+Published as **Terry's Gambit** (s&box package `gamah.gambit`).
 
 Walk around a shared room with up to 8 players. Sit down at one of the chess
 boards arranged in a ring and:
