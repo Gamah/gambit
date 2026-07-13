@@ -398,9 +398,9 @@ public sealed class LocalGameController : Component
 	/// <summary>POST the finished game's PGN to lichess (unauthenticated import,
 	/// 100 games/hour/IP) and keep the returned URL for click-to-copy. Routed
 	/// through <see cref="LichessApi"/>, which owns the single-flight + 60s-429
-	/// rate discipline and the request shape (the 4-arg form that actually sends
-	/// the body — the M2 import was dead because the 3-arg form didn't; PLAN.md
-	/// M2 carry-in).</summary>
+	/// rate discipline and — the actual M2 fix — sends <c>Accept: application/json</c>
+	/// so lichess returns {id,url} instead of the game's HTML page (PLAN.md M2
+	/// carry-in; confirmed in-editor: the old call got HTTP 200 + HTML).</summary>
 	public async void ImportToLichess()
 	{
 		if ( Game == null || !Game.IsGameOver || Importing || LichessUrl != null ) return;

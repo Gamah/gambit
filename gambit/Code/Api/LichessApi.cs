@@ -22,6 +22,11 @@ namespace Gambit.Api;
 /// parent project (rotaliate ApiClient), and the fix for M2's dead import
 /// (the old 3-arg call never landed the form body — see PLAN.md M2 note).
 ///
+/// Every request also sends <c>Accept: application/json</c> — mandatory, since
+/// lichess content-negotiates on shared paths (that missing header, not the
+/// 3-vs-4-arg request shape, was M2's dead import: POST /api/import replied 200 +
+/// the game's HTML page instead of {id,url}).
+///
 /// The bearer token is a secret (PLAN.md D3): it is only ever placed in the
 /// Authorization header here and is never logged (see <see cref="Redact"/>).
 /// </summary>
@@ -64,7 +69,13 @@ public static class LichessApi
 		_inFlight = true;
 		try
 		{
-			var headers = new Dictionary<string, string>();
+			// Accept: application/json is REQUIRED, not cosmetic. lichess content-
+			// negotiates on shared paths: POST /api/import without it returns 200 +
+			// the imported game's HTML page (the web-form response), not {id,url} —
+			// that was M2's dead import (confirmed in-editor: HTTP 200, HTML body, no
+			// url). /api/account happens to be JSON-only, which is why sign-in worked
+			// regardless. Send it on every request so no endpoint can surprise us.
+			var headers = new Dictionary<string, string> { ["Accept"] = "application/json" };
 			if ( !string.IsNullOrEmpty( bearer ) )
 				headers["Authorization"] = "Bearer " + bearer;
 

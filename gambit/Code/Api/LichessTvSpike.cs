@@ -11,6 +11,16 @@ namespace Gambit.Api;
 /// loop needs (held-open event/game streams)? There is no polling fallback if
 /// not.
 ///
+/// <para><b>Result (in-editor, 2026-07-13): NO.</b> On the infinite TV feed,
+/// <c>await Http.RequestAsync(...)</c> never returned — the "response headers
+/// received" line below never logged — so <c>RequestAsync</c> buffers the whole
+/// body before yielding and cannot be read incrementally. That blocks the Board
+/// API play loop (M4), which needs held-open streams. Mitigation is an M4 task:
+/// a Facepunch whitelist/feature request for a headers-first / streaming HTTP
+/// read (or an incremental primitive), since lichess has no polling alternative.
+/// This command is kept as the reproduction. (It intentionally hangs its async
+/// on an endless feed — that hang IS the finding.)</para>
+///
 /// <para><b>Isolated on purpose.</b> The stream-reading APIs used here
 /// (<c>HttpContent.ReadAsStreamAsync</c>, <c>Stream.ReadAsync(byte[],…)</c>) have
 /// no precedent in this repo or the parent, so they might trip the s&amp;box
