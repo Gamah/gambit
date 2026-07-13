@@ -46,16 +46,16 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// table top is 34 wide; 26 leaves a healthy margin for clocks/captures later.</summary>
 	[Property] public float BoardSize { get; set; } = 26f;
 
-	/// <summary>Horizontal distance (world units) from the board center to each
-	/// seat's locked-camera anchor. Small on purpose: the seated view hangs
-	/// mostly over the board so square picking (M2) has a clear look at all
-	/// eight ranks.</summary>
-	[Property] public float SeatDistance { get; set; } = 28f;
+	/// <summary>Straight-line distance (world units) from the board center to each
+	/// seat's locked-camera anchor. The camera orbits the board center at this
+	/// radius — SeatPitch rotates it up/down WITHOUT changing how close the board
+	/// looks, unlike the old horizontal-distance + height pair.</summary>
+	[Property] public float SeatOrbitRadius { get; set; } = 41f;
 
-	/// <summary>Height (world units above the station floor) of the seat camera
-	/// anchors. With SeatDistance this sets the downward pitch over the board
-	/// (~47° at the defaults — raised over the board but not overhead).</summary>
-	[Property] public float SeatCameraHeight { get; set; } = 64f;
+	/// <summary>Camera elevation in degrees on that orbit: 0 = level with the
+	/// board, 90 = straight overhead. Rotates around the board center, so range
+	/// (and apparent board size) stays fixed while the view tilts.</summary>
+	[Property, Range( 15f, 85f )] public float SeatPitch { get; set; } = 55f;
 
 	/// <summary>Sideways slew of each seat camera, in degrees of yaw around the
 	/// board center — positive moves the view to the seated player's left, so the
@@ -100,8 +100,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			return new Rect( 0f, 0f, 1f, 1f );
 
 		float halfWorld = ring.BoardSize * 0.5f * ring.TableScale * ring.UiFit;
-		float drop = ring.SeatCameraHeight - ring.BoardSurfaceZ;
-		float dist = MathF.Sqrt( ring.SeatDistance * ring.SeatDistance + drop * drop );
+		float dist = ring.SeatOrbitRadius; // camera orbits the board center at this range
 		if ( dist <= 1f ) return new Rect( 0f, 0f, 1f, 1f );
 
 		float tanHalf = MathF.Tan( cam.FieldOfView * 0.5f * (MathF.PI / 180f) );
@@ -404,27 +403,38 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// down at the board center so LobbyPlayer can lerp straight to it.</summary>
 	GameObject BuildSeatAnchor( GameObject station, string name, float side )
 	{
+		// Spherical orbit around the board center: SeatOrbitRadius sets the range,
+		// SeatPitch the elevation on that sphere, SeatSideAngle a yaw slew around
+		// the same center. All three rotate the view without changing how close
+		// the board looks.
+		var center = new Vector3( 0, 0, BoardSurfaceZ + 2f );
+		float pitch = SeatPitch * (MathF.PI / 180f);
+		var offset = new Vector3(
+			side * SeatOrbitRadius * MathF.Cos( pitch ),
+			0,
+			SeatOrbitRadius * MathF.Sin( pitch ) );
+
 		var anchor = new GameObject( true, name );
 		anchor.Parent = station;
 		// One shared negative yaw slews BOTH seats toward their occupant's left
-		// (White faces +X so left is +Y; Black faces −X so left is −Y).
-		anchor.LocalPosition = Rotation.FromYaw( -SeatSideAngle )
-			* new Vector3( side * SeatDistance, 0, SeatCameraHeight );
-		var aim = new Vector3( 0, 0, BoardSurfaceZ + 2f ) - anchor.LocalPosition;
-		anchor.LocalRotation = Rotation.LookAt( aim, Vector3.Up );
+		// (White faces +X so left is +Y; Black faces −X so left is −Y). The center
+		// sits on the yaw axis, so this orbits the aim point exactly.
+		anchor.LocalPosition = center + Rotation.FromYaw( -SeatSideAngle ) * offset;
+		anchor.LocalRotation = Rotation.LookAt( center - anchor.LocalPosition, Vector3.Up );
 		return anchor;
 	}
 
 	/// <summary>Ring radius for a given station count: keeps the chord between
 	/// neighboring tables at the scene-tuned 8-station spacing (Radius), then
-	/// clamps so the seats (SeatDistance outward of each board, plus a margin for
-	/// the player) stay inside the room walls.</summary>
+	/// clamps so the outer seat spots (the orbit's ground footprint, plus a margin
+	/// for the player) stay inside the room walls.</summary>
 	float RingRadius( int count )
 	{
 		int n = Math.Max( count, 2 );
 		float r = Radius * ( MathF.Sin( MathF.PI / 8f ) / MathF.Sin( MathF.PI / n ) );
 		float roomHalf = ( Components.Get<LobbyRoom>()?.RoomSize ?? 800f ) * 0.5f;
-		return MathF.Min( r, roomHalf - SeatDistance - 30f );
+		float seatFootprint = SeatOrbitRadius * MathF.Cos( SeatPitch * (MathF.PI / 180f) );
+		return MathF.Min( r, roomHalf - seatFootprint - 30f );
 	}
 
 	/// <summary>
