@@ -292,7 +292,7 @@ public partial class ChessBoard
     internal ChessBoard(Piece?[,] pieces, List<Move> moves)
     {
         executedMoves = new List<Move>(moves);
-        this.pieces = (Piece[,])pieces.Clone();
+        this.pieces = pieces.CopyBoard(); // GAMBIT VENDOR PATCH: Array.Clone is off-whitelist
     }
 
     /// <summary>

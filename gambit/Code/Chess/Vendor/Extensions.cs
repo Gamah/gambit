@@ -21,6 +21,25 @@ internal static class Extensions
         second = list.Count > 1 ? list[1] : default; // or throw
     }
 
+    /// <summary>
+    /// GAMBIT VENDOR PATCH (s&box whitelist): Array.Clone() is blocked (SB1000)
+    /// — manual 8x8 copy replaces the two board-clone call sites.
+    /// </summary>
+    internal static Piece?[,] CopyBoard(this Piece?[,] pieces)
+    {
+        var copy = new Piece?[pieces.GetLength(0), pieces.GetLength(1)];
+
+        for (int i = 0; i < pieces.GetLength(0); i++)
+        {
+            for (int j = 0; j < pieces.GetLength(1); j++)
+            {
+                copy[i, j] = pieces[i, j];
+            }
+        }
+
+        return copy;
+    }
+
     internal static List<Piece> PiecesList(this Piece?[,] pieces)
     {
         var list = new List<Piece>();

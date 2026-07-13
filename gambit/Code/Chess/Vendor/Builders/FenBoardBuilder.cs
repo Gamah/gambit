@@ -16,7 +16,7 @@ internal class FenBoardBuilder
     /// <summary>
     /// "Begin Situation"
     /// </summary>
-    internal Piece?[,] Pieces => (Piece?[,])pieces.Clone();
+    internal Piece?[,] Pieces => pieces.CopyBoard(); // GAMBIT VENDOR PATCH: Array.Clone is off-whitelist
 
     internal PieceColor Turn { get; private set; }
 
