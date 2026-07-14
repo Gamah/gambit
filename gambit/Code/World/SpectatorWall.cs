@@ -30,6 +30,16 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	const float InfoPxWidth = 560f;
 	const float InfoPxHeight = 300f;
 
+	/// <summary>Intrinsic pixel size of SpectatorScorePanel's &lt;root&gt; — the players +
+	/// clocks board floating just above the 3D board.</summary>
+	const float ScorePxWidth = 760f;
+	const float ScorePxHeight = 250f;
+
+	/// <summary>WorldPanel px→world-unit factor (Sandbox ScreenToWorldScale) — a panel of P px
+	/// renders P × scale × this many world units wide; used to place the scoreboard above the
+	/// board by its own world height.</summary>
+	const float PxToWorld = 0.05f;
+
 	/// <summary>World units the board sits in front of the wall's inner face
 	/// (RoomSize / 2), toward the room.</summary>
 	[Property] public float WallInset { get; set; } = 4f;
@@ -37,8 +47,10 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// <summary>World-unit edge length of one board square. The 3D board is 8× this wide; it
 	/// floats high above the wall and must read from across the room, so it's large.
 	/// SpectatorBoard3D is sized directly to this and its GO is left <b>unscaled</b>, so the
-	/// board light's world-unit radius needs no transform-scale compensation.</summary>
-	[Property] public float BoardCellSize { get; set; } = 28f;
+	/// board light's world-unit radius needs no transform-scale compensation. The board grows
+	/// upward from a fixed bottom edge (see <see cref="ClearAboveWall"/>), so changing this
+	/// keeps the bottom in place.</summary>
+	[Property] public float BoardCellSize { get; set; } = 56f;
 
 	/// <summary>Degrees the board leans back from vertical (top toward the wall) so pieces,
 	/// standing out of the near-vertical face, cast shadows across it under the board light.
@@ -47,6 +59,12 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 
 	/// <summary>Uniform scale multiplier on the walk-up control board.</summary>
 	[Property] public float InfoBoardScale { get; set; } = 4.5f;
+
+	/// <summary>Uniform scale multiplier on the scoreboard board above the 3D board.</summary>
+	[Property] public float ScoreboardScale { get; set; } = 6f;
+
+	/// <summary>Gap between the top edge of the 3D board and the bottom of the scoreboard.</summary>
+	[Property] public float ScoreboardGap { get; set; } = 14f;
 
 	/// <summary>Gap between the wall top and the bottom edge of the floating board. The
 	/// board's clearance tracks the scale automatically (centre = wall-top + this +
@@ -127,6 +145,21 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		var board3d = board.AddComponent<Gambit.World.SpectatorBoard3D>( false );
 		board3d.CellSize = BoardCellSize;
 		board3d.Enabled = true;
+
+		// Scoreboard (players + ratings + clocks) floating just above the 3D board's top edge.
+		// A flat WorldPanel facing the room (unlike the tilted board) so the text reads squarely.
+		float scoreHalfHeight = ScorePxHeight * ScoreboardScale * PxToWorld * 0.5f;
+		float scoreZ = boardZ + boardSize * 0.5f + ScoreboardGap + scoreHalfHeight;
+
+		var score = new GameObject( true, "SpectatorScoreboard" );
+		score.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
+		score.Parent = _root;
+		score.LocalPosition = new Vector3( centreX, wallY, scoreZ );
+		score.LocalRotation = facing;
+		score.LocalScale = new Vector3( 1f, 1f, 1f ) * ScoreboardScale;
+		var scorePanel = score.AddComponent<WorldPanel>();
+		scorePanel.PanelSize = new Vector2( ScorePxWidth, ScorePxHeight );
+		score.AddComponent<Gambit.UI.SpectatorScorePanel>();
 
 		// Walk-up control board at eye height, directly under the floating board: shows the
 		// current source and invites "Press E to spectate". It carries the engage station so

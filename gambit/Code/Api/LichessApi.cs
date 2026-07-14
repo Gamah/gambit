@@ -323,8 +323,8 @@ public static class LichessApi
 	/// its position (M5 TV / watch-by-id). For an ongoing game lichess delays the
 	/// public export ~3 moves / 3–60s for fair play — a lichess policy to surface in
 	/// the UI, not our latency. Returns the raw PGN in <see cref="Result.Body"/>.</summary>
-	public static Task<Result> GameExportPgn( string gameId ) =>
-		Send( $"{Base}/game/export/{Uri.EscapeDataString( gameId )}?clocks=false&evals=false",
+	public static Task<Result> GameExportPgn( string gameId, bool clocks = false ) =>
+		Send( $"{Base}/game/export/{Uri.EscapeDataString( gameId )}?clocks={( clocks ? "true" : "false" )}&evals=false",
 			"GET", null, null, accept: "application/x-chess-pgn" );
 
 	// ── Helpers ──

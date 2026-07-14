@@ -255,7 +255,11 @@ public sealed class SpectatorBoard3D : Component, Component.ExecuteInEditor
 	GameObject SpawnPiece( char fenChar, int sq )
 	{
 		bool white = char.IsUpper( fenChar );
-		var piece = ChessSetBuilder.BuildPiece( _piecesRoot, PieceTypeOf( fenChar ), white, PieceScale, yaw: white ? 0f : 180f );
+		// Direction-dependent pieces (the knight) must face the enemy. Unlike the tables —
+		// where ranks run along +X, so White faces yaw 0 — this board lays ranks along +Y
+		// (rank 1 at −Y, rank 8 at +Y, so ranks stand vertically once the board is tilted up),
+		// so "toward the enemy" is +Y for White (yaw 90°) and −Y for Black (yaw 270°).
+		var piece = ChessSetBuilder.BuildPiece( _piecesRoot, PieceTypeOf( fenChar ), white, PieceScale, yaw: white ? 90f : 270f );
 		if ( piece.IsValid() ) piece.LocalPosition = PieceLocal( sq );
 		return piece;
 	}

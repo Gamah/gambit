@@ -45,6 +45,37 @@ public sealed class SpectatorController : Component
 	public string StatusText { get; private set; }
 	public bool HasPosition => !string.IsNullOrEmpty( Fen );
 
+	// ── Player metadata for the scoreboard panel (parsed from the export PGN for lichess
+	//    sources; unknown for the sbox-table featured source). ──
+	/// <summary>Elo, or 0 when unknown (sbox players, unrated games, missing header).</summary>
+	public int WhiteRating { get; private set; }
+	public int BlackRating { get; private set; }
+	/// <summary>Player title ("GM", "BOT", …) or null.</summary>
+	public string WhiteTitle { get; private set; }
+	public string BlackTitle { get; private set; }
+	/// <summary>Live clock (seconds) for each side, or &lt; 0 when unknown. The side to move
+	/// ticks down from the last polled value; the other side holds. Coarse — it restarts from
+	/// the poll each time (the poll latency is already surfaced in <see cref="StatusText"/>).</summary>
+	public double WhiteClock => LiveClock( true );
+	public double BlackClock => LiveClock( false );
+	public bool HasClocks => _whiteClockBase >= 0 && _blackClockBase >= 0;
+	/// <summary>Whose clock is ticking (drives the scoreboard's active-clock highlight).</summary>
+	public bool WhiteToMoveNow => _whiteToMove;
+
+	double _whiteClockBase = -1, _blackClockBase = -1; // seconds as of the last poll
+	RealTimeSince _sinceClock;                          // time since that poll
+	bool _whiteToMove = true;                            // whose clock is ticking
+	bool _clocksFrozen;                                  // game over → stop ticking
+
+	double LiveClock( bool white )
+	{
+		double basis = white ? _whiteClockBase : _blackClockBase;
+		if ( basis < 0 ) return -1;
+		if ( !_clocksFrozen && white == _whiteToMove )
+			return System.Math.Max( 0, basis - _sinceClock );
+		return basis;
+	}
+
 	// ── TV / watch state ──
 	string _tvChannelKey;             // null = auto-pick the best channel
 	string _tvGameId;
@@ -141,6 +172,8 @@ public sealed class SpectatorController : Component
 		LastMoveUci = t.lastMove;
 		WhiteName = t.white;
 		BlackName = t.black;
+		// The sbox-table relay carries names only — no lichess Elo/clock for this source.
+		ClearPlayerMeta();
 		ChannelLabel = live.Count > 1 ? $"FEATURED · Table {t.number} ({idx + 1}/{live.Count})" : $"FEATURED · Table {t.number}";
 		StatusText = null;
 	}
@@ -246,7 +279,9 @@ public sealed class SpectatorController : Component
 
 	async System.Threading.Tasks.Task FetchPosition( string gameId, string delayNote )
 	{
-		var res = await LichessApi.GameExportPgn( gameId );
+		// clocks:true so the PGN carries %clk comments for the scoreboard — the vendor parser
+		// strips {…} comments before reading SAN, so FEN reconstruction is unaffected.
+		var res = await LichessApi.GameExportPgn( gameId, clocks: true );
 		if ( !res.Ok )
 		{
 			StatusText = res.Unauthorized ? "That game is private." : "Couldn't load that game.";
@@ -265,9 +300,14 @@ public sealed class SpectatorController : Component
 			StatusText = delayNote;
 		}
 
+		bool over = PgnGameOver( res.Body );
+		_clocksFrozen = over;
+		// Names/ratings/titles/clocks for the scoreboard (headers are present even with no moves).
+		ApplyPlayerMeta( res.Body );
+
 		// On TV, note when the featured game has finished so PollTv re-picks the channel's
 		// next game rather than freezing on the final position. Watch-by-id stays put.
-		if ( _channel == Channel.LichessTv && PgnGameOver( res.Body ) )
+		if ( _channel == Channel.LichessTv && over )
 			_tvGameOver = true;
 	}
 
@@ -329,5 +369,104 @@ public sealed class SpectatorController : Component
 		LastMoveUci = null;
 		WhiteName = "White";
 		BlackName = "Black";
+		ClearPlayerMeta();
+	}
+
+	void ClearPlayerMeta()
+	{
+		WhiteRating = BlackRating = 0;
+		WhiteTitle = BlackTitle = null;
+		_whiteClockBase = _blackClockBase = -1;
+		_clocksFrozen = false;
+	}
+
+	// ── PGN scoreboard parsing (headers + %clk comments) ──
+
+	/// <summary>Fill the scoreboard fields from an export PGN: both names + Elos + titles from
+	/// the headers, and each side's clock from the last two <c>%clk</c> comments.</summary>
+	void ApplyPlayerMeta( string pgn )
+	{
+		var w = PgnHeader( pgn, "White" );
+		var b = PgnHeader( pgn, "Black" );
+		if ( !string.IsNullOrEmpty( w ) ) WhiteName = w;
+		if ( !string.IsNullOrEmpty( b ) ) BlackName = b;
+		WhiteRating = ParseInt( PgnHeader( pgn, "WhiteElo" ) );
+		BlackRating = ParseInt( PgnHeader( pgn, "BlackElo" ) );
+		WhiteTitle = PgnHeader( pgn, "WhiteTitle" );
+		BlackTitle = PgnHeader( pgn, "BlackTitle" );
+
+		// %clk comments alternate White, Black, White, Black… The last belongs to whoever just
+		// moved, i.e. the OPPOSITE of the side to move (which is holding its previous value).
+		var clocks = ExtractClocks( pgn );
+		_whiteToMove = SideToMove( Fen );
+		if ( clocks.Count >= 2 )
+		{
+			double last = clocks[clocks.Count - 1], prev = clocks[clocks.Count - 2];
+			if ( _whiteToMove ) { _blackClockBase = last; _whiteClockBase = prev; }
+			else { _whiteClockBase = last; _blackClockBase = prev; }
+			_sinceClock = 0f;
+		}
+		else
+		{
+			_whiteClockBase = _blackClockBase = -1;
+		}
+	}
+
+	/// <summary>Value of a <c>[Key "value"]</c> PGN header, or null (lichess writes "?" for an
+	/// unknown Elo/title — treated as null).</summary>
+	static string PgnHeader( string pgn, string key )
+	{
+		if ( string.IsNullOrEmpty( pgn ) ) return null;
+		var tag = "[" + key + " \"";
+		int i = pgn.IndexOf( tag, System.StringComparison.Ordinal );
+		if ( i < 0 ) return null;
+		i += tag.Length;
+		int end = pgn.IndexOf( '"', i );
+		if ( end < 0 ) return null;
+		var v = pgn[i..end];
+		return v == "?" ? null : v;
+	}
+
+	static int ParseInt( string s ) => int.TryParse( s, out var n ) ? n : 0;
+
+	/// <summary>True when it's White to move (FEN's active-colour field is not 'b').</summary>
+	static bool SideToMove( string fen )
+	{
+		if ( string.IsNullOrEmpty( fen ) ) return true;
+		int sp = fen.IndexOf( ' ' );
+		return sp < 0 || sp + 1 >= fen.Length || fen[sp + 1] != 'b';
+	}
+
+	/// <summary>Every <c>%clk H:MM:SS(.f)</c> value in the PGN, in move order (seconds).</summary>
+	static List<double> ExtractClocks( string pgn )
+	{
+		var list = new List<double>();
+		if ( string.IsNullOrEmpty( pgn ) ) return list;
+		int i = 0;
+		while ( ( i = pgn.IndexOf( "%clk", i, System.StringComparison.Ordinal ) ) >= 0 )
+		{
+			i += 4;
+			while ( i < pgn.Length && pgn[i] == ' ' ) i++;
+			int start = i;
+			while ( i < pgn.Length && ( char.IsDigit( pgn[i] ) || pgn[i] == ':' || pgn[i] == '.' ) ) i++;
+			if ( ParseClk( pgn[start..i], out var sec ) ) list.Add( sec );
+		}
+		return list;
+	}
+
+	static bool ParseClk( string s, out double seconds )
+	{
+		seconds = 0;
+		if ( string.IsNullOrEmpty( s ) ) return false;
+		var parts = s.Split( ':' );
+		double mult = 1, total = 0;
+		for ( int k = parts.Length - 1; k >= 0; k-- )
+		{
+			if ( !double.TryParse( parts[k], out var v ) ) return false;
+			total += v * mult;
+			mult *= 60;
+		}
+		seconds = total;
+		return true;
 	}
 }
