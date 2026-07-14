@@ -37,7 +37,7 @@ public static class LichessOAuth
 	// the address bar regardless. localhost is a valid redirect for public clients.
 	public const string RedirectUri = "http://localhost/gambit-oauth";
 
-	const string Scopes = "board:play challenge:read challenge:write";
+	const string Scopes = "board:play challenge:read challenge:write puzzle:read";
 
 	// PKCE method. S256 sends SHA-256(verifier) as the challenge; `plain` sends the
 	// raw random verifier as the challenge (no hashing — the "just send noise" idea)

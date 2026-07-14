@@ -41,6 +41,76 @@ public sealed class ChessGame
 		return true;
 	}
 
+	/// <summary>
+	/// Reconstruct the position <paramref name="ply"/> half-moves into a game given
+	/// its PGN/movetext (M5 — lichess puzzles hand us <c>game.pgn</c> + an
+	/// <c>initialPly</c>; TV snapshots hand us an export PGN). The vendor parses the
+	/// movetext, we navigate to the requested ply, snapshot its FEN, then rebuild a
+	/// <b>clean</b> game from that FEN so the caller gets full move-gen with no
+	/// navigation state to trip over. <paramref name="ply"/> is clamped to the moves
+	/// available; pass <see cref="int.MaxValue"/> for the final position.
+	/// </summary>
+	public static bool TryFromPgnAtPly( string pgn, int ply, out ChessGame game )
+	{
+		game = null;
+		if ( string.IsNullOrWhiteSpace( pgn ) ) return false;
+		if ( !ChessLib.ChessBoard.TryLoadFromPgn( pgn, out var board ) || board == null ) return false;
+
+		int count = board.ExecutedMoves.Count;
+		if ( count == 0 ) return board.ToFen() is { } f0 && TryFromFen( f0, out game );
+
+		// MoveIndex is the 0-based index of the displayed move; index k shows the
+		// position after k+1 half-moves. Clamp ply into [0, count].
+		int target = ply < 0 ? 0 : ply > count ? count : ply;
+		board.MoveIndex = target - 1; // -1 = the start position (before any move)
+
+		if ( board.ToFen() is not { } fen || !TryFromFen( fen, out game ) ) return false;
+
+		// Carry the last displayed move as UCI so callers can highlight it (the move that
+		// led to a puzzle, or the move that ended a finished game — the board view keys its
+		// last-move highlight off this). Same class, so we can set the private field.
+		if ( target >= 1 )
+			game._lastMoveUci = UciOf( board.ExecutedMoves[target - 1] );
+		return true;
+	}
+
+	/// <summary>UCI of a vendor move ("e2e4", "e7e8q").</summary>
+	static string UciOf( ChessLib.Move move )
+	{
+		string uci = move.OriginalPosition.ToString() + move.NewPosition.ToString();
+		if ( move.Parameter is ChessLib.MovePromotion promo )
+			uci += char.ToLowerInvariant( promo.PromotionResult.AsChar );
+		return uci;
+	}
+
+	/// <summary>Reconstruct the final position of a PGN/movetext (TV snapshots).</summary>
+	public static bool TryFromPgn( string pgn, out ChessGame game ) =>
+		TryFromPgnAtPly( pgn, int.MaxValue, out game );
+
+	/// <summary>
+	/// Every position of a PGN's movetext as (fen, lastMoveUci), in ply order — index 0 is the
+	/// position after the first half-move, the last entry is the final position. Empty when the
+	/// PGN has no moves. Parses once and walks the move cursor, so the spectator can replay a
+	/// multi-move poll gap one move at a time (a smooth slide per move) instead of teleporting
+	/// several pieces at once.
+	/// </summary>
+	public static List<(string fen, string lastMoveUci)> PgnPositions( string pgn )
+	{
+		var positions = new List<(string, string)>();
+		if ( string.IsNullOrWhiteSpace( pgn ) ) return positions;
+		if ( !ChessLib.ChessBoard.TryLoadFromPgn( pgn, out var board ) || board == null ) return positions;
+
+		int count = board.ExecutedMoves.Count;
+		for ( int ply = 1; ply <= count; ply++ )
+		{
+			// MoveIndex m shows the position after m+1 half-moves; m = ply-1 → after `ply` moves.
+			board.MoveIndex = ply - 1;
+			if ( board.ToFen() is not { } fen ) continue;
+			positions.Add( (fen, UciOf( board.ExecutedMoves[ply - 1] )) );
+		}
+		return positions;
+	}
+
 	// ── State reads ──
 	// The board view and HUD poll these every frame for every table, so the
 	// values the vendor recomputes/copies on each call are cached here and

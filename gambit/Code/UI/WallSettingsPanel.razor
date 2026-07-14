@@ -44,11 +44,8 @@
 	   static tokens live here. Layout in the WorldPanel's fixed intrinsic pixel space,
 	   fixed px font sizes, uniform GO scale. */
 	.board {
-		position: absolute;
-		top: 0;
-		left: 0;
 		width: 100%;
-		height: 100%;
+		height: auto;
 		flex-direction: column;
 		align-items: stretch;
 		justify-content: flex-start;
@@ -93,6 +90,32 @@
 {
 	/// <summary>Which board this is (world / host / music).</summary>
 	[Property] public SettingsStation.StationKind Kind { get; set; }
+
+	/// <summary>World half-height of the panel's intrinsic rect per unit of GO Z-scale — same
+	/// calibration as CenterInfoPanel/the cabinet screens (tune in-editor if a board floats or
+	/// sinks). Lets these boards floor-anchor exactly like the info board so all wall boards
+	/// read as one size (WallBoardGeometry).</summary>
+	[Property] public float HalfHeightPerScale { get; set; } = 18f;
+
+	/// <summary>World units to keep between the content's bottom edge and the floor.</summary>
+	[Property] public float FloorClearance { get; set; } = 60f;
+
+	protected override void OnUpdate()
+	{
+		// .board is height:auto, so it can be shorter than the panel's intrinsic rect. Measure
+		// the content/root pixel ratio (unit-agnostic) and lift the GO so the content's bottom
+		// edge sits FloorClearance above z=0 — identical to CenterInfoPanel, so info + settings
+		// boards line up at the same size and floor anchor.
+		var board = Panel?.Children.FirstOrDefault();
+		if ( board is null || Panel.Box.Rect.Height <= 0f ) return;
+
+		float rootHalf = HalfHeightPerScale * WorldScale.z;
+		float contentHeight = 1.5f * rootHalf * ( board.Box.Rect.Height / Panel.Box.Rect.Height );
+
+		var pos = LocalPosition;
+		pos.z = FloorClearance + contentHeight - rootHalf;
+		LocalPosition = pos;
+	}
 
 	bool Host => Kind == SettingsStation.StationKind.Host;
 

@@ -80,7 +80,7 @@ public sealed class InfoWall : Component, Component.ExecuteInEditor
 		info.Parent = _root;
 		info.LocalPosition = new Vector3( wallX, InfoYFrac * WallWidth, 100f );
 		info.LocalRotation = facing;
-		info.LocalScale = new Vector3( 1f, 1.8f, 2.4f ) * BoardScale;
+		info.LocalScale = WallBoardGeometry.Stretch * BoardScale;
 		info.AddComponent<WorldPanel>();
 		info.AddComponent<Gambit.UI.CenterInfoPanel>().FloorClearance = FloorClearance;
 

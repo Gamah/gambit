@@ -55,7 +55,10 @@ public sealed class LobbyPlayer : Component
 	/// <summary>Info/dev-notes station in range that "Press E" would activate, null if none.</summary>
 	public InfoStation NearbyInfo { get; private set; }
 
-	public bool Engaged => ChessStation.Active != null || SettingsStation.Active != null || InfoStation.Active != null;
+	/// <summary>Spectator wall the player is close enough to engage, if any.</summary>
+	public SpectatorStation NearbySpectator { get; private set; }
+
+	public bool Engaged => ChessStation.Active != null || SettingsStation.Active != null || InfoStation.Active != null || SpectatorStation.Active != null;
 
 	/// <summary>True once the camera has finished blending to the seat anchor —
 	/// engaged screens wait for this so the swoop down to the board stays visible.</summary>
@@ -124,6 +127,7 @@ public sealed class LobbyPlayer : Component
 		_spawnPos = WorldPosition;
 		EnsureGameHud();
 		EnsureSplash();
+		EnsureSpectatorScreen();
 
 		// Re-validate any stored lichess token; a 401 clears it and re-prompts
 		// (PLAN.md M3 gate: "401 → re-prompt"). No-op when signed out.
@@ -152,6 +156,19 @@ public sealed class LobbyPlayer : Component
 		{
 			if ( screen.Components.Get<Gambit.UI.Screens.SplashScreen>() == null )
 				screen.GameObject.AddComponent<Gambit.UI.Screens.SplashScreen>();
+			return; // first ScreenPanel is the scene UI root
+		}
+	}
+
+	/// <summary>Attach the spectator-wall channel picker to the scene ScreenPanel at
+	/// runtime (M5) — same self-heal as EnsureGameHud, so no scene rewire is needed. The
+	/// screen draws nothing until the player engages the SpectatorStation.</summary>
+	void EnsureSpectatorScreen()
+	{
+		foreach ( var screen in Scene.GetAllComponents<ScreenPanel>() )
+		{
+			if ( screen.Components.Get<Gambit.UI.Screens.SpectatorScreen>() == null )
+				screen.GameObject.AddComponent<Gambit.UI.Screens.SpectatorScreen>();
 			return; // first ScreenPanel is the scene UI root
 		}
 	}
@@ -213,7 +230,9 @@ public sealed class LobbyPlayer : Component
 			// Escape or Back stands up / closes the wall board. (Start auto-sets
 			// EscapePressed; the Back button is wired through the "Back" action.)
 			// Standing up mid-game resigns, so that path is two-stage (RequestLeave).
-			if ( Input.EscapePressed || Input.Pressed( "Back" ) )
+			// The info/welcome board also closes on E (its own hint says "E or Esc").
+			if ( Input.EscapePressed || Input.Pressed( "Back" )
+				|| ( InfoStation.Active != null && Input.Pressed( "use" ) ) )
 			{
 				Input.EscapePressed = false;
 				RequestLeave();
@@ -301,6 +320,7 @@ public sealed class LobbyPlayer : Component
 		FindNearbySeat();
 		NearbyBoard = NearbyStation == null ? FindNearbyBoard() : null;
 		NearbyInfo = NearbyStation == null && NearbyBoard == null ? FindNearbyInfo() : null;
+		NearbySpectator = NearbyStation == null && NearbyBoard == null && NearbyInfo == null ? FindNearbySpectator() : null;
 
 		if ( NearbyStation != null && Input.Pressed( "use" ) )
 			Engage( NearbyStation, NearbySeat );
@@ -308,6 +328,27 @@ public sealed class LobbyPlayer : Component
 			EngageBoard( NearbyBoard );
 		else if ( NearbyInfo != null && Input.Pressed( "use" ) )
 			EngageInfo( NearbyInfo );
+		else if ( NearbySpectator != null && Input.Pressed( "use" ) )
+			EngageSpectator( NearbySpectator );
+	}
+
+	SpectatorStation FindNearbySpectator()
+	{
+		SpectatorStation best = null;
+		float bestDist = float.MaxValue;
+
+		foreach ( var station in Scene.GetAllComponents<SpectatorStation>() )
+		{
+			var delta = station.WorldPosition - GameObject.WorldPosition;
+			float dist = new Vector2( delta.x, delta.y ).Length;
+			if ( dist < station.InteractRange && dist < bestDist )
+			{
+				best = station;
+				bestDist = dist;
+			}
+		}
+
+		return best;
 	}
 
 	SettingsStation FindNearbyBoard()
@@ -501,6 +542,7 @@ public sealed class LobbyPlayer : Component
 		// resign a live game, cancel a pending challenge/seek/open link, or clear the
 		// game-over screen — so the board returns to "not playing" for the next sitter.
 		lichess?.LeaveSeat();
+		Gambit.Game.PuzzleController.For( station )?.LeaveSeat();
 		Disengage();
 	}
 
@@ -566,6 +608,14 @@ public sealed class LobbyPlayer : Component
 		BeginBoardEngage();
 	}
 
+	/// <summary>Open the west-wall spectator board's channel picker — screen-space UI,
+	/// same as EngageBoard (camera stays put; cursor freed).</summary>
+	public void EngageSpectator( SpectatorStation station )
+	{
+		station.Enter();
+		BeginBoardEngage();
+	}
+
 	/// <summary>Wall boards draw their UI directly on the screen, so leave the camera
 	/// alone and only disable look controls so the cursor can drive the panel.</summary>
 	void BeginBoardEngage()
@@ -574,7 +624,7 @@ public sealed class LobbyPlayer : Component
 			_controller.UseLookControls = false;
 	}
 
-	bool BoardEngaged => SettingsStation.Active != null || InfoStation.Active != null;
+	bool BoardEngaged => SettingsStation.Active != null || InfoStation.Active != null || SpectatorStation.Active != null;
 
 	void BeginEngage()
 	{
@@ -659,6 +709,7 @@ public sealed class LobbyPlayer : Component
 		{
 			SettingsStation.Active?.Leave();
 			InfoStation.Active?.Leave();
+			SpectatorStation.Active?.Leave();
 			if ( _controller != null )
 				_controller.UseLookControls = true;
 			return;

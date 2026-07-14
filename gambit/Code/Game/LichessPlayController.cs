@@ -99,8 +99,10 @@ public sealed class LichessPlayController : Component, IBoardGame
 	public bool TryMakeMove( string uci )
 	{
 		if ( _phase != PlayPhase.Playing || !IsMyTurn || _moveInFlight || _playGame == null ) return false;
+		string before = _playGame.Fen;
 		if ( !_playGame.ApplyUci( uci ) ) return false; // optimistic local apply; lichess is the authority
 
+		PlayMoveSound( before, _playGame.Fen, positional: false ); // our move, on our own board
 		IsMyTurn = false;
 		_lastMoveUci = uci;
 		PostMove( uci );
@@ -129,6 +131,12 @@ public sealed class LichessPlayController : Component, IBoardGame
 
 	public RealTimeSince SinceCopied { get; private set; } = 999f;
 
+	/// <summary>Incoming lichess challenges (someone challenged YOU — from the web, mobile,
+	/// or another client), polled while idle + seated here (M4 #4). The HUD lists them with
+	/// Accept / Decline. id, challenger name, speed.</summary>
+	public IReadOnlyList<(string id, string from, string speed)> Incoming => _incoming;
+	readonly List<(string id, string from, string speed)> _incoming = new();
+
 	// ── Internals ──
 
 	ChessSeat _myColor;
@@ -145,7 +153,11 @@ public sealed class LichessPlayController : Component, IBoardGame
 	bool _polling;
 	bool _moveInFlight;
 
+	RealTimeSince _sinceChallengePoll = 999f;
+	bool _challengePolling;
+
 	const float PollInterval = 1.5f; // ~lichess-friendly; a full-minute 429 back-off would flag-loss anyway
+	const float ChallengePollInterval = 4f; // idle inbound-challenge watch — slower, it's just a notification
 
 	ChessSeat? LocalSeatNow =>
 		ChessStation.Active == Station && Station != null ? ChessStation.ActiveSeat : null;
@@ -166,8 +178,13 @@ public sealed class LichessPlayController : Component, IBoardGame
 			&& Station.WhiteSteamId == 0 && Station.BlackSteamId == 0 )
 			ClearRelayFields();
 
-		// Only the client that started a game here is non-Idle; everyone else no-ops.
-		if ( _phase != PlayPhase.Challenging && _phase != PlayPhase.Playing ) return;
+		// Idle + seated here: watch for INCOMING challenges so they can be accepted in
+		// sbox (only the station the local player is sitting at polls — challenges are
+		// account-global, so one poller is enough).
+		if ( _phase == PlayPhase.Idle ) { PollIncomingIfSeated(); return; }
+		if ( _phase == PlayPhase.Over ) return;
+
+		// Remaining: Challenging or Playing — the client that started a game here.
 
 		// While a game is live, hold the game stream open so lichess sees us present —
 		// without it the opponent's client shows us as having left after every move
@@ -200,7 +217,13 @@ public sealed class LichessPlayController : Component, IBoardGame
 			return;
 		}
 		if ( _spectatorGame != null && _spectatorGame.Fen == RelayFen ) return;
-		if ( ChessGame.TryFromFen( RelayFen, out var g ) ) _spectatorGame = g;
+		string before = _spectatorGame?.Fen;
+		if ( ChessGame.TryFromFen( RelayFen, out var g ) )
+		{
+			_spectatorGame = g;
+			// Positional move sound at the table we're watching (M6 sound mapping).
+			if ( before != null ) PlayMoveSound( before, RelayFen, positional: true );
+		}
 	}
 
 	/// <summary>Playing client → host: publish the current public position for watchers.
@@ -285,6 +308,82 @@ public sealed class LichessPlayController : Component, IBoardGame
 		_presenceTask = null;
 	}
 
+	// ── Incoming challenges (M4 #4) ──
+
+	void PollIncomingIfSeated()
+	{
+		// Only poll while the local player is actually sitting here and signed in.
+		if ( LocalSeatNow == null || !LichessAuth.SignedIn )
+		{
+			if ( _incoming.Count > 0 ) _incoming.Clear();
+			return;
+		}
+		if ( _challengePolling || _polling || LichessApi.Busy ) return;
+		if ( _sinceChallengePoll < ChallengePollInterval ) return;
+		_sinceChallengePoll = 0f;
+		PollIncoming();
+	}
+
+	async void PollIncoming()
+	{
+		_challengePolling = true;
+		try
+		{
+			var res = await LichessApi.GetChallenges( LichessAuth.Token );
+			// Don't treat a 401 here as a dead token — a token missing only the
+			// challenge:read scope 401s this endpoint while still being fine for play. Just
+			// skip quietly (real token death is caught by the play/account polls).
+			if ( !res.Ok ) return; // unauthorized/transient — try again next tick
+
+			var list = LichessApi.Deserialize<LichessChallengeList>( res.Body );
+			_incoming.Clear();
+			if ( list?.@in != null )
+				foreach ( var c in list.@in )
+					if ( !string.IsNullOrEmpty( c.id ) )
+						_incoming.Add( (c.id, c.challenger?.name ?? "someone", c.speed ?? "") );
+		}
+		finally
+		{
+			_challengePolling = false;
+		}
+	}
+
+	/// <summary>Accept an incoming challenge and play it on this board. Colours were set by
+	/// the challenger, so lichess assigns ours on accept — we adopt the new game via the
+	/// poll (like a seek) and swoop the camera to whichever side we're given.</summary>
+	public async void AcceptIncoming( string id )
+	{
+		if ( string.IsNullOrEmpty( id ) ) return;
+		if ( !CanStart( out var seat ) ) return;
+
+		// Snapshot ongoing games so the poll adopts only the newly-accepted one.
+		var pre = await LichessApi.GetAccountPlaying( LichessAuth.Token );
+		if ( pre.Unauthorized ) { FailStart( pre ); return; }
+		var preList = pre.Ok ? LichessApi.Deserialize<LichessNowPlaying>( pre.Body )?.nowPlaying : null;
+		if ( _phase == PlayPhase.Challenging || _phase == PlayPhase.Playing ) return;
+
+		BeginChallenge( seat, expectOpponent: null, ai: false );
+		_expectAny = true;
+		_preexistingIds = CollectGameIds( preList );
+		StatusText = "Accepting the challenge…";
+
+		var res = await LichessApi.AcceptChallenge( id, null, LichessAuth.Token );
+		if ( !res.Ok )
+			// Non-fatal: if it doesn't land the poll simply finds no new game and standing
+			// up clears the stuck Challenging state.
+			Log.Warning( $"[Gambit] accept incoming failed ({res.Status}): {LichessApi.Truncate( res.Body, 160 )}" );
+
+		_sincePoll = 999f;
+	}
+
+	/// <summary>Decline an incoming challenge — drop it locally and tell lichess.</summary>
+	public async void DeclineIncoming( string id )
+	{
+		if ( string.IsNullOrEmpty( id ) ) return;
+		_incoming.RemoveAll( c => c.id == id );
+		await LichessApi.DeclineChallenge( id, LichessAuth.Token );
+	}
+
 	// ── Starting a game ──
 
 	/// <summary>Challenge a lichess user to a casual Rapid 10+0 game, playing the
@@ -302,8 +401,10 @@ public sealed class LichessPlayController : Component, IBoardGame
 		var res = await LichessApi.ChallengeUser( username, ColorWord( seat ), 600, 0, LichessAuth.Token );
 		if ( !res.Ok ) { FailStart( res ); return; }
 
-		_challengeId = LichessApi.Deserialize<LichessChallenge>( res.Body )?.id;
+		var ch = LichessApi.Deserialize<LichessChallenge>( res.Body );
+		_challengeId = ch?.id;
 		StatusText = $"Waiting for {username} to accept…";
+		Log.Info( $"[Gambit] challenge sent to {username}: {ch?.url ?? "(no url in reply)"} — they accept on lichess or their sbox client." );
 		_sincePoll = 999f; // start polling promptly
 	}
 
@@ -332,8 +433,10 @@ public sealed class LichessPlayController : Component, IBoardGame
 		var res = await LichessApi.ChallengeUser( opp, ColorWord( seat ), 600, 0, LichessAuth.Token );
 		if ( !res.Ok ) { FailStart( res ); return; }
 
-		_challengeId = LichessApi.Deserialize<LichessChallenge>( res.Body )?.id;
+		var chSeated = LichessApi.Deserialize<LichessChallenge>( res.Body );
+		_challengeId = chSeated?.id;
 		StatusText = $"Waiting for {opp} to accept…";
+		Log.Info( $"[Gambit] head-to-head challenge sent to {opp}: {chSeated?.url ?? "(no url)"} — their sbox client auto-accepts; also visible on lichess." );
 
 		// Ask the seated opponent's client to accept this specific challenge. Broadcast
 		// straight from here (the same client→all pattern as NetChessMove) — lichess only
@@ -473,6 +576,7 @@ public sealed class LichessPlayController : Component, IBoardGame
 		IsOpenGame = false;
 		SeatUrl = null;
 		ShareUrl = null;
+		_incoming.Clear();
 		_phase = PlayPhase.Challenging;
 	}
 
@@ -640,7 +744,45 @@ public sealed class LichessPlayController : Component, IBoardGame
 
 		var server = BuildGame( g.fen, g.color, g.isMyTurn );
 		if ( server != null && ( _playGame == null || _playGame.Fen != server.Fen ) )
+		{
+			string before = _playGame?.Fen;
 			_playGame = server;
+			// The opponent's move arriving via the poll (our own confirmed move leaves the
+			// FEN unchanged from the optimistic apply, so before==after → silent here). 2D
+			// since it's our own board (M6 sound mapping).
+			if ( before != null ) PlayMoveSound( before, server.Fen, positional: false );
+		}
+	}
+
+	/// <summary>Tick for White's move, tock for Black's, pop for any capture — mirrors
+	/// LocalGameController.PlayMoveSound. 2D on our own engaged board, positional when
+	/// watching another table (M6 sound mapping).</summary>
+	void PlayMoveSound( string before, string after, bool positional )
+	{
+		if ( string.IsNullOrEmpty( before ) || string.IsNullOrEmpty( after ) ) return;
+		bool capture = CountPieces( before ) != CountPieces( after );
+		bool whiteMoved = after.Contains( " b " ); // after a white move it's Black to move
+
+		if ( positional )
+		{
+			if ( capture ) Audio.SoundPlayer.PlayPopAt( WorldPosition );
+			else Audio.SoundPlayer.PlayTickAt( WorldPosition );
+			return;
+		}
+
+		if ( capture ) Audio.SoundPlayer.PlayPop();
+		else if ( whiteMoved ) Audio.SoundPlayer.PlayTick();
+		else Audio.SoundPlayer.PlayTock();
+	}
+
+	static int CountPieces( string fen )
+	{
+		int n = 0;
+		int end = fen.IndexOf( ' ' );
+		if ( end < 0 ) end = fen.Length;
+		for ( int i = 0; i < end; i++ )
+			if ( char.IsLetter( fen[i] ) ) n++;
+		return n;
 	}
 
 	/// <summary>Turn a nowPlaying FEN into a rules instance. lichess usually sends a
@@ -700,11 +842,40 @@ public sealed class LichessPlayController : Component, IBoardGame
 		IsMyTurn = false;
 		StatusText = null;
 		StopPresence(); // game's over — release the held-open game stream
-		ClearRelay();   // and take the relayed board off every watcher
 
 		var res = await LichessApi.GameExport( _gameId );
 		var st = res.Ok ? LichessApi.Deserialize<LichessGameStatus>( res.Body ) : null;
+
+		// account/playing drops a game the instant it ends, so the move that ENDED it (a
+		// mate / final move by the opponent) never arrived via the poll — the board froze a
+		// move short. Rebuild the final position from the export's movetext and set it so
+		// the board animates that last move into place (with the mating-move highlight),
+		// then publish it to any watchers instead of yanking their board away.
+		if ( st?.moves is { Length: > 0 } && ChessGame.TryFromPgn( st.moves, out var final ) )
+		{
+			_playGame = final;
+			_lastMoveUci = final.LastMoveUci ?? _lastMoveUci;
+			RelayFinal( final );
+		}
+		else
+		{
+			ClearRelay(); // no final position to show — take the relayed board off watchers
+		}
+
 		OverText = DescribeEnd( st );
+	}
+
+	/// <summary>Host-fold the finished position to spectators so their board lands on the
+	/// same final move rather than clearing. It stays up until the player leaves / the
+	/// table empties (LeaveSeat → ClearPlay → ClearRelay, or the OnUpdate auto-recycle).</summary>
+	void RelayFinal( ChessGame final )
+	{
+		string me = LichessAuth.Username;
+		if ( string.IsNullOrEmpty( me ) ) me = "You";
+		string opp = OpponentName ?? "Opponent";
+		string white = _myColor == ChessSeat.White ? me : opp;
+		string black = _myColor == ChessSeat.White ? opp : me;
+		HostRelay( final.Fen, _lastMoveUci, white, black );
 	}
 
 	string DescribeEnd( LichessGameStatus st )

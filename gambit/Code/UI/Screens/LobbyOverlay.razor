@@ -41,6 +41,14 @@
 			<div>@InfoPrompt( LobbyPlayer.Local.NearbyInfo )</div>
 		</div>
 	}
+	else if ( LobbyPlayer.Local?.NearbySpectator != null )
+	{
+		<div class="prompt">
+			<div>Press</div>
+			<div class="key">E</div>
+			<div>to spectate games</div>
+		</div>
+	}
 	else if ( DiscordButton.SinceCopied < 2f )
 	{
 		<div class="prompt">
@@ -125,5 +133,6 @@
 			LobbyPlayer.Local?.NearbySeat, ChessStation.Active != null,
 			LobbyPlayer.Local?.NearbyBoard?.Kind,
 			LobbyPlayer.Local?.NearbyInfo?.Kind, DiscordButton.SinceCopied < 2f,
-			LobbyPlayer.Local?.LeaveArmed );
+			System.HashCode.Combine( LobbyPlayer.Local?.NearbySpectator != null,
+				LobbyPlayer.Local?.LeaveArmed ) );
 }

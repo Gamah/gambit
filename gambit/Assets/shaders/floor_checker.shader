@@ -55,12 +55,16 @@ PS
     #include "common/pixel.hlsl"
 
     Texture2D PopMap < Attribute( "PopMap" ); >;
+    Texture2D GlyphMap < Attribute( "GlyphMap" ); >;       // R = glyph index per cell (0 none, 1..6 piece)
+    Texture2D GlyphAtlas < Attribute( "GlyphAtlas" ); >;   // 6-cell horizontal alpha atlas of the piece silhouettes
     float g_flBoardDim < Attribute( "BoardDim" ); Default( 20.0 ); >;
+    float g_flGlyphCount < Attribute( "GlyphCount" ); Default( 6.0 ); >;
     float g_flBorderWidth < Attribute( "BorderWidth" ); Default( 0.05 ); >;
     float g_flBevelWidth < Attribute( "BevelWidth" ); Default( 0.12 ); >;    // bevel band width as a fraction of the cell
     float g_flBevelStrength < Attribute( "BevelStrength" ); Default( 0.6 ); >; // how far the edge normals tilt outward
     float g_flRoughness < Attribute( "FloorRoughness" ); Default( 0.5 ); >;     // lower = glossier, so grooves catch specular and read as tile
     SamplerState PointClamp < Filter( Point ); AddressU( Clamp ); AddressV( Clamp ); >;
+    SamplerState BilinearClamp < Filter( Bilinear ); AddressU( Clamp ); AddressV( Clamp ); >;
 
     float4 MainPs( PixelInput i ) : SV_Target0
     {
@@ -70,6 +74,22 @@ PS
         float2 cellUv = frac( i.vTextureCoords.xy * g_flBoardDim );
         if ( g_flBorderWidth > 0.0 && ( any( cellUv < g_flBorderWidth ) || any( cellUv > 1.0 - g_flBorderWidth ) ) )
             col = float3( 0.0, 0.0, 0.0 );
+
+        // Glyph pop (D6): if this cell carries a piece index, look the silhouette up in the
+        // atlas and blend it over the square in the OPPOSITE colour (white glyph on a dark
+        // cell, dark on a light one). The index map is one texel per cell, point-sampled;
+        // the atlas is 6 cells wide, so cell g occupies U in [(g-1)/6, g/6].
+        float glyphIdx = round( GlyphMap.Sample( PointClamp, i.vTextureCoords.xy ).r * 255.0 );
+        if ( glyphIdx >= 1.0 )
+        {
+            float2 cellId = floor( i.vTextureCoords.xy * g_flBoardDim );
+            bool lightSquare = frac( ( cellId.x + cellId.y ) * 0.5 ) > 0.25; // odd sum = light
+            float3 glyphColor = lightSquare ? float3( 0.03, 0.03, 0.03 ) : float3( 0.95, 0.95, 0.95 );
+
+            float atlasU = ( cellUv.x + ( glyphIdx - 1.0 ) ) / g_flGlyphCount;
+            float coverage = GlyphAtlas.Sample( BilinearClamp, float2( atlasU, cellUv.y ) ).a;
+            col = lerp( col, glyphColor, coverage );
+        }
 
         Material m = Material::Init( i );
         m.Albedo = col;

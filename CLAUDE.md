@@ -11,14 +11,24 @@ anonymous play via PGN import), the rotaliate→gambit file mapping, milestones
 M0–M6, and risks. This file carries the s&box engineering lore inherited from the
 parent project — hard-won gotchas that still apply.
 
-Current status: **M0–M4 done** (M4 merged to master 2026-07-14) — in-sbox
-lichess play via polling: browser-link flow, quick-play seek, spectator relay,
-two-authed head-to-head, plus the host-visibility fix and a display-name
-unification. All polling-based; no relay/engine fix needed, and M5+ don't need
-one either. A few M4 items await a *live* second-account confirm (head-to-head
-handshake, presence) — deferred, not blocking. **Next: M5 — spectate / TV /
-puzzles.** **`PLAN.md` is the authoritative milestone status** (M5 entry explains
-why streaming is not a prerequisite). All legacy Rotaliate gameplay code is deleted.
+Current status: **M0–M4 done** (M4 merged to master 2026-07-14); **M5 + M6
+code-complete and gates PASSED on branch `m5-m6-spectate-puzzles` (2026-07-14) —
+ready to merge.** M5:
+lichess **puzzles** solvable at any board (`PuzzleController`, IBoardGame — daily/
+next, local validate, retry/reveal, "doesn't affect your rating"), a west-wall
+**spectator board** (`SpectatorWall`/`SpectatorStation`/`SpectatorController`,
+self-healed by LobbyRoom) that mirrors a live sbox table (M4 relay, real-time) or
+polls **lichess TV / a game by id** (channels JSON + PGN-export → FEN, coarse
+latency), rendered as a real 3D board (`SpectatorBoard3D` — ChessSetBuilder meshes + a raking light for shadows) with a channel
+picker (`SpectatorScreen`). M6: **floor glyph pops** (D6 — CC0 glyph atlas via
+`scripts/gen_glyph_atlas.py`, `floor_checker.shader` rewritten to blend piece
+glyphs opposite the square colour — **confirmed rendering in-editor**), lichess/
+puzzle **move sounds** (confirmed), and rate-limit + token-hygiene audits (clean).
+Deferred (post-v1/optional): draw offer/abort, rated toggle, lichess chat, Poly
+Haven 3D pieces, branding, and a general sound-design revisit. One untested-but-
+low-risk item: the featured-sbox-table wall mirror (proven M4 relay path).
+**`PLAN.md` is the authoritative milestone status.** All legacy Rotaliate gameplay
+code is deleted.
 The world is chess: `ChessRing` builds tables (LobbyRoom auto-adds the ring
 component if the scene lacks one), pieces are lathed runtime meshes in
 `ChessSetBuilder` (`models/chess/{type}.vmdl` is a drop-in upgrade path), and

@@ -56,6 +56,31 @@ public sealed class LichessChallenge
 	public string speed { get; set; }
 }
 
+/// <summary>Reply from <c>GET /api/challenge</c> — the signed-in user's live challenges.
+/// <c>@in</c>/<c>@out</c> escape the C# keywords; System.Text.Json still binds them to the
+/// wire keys "in"/"out".</summary>
+public sealed class LichessChallengeList
+{
+	public List<LichessChallengeEntry> @in { get; set; }
+	public List<LichessChallengeEntry> @out { get; set; }
+}
+
+public sealed class LichessChallengeEntry
+{
+	public string id { get; set; }
+	public string url { get; set; }
+	public string status { get; set; }        // "created","offline","canceled","declined","accepted"
+	public string speed { get; set; }
+	public LichessChallengeUser challenger { get; set; }
+	public LichessChallengeUser destUser { get; set; }
+}
+
+public sealed class LichessChallengeUser
+{
+	public string id { get; set; }
+	public string name { get; set; }
+}
+
 /// <summary>Reply from <c>GET /api/account/playing</c> — the poll payload driving
 /// in-sbox play (PLAN.md M4). Only ongoing games are listed, so a game vanishing
 /// from here is how we detect it ended.</summary>
@@ -90,6 +115,65 @@ public sealed class LichessGameStatus
 	public string id { get; set; }
 	public string status { get; set; }       // "mate","resign","outoftime","draw","stalemate",…
 	public string winner { get; set; }       // "white"/"black"/null
+	public string moves { get; set; }        // full SAN movetext — lets us rebuild the final position
+}
+
+// ── Puzzles (M5) ──
+
+/// <summary>Reply from <c>GET /api/puzzle/{daily|next|id}</c>. The puzzle position is the
+/// END of the source <see cref="game"/>'s PGN (its last move is the opponent's setup move;
+/// <c>puzzle.initialPly</c> is that move's 0-based index, so the position is after
+/// initialPly+1 half-moves). From there it is the solver's turn: <c>puzzle.solution</c> is
+/// the UCI line SOLVER-move-first (solution[0] = solver, solution[1] = opponent reply, …).</summary>
+public sealed class LichessPuzzleResponse
+{
+	public PuzzleGame game { get; set; }
+	public PuzzleData puzzle { get; set; }
+}
+
+public sealed class PuzzleGame
+{
+	public string id { get; set; }
+	public string pgn { get; set; }          // space-separated movetext (no headers)
+	public string clock { get; set; }
+	public List<PuzzlePlayer> players { get; set; }
+}
+
+public sealed class PuzzlePlayer
+{
+	public string name { get; set; }
+	public string color { get; set; }        // "white" / "black"
+	public int? rating { get; set; }
+}
+
+public sealed class PuzzleData
+{
+	public string id { get; set; }
+	public int rating { get; set; }
+	public int initialPly { get; set; }
+	public List<string> solution { get; set; }   // UCI moves, opponent-first
+	public List<string> themes { get; set; }
+}
+
+// ── TV (M5) ──
+
+/// <summary>One channel of <c>GET /api/tv/channels</c> — the current featured game
+/// on that channel and its top player. The reply is a JSON object keyed by channel
+/// name ("bot","blitz","rapid",…), so deserialize the whole thing as
+/// <c>Dictionary&lt;string, LichessTvChannel&gt;</c>.</summary>
+public sealed class LichessTvChannel
+{
+	public LichessTvUser user { get; set; }
+	public int rating { get; set; }
+	public string gameId { get; set; }
+	public string color { get; set; }        // colour the featured user plays
+}
+
+public sealed class LichessTvUser
+{
+	public string id { get; set; }
+	public string name { get; set; }
+	public string title { get; set; }        // "GM", "BOT", … or null
 }
 
 /// <summary>Reply from <c>POST /api/token</c> — the OAuth code exchange.</summary>
