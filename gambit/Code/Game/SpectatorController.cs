@@ -122,9 +122,14 @@ public sealed class SpectatorController : Component
 	string _shownGameId;              // game the buffer belongs to (id change ⇒ snap, don't replay)
 	RealTimeSince _sinceReveal;
 	float _nextGap;                   // seconds until the next ply is revealed (adaptive)
-	const float MinReplayGap = 0.45f; // ≥ the board's slide time so moves don't blur together
-	const float MaxReplayGap = 3f;    // cap the idle between moves in a slow game
-	const int ReplayBacklogCap = 10;  // snap forward if we somehow fall this far behind
+	// The export gives us only whole-second %clk, so there's no true sub-second move timing to
+	// replay bullet by. Instead, drain the backlog within ReplayWindow (< PollInterval) so a
+	// fast game flurries and then briefly idles — closer to how bullet actually looks — rather
+	// than crawling one move every (interval / backlog).
+	const float ReplayWindow = 5f;
+	const float MinReplayGap = 0.22f; // near the board's slide time — fast games flow, no blur
+	const float MaxReplayGap = 1.6f;  // cap the idle between moves in a slow game
+	const int ReplayBacklogCap = 12;  // snap forward if we somehow fall this far behind
 
 	protected override void OnEnabled() => Instance = this;
 	protected override void OnDisabled() { if ( Instance == this ) Instance = null; }
@@ -393,7 +398,7 @@ public sealed class SpectatorController : Component
 
 		int backlog = _positions.Count - _shownPly;
 		_nextGap = backlog <= 0 ? MaxReplayGap
-			: System.Math.Clamp( PollInterval / backlog, MinReplayGap, MaxReplayGap );
+			: System.Math.Clamp( ReplayWindow / backlog, MinReplayGap, MaxReplayGap );
 	}
 
 	/// <summary>Point Fen/LastMoveUci at the currently-revealed ply (same string instances until

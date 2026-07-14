@@ -47,8 +47,9 @@ public sealed class SpectatorBoard3D : Component, Component.ExecuteInEditor
 	/// ratio ChessRing uses so pieces stay proportional to their squares).</summary>
 	[Property] public float PieceScaleMul { get; set; } = 1f;
 
-	/// <summary>Seconds a piece takes to slide to its new square on a position change.</summary>
-	[Property] public float MoveSeconds { get; set; } = 0.28f;
+	/// <summary>Seconds a piece takes to slide to its new square on a position change. Kept at or
+	/// under the spectator replay's minimum per-move gap so fast games (bullet) stay crisp.</summary>
+	[Property] public float MoveSeconds { get; set; } = 0.2f;
 
 	/// <summary>Peak height of the slide hop, as a fraction of a square.</summary>
 	[Property] public float MoveArc { get; set; } = 0.4f;
