@@ -133,6 +133,6 @@
 			LobbyPlayer.Local?.NearbySeat, ChessStation.Active != null,
 			LobbyPlayer.Local?.NearbyBoard?.Kind,
 			LobbyPlayer.Local?.NearbyInfo?.Kind, DiscordButton.SinceCopied < 2f,
-			LobbyPlayer.Local?.NearbySpectator != null,
-			LobbyPlayer.Local?.LeaveArmed );
+			System.HashCode.Combine( LobbyPlayer.Local?.NearbySpectator != null,
+				LobbyPlayer.Local?.LeaveArmed ) );
 }
