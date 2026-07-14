@@ -143,7 +143,8 @@ public sealed class SpectatorController : Component
 	/// <summary>+1 White won, −1 Black won, 0 draw — for banner colouring.</summary>
 	public int ResultWinner { get; private set; }
 	RealTimeSince _sinceResultShown;
-	const float FanfareSeconds = 3f;  // hold the result at least this long before the next game
+	const float FanfareSeconds = 3f;    // hold the result at LEAST this long
+	const float MaxFanfareSeconds = 9f; // …and at most this long (don't stall on a slow-to-buffer next game)
 
 	protected override void OnEnabled() => Instance = this;
 	protected override void OnDisabled() { if ( Instance == this ) Instance = null; }
@@ -320,9 +321,11 @@ public sealed class SpectatorController : Component
 			if ( _tvGameOver && ch.gameId == _resultDoneGameId )
 				return;
 
-			// A new featured game — reset the board so the last position doesn't linger under
-			// the incoming one.
-			if ( ch.gameId != _tvGameId ) ClearPosition();
+			// A new featured game — reset the board so the last position doesn't linger under the
+			// incoming one. Skip while the result banner is up: the next game pre-buffers under it,
+			// and ClearPosition would drop the banner (IngestPositions' new-game branch resets the
+			// buffer for it anyway).
+			if ( ch.gameId != _tvGameId && !ShowingResult ) ClearPosition();
 			_tvGameId = ch.gameId;
 			_tvGameOver = false;
 			WhiteName = ch.color == "black" ? "opponent" : ch.user?.name ?? "White";
@@ -441,15 +444,21 @@ public sealed class SpectatorController : Component
 	{
 		if ( !_replayActive ) return;
 
-		// Holding the end-of-game result banner (at least FanfareSeconds).
+		// Holding the end-of-game result banner. Keep it up until at least FanfareSeconds AND the
+		// NEXT game has pre-buffered its cushion (so it starts smoothly the instant the banner
+		// drops) — but never past MaxFanfareSeconds, so a slow-to-buffer next game can't stall the
+		// banner forever.
 		if ( ShowingResult )
 		{
-			if ( _sinceResultShown >= FanfareSeconds )
-			{
+			bool minTimeUp = _sinceResultShown >= FanfareSeconds;
+			bool maxTimeUp = _sinceResultShown >= MaxFanfareSeconds;
+			// The next game (loaded under the banner) is ready: its own new-game load set _playing
+			// once its lag reached PreRollLag, and it's a different game than the one we're crediting.
+			bool nextReady = _playing && _shownGameId != _resultDoneGameId
+				&& _positions.Count - _shownPly >= PreRollLag;
+			bool noNext = _channel != Channel.LichessTv; // watch-by-id has no next game to wait for
+			if ( minTimeUp && ( nextReady || noNext || maxTimeUp ) )
 				ShowingResult = false;
-				_resultDoneGameId = _shownGameId;                       // don't re-fanfare this game
-				if ( _channel == Channel.LichessTv ) _tvGameOver = true; // now let PollTv pick the next game
-			}
 			return;
 		}
 
@@ -489,6 +498,16 @@ public sealed class SpectatorController : Component
 		ResultHeadline = _pendingHeadline;
 		ResultReason = _pendingReason;
 		ResultWinner = _pendingWinner;
+		_resultDoneGameId = _shownGameId; // don't re-fanfare this game
+
+		// Start loading the NEXT game NOW so it pre-buffers UNDER the banner. The banner then
+		// stays up (AdvanceReplay) until that cushion is ready — so the previous game's fanfare
+		// chews up the next game's load time, instead of hanging on "Buffering" after it drops.
+		if ( _channel == Channel.LichessTv )
+		{
+			_tvGameOver = true;
+			_sincePoll = 999f; // poll the next featured game promptly
+		}
 	}
 
 	/// <summary>Winner + reason for the end-of-game fanfare, from the export PGN. Winner: +1 White,
