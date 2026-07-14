@@ -42,9 +42,11 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// <summary>Keep a seat tag this far off the side wall when auto-fitting its width.</summary>
 	const float SeatWallMargin = 10f;
 
-	/// <summary>Intrinsic pixel size of the end-of-game fanfare banner (SpectatorResultPanel).</summary>
-	const float ResultPxWidth = 900f;
-	const float ResultPxHeight = 420f;
+	/// <summary>Intrinsic pixel size of the end-of-game fanfare banner (SpectatorResultPanel) —
+	/// wide enough that a "&lt;PlayerName&gt; wins" headline at the banner's font size fits without
+	/// clipping (the panel clips content past this width).</summary>
+	const float ResultPxWidth = 2200f;
+	const float ResultPxHeight = 700f;
 
 	/// <summary>World units the board sits in front of the wall's inner face
 	/// (RoomSize / 2), toward the room.</summary>
@@ -71,8 +73,9 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// just outside the edge, coplanar with the board).</summary>
 	[Property] public float SeatEdgeGap { get; set; } = 6f;
 
-	/// <summary>Uniform scale of the end-of-game fanfare banner centred over the board.</summary>
-	[Property] public float ResultBoardScale { get; set; } = 6f;
+	/// <summary>Uniform scale of the end-of-game fanfare banner centred over the board (world
+	/// width ≈ ResultPxWidth × this × 0.05).</summary>
+	[Property] public float ResultBoardScale { get; set; } = 5f;
 
 	/// <summary>How far the fanfare banner pops out in front of the board face so it reads clearly
 	/// over the pieces.</summary>
