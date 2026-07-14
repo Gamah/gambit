@@ -50,8 +50,14 @@ public sealed class SpectatorController : Component
 	string _tvGameId;
 	string _watchId;
 	RealTimeSince _sincePoll = 999f;
+	RealTimeSince _sinceTvChannel = 999f; // time since the featured game id was (re)picked
+	bool _tvGameOver;                 // the featured game finished — re-pick on the next poll
 	bool _polling;
 	const float PollInterval = 3f;    // coarse — lichess delays public game export anyway
+	// lichess rotates a channel's featured game and games end; re-pick the featured game
+	// this often so the board keeps following live play instead of freezing on a finished
+	// game (a finished game also forces an immediate re-pick via _tvGameOver).
+	const float TvChannelRefresh = 20f;
 
 	protected override void OnEnabled() => Instance = this;
 	protected override void OnDisabled() { if ( Instance == this ) Instance = null; }
@@ -84,6 +90,8 @@ public sealed class SpectatorController : Component
 		_channel = Channel.LichessTv;
 		_tvChannelKey = channelKey;
 		_tvGameId = null;
+		_tvGameOver = false;
+		_sinceTvChannel = 999f;
 		ClearPosition();
 		StatusText = "Loading lichess TV…";
 		_sincePoll = 999f; // poll promptly
@@ -194,20 +202,34 @@ public sealed class SpectatorController : Component
 
 	async System.Threading.Tasks.Task PollTv()
 	{
-		// Refresh the featured game id for the channel, then fetch its position.
-		if ( _tvGameId == null )
+		// (Re)pick the channel's current featured game when we have none, when the one we
+		// were watching ended, or periodically — lichess rotates the featured game and games
+		// finish, so a pinned id would eventually freeze the board on a stale/finished game.
+		if ( _tvGameId == null || _tvGameOver || _sinceTvChannel > TvChannelRefresh )
 		{
 			var chres = await LichessApi.GetTvChannels();
-			if ( !chres.Ok ) { StatusText = "Couldn't reach lichess TV."; return; }
+			if ( !chres.Ok )
+			{
+				// Keep showing the last position if we still have one; only surface the error
+				// when the board is empty.
+				if ( !HasPosition ) StatusText = "Couldn't reach lichess TV.";
+				return;
+			}
 
 			var channels = LichessApi.Deserialize<Dictionary<string, LichessTvChannel>>( chres.Body );
 			var ch = PickChannel( channels, _tvChannelKey );
 			if ( ch == null || string.IsNullOrEmpty( ch.gameId ) )
 			{
-				StatusText = "No featured game on that channel.";
+				if ( !HasPosition ) StatusText = "No featured game on that channel.";
 				return;
 			}
+
+			// A new featured game — reset the board so the last position doesn't linger under
+			// the incoming one.
+			if ( ch.gameId != _tvGameId ) ClearPosition();
 			_tvGameId = ch.gameId;
+			_tvGameOver = false;
+			_sinceTvChannel = 0f;
 			WhiteName = ch.color == "black" ? "opponent" : ch.user?.name ?? "White";
 			BlackName = ch.color == "black" ? ch.user?.name ?? "Black" : "opponent";
 			ChannelLabel = $"LICHESS TV · {_tvChannelKey ?? "featured"}";
@@ -242,6 +264,25 @@ public sealed class SpectatorController : Component
 			// A game with no moves yet exports as headers only — keep whatever we had.
 			StatusText = delayNote;
 		}
+
+		// On TV, note when the featured game has finished so PollTv re-picks the channel's
+		// next game rather than freezing on the final position. Watch-by-id stays put.
+		if ( _channel == Channel.LichessTv && PgnGameOver( res.Body ) )
+			_tvGameOver = true;
+	}
+
+	/// <summary>A PGN whose result header/terminator is decisive or drawn (not the ongoing
+	/// "*") — the game is over. lichess sets the real result only once the game ends.</summary>
+	static bool PgnGameOver( string pgn )
+	{
+		if ( string.IsNullOrEmpty( pgn ) ) return false;
+		int i = pgn.IndexOf( "[Result \"", System.StringComparison.Ordinal );
+		if ( i < 0 ) return false;
+		i += 9;
+		int end = pgn.IndexOf( '"', i );
+		if ( end < 0 ) return false;
+		var result = pgn[i..end];
+		return result is "1-0" or "0-1" or "1/2-1/2";
 	}
 
 	static LichessTvChannel PickChannel( Dictionary<string, LichessTvChannel> channels, string key )
