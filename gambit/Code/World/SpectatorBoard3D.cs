@@ -140,12 +140,12 @@ public sealed class SpectatorBoard3D : Component, Component.ExecuteInEditor
 		var aimAt = new Vector3( 0f, 0f, SurfaceZ );
 		lightGo.LocalPosition = lightPos;
 		lightGo.LocalRotation = Rotation.LookAt( ( aimAt - lightPos ).Normal );
-		var light = lightGo.AddComponent<SpotLight>();
-		light.LightColor = new Color( LightBrightness, LightBrightness, LightBrightness );
-		light.Radius = BoardSize * 3f;
-		light.ConeInner = 30f;
-		light.ConeOuter = 55f;
-		light.Shadows = true; // the whole point — pieces cast shadows across the tilted face
+		var spot = lightGo.AddComponent<SpotLight>();
+		spot.LightColor = new Color( LightBrightness, LightBrightness, LightBrightness );
+		spot.Radius = BoardSize * 3f;
+		spot.ConeInner = 30f;
+		spot.ConeOuter = 55f;
+		spot.Shadows = true; // the whole point — pieces cast shadows across the tilted face
 
 		for ( int i = 0; i < 64; i++ ) { _rendered[i] = '\0'; _pieces[i] = null; }
 		_slides.Clear();
