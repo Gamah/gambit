@@ -21,9 +21,10 @@ namespace Gambit.World;
 ///
 /// <para>The board is built <b>flat</b> (surface normal = local +Z, so pieces stand
 /// straight up in +Z exactly like on a table). <see cref="SpectatorWall"/> owns how it
-/// hangs: it stands the whole GO up against the wall and tilts it back a few degrees so the
-/// pieces cast shadows across the face. Because the piece meshes are children of this flat
-/// board, they need no per-piece rotation — the mount rotation carries them.</para>
+/// hangs: it stands the whole GO up above the wall and tilts it inward (pivoting off the
+/// bottom edge) so the face angles down toward the room and the pieces cast shadows across it.
+/// Because the piece meshes are children of this flat board, they need no per-piece rotation —
+/// the mount rotation carries them.</para>
 ///
 /// <para>Cosmetic and client-local (NotSaved/NotNetworked): each client reads its own
 /// <see cref="SpectatorController"/> (the M4 relay or its own lichess poll), so nothing here

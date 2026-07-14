@@ -87,6 +87,30 @@ public sealed class ChessGame
 	public static bool TryFromPgn( string pgn, out ChessGame game ) =>
 		TryFromPgnAtPly( pgn, int.MaxValue, out game );
 
+	/// <summary>
+	/// Every position of a PGN's movetext as (fen, lastMoveUci), in ply order — index 0 is the
+	/// position after the first half-move, the last entry is the final position. Empty when the
+	/// PGN has no moves. Parses once and walks the move cursor, so the spectator can replay a
+	/// multi-move poll gap one move at a time (a smooth slide per move) instead of teleporting
+	/// several pieces at once.
+	/// </summary>
+	public static List<(string fen, string lastMoveUci)> PgnPositions( string pgn )
+	{
+		var positions = new List<(string, string)>();
+		if ( string.IsNullOrWhiteSpace( pgn ) ) return positions;
+		if ( !ChessLib.ChessBoard.TryLoadFromPgn( pgn, out var board ) || board == null ) return positions;
+
+		int count = board.ExecutedMoves.Count;
+		for ( int ply = 1; ply <= count; ply++ )
+		{
+			// MoveIndex m shows the position after m+1 half-moves; m = ply-1 → after `ply` moves.
+			board.MoveIndex = ply - 1;
+			if ( board.ToFen() is not { } fen ) continue;
+			positions.Add( (fen, UciOf( board.ExecutedMoves[ply - 1] )) );
+		}
+		return positions;
+	}
+
 	// ── State reads ──
 	// The board view and HUD poll these every frame for every table, so the
 	// values the vendor recomputes/copies on each call are cached here and

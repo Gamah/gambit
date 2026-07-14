@@ -26,9 +26,10 @@ namespace Gambit.World;
 public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 {
 	/// <summary>Intrinsic pixel size of a SpectatorSeatPanel's &lt;root&gt; — one player's tag
-	/// (name + rating | clock) that hugs a corner of the 3D board.</summary>
-	const float SeatPxWidth = 360f;
-	const float SeatPxHeight = 170f;
+	/// (name over rating | clock). Wide-and-short so it reads as a broadcast lower-third strip
+	/// along the board edge; the small font scale rides on the width.</summary>
+	const float SeatPxWidth = 1050f;
+	const float SeatPxHeight = 200f;
 
 	/// <summary>WorldPanel px→world-unit factor (Sandbox ScreenToWorldScale) — a panel of P px
 	/// renders P × scale × this many world units wide; used to place the seat tags at the board
@@ -47,17 +48,17 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// keeps the bottom in place.</summary>
 	[Property] public float BoardCellSize { get; set; } = 56f;
 
-	/// <summary>Degrees the board leans back from vertical (top toward the wall) so pieces,
-	/// standing out of the near-vertical face, cast shadows across it under the board light.
-	/// Tuned in-editor; flip the sign if the face ends up angled the wrong way.</summary>
+	/// <summary>Degrees the board leans inward from vertical — the top swings out over the room
+	/// (pivoting off the fixed bottom edge) so the face angles down toward players on the floor.
+	/// Tuned in-editor; negate to lean back toward the wall instead.</summary>
 	[Property] public float TiltDegrees { get; set; } = 7f;
 
-	/// <summary>Uniform scale multiplier on each corner seat tag (name + rating | clock).</summary>
-	[Property] public float SeatBoardScale { get; set; } = 6f;
+	/// <summary>Uniform scale multiplier on each player-tag strip.</summary>
+	[Property] public float SeatBoardScale { get; set; } = 5f;
 
-	/// <summary>Gap between the 3D board's edge and the near edge of a seat tag — the tags sit
-	/// just outside the board corners so they never cover the pieces.</summary>
-	[Property] public float SeatGap { get; set; } = 10f;
+	/// <summary>How far each tag pops out in front of the board face (board-local +Z) so it floats
+	/// just above the tiles/pieces at its edge rather than z-fighting the board.</summary>
+	[Property] public float SeatGap { get; set; } = 14f;
 
 	/// <summary>Gap between the wall top and the bottom edge of the floating board. The
 	/// board's clearance tracks the scale automatically (centre = wall-top + this +
@@ -115,24 +116,29 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		_root.AddComponent<Gambit.Game.SpectatorController>();
 
 		// Floating display board: a real 3D chess set (SpectatorBoard3D), centred on the wall
-		// width and hovering just above the wall top so the whole lobby can watch one game from
-		// across the room. SpectatorBoard3D builds the board FLAT (surface normal = local +Z,
-		// pieces standing up in +Z); we stand it up here and lean it back so the pieces throw
-		// shadows across the face:
-		//   • rotate +90° about the wall-horizontal axis (+X) → the flat +Z normal swings to
-		//     -Y (into the room) and the board's rank axis (+Y) swings to +Z (world up), so
-		//     rank 1 lands at the bottom and the a-file on the viewer's left (White bottom-left);
-		//   • take TiltDegrees off that angle so the top leans back toward the wall.
-		// Its bottom edge clears the wall top by ClearAboveWall (the board's world half-height
-		// is just half its edge length, since it's built at world size and left unscaled).
+		// width and hovering above the wall top so the whole lobby can watch one game from across
+		// the room. SpectatorBoard3D builds the board FLAT (surface normal = local +Z, ranks along
+		// local +Y with rank 1 at −Y, pieces standing up in +Z). We stand it up and tilt it
+		// INWARD, pivoting off its bottom edge:
+		//   • rotate +90° about the wall-horizontal axis (+X) stands the flat board up — the rank
+		//     axis (+Y) swings to world up, so rank 1 lands at the bottom and the a-file on the
+		//     viewer's left (White bottom-left);
+		//   • ADD TiltDegrees so the top leans into the room (−Y) and the face angles DOWN toward
+		//     players on the floor (flip the sign to lean back toward the wall instead);
+		//   • anchor the bottom-edge centre at wall-top + ClearAboveWall and offset back to the
+		//     board centre through the tilt, so the tilt pivots off the bottom edge (bottom stays
+		//     put, top swings out) rather than about the board centre.
 		float boardSize = BoardCellSize * 8f;
-		float boardZ = WallHeight + ClearAboveWall + boardSize * 0.5f;
+		float halfBoard = boardSize * 0.5f;
+		var boardRot = Rotation.FromAxis( Vector3.Forward, 90f + TiltDegrees );
+		var bottomAnchor = new Vector3( centreX, wallY, WallHeight + ClearAboveWall );
+		var boardCentre = bottomAnchor + boardRot * new Vector3( 0f, halfBoard, 0f );
 
 		var board = new GameObject( true, "SpectatorBoard" );
 		board.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
 		board.Parent = _root;
-		board.LocalPosition = new Vector3( centreX, wallY, boardZ );
-		board.LocalRotation = Rotation.FromAxis( Vector3.Forward, 90f - TiltDegrees );
+		board.LocalPosition = boardCentre;
+		board.LocalRotation = boardRot;
 		// Add disabled so we can set the size before it builds (OnEnabled), then enable — a
 		// [Property] set from code doesn't re-run OnValidate, so building at the final size in
 		// one pass beats building at the default and rebuilding.
@@ -140,22 +146,25 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		board3d.CellSize = BoardCellSize;
 		board3d.Enabled = true;
 
-		// Two player tags, one per corner of the 3D board (replacing the single overhead
-		// scoreboard that tried to show both sides at once and read poorly). The board hangs
-		// White at the bottom (rank 1 at low Z) with the a-file on the viewer's left (world −X),
-		// so: White → bottom-right, Black → top-left. Each tag sits just OUTSIDE its corner
-		// (SeatGap) so it never covers the pieces. Flat WorldPanels facing the room so the text
-		// reads squarely (unlike the tilted board).
-		float halfBoard = boardSize * 0.5f;
+		// Two player tags (replacing the single overhead scoreboard that tried to show both sides
+		// at once and read poorly). Each lies IN the board's plane, flush with its player's edge —
+		// White along the bottom edge (rank 1), Black along the top edge (rank 8) — so they read
+		// as attached to the board, not floating out in the world. Placed in the board's local
+		// frame (files X, ranks Y, out-of-face +Z) and transformed through the board's own
+		// position/rotation, so they track the tilt automatically. White hugs the right, Black the
+		// left, so a wide strip never crosses the centre.
 		float seatHalfW = SeatPxWidth * SeatBoardScale * PxToWorld * 0.5f;
 		float seatHalfH = SeatPxHeight * SeatBoardScale * PxToWorld * 0.5f;
-		// Right/left edge, tag's outer edge flush with the board edge; below/above by SeatGap.
-		float seatX = halfBoard - seatHalfW;
-		float belowZ = boardZ - halfBoard - SeatGap - seatHalfH;
-		float aboveZ = boardZ + halfBoard + SeatGap + seatHalfH;
+		float seatX = halfBoard - seatHalfW; // outer edge flush with the board's left/right edge
+		// A WorldPanel faces its GO +X with up +Z; rotate it to lie in the board plane facing out
+		// of the face (board +Z) with text up along the ranks (board +Y).
+		var inPlane = boardRot * Rotation.LookAt( new Vector3( 0f, 0f, 1f ), new Vector3( 0f, 1f, 0f ) );
 
-		AddSeatTag( "SpectatorWhiteTag", new Vector3( centreX + seatX, wallY, belowZ ), facing, white: true );
-		AddSeatTag( "SpectatorBlackTag", new Vector3( centreX - seatX, wallY, aboveZ ), facing, white: false );
+		Vector3 WhiteOffset = new( seatX, -halfBoard + seatHalfH, SeatGap );     // bottom edge, right
+		Vector3 BlackOffset = new( -seatX, halfBoard - seatHalfH, SeatGap );     // top edge, left
+
+		AddSeatTag( "SpectatorWhiteTag", boardCentre + boardRot * WhiteOffset, inPlane, white: true );
+		AddSeatTag( "SpectatorBlackTag", boardCentre + boardRot * BlackOffset, inPlane, white: false );
 
 		// Walk-up control board at walk-up height, directly under the floating board: shows the
 		// current source, players, time control/move, and live status, and invites "Press E to
@@ -174,15 +183,15 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		info.AddComponent<SpectatorStation>();
 	}
 
-	/// <summary>A single corner player tag (SpectatorSeatPanel) — a flat WorldPanel facing the
-	/// room, sized by SeatBoardScale.</summary>
-	void AddSeatTag( string name, Vector3 localPos, Rotation facing, bool white )
+	/// <summary>A single player-tag strip (SpectatorSeatPanel) lying in the board's plane at its
+	/// edge, sized by SeatBoardScale.</summary>
+	void AddSeatTag( string name, Vector3 localPos, Rotation rotation, bool white )
 	{
 		var tag = new GameObject( true, name );
 		tag.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
 		tag.Parent = _root;
 		tag.LocalPosition = localPos;
-		tag.LocalRotation = facing;
+		tag.LocalRotation = rotation;
 		tag.LocalScale = new Vector3( 1f, 1f, 1f ) * SeatBoardScale;
 		var panel = tag.AddComponent<WorldPanel>();
 		panel.PanelSize = new Vector2( SeatPxWidth, SeatPxHeight );

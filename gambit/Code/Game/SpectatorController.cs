@@ -101,11 +101,30 @@ public sealed class SpectatorController : Component
 	RealTimeSince _sinceTvChannel = 999f; // time since the featured game id was (re)picked
 	bool _tvGameOver;                 // the featured game finished — re-pick on the next poll
 	bool _polling;
-	const float PollInterval = 3f;    // coarse — lichess delays public game export anyway
+	// Poll rarely: lichess already delays the public export a few moves, so there's no benefit
+	// to a tight loop. Each poll usually spans several moves; we replay them one at a time,
+	// spread across the interval (AdvanceReplay), so the board keeps moving continuously between
+	// polls instead of teleporting a burst of moves then sitting idle.
+	const float PollInterval = 8f;
 	// lichess rotates a channel's featured game and games end; re-pick the featured game
 	// this often so the board keeps following live play instead of freezing on a finished
 	// game (a finished game also forces an immediate re-pick via _tvGameOver).
 	const float TvChannelRefresh = 20f;
+
+	// ── Move replay: reveal buffered plies one at a time (a smooth slide each) rather than
+	//    teleporting several moves when a poll spans several. Paced to the data rate — the
+	//    backlog is spread across roughly one poll interval, clamped so moves neither blur
+	//    together nor stall. ──
+	List<(string fen, string uci)> _positions = new();
+	int _shownPly;                    // plies currently revealed to the board (1-based count)
+	bool _hasShownPly;                // seen at least one position (first sight snaps to current)
+	bool _replayActive;               // a PGN source is driving replay (false for sbox tables)
+	string _shownGameId;              // game the buffer belongs to (id change ⇒ snap, don't replay)
+	RealTimeSince _sinceReveal;
+	float _nextGap;                   // seconds until the next ply is revealed (adaptive)
+	const float MinReplayGap = 0.45f; // ≥ the board's slide time so moves don't blur together
+	const float MaxReplayGap = 3f;    // cap the idle between moves in a slow game
+	const int ReplayBacklogCap = 10;  // snap forward if we somehow fall this far behind
 
 	protected override void OnEnabled() => Instance = this;
 	protected override void OnDisabled() { if ( Instance == this ) Instance = null; }
@@ -120,6 +139,7 @@ public sealed class SpectatorController : Component
 			case Channel.LichessTv:
 			case Channel.WatchId:
 				MaybePoll();
+				AdvanceReplay();
 				break;
 		}
 	}
@@ -305,27 +325,85 @@ public sealed class SpectatorController : Component
 			return;
 		}
 
-		if ( ChessGame.TryFromPgn( res.Body, out var g ) )
-		{
-			Fen = g.Fen;
-			LastMoveUci = g.LastMoveUci;
-			StatusText = delayNote;
-		}
-		else
-		{
-			// A game with no moves yet exports as headers only — keep whatever we had.
-			StatusText = delayNote;
-		}
-
+		var positions = ChessGame.PgnPositions( res.Body );
 		bool over = PgnGameOver( res.Body );
 		_clocksFrozen = over;
-		// Names/ratings/titles/clocks for the scoreboard (headers are present even with no moves).
-		ApplyPlayerMeta( res.Body );
+
+		// Names/ratings/titles/clocks for the tags (headers are present even with no moves). Clock
+		// ownership is decided by the LATEST position's side to move — not the (possibly lagging)
+		// one the board is currently replaying.
+		string latestFen = positions.Count > 0 ? positions[^1].fen : Fen;
+		ApplyPlayerMeta( res.Body, latestFen );
+
+		// Feed the replay buffer; AdvanceReplay reveals the plies one at a time.
+		IngestPositions( gameId, positions );
+		StatusText = delayNote;
 
 		// On TV, note when the featured game has finished so PollTv re-picks the channel's
 		// next game rather than freezing on the final position. Watch-by-id stays put.
 		if ( _channel == Channel.LichessTv && over )
 			_tvGameOver = true;
+	}
+
+	/// <summary>Take a poll's full position list and either snap to the current position (first
+	/// sight of a game) or leave the backlog for AdvanceReplay to reveal one move at a time.</summary>
+	void IngestPositions( string gameId, List<(string fen, string uci)> positions )
+	{
+		if ( positions.Count == 0 )
+		{
+			// Headers-only (no moves yet) — nothing to replay; the board idles on the start
+			// position (empty Fen). Keep any prior position we were showing.
+			_positions = positions;
+			_replayActive = false;
+			return;
+		}
+
+		bool freshGame = gameId != _shownGameId || !_hasShownPly;
+		_shownGameId = gameId;
+		_positions = positions;
+		_replayActive = true;
+
+		if ( freshGame )
+		{
+			// First sight of this game: jump straight to the current position (lichess already
+			// delays us a few moves — don't replay the whole game from move 1).
+			_shownPly = positions.Count;
+			_hasShownPly = true;
+		}
+		else
+		{
+			if ( _shownPly > positions.Count ) _shownPly = positions.Count; // game replaced/shrank
+			int backlog = positions.Count - _shownPly;
+			if ( backlog > ReplayBacklogCap ) _shownPly = positions.Count - ReplayBacklogCap;
+			_nextGap = 0f; // start revealing on the next frame
+		}
+		ApplyShown();
+	}
+
+	/// <summary>Reveal the next buffered ply once its adaptive gap has elapsed, then pace the
+	/// remaining backlog across roughly one poll interval (clamped).</summary>
+	void AdvanceReplay()
+	{
+		if ( !_replayActive || _shownPly >= _positions.Count ) return;
+		if ( _sinceReveal < _nextGap ) return;
+
+		_shownPly++;
+		_sinceReveal = 0f;
+		ApplyShown();
+
+		int backlog = _positions.Count - _shownPly;
+		_nextGap = backlog <= 0 ? MaxReplayGap
+			: System.Math.Clamp( PollInterval / backlog, MinReplayGap, MaxReplayGap );
+	}
+
+	/// <summary>Point Fen/LastMoveUci at the currently-revealed ply (same string instances until
+	/// the ply changes, so the board's reference-equality "unchanged" check still holds).</summary>
+	void ApplyShown()
+	{
+		if ( _positions.Count == 0 ) return;
+		int idx = System.Math.Clamp( _shownPly, 1, _positions.Count ) - 1;
+		Fen = _positions[idx].fen;
+		LastMoveUci = _positions[idx].uci;
 	}
 
 	/// <summary>A PGN whose result header/terminator is decisive or drawn (not the ongoing
@@ -387,6 +465,14 @@ public sealed class SpectatorController : Component
 		WhiteName = "White";
 		BlackName = "Black";
 		ClearPlayerMeta();
+
+		// Reset the replay buffer so the next game snaps to its current position instead of
+		// trying to continue from a stale ply.
+		_positions = new();
+		_shownPly = 0;
+		_hasShownPly = false;
+		_replayActive = false;
+		_shownGameId = null;
 	}
 
 	void ClearPlayerMeta()
@@ -402,7 +488,7 @@ public sealed class SpectatorController : Component
 
 	/// <summary>Fill the scoreboard fields from an export PGN: both names + Elos + titles from
 	/// the headers, and each side's clock from the last two <c>%clk</c> comments.</summary>
-	void ApplyPlayerMeta( string pgn )
+	void ApplyPlayerMeta( string pgn, string latestFen )
 	{
 		var w = PgnHeader( pgn, "White" );
 		var b = PgnHeader( pgn, "Black" );
@@ -417,7 +503,7 @@ public sealed class SpectatorController : Component
 		// %clk comments alternate White, Black, White, Black… The last belongs to whoever just
 		// moved, i.e. the OPPOSITE of the side to move (which is holding its previous value).
 		var clocks = ExtractClocks( pgn );
-		_whiteToMove = SideToMove( Fen );
+		_whiteToMove = SideToMove( latestFen );
 		if ( clocks.Count >= 2 )
 		{
 			double last = clocks[clocks.Count - 1], prev = clocks[clocks.Count - 2];
@@ -460,7 +546,7 @@ public sealed class SpectatorController : Component
 			return null;
 		double mins = baseSec / 60.0;
 		// Whole minutes print bare (10+0); sub-minute controls keep one decimal (0.5+0).
-		string b = mins == Math.Floor( mins ) ? ( (int)mins ).ToString() : mins.ToString( "0.#" );
+		string b = mins == System.Math.Floor( mins ) ? ( (int)mins ).ToString() : mins.ToString( "0.#" );
 		return $"{b}+{inc}";
 	}
 
