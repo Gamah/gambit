@@ -310,8 +310,10 @@ public sealed class LichessPlayController : Component, IBoardGame
 		var res = await LichessApi.ChallengeUser( username, ColorWord( seat ), 600, 0, LichessAuth.Token );
 		if ( !res.Ok ) { FailStart( res ); return; }
 
-		_challengeId = LichessApi.Deserialize<LichessChallenge>( res.Body )?.id;
+		var ch = LichessApi.Deserialize<LichessChallenge>( res.Body );
+		_challengeId = ch?.id;
 		StatusText = $"Waiting for {username} to accept…";
+		Log.Info( $"[Gambit] challenge sent to {username}: {ch?.url ?? "(no url in reply)"} — they accept on lichess or their sbox client." );
 		_sincePoll = 999f; // start polling promptly
 	}
 
@@ -340,8 +342,10 @@ public sealed class LichessPlayController : Component, IBoardGame
 		var res = await LichessApi.ChallengeUser( opp, ColorWord( seat ), 600, 0, LichessAuth.Token );
 		if ( !res.Ok ) { FailStart( res ); return; }
 
-		_challengeId = LichessApi.Deserialize<LichessChallenge>( res.Body )?.id;
+		var chSeated = LichessApi.Deserialize<LichessChallenge>( res.Body );
+		_challengeId = chSeated?.id;
 		StatusText = $"Waiting for {opp} to accept…";
+		Log.Info( $"[Gambit] head-to-head challenge sent to {opp}: {chSeated?.url ?? "(no url)"} — their sbox client auto-accepts; also visible on lichess." );
 
 		// Ask the seated opponent's client to accept this specific challenge. Broadcast
 		// straight from here (the same client→all pattern as NetChessMove) — lichess only

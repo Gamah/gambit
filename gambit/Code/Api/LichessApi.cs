@@ -227,6 +227,12 @@ public static class LichessApi
 	public static Task<Result> BoardResign( string gameId, string token ) =>
 		Send( $"{Base}/api/board/game/{gameId}/resign", "POST", null, token );
 
+	/// <summary>List the signed-in user's live challenges — <c>{ in: [...], out: [...] }</c>
+	/// (incoming and outgoing). Needs the <c>challenge:read</c> scope. Handy for
+	/// confirming a challenge we sent actually reached lichess (M4 head-to-head debug).</summary>
+	public static Task<Result> GetChallenges( string token ) =>
+		Send( Base + "/api/challenge", "GET", null, token );
+
 	/// <summary>Cancel a challenge we created that hasn't been accepted yet.</summary>
 	public static Task<Result> CancelChallenge( string challengeId, string token ) =>
 		Send( $"{Base}/api/challenge/{challengeId}/cancel", "POST", null, token );

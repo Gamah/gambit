@@ -56,6 +56,31 @@ public sealed class LichessChallenge
 	public string speed { get; set; }
 }
 
+/// <summary>Reply from <c>GET /api/challenge</c> — the signed-in user's live challenges.
+/// <c>@in</c>/<c>@out</c> escape the C# keywords; System.Text.Json still binds them to the
+/// wire keys "in"/"out".</summary>
+public sealed class LichessChallengeList
+{
+	public List<LichessChallengeEntry> @in { get; set; }
+	public List<LichessChallengeEntry> @out { get; set; }
+}
+
+public sealed class LichessChallengeEntry
+{
+	public string id { get; set; }
+	public string url { get; set; }
+	public string status { get; set; }        // "created","offline","canceled","declined","accepted"
+	public string speed { get; set; }
+	public LichessChallengeUser challenger { get; set; }
+	public LichessChallengeUser destUser { get; set; }
+}
+
+public sealed class LichessChallengeUser
+{
+	public string id { get; set; }
+	public string name { get; set; }
+}
+
 /// <summary>Reply from <c>GET /api/account/playing</c> — the poll payload driving
 /// in-sbox play (PLAN.md M4). Only ongoing games are listed, so a game vanishing
 /// from here is how we detect it ended.</summary>

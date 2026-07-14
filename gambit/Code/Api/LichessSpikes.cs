@@ -218,6 +218,34 @@ public static class LichessSpikes
 		pc.PlayOpenGame();
 	}
 
+	/// <summary>List the signed-in account's live lichess challenges (incoming + outgoing)
+	/// with their status + URL — the quick way to confirm a challenge you sent actually
+	/// reached lichess (needs the challenge:read scope). Head-to-head debug (M4).</summary>
+	[ConCmd( "gambit_challenges" )]
+	public static void Challenges() => _ = ListChallenges();
+
+	static async Task ListChallenges()
+	{
+		if ( !LichessAuth.SignedIn ) { Log.Warning( "[Gambit] sign in first, then: gambit_challenges" ); return; }
+
+		var res = await LichessApi.GetChallenges( LichessAuth.Token );
+		if ( !res.Ok ) { Log.Error( $"[Gambit] challenges failed ({res.Status}): {res.Error}" ); return; }
+
+		var list = LichessApi.Deserialize<LichessChallengeList>( res.Body );
+		int outN = list?.@out?.Count ?? 0, inN = list?.@in?.Count ?? 0;
+		Log.Info( $"[Gambit] challenges for {LichessAuth.Username}: {outN} outgoing, {inN} incoming" );
+
+		if ( list?.@out != null )
+			foreach ( var c in list.@out )
+				Log.Info( $"[Gambit]   → to {c.destUser?.name ?? "?"}: {c.status} ({c.speed})  {c.url}" );
+		if ( list?.@in != null )
+			foreach ( var c in list.@in )
+				Log.Info( $"[Gambit]   ← from {c.challenger?.name ?? "?"}: {c.status} ({c.speed})  {c.url}" );
+
+		if ( outN == 0 && inN == 0 )
+			Log.Info( "[Gambit]   (none live — a challenge shows here only until it's accepted/declined/expired)" );
+	}
+
 	// ── M5: spectate / TV / puzzles ──
 
 	/// <summary>Load a puzzle on the board you're seated at (M5). <c>daily</c> (default)
