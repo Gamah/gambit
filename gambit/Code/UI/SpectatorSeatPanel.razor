@@ -141,7 +141,8 @@
 		var c = C;
 		// The whole-second clock is in the hash so the tag repaints ~once a second while ticking.
 		return HashCode.Combine(
-			White, c?.WhiteName, c?.BlackName, c?.WhiteTitle, c?.BlackTitle,
+			White,
+			HashCode.Combine( c?.WhiteName, c?.BlackName, c?.WhiteTitle, c?.BlackTitle ),
 			HashCode.Combine( c?.WhiteRating, c?.BlackRating, c?.HasClocks, c?.WhiteToMoveNow ),
 			(int)( c?.WhiteClock ?? -1 ), (int)( c?.BlackClock ?? -1 ),
 			SettingsModel.SettingsVersion );
