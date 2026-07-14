@@ -121,14 +121,16 @@ public sealed class SpectatorController : Component
 	bool _replayActive;               // a PGN source is driving replay (false for sbox tables)
 	string _shownGameId;              // game the buffer belongs to (id change ⇒ snap, don't replay)
 	RealTimeSince _sinceReveal;
-	float _nextGap;                   // seconds until the next ply is revealed (adaptive)
+	float _nextGap;                   // seconds until the next ply is revealed
 	// The export gives us only whole-second %clk, so there's no true sub-second move timing to
-	// replay bullet by. Instead, drain the backlog within ReplayWindow (< PollInterval) so a
-	// fast game flurries and then briefly idles — closer to how bullet actually looks — rather
-	// than crawling one move every (interval / backlog).
-	const float ReplayWindow = 5f;
-	const float MinReplayGap = 0.22f; // near the board's slide time — fast games flow, no blur
-	const float MaxReplayGap = 1.6f;  // cap the idle between moves in a slow game
+	// replay bullet by (real-time needs the wss relay — deferred). Client-side, the best we can
+	// do is play each buffered move DISCRETELY: let its slide fully finish (its full ease-out
+	// slope, not a cut-off linear jerk), then a short beat, then the next. When we're near live
+	// that beat gives a natural cadence; when a poll drops several moves we drop the beat and
+	// chain the completed slides back-to-back so the board drains promptly instead of crawling.
+	const float ReplaySlide = 0.22f;  // ≥ SpectatorBoard3D.MoveSeconds — a move's slide finishes within this
+	const float ReplayHold = 0.13f;   // the small beat between moves once we're near live
+	const int ReplayHoldBacklog = 4;  // ≥ this far behind ⇒ drop the beat, chain slides back-to-back
 	const int ReplayBacklogCap = 12;  // snap forward if we somehow fall this far behind
 
 	protected override void OnEnabled() => Instance = this;
@@ -396,9 +398,11 @@ public sealed class SpectatorController : Component
 		_sinceReveal = 0f;
 		ApplyShown();
 
+		// Let this move's slide finish, then hold a short beat — unless we're several moves
+		// behind, in which case drop the beat and chain the completed slides back-to-back so the
+		// buffer drains promptly instead of growing.
 		int backlog = _positions.Count - _shownPly;
-		_nextGap = backlog <= 0 ? MaxReplayGap
-			: System.Math.Clamp( ReplayWindow / backlog, MinReplayGap, MaxReplayGap );
+		_nextGap = ReplaySlide + ( backlog >= ReplayHoldBacklog ? 0f : ReplayHold );
 	}
 
 	/// <summary>Point Fen/LastMoveUci at the currently-revealed ply (same string instances until

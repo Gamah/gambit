@@ -1,3 +1,4 @@
+using System;
 using Sandbox;
 
 namespace Gambit.World;
@@ -25,16 +26,21 @@ namespace Gambit.World;
 /// </summary>
 public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 {
-	/// <summary>Intrinsic pixel size of a SpectatorSeatPanel's &lt;root&gt; — one player's tag
-	/// (name over rating | clock). Wide-and-short so it reads as a broadcast lower-third strip
-	/// along the board edge; the small font scale rides on the width.</summary>
-	const float SeatPxWidth = 1050f;
+	/// <summary>Intrinsic pixel HEIGHT of a SpectatorSeatPanel's &lt;root&gt; (name over
+	/// rating | clock). The WIDTH is computed per-build to fill the space between the board edge
+	/// and the side wall (SeatBoardScale fixes the text size + height, the width just trims the
+	/// side margin), so a tag never pokes through the wall.</summary>
 	const float SeatPxHeight = 200f;
 
 	/// <summary>WorldPanel px→world-unit factor (Sandbox ScreenToWorldScale) — a panel of P px
-	/// renders P × scale × this many world units wide; used to place the seat tags at the board
-	/// corners by their own world size.</summary>
+	/// renders P × scale × this many world units wide; used to size/place the seat tags.</summary>
 	const float PxToWorld = 0.05f;
+
+	/// <summary>Cap on a seat tag's world width so it doesn't get absurdly wide in a big room.</summary>
+	const float SeatMaxWorldWidth = 340f;
+
+	/// <summary>Keep a seat tag this far off the side wall when auto-fitting its width.</summary>
+	const float SeatWallMargin = 10f;
 
 	/// <summary>World units the board sits in front of the wall's inner face
 	/// (RoomSize / 2), toward the room.</summary>
@@ -53,12 +59,13 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// Tuned in-editor; negate to lean back toward the wall instead.</summary>
 	[Property] public float TiltDegrees { get; set; } = 7f;
 
-	/// <summary>Uniform scale multiplier on each player-tag strip.</summary>
+	/// <summary>Uniform scale multiplier on each player-tag strip — sets the text size and height
+	/// (the width auto-fits the space beside the board).</summary>
 	[Property] public float SeatBoardScale { get; set; } = 5f;
 
-	/// <summary>How far each tag pops out in front of the board face (board-local +Z) so it floats
-	/// just above the tiles/pieces at its edge rather than z-fighting the board.</summary>
-	[Property] public float SeatGap { get; set; } = 14f;
+	/// <summary>Gap between a player's board edge and the near edge of their tag (the tag sits
+	/// just outside the edge, coplanar with the board).</summary>
+	[Property] public float SeatEdgeGap { get; set; } = 6f;
 
 	/// <summary>Gap between the wall top and the bottom edge of the floating board. The
 	/// board's clearance tracks the scale automatically (centre = wall-top + this +
@@ -147,24 +154,31 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		board3d.Enabled = true;
 
 		// Two player tags (replacing the single overhead scoreboard that tried to show both sides
-		// at once and read poorly). Each lies IN the board's plane, flush with its player's edge —
-		// White along the bottom edge (rank 1), Black along the top edge (rank 8) — so they read
-		// as attached to the board, not floating out in the world. Placed in the board's local
-		// frame (files X, ranks Y, out-of-face +Z) and transformed through the board's own
-		// position/rotation, so they track the tilt automatically. White hugs the right, Black the
-		// left, so a wide strip never crosses the centre.
-		float seatHalfW = SeatPxWidth * SeatBoardScale * PxToWorld * 0.5f;
+		// at once and read poorly). Each lies coplanar with the board and sits just OUTSIDE its
+		// player's RIGHT edge — White faces up the board so its right is the +X (h-file) edge and
+		// sits at the bottom; Black faces down so its right is the −X (a-file) edge and sits at the
+		// top. Placed in the board's local frame (files X, ranks Y, out-of-face +Z) and transformed
+		// through the board's own position/rotation, so they track the tilt automatically. Each
+		// tag's WIDTH is auto-fit to the gap between the board edge and the side wall so a wide
+		// strip never pokes through the wall.
 		float seatHalfH = SeatPxHeight * SeatBoardScale * PxToWorld * 0.5f;
-		float seatX = halfBoard - seatHalfW; // outer edge flush with the board's left/right edge
+		// World width available beside the board on the tighter side (both tags share it, so they
+		// match); guards against the board being off-centre along the wall.
+		float sideSpace = ( WallWidth * 0.5f - WallInset ) - ( halfBoard + MathF.Abs( centreX ) )
+			- SeatEdgeGap - SeatWallMargin;
+		float tagWorldW = MathF.Max( MathF.Min( sideSpace, SeatMaxWorldWidth ), 1f );
+		float seatPxW = tagWorldW / ( SeatBoardScale * PxToWorld ); // px that renders tagWorldW wide
+		float outX = halfBoard + SeatEdgeGap + tagWorldW * 0.5f;    // tag centre just outside the edge
+
 		// A WorldPanel faces its GO +X with up +Z; rotate it to lie in the board plane facing out
 		// of the face (board +Z) with text up along the ranks (board +Y).
 		var inPlane = boardRot * Rotation.LookAt( new Vector3( 0f, 0f, 1f ), new Vector3( 0f, 1f, 0f ) );
 
-		Vector3 WhiteOffset = new( seatX, -halfBoard + seatHalfH, SeatGap );     // bottom edge, right
-		Vector3 BlackOffset = new( -seatX, halfBoard - seatHalfH, SeatGap );     // top edge, left
+		Vector3 WhiteOffset = new( outX, -halfBoard + seatHalfH, 0f );  // right of board, bottom-aligned
+		Vector3 BlackOffset = new( -outX, halfBoard - seatHalfH, 0f );  // left of board, top-aligned
 
-		AddSeatTag( "SpectatorWhiteTag", boardCentre + boardRot * WhiteOffset, inPlane, white: true );
-		AddSeatTag( "SpectatorBlackTag", boardCentre + boardRot * BlackOffset, inPlane, white: false );
+		AddSeatTag( "SpectatorWhiteTag", boardCentre + boardRot * WhiteOffset, inPlane, seatPxW, white: true );
+		AddSeatTag( "SpectatorBlackTag", boardCentre + boardRot * BlackOffset, inPlane, seatPxW, white: false );
 
 		// Walk-up control board at walk-up height, directly under the floating board: shows the
 		// current source, players, time control/move, and live status, and invites "Press E to
@@ -183,9 +197,9 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		info.AddComponent<SpectatorStation>();
 	}
 
-	/// <summary>A single player-tag strip (SpectatorSeatPanel) lying in the board's plane at its
-	/// edge, sized by SeatBoardScale.</summary>
-	void AddSeatTag( string name, Vector3 localPos, Rotation rotation, bool white )
+	/// <summary>A single player-tag strip (SpectatorSeatPanel) lying coplanar with the board at its
+	/// edge, sized by SeatBoardScale with an auto-fit pixel width.</summary>
+	void AddSeatTag( string name, Vector3 localPos, Rotation rotation, float pxWidth, bool white )
 	{
 		var tag = new GameObject( true, name );
 		tag.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
@@ -194,7 +208,7 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		tag.LocalRotation = rotation;
 		tag.LocalScale = new Vector3( 1f, 1f, 1f ) * SeatBoardScale;
 		var panel = tag.AddComponent<WorldPanel>();
-		panel.PanelSize = new Vector2( SeatPxWidth, SeatPxHeight );
+		panel.PanelSize = new Vector2( pxWidth, SeatPxHeight );
 		tag.AddComponent<Gambit.UI.SpectatorSeatPanel>().White = white;
 	}
 
