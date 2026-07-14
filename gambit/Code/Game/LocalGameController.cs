@@ -149,9 +149,20 @@ public sealed class LocalGameController : Component, IBoardGame
 
 	// ── Host game lifecycle ──
 
-	/// <summary>True when this board is hosting an open lichess game (M4) — the
-	/// local two-seat match steps aside so the two sides can be colour URLs.</summary>
-	bool LichessBusy => LichessGameController.For( Station )?.HasOpenGame ?? false;
+	/// <summary>True when this board is hosting a lichess game (M4) — the local
+	/// two-seat match steps aside. Covers both the open-link flow (the two sides are
+	/// colour URLs) and in-sbox polling play / a relayed spectator game (the board is
+	/// showing someone's real lichess game, not a fresh local match).</summary>
+	bool LichessBusy =>
+		( LichessGameController.For( Station )?.HasOpenGame ?? false )
+		|| ( LichessPlayController.For( Station )?.BlocksLocalGame ?? false );
+
+	/// <summary>Don't auto-start the anonymous local match when it shouldn't own the
+	/// board: a lichess game is already here (<see cref="LichessBusy"/>), or both seats
+	/// hold signed-in lichess players (M4 #3) — that pair gets the "PLAY IN SBOX" panel
+	/// (quick match / head-to-head / AI) instead of a forced local game.</summary>
+	bool SuppressLocalStart =>
+		LichessBusy || ( Station?.BothSeatsLichess ?? false );
 
 	void HostUpdate()
 	{
@@ -164,10 +175,10 @@ public sealed class LocalGameController : Component, IBoardGame
 		switch ( Phase )
 		{
 			case PhaseIdle:
-				// A game starts the moment both seats fill — unless this board is
-				// hosting an open lichess game (M4), where the two sides are colour
-				// URLs, not a local two-player match.
-				if ( whiteSeated && blackSeated && !LichessBusy )
+				// A game starts the moment both seats fill — unless the board is spoken
+				// for by lichess: an open-link game, an in-sbox/relayed game, or a pair
+				// of signed-in lichess players who play head-to-head instead (M4).
+				if ( whiteSeated && blackSeated && !SuppressLocalStart )
 					HostStartFresh();
 				break;
 
@@ -189,7 +200,7 @@ public sealed class LocalGameController : Component, IBoardGame
 				// starts straight away, a vacated table resets.
 				if ( !whiteSeated && !blackSeated )
 					HostSetIdle();
-				else if ( whiteSeated && blackSeated && pair != _endedPair )
+				else if ( whiteSeated && blackSeated && pair != _endedPair && !SuppressLocalStart )
 					HostStartFresh();
 				break;
 		}

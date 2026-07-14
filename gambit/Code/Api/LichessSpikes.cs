@@ -159,6 +159,18 @@ public static class LichessSpikes
 		pc.ChallengeUser( username );
 	}
 
+	/// <summary>Head-to-head (#3): challenge the signed-in lichess player sitting across
+	/// this board — their client auto-accepts, so neither of you leaves sbox. Both must be
+	/// signed in and seated on opposite sides; the guaranteed-working twin of the HUD's
+	/// "Play … (head-to-head)" button.</summary>
+	[ConCmd( "gambit_challenge_seated" )]
+	public static void ChallengeSeated()
+	{
+		var pc = Gambit.Game.LichessPlayController.For( Gambit.World.ChessStation.Active );
+		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first (across a signed-in player), then: gambit_challenge_seated" ); return; }
+		pc.ChallengeSeatedOpponent();
+	}
+
 	/// <summary>Play Stockfish (level 1–8, default 3) on the board you're seated at —
 	/// zero-setup way to test the play loop.</summary>
 	[ConCmd( "gambit_challenge_ai" )]
@@ -167,6 +179,32 @@ public static class LichessSpikes
 		var pc = Gambit.Game.LichessPlayController.For( Gambit.World.ChessStation.Active );
 		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_challenge_ai [level]" ); return; }
 		pc.ChallengeAi( level );
+	}
+
+	/// <summary>Quick match: seek a random lichess opponent at Rapid 10+0 on the board
+	/// you're seated at (the M4 gate item). Pass <c>casual</c> for an unrated seek;
+	/// anything else (or nothing) seeks rated. Sit down first, then wait for the pairing.</summary>
+	[ConCmd( "gambit_seek" )]
+	public static void Seek( string mode = "rated" )
+	{
+		var pc = Gambit.Game.LichessPlayController.For( Gambit.World.ChessStation.Active );
+		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_seek [rated|casual]" ); return; }
+		bool rated = !string.Equals( mode, "casual", System.StringComparison.OrdinalIgnoreCase );
+		Log.Info( $"[Gambit] seeking a {( rated ? "rated" : "casual" )} Rapid 10+0 opponent…" );
+		pc.QuickSeek( rated );
+	}
+
+	/// <summary>Force the in-sbox lichess controller on the board you're at back to
+	/// "not playing" — resigns a live game, cancels a pending challenge/seek/open link,
+	/// or clears the game-over screen. The same reset standing up performs; handy to
+	/// un-stick a board during testing.</summary>
+	[ConCmd( "gambit_play_reset" )]
+	public static void PlayReset()
+	{
+		var pc = Gambit.Game.LichessPlayController.For( Gambit.World.ChessStation.Active );
+		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_play_reset" ); return; }
+		pc.LeaveSeat();
+		Log.Info( "[Gambit] lichess play state reset to idle." );
 	}
 
 	/// <summary>Create an open game vs an anonymous browser and sit in on it in sbox

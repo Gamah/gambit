@@ -50,20 +50,56 @@ public sealed class LichessPlayController : Component, IBoardGame
 	public bool Over => _phase == PlayPhase.Over;
 
 	/// <summary>This controller is doing something lichess-play related (drives the
-	/// HUD to show the play panel instead of the idle/link panel).</summary>
+	/// HUD to show the play panel instead of the idle/link panel). Only true on the
+	/// client that actually started the game — spectators stay Idle and watch via the
+	/// synced relay (<see cref="Spectating"/>).</summary>
 	public bool Active => _phase != PlayPhase.Idle;
+
+	/// <summary>We are the challenger AND still looking for a random opponent via a
+	/// held-open board seek (drives a "seeking…" note instead of "waiting to accept").</summary>
+	public bool Seeking => _phase == PlayPhase.Challenging && _expectAny;
+
+	/// <summary>This client should render the board for this table: either we're
+	/// playing here (<see cref="Active"/>) or we're a spectator watching the relayed
+	/// game (<see cref="Spectating"/>). <see cref="ChessBoardView"/> keys off this.</summary>
+	public bool ShowsBoard => Active || Spectating;
+
+	/// <summary>We're not a player here but the host is relaying a live lichess game at
+	/// this table — render it read-only from the synced FEN.</summary>
+	public bool Spectating => !Active && RelayLive && _spectatorGame != null;
+
+	/// <summary>A lichess game occupies this board (we play it, or one is being relayed
+	/// here) — the local two-seat game must not auto-start on top of it.</summary>
+	public bool BlocksLocalGame => Active || RelayLive;
 
 	// ── IBoardGame ──
 
-	public ChessGame Game { get; private set; }
+	/// <summary>Player's own rules instance while <see cref="Active"/>; the spectator
+	/// reconstruction from the relayed FEN while <see cref="Spectating"/>.</summary>
+	public ChessGame Game => Spectating ? _spectatorGame : _playGame;
+	ChessGame _playGame;
+	ChessGame _spectatorGame;
+
 	public bool IsMyTurn { get; private set; }
 	public ChessSeat? LocalSeat => _phase is PlayPhase.Playing or PlayPhase.Over ? _myColor : null;
-	public string LastMoveUci => Game?.LastMoveUci ?? _lastMoveUci;
+	public string LastMoveUci => Spectating ? RelayLastMove : ( Game?.LastMoveUci ?? _lastMoveUci );
+
+	// ── Spectator relay (D7) ──
+	// A lichess game is played entirely on one client (its token never crosses the
+	// wire, D3), so other clients can't see it. The playing client folds its polled,
+	// public position through the host into these synced fields — the direct analog of
+	// LocalGameController.HostFold — and non-players render it read-only. Only the FEN
+	// and player names travel (all public); no token, ever.
+	[Sync( SyncFlags.FromHost )] public bool RelayLive { get; set; }
+	[Sync( SyncFlags.FromHost )] public string RelayFen { get; set; }
+	[Sync( SyncFlags.FromHost )] public string RelayLastMove { get; set; }
+	[Sync( SyncFlags.FromHost )] public string RelayWhiteName { get; set; }
+	[Sync( SyncFlags.FromHost )] public string RelayBlackName { get; set; }
 
 	public bool TryMakeMove( string uci )
 	{
-		if ( _phase != PlayPhase.Playing || !IsMyTurn || _moveInFlight || Game == null ) return false;
-		if ( !Game.ApplyUci( uci ) ) return false; // optimistic local apply; lichess is the authority
+		if ( _phase != PlayPhase.Playing || !IsMyTurn || _moveInFlight || _playGame == null ) return false;
+		if ( !_playGame.ApplyUci( uci ) ) return false; // optimistic local apply; lichess is the authority
 
 		IsMyTurn = false;
 		_lastMoveUci = uci;
@@ -100,6 +136,8 @@ public sealed class LichessPlayController : Component, IBoardGame
 	string _challengeId;
 	string _expectOpponent;   // username we challenged (matches the nowPlaying game)
 	bool _expectAi;
+	bool _expectAny;          // seek: adopt the first NEW game that appears
+	HashSet<string> _preexistingIds; // games already ongoing when a seek began
 	string _lastMoveUci;
 	string _error;
 
@@ -116,6 +154,18 @@ public sealed class LichessPlayController : Component, IBoardGame
 
 	protected override void OnUpdate()
 	{
+		// Watchers (Idle here) keep a read-only board built from the relayed FEN.
+		SyncSpectator();
+
+		// Host recycle: if the table has emptied but a relay is still live, the player
+		// left without a clean LeaveSeat (an abrupt disconnect) — drop it so watchers
+		// don't stare at a frozen board and the next sitter starts fresh. Mirrors
+		// LichessGameController's auto-recycle. The graceful stand-up path clears the
+		// relay itself via LeaveSeat → ClearPlay, so this is only the safety net.
+		if ( Networking.IsHost && RelayLive && Station != null
+			&& Station.WhiteSteamId == 0 && Station.BlackSteamId == 0 )
+			ClearRelayFields();
+
 		// Only the client that started a game here is non-Idle; everyone else no-ops.
 		if ( _phase != PlayPhase.Challenging && _phase != PlayPhase.Playing ) return;
 
@@ -130,7 +180,83 @@ public sealed class LichessPlayController : Component, IBoardGame
 		Poll();
 	}
 
-	protected override void OnDestroy() => StopPresence();
+	protected override void OnDestroy()
+	{
+		StopPresence();
+		StopSeek();
+	}
+
+	// ── Spectator relay ──
+
+	/// <summary>Non-player clients rebuild a read-only <see cref="ChessGame"/> from the
+	/// host-folded <see cref="RelayFen"/> so <see cref="ChessBoardView"/> can render the
+	/// lichess game the same way it renders any other position.</summary>
+	void SyncSpectator()
+	{
+		if ( Active ) return; // we're the player — Game resolves to our own instance
+		if ( !RelayLive || string.IsNullOrEmpty( RelayFen ) )
+		{
+			_spectatorGame = null;
+			return;
+		}
+		if ( _spectatorGame != null && _spectatorGame.Fen == RelayFen ) return;
+		if ( ChessGame.TryFromFen( RelayFen, out var g ) ) _spectatorGame = g;
+	}
+
+	/// <summary>Playing client → host: publish the current public position for watchers.
+	/// Deduped so it only fires when something changed (idle while the opponent thinks).</summary>
+	void RelayToSpectators()
+	{
+		if ( _phase != PlayPhase.Playing || _playGame == null ) return;
+
+		var fen = _playGame.Fen;
+		string me = LichessAuth.Username;
+		if ( string.IsNullOrEmpty( me ) ) me = "You";
+		string opp = OpponentName ?? "Opponent";
+		string white = _myColor == ChessSeat.White ? me : opp;
+		string black = _myColor == ChessSeat.White ? opp : me;
+
+		if ( RelayLive && fen == RelayFen && white == RelayWhiteName && black == RelayBlackName )
+			return;
+
+		HostRelay( fen, LastMoveUci, white, black );
+	}
+
+	[Rpc.Host]
+	void HostRelay( string fen, string lastMove, string white, string black )
+	{
+		if ( !Networking.IsHost ) return;
+		RelayFen = fen;
+		RelayLastMove = lastMove;
+		RelayWhiteName = white;
+		RelayBlackName = black;
+		RelayLive = true;
+	}
+
+	/// <summary>Tear down the relayed board on every watcher (game over / cleared).</summary>
+	void ClearRelay()
+	{
+		if ( !RelayLive && string.IsNullOrEmpty( RelayFen ) ) return;
+		HostRelayClear();
+	}
+
+	[Rpc.Host]
+	void HostRelayClear()
+	{
+		if ( !Networking.IsHost ) return;
+		ClearRelayFields();
+	}
+
+	/// <summary>Host-side field reset — reached inline from the auto-recycle path and
+	/// via <see cref="HostRelayClear"/>'s RPC (only the host writes FromHost syncs).</summary>
+	void ClearRelayFields()
+	{
+		RelayLive = false;
+		RelayFen = null;
+		RelayLastMove = null;
+		RelayWhiteName = null;
+		RelayBlackName = null;
+	}
 
 	// ── Presence (held-open game stream) ──
 
@@ -181,6 +307,77 @@ public sealed class LichessPlayController : Component, IBoardGame
 		_sincePoll = 999f; // start polling promptly
 	}
 
+	/// <summary>Head-to-head (M4 #3): challenge the signed-in lichess player sitting on
+	/// the other side of this board to a real lichess game. Same as
+	/// <see cref="ChallengeUser"/>, but the opponent's username comes from the opposite
+	/// seat's synced lichess name and — so neither player has to leave sbox — we tell
+	/// their client to auto-accept this exact challenge. Colours follow the seats (we
+	/// challenge with our own side; lichess gives the opponent the other, which is the
+	/// seat they're on).</summary>
+	public async void ChallengeSeatedOpponent()
+	{
+		if ( !CanStart( out var seat ) ) return;
+
+		var oppSeat = seat == ChessSeat.White ? ChessSeat.Black : ChessSeat.White;
+		var opp = Station?.SeatLichessName( oppSeat );
+		if ( string.IsNullOrEmpty( opp ) )
+		{
+			_error = "The player across isn't signed in to lichess.";
+			return;
+		}
+
+		BeginChallenge( seat, expectOpponent: opp, ai: false );
+		StatusText = $"Challenging {opp}…";
+
+		var res = await LichessApi.ChallengeUser( opp, ColorWord( seat ), 600, 0, LichessAuth.Token );
+		if ( !res.Ok ) { FailStart( res ); return; }
+
+		_challengeId = LichessApi.Deserialize<LichessChallenge>( res.Body )?.id;
+		StatusText = $"Waiting for {opp} to accept…";
+
+		// Ask the seated opponent's client to accept this specific challenge. Broadcast
+		// straight from here (the same client→all pattern as NetChessMove) — lichess only
+		// lets them accept a challenge it actually sent them, so it's self-verifying.
+		if ( !string.IsNullOrEmpty( _challengeId ) )
+			NetAskAccept( _challengeId, (int)oppSeat, LichessAuth.Username ?? "" );
+
+		_sincePoll = 999f;
+	}
+
+	/// <summary>Challenger → everyone: the player seated at <paramref name="targetSeat"/>
+	/// of this board should accept challenge <paramref name="challengeId"/>. Reaches all
+	/// clients; only the one whose local player holds that seat (signed in and idle) acts —
+	/// everyone else, including the challenger, no-ops.</summary>
+	[Rpc.Broadcast]
+	void NetAskAccept( string challengeId, int targetSeat, string challengerName )
+	{
+		if ( string.IsNullOrEmpty( challengeId ) ) return;
+		var seat = (ChessSeat)targetSeat;
+		if ( LocalSeatNow != seat ) return;      // not the challenged seat on this client
+		if ( !LichessAuth.SignedIn ) return;     // can't play a Board-API game without a token
+		if ( _phase != PlayPhase.Idle ) return;  // already busy with something else
+		AutoAccept( challengeId, seat, challengerName );
+	}
+
+	/// <summary>Accept a head-to-head challenge aimed at our seat and fall into the normal
+	/// poll-driven play loop (matched by the challenger's username, like
+	/// <see cref="ChallengeUser"/>).</summary>
+	async void AutoAccept( string challengeId, ChessSeat seat, string challenger )
+	{
+		bool hasName = !string.IsNullOrEmpty( challenger );
+		BeginChallenge( seat, expectOpponent: hasName ? challenger : null, ai: false );
+		_challengeId = challengeId;
+		StatusText = hasName ? $"Accepting {challenger}'s challenge…" : "Accepting the challenge…";
+
+		var res = await LichessApi.AcceptChallenge( challengeId, null, LichessAuth.Token );
+		if ( !res.Ok )
+			// Non-fatal: if it hasn't landed yet the poll still adopts the game by opponent
+			// name once it goes live, and standing up clears a stuck Challenging state.
+			Log.Warning( $"[Gambit] head-to-head auto-accept failed ({res.Status}): {LichessApi.Truncate( res.Body, 160 )}" );
+
+		_sincePoll = 999f; // poll picks up the now-live game
+	}
+
 	/// <summary>Challenge Stockfish (level 1–8) — starts immediately, so we get the
 	/// game id straight back. Zero-setup way to exercise the play loop.</summary>
 	public async void ChallengeAi( int level )
@@ -197,6 +394,55 @@ public sealed class LichessPlayController : Component, IBoardGame
 		_sincePoll = 999f;
 	}
 
+	/// <summary>Quick match: seek a <b>random</b> lichess opponent at Rapid 10+0 (the
+	/// original M4 gate item). Unlike a direct challenge the colour is lichess's to
+	/// decide, so we adopt whichever side it hands us on the first poll (and swoop the
+	/// camera there if it differs from the seat we sat at). <paramref name="rated"/>
+	/// drives the rated toggle.</summary>
+	public async void QuickSeek( bool rated )
+	{
+		if ( !CanStart( out var seat ) ) return;
+
+		// Snapshot the games already ongoing so the seek adopts only the NEW pairing,
+		// never some pre-existing game of the player's.
+		var pre = await LichessApi.GetAccountPlaying( LichessAuth.Token );
+		if ( pre.Unauthorized ) { FailStart( pre ); return; }
+		var preList = pre.Ok ? LichessApi.Deserialize<LichessNowPlaying>( pre.Body )?.nowPlaying : null;
+
+		// A second start may have raced in during the await.
+		if ( _phase == PlayPhase.Challenging || _phase == PlayPhase.Playing ) return;
+
+		BeginChallenge( seat, expectOpponent: null, ai: false );
+		_expectAny = true;
+		_preexistingIds = CollectGameIds( preList );
+		StatusText = rated ? "Seeking a rated Rapid opponent…" : "Seeking a casual Rapid opponent…";
+
+		// Hold the seek open (bypasses the single-flight gate); it returns when lichess
+		// pairs us. We detect the pairing via the poll, which runs concurrently.
+		StopSeek();
+		_seekCts = new CancellationTokenSource();
+		_ = LichessApi.HoldSeek( rated, 10, 0, LichessAuth.Token, _seekCts.Token );
+
+		_sincePoll = 999f; // start polling for the pairing promptly
+	}
+
+	static HashSet<string> CollectGameIds( List<NowPlayingGame> games )
+	{
+		var set = new HashSet<string>();
+		if ( games != null )
+			foreach ( var g in games )
+				if ( !string.IsNullOrEmpty( g.gameId ) ) set.Add( g.gameId );
+		return set;
+	}
+
+	CancellationTokenSource _seekCts;
+
+	void StopSeek()
+	{
+		_seekCts?.Cancel();
+		_seekCts = null;
+	}
+
 	bool CanStart( out ChessSeat seat )
 	{
 		seat = default;
@@ -210,12 +456,15 @@ public sealed class LichessPlayController : Component, IBoardGame
 	void BeginChallenge( ChessSeat seat, string expectOpponent, bool ai )
 	{
 		StopPresence(); // drop any leftover held stream from a previous game
+		StopSeek();     // and any in-flight seek
 		_myColor = seat;
 		_expectOpponent = expectOpponent;
 		_expectAi = ai;
+		_expectAny = false;
+		_preexistingIds = null;
 		_gameId = null;
 		_challengeId = null;
-		Game = null;
+		_playGame = null;
 		IsMyTurn = false;
 		_lastMoveUci = null;
 		OpponentName = null;
@@ -323,18 +572,36 @@ public sealed class LichessPlayController : Component, IBoardGame
 			OpponentName = g.opponent?.username
 				?? ( g.opponent?.ai is { } lvl ? $"Stockfish level {lvl}" : "Opponent" );
 			MyClockSeconds = g.secondsLeft;
+			AdoptSide( g );
 			AdoptState( g );
 
 			if ( _phase == PlayPhase.Challenging )
 			{
-				_phase = PlayPhase.Playing; // accepted → live
+				_phase = PlayPhase.Playing; // accepted / paired → live
 				StatusText = null;
+				StopSeek();       // paired — stop holding the seek open
+				_expectAny = false;
 			}
+
+			RelayToSpectators(); // publish this position for watchers (D7)
 		}
 		finally
 		{
 			_polling = false;
 		}
+	}
+
+	/// <summary>lichess is authoritative about which colour we're playing — a random
+	/// seek may hand us the opposite side to the seat we sat at. Adopt it, and (for a
+	/// seek) swoop the camera to the side we're actually playing.</summary>
+	void AdoptSide( NowPlayingGame g )
+	{
+		var side = g.color == "black" ? ChessSeat.Black : ChessSeat.White;
+		if ( side == _myColor ) return;
+		_myColor = side;
+
+		if ( _expectAny && LocalSeatNow is { } seat && seat != side )
+			LobbyPlayer.Local?.JoinLichessSide( side );
 	}
 
 	NowPlayingGame FindOurGame( List<NowPlayingGame> games )
@@ -345,6 +612,12 @@ public sealed class LichessPlayController : Component, IBoardGame
 			if ( !string.IsNullOrEmpty( _gameId ) )
 			{
 				if ( g.gameId == _gameId ) return g;
+				continue;
+			}
+			if ( _expectAny )
+			{
+				// The freshly-paired seek game = the one that wasn't ongoing at seek start.
+				if ( _preexistingIds == null || !_preexistingIds.Contains( g.gameId ) ) return g;
 				continue;
 			}
 			if ( _expectAi && g.opponent?.ai != null ) return g;
@@ -366,8 +639,8 @@ public sealed class LichessPlayController : Component, IBoardGame
 		_lastMoveUci = string.IsNullOrEmpty( g.lastMove ) ? _lastMoveUci : g.lastMove;
 
 		var server = BuildGame( g.fen, g.color, g.isMyTurn );
-		if ( server != null && ( Game == null || Game.Fen != server.Fen ) )
-			Game = server;
+		if ( server != null && ( _playGame == null || _playGame.Fen != server.Fen ) )
+			_playGame = server;
 	}
 
 	/// <summary>Turn a nowPlaying FEN into a rules instance. lichess usually sends a
@@ -427,6 +700,7 @@ public sealed class LichessPlayController : Component, IBoardGame
 		IsMyTurn = false;
 		StatusText = null;
 		StopPresence(); // game's over — release the held-open game stream
+		ClearRelay();   // and take the relayed board off every watcher
 
 		var res = await LichessApi.GameExport( _gameId );
 		var st = res.Ok ? LichessApi.Deserialize<LichessGameStatus>( res.Body ) : null;
@@ -462,18 +736,40 @@ public sealed class LichessPlayController : Component, IBoardGame
 	public async void ClearPlay()
 	{
 		StopPresence();
+		StopSeek();
+		ClearRelay();
 
 		if ( _phase == PlayPhase.Challenging && !string.IsNullOrEmpty( _challengeId ) )
 			await LichessApi.CancelChallenge( _challengeId, LichessAuth.Token );
 
 		_phase = PlayPhase.Idle;
-		Game = null;
+		_playGame = null;
 		IsMyTurn = false;
 		_gameId = null;
 		_challengeId = null;
+		_expectAny = false;
+		_preexistingIds = null;
 		StatusText = null;
 		OverText = null;
 		_error = null;
+	}
+
+	/// <summary>The seated player stood up / left the board (or a dev reset). Tear down
+	/// whatever this controller was doing so the table is free for the next person:
+	/// forfeit a live game, cancel a pending challenge/seek/open game, drop the
+	/// spectator relay, and return to <see cref="PlayPhase.Idle"/>. No-op on every
+	/// client except the one that owns the game (everyone else is already Idle).</summary>
+	public void LeaveSeat()
+	{
+		if ( _phase == PlayPhase.Idle ) return;
+
+		// Walking away from a live game is a resignation on lichess. Fire it directly
+		// (not ResignGame, which waits for the next poll) since we clear to Idle below
+		// and stop polling immediately.
+		if ( _phase == PlayPhase.Playing && !string.IsNullOrEmpty( _gameId ) )
+			_ = LichessApi.BoardResign( _gameId, LichessAuth.Token );
+
+		ClearPlay(); // cancels a pending challenge/seek/open, drops the relay, → Idle
 	}
 
 	public void CopyGameUrl() => Copy( GameUrl );

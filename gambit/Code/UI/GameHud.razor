@@ -48,7 +48,14 @@
 						else
 						{
 							<div class="lc-you">@( lp.StatusText ?? "Waiting for the opponent…" )</div>
-							<div class="lc-note">They accept on lichess.org; the game then appears here.</div>
+							@if ( lp.Seeking )
+							{
+								<div class="lc-note">Pairing you with a random lichess player — this can take a moment.</div>
+							}
+							else
+							{
+								<div class="lc-note">They accept on lichess.org; the game then appears here.</div>
+							}
 						}
 						<div class="button ghost" onclick="@( () => lp.ClearPlay() )">Cancel</div>
 					}
@@ -107,7 +114,19 @@
 						}
 						else
 						{
-							<div class="lc-you">Play a lichess user right here — you'll be @SeatWord( mySeat ), Rapid 10+0.</div>
+							@{ var seatedOpp = SeatedOpponentLichessName(); }
+							@if ( seatedOpp != null )
+							{
+								<div class="lc-you">@seatedOpp is seated across — play them head-to-head on lichess (Rapid 10+0, you're @SeatWord( mySeat )).</div>
+								<div class="button" onclick="@( () => ChallengeSeated() )">Play @seatedOpp (head-to-head)</div>
+								<div class="lc-divider">— or a random opponent —</div>
+							}
+							<div class="lc-you">Quick match — pair with a random lichess player, Rapid 10+0. Colour is assigned when you're paired.</div>
+							<div class="button" onclick="@( () => QuickSeek( true ) )">Quick match — rated</div>
+							<div class="button ghost" onclick="@( () => QuickSeek( false ) )">Quick match — casual</div>
+
+							<div class="lc-divider">— or pick your opponent —</div>
+							<div class="lc-you">Play a specific lichess user — you'll be @SeatWord( mySeat ), Rapid 10+0.</div>
 							<TextEntry @ref="_oppEntry" class="lc-input" placeholder="opponent lichess username" />
 							<div class="button" onclick="@( () => ChallengeUser() )">Challenge & play here</div>
 							<div class="button ghost" onclick="@( () => PlayOpen() )">vs anonymous browser (open link)</div>
@@ -365,6 +384,19 @@
 	void ChallengeUser() => LichessPlay()?.ChallengeUser( _oppEntry?.Text?.Trim() );
 	void ChallengeAi() => LichessPlay()?.ChallengeAi( 3 );
 	void PlayOpen() => LichessPlay()?.PlayOpenGame();
+	void QuickSeek( bool rated ) => LichessPlay()?.QuickSeek( rated );
+
+	// Head-to-head (#3): the signed-in lichess name of whoever sits on the other side
+	// of this board, or null if that seat is empty / its player isn't signed in.
+	static string SeatedOpponentLichessName()
+	{
+		if ( Station() is not { } s ) return null;
+		var oppSeat = ChessStation.ActiveSeat == ChessSeat.White ? ChessSeat.Black : ChessSeat.White;
+		var name = s.SeatLichessName( oppSeat );
+		return string.IsNullOrEmpty( name ) ? null : name;
+	}
+
+	void ChallengeSeated() => LichessPlay()?.ChallengeSeatedOpponent();
 
 	static string LichessTurnText( LichessPlayController lp ) =>
 		lp.IsMyTurn
@@ -438,7 +470,7 @@
 			System.HashCode.Combine( lp?.Active, lp?.Playing, lp?.Challenging, lp?.IsMyTurn, lp?.Game?.Fen,
 				lp?.StatusText, lp?.OverText ),
 			System.HashCode.Combine( lp?.Error, lp?.OpponentName, lp?.SinceCopied < 2f, SignedIn(),
-				lp?.IsOpenGame, lp?.ShareUrl ) );
+				lp?.IsOpenGame, lp?.ShareUrl, lp?.Seeking, SeatedOpponentLichessName() ) );
 		return System.HashCode.Combine(
 			Visible(), ctrl?.GameId, ctrl?.Game?.MoveCount, ctrl?.GameOver, lichessHash,
 			System.HashCode.Combine( ctrl?.Importing, ctrl?.LichessUrl, ctrl?.ImportError,

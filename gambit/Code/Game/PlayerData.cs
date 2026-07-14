@@ -7,9 +7,19 @@ namespace Gambit.Game;
 
 public sealed class PlayerData
 {
-	/// <summary>Display name shown on name tags and seat labels. Free-form local
-	/// choice until lichess sign-in (M3) overrides it with the account name.</summary>
+	/// <summary>Free-form local display name chosen while anonymous. Once signed in to
+	/// lichess (M3) the account name takes over for display — read <see cref="DisplayName"/>,
+	/// not this, on any human-facing surface. Kept as the fallback so signing out reverts
+	/// to it.</summary>
 	public string Username { get; set; } = "";
+
+	/// <summary>The name to show for this player everywhere (name tags, seat labels, PGN
+	/// headers): the lichess account name once signed in, otherwise the anonymous
+	/// <see cref="Username"/>. Single source of truth so signing in never leaves a stale
+	/// anon name on one surface while another shows the lichess name. A method, not a
+	/// get-only property, so System.Text.Json doesn't write it back into the saved JSON.</summary>
+	public string DisplayName() =>
+		!string.IsNullOrEmpty( LichessUsername ) ? LichessUsername : Username;
 
 	// ── Lichess identity (populated by LichessAuth in M3) ──
 	// The token is a SECRET credential (PLAN D3): never [Sync]/RPC it, never log
