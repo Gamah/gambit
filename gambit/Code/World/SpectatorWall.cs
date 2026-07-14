@@ -26,27 +26,30 @@ namespace Gambit.World;
 /// </summary>
 public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 {
-	/// <summary>Intrinsic pixel HEIGHT of a SpectatorSeatPanel's &lt;root&gt; (name over
-	/// rating | clock). The WIDTH is computed per-build to fill the space between the board edge
-	/// and the side wall (SeatBoardScale fixes the text size + height, the width just trims the
-	/// side margin), so a tag never pokes through the wall.</summary>
+	/// <summary>Intrinsic pixel size of a SpectatorSeatPanel's &lt;root&gt; (name over
+	/// rating | clock). FIXED, sized to hold the longest name lichess allows — a title plus a
+	/// 20-char username (~24 monospace chars at the name font) — plus the chip and a padding buffer,
+	/// so a max-length name never clips or presses the edge. The uniform scale is then chosen to fit
+	/// this fixed-width tag into the space beside the board (so the world size adapts to the room).</summary>
+	const float SeatPxWidth = 640f;
 	const float SeatPxHeight = 200f;
 
 	/// <summary>WorldPanel px→world-unit factor (Sandbox ScreenToWorldScale) — a panel of P px
 	/// renders P × scale × this many world units wide; used to size/place the seat tags.</summary>
 	const float PxToWorld = 0.05f;
 
-	/// <summary>Cap on a seat tag's world width so it doesn't get absurdly wide in a big room.</summary>
-	const float SeatMaxWorldWidth = 340f;
-
-	/// <summary>Keep a seat tag this far off the side wall when auto-fitting its width.</summary>
+	/// <summary>Keep a seat tag this far off the side wall when fitting it beside the board.</summary>
 	const float SeatWallMargin = 10f;
 
 	/// <summary>Intrinsic pixel size of the end-of-game fanfare banner (SpectatorResultPanel) —
-	/// wide enough that a "&lt;PlayerName&gt; wins" headline at the banner's font size fits without
-	/// clipping (the panel clips content past this width).</summary>
-	const float ResultPxWidth = 2200f;
+	/// FIXED, wide enough that the longest headline ("&lt;title&gt; &lt;20-char name&gt; wins", ~29
+	/// monospace chars at the banner font) fits with a buffer (the panel clips content past this).
+	/// The banner's scale is then fit to the room width so it can't poke the side walls.</summary>
+	const float ResultPxWidth = 2400f;
 	const float ResultPxHeight = 700f;
+
+	/// <summary>Keep the fanfare banner this far off each side wall when fitting its scale.</summary>
+	const float ResultWallMargin = 20f;
 
 	/// <summary>World units the board sits in front of the wall's inner face
 	/// (RoomSize / 2), toward the room.</summary>
@@ -65,13 +68,14 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// Tuned in-editor; negate to lean back toward the wall instead.</summary>
 	[Property] public float TiltDegrees { get; set; } = 7f;
 
-	/// <summary>Uniform scale multiplier on each player-tag strip — sets the text size and height
-	/// (the width auto-fits the space beside the board).</summary>
+	/// <summary>MAX uniform scale of a player-tag strip. The build shrinks below this if needed to
+	/// fit the fixed-width tag beside the board, so this just caps the text size in a roomy layout.</summary>
 	[Property] public float SeatBoardScale { get; set; } = 5f;
 
-	/// <summary>Gap between a player's board edge and the near edge of their tag (the tag sits
-	/// just outside the edge, coplanar with the board).</summary>
-	[Property] public float SeatEdgeGap { get; set; } = 6f;
+	/// <summary>Gap between a player's board edge and the near edge of their tag, as a fraction of a
+	/// board square (0.5 = half a square). The tag sits just outside the edge, coplanar with the
+	/// board.</summary>
+	[Property] public float SeatEdgeCells { get; set; } = 0.5f;
 
 	/// <summary>How far up the board (as a fraction of its height) each tag sits, measured from
 	/// that player's own edge — 0 = at the edge, 0.5 = centred. Default 1/3 biases each tag toward
@@ -178,16 +182,17 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		// faces down so its right is the −X (a-file) edge. Vertically each is biased toward its own
 		// player's half (SeatEdgeBias up the board from that player's edge), not centred. Placed in
 		// the board's local frame (files X, ranks Y, out-of-face +Z) and transformed through the
-		// board's own position/rotation, so they track the tilt automatically. Each tag's WIDTH is
-		// auto-fit to the gap between the board edge and the side wall so a wide strip never pokes
-		// through the wall.
-		// World width available beside the board on the tighter side (both tags share it, so they
-		// match); guards against the board being off-centre along the wall.
+		// board's own position/rotation, so they track the tilt automatically. Each tag is a
+		// FIXED-width panel (SeatPxWidth, sized for a max-length lichess name); we pick the uniform
+		// scale that fits it into the gap between the board edge and the side wall — so the content
+		// always fits and the world size just adapts to the room. Offset from the edge by half a
+		// square (SeatEdgeCells). Both tags share the tighter side's fit so they match.
+		float edgeGap = BoardCellSize * SeatEdgeCells;
 		float sideSpace = ( WallWidth * 0.5f - MathF.Abs( centreX ) - WallInset ) - halfBoard
-			- SeatEdgeGap - SeatWallMargin;
-		float tagWorldW = MathF.Max( MathF.Min( sideSpace, SeatMaxWorldWidth ), 1f );
-		float seatPxW = tagWorldW / ( SeatBoardScale * PxToWorld ); // px that renders tagWorldW wide
-		float outX = halfBoard + SeatEdgeGap + tagWorldW * 0.5f;    // tag centre just outside the edge
+			- edgeGap - SeatWallMargin;
+		float fitScale = MathF.Max( MathF.Min( SeatBoardScale, sideSpace / ( SeatPxWidth * PxToWorld ) ), 0.1f );
+		float tagWorldW = SeatPxWidth * fitScale * PxToWorld;
+		float outX = halfBoard + edgeGap + tagWorldW * 0.5f; // tag centre just outside the edge
 		// Vertical bias: SeatEdgeBias of the board's height in from each player's edge (0 = at the
 		// edge, 0.5 = centred). White (bottom) sits below centre, Black (top) above.
 		float seatY = halfBoard - SeatEdgeBias * boardSize;
@@ -199,18 +204,22 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		Vector3 WhiteOffset = new( outX, -seatY, 0f );  // right of board, biased toward the bottom
 		Vector3 BlackOffset = new( -outX, seatY, 0f );  // left of board, biased toward the top
 
-		AddSeatTag( "SpectatorWhiteTag", boardCentre + boardRot * WhiteOffset, inPlane, seatPxW, white: true );
-		AddSeatTag( "SpectatorBlackTag", boardCentre + boardRot * BlackOffset, inPlane, seatPxW, white: false );
+		AddSeatTag( "SpectatorWhiteTag", boardCentre + boardRot * WhiteOffset, inPlane, fitScale, white: true );
+		AddSeatTag( "SpectatorBlackTag", boardCentre + boardRot * BlackOffset, inPlane, fitScale, white: false );
 
 		// End-of-game fanfare banner, centred over the board and popped toward the room so it reads
-		// over the pieces. Display-only; SpectatorResultPanel renders it only while the controller
-		// is holding a result.
+		// over the pieces. The fixed-width panel holds the longest headline; its scale is fit to the
+		// room width (capped at ResultBoardScale) so a max-length "<name> wins" can't poke the side
+		// walls. Display-only; SpectatorResultPanel renders it only while the controller holds a result.
+		float bannerRoomW = 2f * ( WallWidth * 0.5f - MathF.Abs( centreX ) - WallInset - ResultWallMargin );
+		float bannerScale = MathF.Max( MathF.Min( ResultBoardScale, bannerRoomW / ( ResultPxWidth * PxToWorld ) ), 0.1f );
+
 		var banner = new GameObject( true, "SpectatorResultBanner" );
 		banner.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
 		banner.Parent = _root;
 		banner.LocalPosition = boardCentre + boardRot * new Vector3( 0f, 0f, ResultPop );
 		banner.LocalRotation = inPlane;
-		banner.LocalScale = new Vector3( 1f, 1f, 1f ) * ResultBoardScale;
+		banner.LocalScale = new Vector3( 1f, 1f, 1f ) * bannerScale;
 		var bannerPanel = banner.AddComponent<WorldPanel>();
 		bannerPanel.PanelSize = new Vector2( ResultPxWidth, ResultPxHeight );
 		banner.AddComponent<Gambit.UI.SpectatorResultPanel>();
@@ -233,17 +242,18 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	}
 
 	/// <summary>A single player-tag strip (SpectatorSeatPanel) lying coplanar with the board at its
-	/// edge, sized by SeatBoardScale with an auto-fit pixel width.</summary>
-	void AddSeatTag( string name, Vector3 localPos, Rotation rotation, float pxWidth, bool white )
+	/// edge — fixed intrinsic size (SeatPxWidth × SeatPxHeight), sized to a max-length name, at the
+	/// given uniform scale.</summary>
+	void AddSeatTag( string name, Vector3 localPos, Rotation rotation, float scale, bool white )
 	{
 		var tag = new GameObject( true, name );
 		tag.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
 		tag.Parent = _root;
 		tag.LocalPosition = localPos;
 		tag.LocalRotation = rotation;
-		tag.LocalScale = new Vector3( 1f, 1f, 1f ) * SeatBoardScale;
+		tag.LocalScale = new Vector3( 1f, 1f, 1f ) * scale;
 		var panel = tag.AddComponent<WorldPanel>();
-		panel.PanelSize = new Vector2( pxWidth, SeatPxHeight );
+		panel.PanelSize = new Vector2( SeatPxWidth, SeatPxHeight );
 		tag.AddComponent<Gambit.UI.SpectatorSeatPanel>().White = white;
 	}
 
