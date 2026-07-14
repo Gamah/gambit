@@ -27,6 +27,7 @@ public sealed class LobbyRoom : Component, Component.ExecuteInEditor
 	{
 		Rebuild();
 		EnsureChessRing();
+		EnsureSpectatorWall();
 	}
 
 	/// <summary>Self-heal for the M1 rename: loading a scene saved with the old
@@ -38,6 +39,15 @@ public sealed class LobbyRoom : Component, Component.ExecuteInEditor
 	{
 		if ( Components.Get<ChessRing>( FindMode.EverythingInSelf ) == null )
 			GameObject.AddComponent<ChessRing>();
+	}
+
+	/// <summary>Self-provision the M5 spectator wall (west wall giant board + channel
+	/// picker). Like the ring it lives on this GO (SpectatorWall reads RoomSize from
+	/// LobbyRoom), so add it if the scene doesn't carry one — no scene rewire needed.</summary>
+	void EnsureSpectatorWall()
+	{
+		if ( Components.Get<SpectatorWall>( FindMode.EverythingInSelf ) == null )
+			GameObject.AddComponent<SpectatorWall>();
 	}
 
 	// Fires on editor property changes and after deserialization (scene load),

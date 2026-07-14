@@ -92,6 +92,64 @@ public sealed class LichessGameStatus
 	public string winner { get; set; }       // "white"/"black"/null
 }
 
+// ── Puzzles (M5) ──
+
+/// <summary>Reply from <c>GET /api/puzzle/{daily|next|id}</c>. The puzzle position is
+/// the source <see cref="game"/>'s PGN played out to <c>puzzle.initialPly</c> half-moves;
+/// from there <c>puzzle.solution</c> is the UCI line, opponent-move-first (lichess
+/// convention: the position is one ply before the solver's turn, so solution[0] is the
+/// opponent's setup move, solution[1] the solver's first move, and so on).</summary>
+public sealed class LichessPuzzleResponse
+{
+	public PuzzleGame game { get; set; }
+	public PuzzleData puzzle { get; set; }
+}
+
+public sealed class PuzzleGame
+{
+	public string id { get; set; }
+	public string pgn { get; set; }          // space-separated movetext (no headers)
+	public string clock { get; set; }
+	public List<PuzzlePlayer> players { get; set; }
+}
+
+public sealed class PuzzlePlayer
+{
+	public string name { get; set; }
+	public string color { get; set; }        // "white" / "black"
+	public int? rating { get; set; }
+}
+
+public sealed class PuzzleData
+{
+	public string id { get; set; }
+	public int rating { get; set; }
+	public int initialPly { get; set; }
+	public List<string> solution { get; set; }   // UCI moves, opponent-first
+	public List<string> themes { get; set; }
+}
+
+// ── TV (M5) ──
+
+/// <summary>One channel of <c>GET /api/tv/channels</c> — the current featured game
+/// on that channel and its top player. The reply is a JSON object keyed by channel
+/// name ("bot","blitz","rapid",…), so deserialize the whole thing as
+/// <c>Dictionary&lt;string, LichessTvChannel&gt;</c>.</summary>
+public sealed class LichessTvChannel
+{
+	public LichessTvUser user { get; set; }
+	public int rating { get; set; }
+	public string gameId { get; set; }
+	public string color { get; set; }        // colour the featured user plays
+}
+
+public sealed class LichessTvUser
+{
+	public string id { get; set; }
+	public string name { get; set; }
+	public string title { get; set; }        // "GM", "BOT", … or null
+}
+
 /// <summary>Reply from <c>POST /api/token</c> — the OAuth code exchange.</summary>
 public sealed class LichessTokenResponse
 {

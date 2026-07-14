@@ -38,6 +38,9 @@ public static class HotloadRebuild
 		foreach ( var wall in scene.GetAllComponents<SettingsWall>() )
 			wall.RebuildPreview();
 
+		foreach ( var wall in scene.GetAllComponents<SpectatorWall>() )
+			wall.RebuildPreview();
+
 		foreach ( var floor in scene.GetAllComponents<FloorCheckerboard>() )
 			floor.RebuildPreview();
 

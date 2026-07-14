@@ -217,4 +217,66 @@ public static class LichessSpikes
 		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_play_open" ); return; }
 		pc.PlayOpenGame();
 	}
+
+	// ── M5: spectate / TV / puzzles ──
+
+	/// <summary>Load a puzzle on the board you're seated at (M5). <c>daily</c> (default)
+	/// or <c>next</c> for a fresh one. Solve it by clicking moves; the HUD shows
+	/// retry/reveal/next.</summary>
+	[ConCmd( "gambit_puzzle" )]
+	public static void Puzzle( string which = "daily" )
+	{
+		var pz = Gambit.Game.PuzzleController.For( Gambit.World.ChessStation.Active );
+		if ( pz == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_puzzle [daily|next]" ); return; }
+		if ( string.Equals( which, "next", System.StringComparison.OrdinalIgnoreCase ) ) pz.StartNext();
+		else pz.StartDaily();
+		Log.Info( $"[Gambit] loading {which} puzzle…" );
+	}
+
+	/// <summary>PLAN.md M5 spike — confirm the non-streaming lichess-TV path gives a
+	/// current-enough position before the wall UI leans on it. Fetches
+	/// <c>/api/tv/channels</c> (plain JSON), picks the rapid channel, then loads that
+	/// game's PGN export and logs the reconstructed FEN. Spread this a few seconds apart
+	/// and watch the FEN advance to gauge the lag.</summary>
+	[ConCmd( "gambit_tv" )]
+	public static void Tv() => _ = TvAsync();
+
+	static async System.Threading.Tasks.Task TvAsync()
+	{
+		Log.Info( "[Gambit] M5 TV spike → GET /api/tv/channels" );
+		var chres = await LichessApi.GetTvChannels();
+		if ( !chres.Ok ) { Log.Error( $"[Gambit]   channels failed ({chres.Status}): {chres.Error}" ); return; }
+
+		var channels = LichessApi.Deserialize<System.Collections.Generic.Dictionary<string, LichessTvChannel>>( chres.Body );
+		if ( channels == null || channels.Count == 0 ) { Log.Error( "[Gambit]   no channels parsed" ); return; }
+
+		foreach ( var kv in channels )
+			Log.Info( $"[Gambit]   channel {kv.Key}: game {kv.Value.gameId}, {kv.Value.user?.name} ({kv.Value.rating})" );
+
+		var id = channels.TryGetValue( "rapid", out var rapid ) ? rapid.gameId : null;
+		foreach ( var c in channels.Values ) { id ??= c.gameId; }
+		if ( string.IsNullOrEmpty( id ) ) { Log.Error( "[Gambit]   no game id to fetch" ); return; }
+
+		Log.Info( $"[Gambit]   GET /game/export/{id} (PGN) → reconstruct FEN…" );
+		var g = await LichessApi.GameExportPgn( id );
+		if ( !g.Ok ) { Log.Error( $"[Gambit]   export failed ({g.Status})" ); return; }
+
+		if ( Gambit.Chess.ChessGame.TryFromPgn( g.Body, out var game ) )
+			Log.Info( $"[Gambit]   FEN: {game.Fen}  (last: {game.LastMoveUci ?? "—"}) — re-run in a few seconds to gauge the delay." );
+		else
+			Log.Warning( $"[Gambit]   couldn't parse PGN body ({LichessApi.Truncate( g.Body, 120 )})" );
+	}
+
+	/// <summary>Point the spectator wall at a specific game id / URL (M5) — the
+	/// guaranteed-working twin of the wall screen's Watch field.</summary>
+	[ConCmd( "gambit_watch" )]
+	public static void Watch( string idOrUrl )
+	{
+		if ( Gambit.Game.SpectatorController.Instance == null )
+		{
+			Log.Warning( "[Gambit] no spectator wall in the scene yet." );
+			return;
+		}
+		Gambit.Game.SpectatorController.Instance.WatchGame( idOrUrl );
+	}
 }

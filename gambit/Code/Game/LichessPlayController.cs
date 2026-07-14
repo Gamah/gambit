@@ -99,8 +99,10 @@ public sealed class LichessPlayController : Component, IBoardGame
 	public bool TryMakeMove( string uci )
 	{
 		if ( _phase != PlayPhase.Playing || !IsMyTurn || _moveInFlight || _playGame == null ) return false;
+		string before = _playGame.Fen;
 		if ( !_playGame.ApplyUci( uci ) ) return false; // optimistic local apply; lichess is the authority
 
+		PlayMoveSound( before, _playGame.Fen, positional: false ); // our move, on our own board
 		IsMyTurn = false;
 		_lastMoveUci = uci;
 		PostMove( uci );
@@ -200,7 +202,13 @@ public sealed class LichessPlayController : Component, IBoardGame
 			return;
 		}
 		if ( _spectatorGame != null && _spectatorGame.Fen == RelayFen ) return;
-		if ( ChessGame.TryFromFen( RelayFen, out var g ) ) _spectatorGame = g;
+		string before = _spectatorGame?.Fen;
+		if ( ChessGame.TryFromFen( RelayFen, out var g ) )
+		{
+			_spectatorGame = g;
+			// Positional move sound at the table we're watching (M6 sound mapping).
+			if ( before != null ) PlayMoveSound( before, RelayFen, positional: true );
+		}
 	}
 
 	/// <summary>Playing client → host: publish the current public position for watchers.
@@ -640,7 +648,45 @@ public sealed class LichessPlayController : Component, IBoardGame
 
 		var server = BuildGame( g.fen, g.color, g.isMyTurn );
 		if ( server != null && ( _playGame == null || _playGame.Fen != server.Fen ) )
+		{
+			string before = _playGame?.Fen;
 			_playGame = server;
+			// The opponent's move arriving via the poll (our own confirmed move leaves the
+			// FEN unchanged from the optimistic apply, so before==after → silent here). 2D
+			// since it's our own board (M6 sound mapping).
+			if ( before != null ) PlayMoveSound( before, server.Fen, positional: false );
+		}
+	}
+
+	/// <summary>Tick for White's move, tock for Black's, pop for any capture — mirrors
+	/// LocalGameController.PlayMoveSound. 2D on our own engaged board, positional when
+	/// watching another table (M6 sound mapping).</summary>
+	void PlayMoveSound( string before, string after, bool positional )
+	{
+		if ( string.IsNullOrEmpty( before ) || string.IsNullOrEmpty( after ) ) return;
+		bool capture = CountPieces( before ) != CountPieces( after );
+		bool whiteMoved = after.Contains( " b " ); // after a white move it's Black to move
+
+		if ( positional )
+		{
+			if ( capture ) Audio.SoundPlayer.PlayPopAt( WorldPosition );
+			else Audio.SoundPlayer.PlayTickAt( WorldPosition );
+			return;
+		}
+
+		if ( capture ) Audio.SoundPlayer.PlayPop();
+		else if ( whiteMoved ) Audio.SoundPlayer.PlayTick();
+		else Audio.SoundPlayer.PlayTock();
+	}
+
+	static int CountPieces( string fen )
+	{
+		int n = 0;
+		int end = fen.IndexOf( ' ' );
+		if ( end < 0 ) end = fen.Length;
+		for ( int i = 0; i < end; i++ )
+			if ( char.IsLetter( fen[i] ) ) n++;
+		return n;
 	}
 
 	/// <summary>Turn a nowPlaying FEN into a rules instance. lichess usually sends a

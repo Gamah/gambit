@@ -60,7 +60,7 @@ public static class LichessApi
 	/// to seconds-remaining: positive while pending, negative once elapsed.)</summary>
 	public static float BackoffRemaining => Math.Max( 0f, (float)_backoff );
 
-	static async Task<Result> Send( string url, string method, HttpContent content, string bearer )
+	static async Task<Result> Send( string url, string method, HttpContent content, string bearer, string accept = "application/json" )
 	{
 		if ( _inFlight )
 			return new Result { Error = "Another lichess request is running — try again in a moment." };
@@ -70,13 +70,15 @@ public static class LichessApi
 		_inFlight = true;
 		try
 		{
-			// Accept: application/json is REQUIRED, not cosmetic. lichess content-
-			// negotiates on shared paths: POST /api/import without it returns 200 +
+			// Accept: application/json is REQUIRED on most calls, not cosmetic. lichess
+			// content-negotiates on shared paths: POST /api/import without it returns 200 +
 			// the imported game's HTML page (the web-form response), not {id,url} —
 			// that was M2's dead import (confirmed in-editor: HTTP 200, HTML body, no
 			// url). /api/account happens to be JSON-only, which is why sign-in worked
-			// regardless. Send it on every request so no endpoint can surprise us.
-			var headers = new Dictionary<string, string> { ["Accept"] = "application/json" };
+			// regardless. Send it on every request so no endpoint can surprise us. The
+			// one exception is the game export, which we ask for as PGN (accept override)
+			// so we can reconstruct a TV position via the vendor PGN parser (M5).
+			var headers = new Dictionary<string, string> { ["Accept"] = accept };
 			if ( !string.IsNullOrEmpty( bearer ) )
 				headers["Authorization"] = "Bearer " + bearer;
 
@@ -277,6 +279,40 @@ public static class LichessApi
 			// Cancelled (game over / left) or the connection dropped — both expected.
 		}
 	}
+
+	// ── Spectate / TV / puzzles (M5) ──
+	// All request/response (no streaming), so they work under s&box Http as-is.
+
+	/// <summary>The daily puzzle — same for everyone, no auth. Returns the source
+	/// game's PGN + the puzzle's <c>initialPly</c> and UCI solution (solutions are
+	/// embedded for LOCAL validation; there is no endpoint to submit them, so solving
+	/// in Gambit never touches the player's lichess puzzle rating — surface that).</summary>
+	public static Task<Result> GetPuzzleDaily() =>
+		Send( Base + "/api/puzzle/daily", "GET", null, null );
+
+	/// <summary>The next puzzle. Signed-in requests are personalised (rating-matched,
+	/// no repeats) — pass the token when we have one, else it's a public random puzzle.</summary>
+	public static Task<Result> GetPuzzleNext( string token = null ) =>
+		Send( Base + "/api/puzzle/next", "GET", null, token );
+
+	/// <summary>A specific puzzle by id.</summary>
+	public static Task<Result> GetPuzzleById( string id ) =>
+		Send( $"{Base}/api/puzzle/{Uri.EscapeDataString( id )}", "GET", null, null );
+
+	/// <summary>Current featured game per TV channel (plain-JSON snapshot — the
+	/// non-streaming path to lichess TV, PLAN.md M5). Each channel carries a
+	/// <c>gameId</c> + players; the position is fetched separately via
+	/// <see cref="GameExportPgn"/>.</summary>
+	public static Task<Result> GetTvChannels() =>
+		Send( Base + "/api/tv/channels", "GET", null, null );
+
+	/// <summary>Export a game as PGN text (not JSON) so the vendor parser can rebuild
+	/// its position (M5 TV / watch-by-id). For an ongoing game lichess delays the
+	/// public export ~3 moves / 3–60s for fair play — a lichess policy to surface in
+	/// the UI, not our latency. Returns the raw PGN in <see cref="Result.Body"/>.</summary>
+	public static Task<Result> GameExportPgn( string gameId ) =>
+		Send( $"{Base}/game/export/{Uri.EscapeDataString( gameId )}?clocks=false&evals=false",
+			"GET", null, null, accept: "application/x-chess-pgn" );
 
 	// ── Helpers ──
 

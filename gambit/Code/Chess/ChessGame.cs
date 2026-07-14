@@ -41,6 +41,36 @@ public sealed class ChessGame
 		return true;
 	}
 
+	/// <summary>
+	/// Reconstruct the position <paramref name="ply"/> half-moves into a game given
+	/// its PGN/movetext (M5 — lichess puzzles hand us <c>game.pgn</c> + an
+	/// <c>initialPly</c>; TV snapshots hand us an export PGN). The vendor parses the
+	/// movetext, we navigate to the requested ply, snapshot its FEN, then rebuild a
+	/// <b>clean</b> game from that FEN so the caller gets full move-gen with no
+	/// navigation state to trip over. <paramref name="ply"/> is clamped to the moves
+	/// available; pass <see cref="int.MaxValue"/> for the final position.
+	/// </summary>
+	public static bool TryFromPgnAtPly( string pgn, int ply, out ChessGame game )
+	{
+		game = null;
+		if ( string.IsNullOrWhiteSpace( pgn ) ) return false;
+		if ( !ChessLib.ChessBoard.TryLoadFromPgn( pgn, out var board ) || board == null ) return false;
+
+		int count = board.ExecutedMoves.Count;
+		if ( count == 0 ) return board.ToFen() is { } f0 && TryFromFen( f0, out game );
+
+		// MoveIndex is the 0-based index of the displayed move; index k shows the
+		// position after k+1 half-moves. Clamp ply into [0, count].
+		int target = ply < 0 ? 0 : ply > count ? count : ply;
+		board.MoveIndex = target - 1; // -1 = the start position (before any move)
+
+		return board.ToFen() is { } fen && TryFromFen( fen, out game );
+	}
+
+	/// <summary>Reconstruct the final position of a PGN/movetext (TV snapshots).</summary>
+	public static bool TryFromPgn( string pgn, out ChessGame game ) =>
+		TryFromPgnAtPly( pgn, int.MaxValue, out game );
+
 	// ── State reads ──
 	// The board view and HUD poll these every frame for every table, so the
 	// values the vendor recomputes/copies on each call are cached here and

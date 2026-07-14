@@ -162,7 +162,8 @@ public sealed class LocalGameController : Component, IBoardGame
 	/// hold signed-in lichess players (M4 #3) — that pair gets the "PLAY IN SBOX" panel
 	/// (quick match / head-to-head / AI) instead of a forced local game.</summary>
 	bool SuppressLocalStart =>
-		LichessBusy || ( Station?.BothSeatsLichess ?? false );
+		LichessBusy || ( Station?.BothSeatsLichess ?? false )
+		|| ( PuzzleController.For( Station )?.Active ?? false );
 
 	void HostUpdate()
 	{

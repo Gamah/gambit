@@ -395,6 +395,13 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			lichessPlay.Station = component;
 			view.LichessPlay = lichessPlay;
 
+			// Puzzles (M5): a seated player can solve lichess puzzles on this board.
+			// Client-local like the lichess play controller (nothing synced); the board
+			// view renders it via IBoardGame.
+			var puzzle = station.AddComponent<Gambit.Game.PuzzleController>();
+			puzzle.Station = component;
+			view.Puzzle = puzzle;
+
 			// Open lichess game (M4): generates a shareable Rapid 10+0 link for the
 			// side a player sits at; the game plays on lichess.org (no streaming yet).
 			// Replicates with the station GO like the others for its [Sync] URLs.

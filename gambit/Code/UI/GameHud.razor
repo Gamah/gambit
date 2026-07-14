@@ -21,6 +21,7 @@
 		var ctrl = Controller();
 		var view = View();
 		var lp = LichessPlay();
+			var pz = Puzzle();
 
 		<div class="hud">
 			<div class="title">@BoardTitle( ctrl )</div>
@@ -29,7 +30,39 @@
 				<div class="name">⬛ @( Station().BlackName ?? "—" )</div>
 			</div>
 
-			@if ( lp != null && lp.Active )
+			@if ( pz != null && pz.Active )
+			{
+				<div class="lichess">
+					<div class="lc-head">LICHESS PUZZLE@( pz.Rating > 0 ? $" · {pz.Rating}" : "" )</div>
+					<div class="status @( pz.Solved ? "turn" : pz.ShowWrong ? "wait" : "" )">@pz.StatusText</div>
+					@if ( pz.Themes != null )
+					{
+						<div class="lc-note">@pz.Themes</div>
+					}
+
+					@if ( pz.Solving )
+					{
+						<div class="button ghost" onclick="@( () => pz.Retry() )">Restart</div>
+						<div class="button ghost" onclick="@( () => pz.Reveal() )">Reveal solution</div>
+					}
+					else
+					{
+						<div class="button" onclick="@( () => pz.StartNext() )">Next puzzle</div>
+						<div class="button ghost" onclick="@( () => pz.Retry() )">Try again</div>
+						@if ( pz.PuzzleUrl != null )
+						{
+							<div class="url">@pz.PuzzleUrl</div>
+						}
+					}
+					<div class="lc-note">Solving here doesn't affect your lichess puzzle rating.</div>
+					<div class="button ghost" onclick="@( () => pz.Close() )">Leave puzzles</div>
+					@if ( pz.Error != null )
+					{
+						<div class="error">@pz.Error</div>
+					}
+				</div>
+			}
+			else if ( lp != null && lp.Active )
 			{
 				<div class="lichess">
 					@if ( lp.Challenging )
@@ -158,6 +191,16 @@
 						}
 
 						<div class="lc-note">Rapid only — no Blitz/Bullet. Or wait for someone to sit across for a local game.</div>
+
+						<div class="lc-divider">— or train —</div>
+						<div class="lc-head">PUZZLES</div>
+						<div class="lc-you">Solve lichess puzzles right here (no sign-in needed).</div>
+						<div class="button" onclick="@( () => pz?.StartDaily() )">Daily puzzle</div>
+						<div class="button ghost" onclick="@( () => pz?.StartNext() )">Random puzzle</div>
+						@if ( pz?.Error != null )
+						{
+							<div class="error">@pz.Error</div>
+						}
 					}
 				</div>
 			}
@@ -366,12 +409,14 @@
 	static LocalGameController Controller() => LocalGameController.For( ChessStation.Active );
 	static LichessGameController Lichess() => LichessGameController.For( ChessStation.Active );
 	static LichessPlayController LichessPlay() => LichessPlayController.For( ChessStation.Active );
+	static PuzzleController Puzzle() => PuzzleController.For( ChessStation.Active );
 	static ChessBoardView View() => ChessStation.Active?.Components.Get<ChessBoardView>();
 
 	static string SeatWord( ChessSeat seat ) => seat == ChessSeat.White ? "White" : "Black";
 
 	static string BoardTitle( LocalGameController ctrl ) =>
-		( LichessPlay()?.Active ?? false ) ? "LICHESS GAME"
+		( Puzzle()?.Active ?? false ) ? "PUZZLE"
+		: ( LichessPlay()?.Active ?? false ) ? "LICHESS GAME"
 		: ( Lichess()?.HasOpenGame ?? false ) ? "LICHESS LINK"
 		: ( ctrl?.HasGame ?? false ) ? "LOCAL GAME"
 		: "CHESS BOARD";
@@ -465,6 +510,9 @@
 		var ctrl = Controller();
 		var lc = Lichess();
 		var lp = LichessPlay();
+		var pz = Puzzle();
+		var puzzleHash = System.HashCode.Combine( pz?.Active, pz?.Solving, pz?.Solved, pz?.WasRevealed,
+			pz?.StatusText, pz?.Game?.Fen, pz?.ShowWrong, pz?.Error );
 		var lichessHash = System.HashCode.Combine(
 			System.HashCode.Combine( lc?.HasOpenGame, lc?.UrlWhite, lc?.Creating, lc?.Error, lc?.SinceCopied < 2f, _joinError ),
 			System.HashCode.Combine( lp?.Active, lp?.Playing, lp?.Challenging, lp?.IsMyTurn, lp?.Game?.Fen,
@@ -475,6 +523,7 @@
 			Visible(), ctrl?.GameId, ctrl?.Game?.MoveCount, ctrl?.GameOver, lichessHash,
 			System.HashCode.Combine( ctrl?.Importing, ctrl?.LichessUrl, ctrl?.ImportError,
 				ctrl?.SinceUrlCopied < 2f, ctrl?.IsMyTurn, View()?.PendingPromotion != null,
-				LobbyPlayer.Local?.LeaveArmed, BothSeated() ) );
+				LobbyPlayer.Local?.LeaveArmed, BothSeated() ),
+			puzzleHash );
 	}
 }

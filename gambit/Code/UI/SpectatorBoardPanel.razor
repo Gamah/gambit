@@ -1,0 +1,185 @@
+@using System
+@using Sandbox
+@using Sandbox.UI
+@using Gambit.Game
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	The giant spectator board on the west wall (PLAN.md M5). Display-only WorldPanel —
+	no pointer input (the channel picker is the separate engaged SpectatorScreen). Renders
+	the SpectatorController's current FEN as a 2D Unicode-glyph board, plus the two player
+	names and a status line. Fixed px sizing (deriving from Box.Rect on a WorldPanel
+	doesn't work — CLAUDE.md); the WorldPanel GO scale sets the world size.
+*@
+
+<root>
+	@{
+		var c = SpectatorController.Instance;
+	}
+	<div class="frame">
+		<div class="head">@( c?.ChannelLabel ?? "SPECTATE" )</div>
+
+		<div class="names">
+			<div class="pname">♔ @( c?.WhiteName ?? "White" )</div>
+			<div class="pname">♚ @( c?.BlackName ?? "Black" )</div>
+		</div>
+
+		<div class="board">
+			@{
+				var squares = Placement( c?.Fen );
+				(int fromSq, int toSq) = LastMove( c?.LastMoveUci );
+			}
+			@for ( int r = 7; r >= 0; r-- )
+			{
+				<div class="rankrow">
+					@for ( int f = 0; f < 8; f++ )
+					{
+						int sq = r * 8 + f;
+						bool light = ( ( f + r ) & 1 ) == 1;
+						bool moved = sq == fromSq || sq == toSq;
+						char pc = squares[sq];
+						<div class="cell @( light ? "light" : "dark" ) @( moved ? "moved" : "" )">
+							@if ( pc != '\0' )
+							{
+								<div class="glyph @( char.IsUpper( pc ) ? "w" : "b" )">@Glyph( pc )</div>
+							}
+						</div>
+					}
+				</div>
+			}
+		</div>
+
+		@if ( !string.IsNullOrEmpty( c?.StatusText ) )
+		{
+			<div class="status">@c.StatusText</div>
+		}
+	</div>
+</root>
+
+<style>
+	root {
+		width: 720px;
+		height: 820px;
+		justify-content: center;
+		align-items: center;
+		font-family: "Segoe UI", "DejaVu Sans", sans-serif;
+	}
+
+	.frame {
+		flex-direction: column;
+		align-items: center;
+		width: 700px;
+		padding: 16px;
+		gap: 8px;
+		background-color: rgba(8, 8, 12, 0.92);
+		border-radius: 14px;
+		border: 2px solid rgba(255, 255, 255, 0.10);
+	}
+
+	.head {
+		font-size: 24px;
+		letter-spacing: 4px;
+		font-weight: bold;
+		color: rgba(255, 255, 255, 0.7);
+	}
+
+	.names {
+		flex-direction: row;
+		justify-content: space-between;
+		width: 576px;
+	}
+	.pname { font-size: 20px; color: rgba(255, 255, 255, 0.85); }
+
+	.board {
+		flex-direction: column;
+		width: 576px;
+		height: 576px;
+		border: 3px solid rgba(0, 0, 0, 0.8);
+	}
+	.rankrow { flex-direction: row; height: 72px; }
+
+	.cell {
+		width: 72px;
+		height: 72px;
+		justify-content: center;
+		align-items: center;
+	}
+	.cell.light { background-color: #d9d9dc; }
+	.cell.dark { background-color: #171717; }
+	.cell.moved.light { background-color: #b6c46a; }
+	.cell.moved.dark { background-color: #6f7a2f; }
+
+	.glyph {
+		font-size: 58px;
+		text-align: center;
+	}
+	/* Solid glyphs for both sides, coloured by side with a contrasting shadow so a
+	   piece reads on either square colour. */
+	.glyph.w { color: #f5f5f7; text-shadow: 0px 0px 4px rgba(0, 0, 0, 0.95); }
+	.glyph.b { color: #101014; text-shadow: 0px 0px 4px rgba(255, 255, 255, 0.55); }
+
+	.status {
+		font-size: 17px;
+		color: rgba(255, 255, 255, 0.5);
+		text-align: center;
+		width: 576px;
+	}
+</style>
+
+@code
+{
+	const string StartPlacement = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+
+	/// <summary>FEN placement field → 64 chars indexed rank*8+file ('\0' = empty).</summary>
+	static char[] Placement( string fen )
+	{
+		string placement = string.IsNullOrEmpty( fen ) ? StartPlacement
+			: fen.IndexOf( ' ' ) is var s && s > 0 ? fen[..s] : fen;
+
+		var squares = new char[64];
+		int rank = 7, file = 0;
+		foreach ( var ch in placement )
+		{
+			if ( ch == '/' ) { rank--; file = 0; }
+			else if ( char.IsDigit( ch ) ) file += ch - '0';
+			else if ( file < 8 && rank >= 0 )
+				squares[rank * 8 + file++] = ch;
+		}
+		return squares;
+	}
+
+	static (int from, int to) LastMove( string uci )
+	{
+		if ( uci is not { Length: >= 4 } ) return (-1, -1);
+		int from = Square( uci[0], uci[1] );
+		int to = Square( uci[2], uci[3] );
+		return (from, to);
+	}
+
+	static int Square( char file, char rank )
+	{
+		if ( file is < 'a' or > 'h' || rank is < '1' or > '8' ) return -1;
+		return ( rank - '1' ) * 8 + ( file - 'a' );
+	}
+
+	/// <summary>Filled Unicode chess glyph for a FEN char (same solid shape for both
+	/// colours — the CSS colour + shadow distinguishes side and keeps contrast).</summary>
+	static string Glyph( char fenChar ) => char.ToLowerInvariant( fenChar ) switch
+	{
+		'k' => "♚",
+		'q' => "♛",
+		'r' => "♜",
+		'b' => "♝",
+		'n' => "♞",
+		'p' => "♟",
+		_ => "",
+	};
+
+	protected override int BuildHash()
+	{
+		var c = SpectatorController.Instance;
+		return System.HashCode.Combine( c?.Fen, c?.LastMoveUci, c?.WhiteName, c?.BlackName,
+			c?.ChannelLabel, c?.StatusText );
+	}
+}
