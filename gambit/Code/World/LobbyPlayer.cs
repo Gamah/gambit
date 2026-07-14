@@ -192,11 +192,10 @@ public sealed class LobbyPlayer : Component
 			Respawn();
 
 		// Publish the display name for everyone's name tags; it can appear or change
-		// at any time. Load() is cached. A signed-in lichess account name wins over
-		// the free-form anonymous name (PLAN.md M3).
+		// at any time. Load() is cached. DisplayName is the single source of truth — the
+		// signed-in lichess account name, else the free-form anonymous name (PLAN.md M3).
 		var data = Gambit.Game.PlayerData.Load();
-		var uname = !string.IsNullOrEmpty( data?.LichessUsername ) ? data.LichessUsername
-			: ( data?.Username ?? "" );
+		var uname = data?.DisplayName() ?? "";
 		if ( GambitName != uname ) GambitName = uname;
 
 		var rating = ( !string.IsNullOrEmpty( data?.LichessUsername ) && data.LichessRating > 0 )

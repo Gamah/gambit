@@ -307,6 +307,77 @@ public sealed class LichessPlayController : Component, IBoardGame
 		_sincePoll = 999f; // start polling promptly
 	}
 
+	/// <summary>Head-to-head (M4 #3): challenge the signed-in lichess player sitting on
+	/// the other side of this board to a real lichess game. Same as
+	/// <see cref="ChallengeUser"/>, but the opponent's username comes from the opposite
+	/// seat's synced lichess name and — so neither player has to leave sbox — we tell
+	/// their client to auto-accept this exact challenge. Colours follow the seats (we
+	/// challenge with our own side; lichess gives the opponent the other, which is the
+	/// seat they're on).</summary>
+	public async void ChallengeSeatedOpponent()
+	{
+		if ( !CanStart( out var seat ) ) return;
+
+		var oppSeat = seat == ChessSeat.White ? ChessSeat.Black : ChessSeat.White;
+		var opp = Station?.SeatLichessName( oppSeat );
+		if ( string.IsNullOrEmpty( opp ) )
+		{
+			_error = "The player across isn't signed in to lichess.";
+			return;
+		}
+
+		BeginChallenge( seat, expectOpponent: opp, ai: false );
+		StatusText = $"Challenging {opp}…";
+
+		var res = await LichessApi.ChallengeUser( opp, ColorWord( seat ), 600, 0, LichessAuth.Token );
+		if ( !res.Ok ) { FailStart( res ); return; }
+
+		_challengeId = LichessApi.Deserialize<LichessChallenge>( res.Body )?.id;
+		StatusText = $"Waiting for {opp} to accept…";
+
+		// Ask the seated opponent's client to accept this specific challenge. Broadcast
+		// straight from here (the same client→all pattern as NetChessMove) — lichess only
+		// lets them accept a challenge it actually sent them, so it's self-verifying.
+		if ( !string.IsNullOrEmpty( _challengeId ) )
+			NetAskAccept( _challengeId, (int)oppSeat, LichessAuth.Username ?? "" );
+
+		_sincePoll = 999f;
+	}
+
+	/// <summary>Challenger → everyone: the player seated at <paramref name="targetSeat"/>
+	/// of this board should accept challenge <paramref name="challengeId"/>. Reaches all
+	/// clients; only the one whose local player holds that seat (signed in and idle) acts —
+	/// everyone else, including the challenger, no-ops.</summary>
+	[Rpc.Broadcast]
+	void NetAskAccept( string challengeId, int targetSeat, string challengerName )
+	{
+		if ( string.IsNullOrEmpty( challengeId ) ) return;
+		var seat = (ChessSeat)targetSeat;
+		if ( LocalSeatNow != seat ) return;      // not the challenged seat on this client
+		if ( !LichessAuth.SignedIn ) return;     // can't play a Board-API game without a token
+		if ( _phase != PlayPhase.Idle ) return;  // already busy with something else
+		AutoAccept( challengeId, seat, challengerName );
+	}
+
+	/// <summary>Accept a head-to-head challenge aimed at our seat and fall into the normal
+	/// poll-driven play loop (matched by the challenger's username, like
+	/// <see cref="ChallengeUser"/>).</summary>
+	async void AutoAccept( string challengeId, ChessSeat seat, string challenger )
+	{
+		bool hasName = !string.IsNullOrEmpty( challenger );
+		BeginChallenge( seat, expectOpponent: hasName ? challenger : null, ai: false );
+		_challengeId = challengeId;
+		StatusText = hasName ? $"Accepting {challenger}'s challenge…" : "Accepting the challenge…";
+
+		var res = await LichessApi.AcceptChallenge( challengeId, null, LichessAuth.Token );
+		if ( !res.Ok )
+			// Non-fatal: if it hasn't landed yet the poll still adopts the game by opponent
+			// name once it goes live, and standing up clears a stuck Challenging state.
+			Log.Warning( $"[Gambit] head-to-head auto-accept failed ({res.Status}): {LichessApi.Truncate( res.Body, 160 )}" );
+
+		_sincePoll = 999f; // poll picks up the now-live game
+	}
+
 	/// <summary>Challenge Stockfish (level 1–8) — starts immediately, so we get the
 	/// game id straight back. Zero-setup way to exercise the play loop.</summary>
 	public async void ChallengeAi( int level )

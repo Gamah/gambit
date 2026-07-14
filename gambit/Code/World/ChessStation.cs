@@ -42,6 +42,14 @@ public sealed class ChessStation : Component
 	[Sync( SyncFlags.FromHost )] public ulong BlackSteamId { get; set; }
 	[Sync( SyncFlags.FromHost )] public string BlackName { get; set; }
 
+	/// <summary>Lichess username of the player in each seat, or null/empty when that
+	/// seat's player isn't signed in to lichess. Public info (like the name tag rating),
+	/// so it's safe to sync — the token never is (D3). Head-to-head play (M4 #3) reads
+	/// the opposite seat's name to challenge them, and the host reads both to know a
+	/// two-signed-in pair should get the lichess panel instead of a local game.</summary>
+	[Sync( SyncFlags.FromHost )] public string WhiteLichessName { get; set; }
+	[Sync( SyncFlags.FromHost )] public string BlackLichessName { get; set; }
+
 	public bool SeatTaken( ChessSeat seat ) =>
 		SeatSteamId( seat ) != 0 || ( Active == this && ActiveSeat == seat );
 
@@ -53,6 +61,16 @@ public sealed class ChessStation : Component
 
 	public string SeatName( ChessSeat seat ) =>
 		seat == ChessSeat.White ? WhiteName : BlackName;
+
+	/// <summary>The lichess username of whoever holds this seat, or null/empty if that
+	/// player isn't signed in to lichess.</summary>
+	public string SeatLichessName( ChessSeat seat ) =>
+		seat == ChessSeat.White ? WhiteLichessName : BlackLichessName;
+
+	/// <summary>Both seats are held by signed-in lichess players — the pair can play a
+	/// real lichess game head-to-head (M4 #3), so the local two-seat match steps aside.</summary>
+	public bool BothSeatsLichess =>
+		!string.IsNullOrEmpty( WhiteLichessName ) && !string.IsNullOrEmpty( BlackLichessName );
 
 	public GameObject SeatAnchor( ChessSeat seat ) =>
 		seat == ChessSeat.White ? WhiteAnchor : BlackAnchor;
@@ -79,7 +97,9 @@ public sealed class ChessStation : Component
 		Active = this;
 		ActiveSeat = seat;
 		// Fully qualified — "Game" alone can resolve to Sandbox.Game under `using Sandbox`
-		RequestEnter( (int)seat, Gambit.Game.PlayerData.Load()?.Username );
+		// DisplayName is the lichess account name once signed in, else the anon name — so
+		// the seat label never shows a stale test name after auth.
+		RequestEnter( (int)seat, Gambit.Game.PlayerData.Load()?.DisplayName(), Gambit.Api.LichessAuth.Username );
 	}
 
 	public void Leave()
@@ -111,7 +131,7 @@ public sealed class ChessStation : Component
 	}
 
 	[Rpc.Host]
-	void RequestEnter( int seatIndex, string name )
+	void RequestEnter( int seatIndex, string name, string lichessName )
 	{
 		var seat = (ChessSeat)seatIndex;
 		// First request wins; lets the current occupant refresh their own info
@@ -122,7 +142,7 @@ public sealed class ChessStation : Component
 		if ( other == Rpc.Caller.SteamId ) return;
 
 		SetSeat( seat, Rpc.Caller.SteamId,
-			string.IsNullOrEmpty( name ) ? Rpc.Caller.DisplayName : name );
+			string.IsNullOrEmpty( name ) ? Rpc.Caller.DisplayName : name, lichessName );
 	}
 
 	[Rpc.Host]
@@ -130,27 +150,29 @@ public sealed class ChessStation : Component
 	{
 		var seat = (ChessSeat)seatIndex;
 		if ( SeatSteamId( seat ) != Rpc.Caller.SteamId ) return;
-		SetSeat( seat, 0, null );
+		SetSeat( seat, 0, null, null );
 	}
 
 	/// <summary>Host-side: free any seat the disconnecting player occupied.</summary>
 	internal void HostHandleDisconnect( ulong steamId )
 	{
-		if ( WhiteSteamId == steamId ) SetSeat( ChessSeat.White, 0, null );
-		if ( BlackSteamId == steamId ) SetSeat( ChessSeat.Black, 0, null );
+		if ( WhiteSteamId == steamId ) SetSeat( ChessSeat.White, 0, null, null );
+		if ( BlackSteamId == steamId ) SetSeat( ChessSeat.Black, 0, null, null );
 	}
 
-	void SetSeat( ChessSeat seat, ulong steamId, string name )
+	void SetSeat( ChessSeat seat, ulong steamId, string name, string lichessName )
 	{
 		if ( seat == ChessSeat.White )
 		{
 			WhiteSteamId = steamId;
 			WhiteName = name;
+			WhiteLichessName = lichessName;
 		}
 		else
 		{
 			BlackSteamId = steamId;
 			BlackName = name;
+			BlackLichessName = lichessName;
 		}
 	}
 

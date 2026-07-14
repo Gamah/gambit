@@ -159,6 +159,18 @@ public static class LichessSpikes
 		pc.ChallengeUser( username );
 	}
 
+	/// <summary>Head-to-head (#3): challenge the signed-in lichess player sitting across
+	/// this board — their client auto-accepts, so neither of you leaves sbox. Both must be
+	/// signed in and seated on opposite sides; the guaranteed-working twin of the HUD's
+	/// "Play … (head-to-head)" button.</summary>
+	[ConCmd( "gambit_challenge_seated" )]
+	public static void ChallengeSeated()
+	{
+		var pc = Gambit.Game.LichessPlayController.For( Gambit.World.ChessStation.Active );
+		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first (across a signed-in player), then: gambit_challenge_seated" ); return; }
+		pc.ChallengeSeatedOpponent();
+	}
+
 	/// <summary>Play Stockfish (level 1–8, default 3) on the board you're seated at —
 	/// zero-setup way to test the play loop.</summary>
 	[ConCmd( "gambit_challenge_ai" )]

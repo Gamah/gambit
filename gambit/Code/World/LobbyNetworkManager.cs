@@ -137,6 +137,16 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 		}
 	}
 
+	// The host's own avatar must NOT be network-spawned inside its own OnActive: that
+	// fires during Networking.CreateLobby, before the snapshot system is ready to include
+	// the object, so late joiners never receive it (they see every other player but the
+	// host). Deferred to the first OnUpdate once networking is active — by then we're off
+	// the CreateLobby call stack and the host avatar lands in the join snapshot like
+	// everything else. Joiner avatars come from genuinely-remote OnActive calls that are
+	// already past bring-up, so they spawn inline.
+	bool _hostSpawnPending;
+	Connection _hostSpawnConnection;
+
 	/// <summary>Called on the host when a connection finishes joining (including the local player).</summary>
 	public void OnActive( Connection connection )
 	{
@@ -150,6 +160,38 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 			Log.Warning( "[Gambit] LobbyNetworkManager has no PlayerTemplate — nobody can spawn" );
 			return;
 		}
+
+		// The host's own connection activates during lobby creation — defer it (see note
+		// above). Everyone else spawns right here.
+		if ( connection == Connection.Local )
+		{
+			_hostSpawnConnection = connection;
+			_hostSpawnPending = true;
+			return;
+		}
+
+		SpawnPlayer( connection );
+	}
+
+	protected override void OnUpdate()
+	{
+		// Flush the deferred host spawn on the first frame after lobby creation — by now
+		// we're off the CreateLobby call stack, so the host avatar network-spawns into the
+		// snapshot late joiners receive. Guarded on IsHost since only the host defers here.
+		if ( _hostSpawnPending && Networking.IsHost )
+		{
+			_hostSpawnPending = false;
+			var conn = _hostSpawnConnection;
+			_hostSpawnConnection = null;
+			SpawnPlayer( conn );
+		}
+	}
+
+	/// <summary>Clone the PlayerTemplate for a connection and network-spawn it owned by
+	/// that connection. Shared by the inline joiner path and the deferred host path.</summary>
+	void SpawnPlayer( Connection connection )
+	{
+		if ( connection == null || PlayerTemplate == null ) return;
 
 		// Fan spawns out along Y so simultaneous joins don't overlap: 0, +1, -1, +2, -2…
 		int slot = ( _spawnCount + 1 ) / 2 * ( _spawnCount % 2 == 0 ? 1 : -1 );
