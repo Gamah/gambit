@@ -7,7 +7,7 @@ namespace Gambit.World;
 /// SpectatorBoard rewrite; mirrors rotaliate-client's floating SpectatorBoard) and
 /// fronts it with a walk-up control board (SpectatorInfoPanel) at eye height that carries
 /// the SpectatorStation engage target ("Press E to spectate") and opens the interactive
-/// channel picker. The big board is a display-only WorldPanel (SpectatorBoardPanel) driven
+/// channel picker. The big board is a display-only 3D chess set (SpectatorBoard3D) driven
 /// by a single
 /// <see cref="Gambit.Game.SpectatorController"/> living on this wall — it mirrors a live
 /// sbox game, streams lichess TV (polled), or watches a game by id.
@@ -15,8 +15,8 @@ namespace Gambit.World;
 /// The board <b>floats above the wall top</b>, centred on the wall's width and facing
 /// back into the room, sized to read from across the lobby — not flat against the wall.
 /// Its bottom edge always clears the wall top by <see cref="ClearAboveWall"/> regardless
-/// of <see cref="BoardScale"/> (the vertical centre is wall-top + clearance + half the
-/// board's world height, and the half-height tracks the scale).
+/// of <see cref="BoardCellSize"/> (the vertical centre is wall-top + clearance + half the
+/// board's world height, which tracks the cell size).
 ///
 /// Same editor-preview + wall-dimension-watch pattern as InfoWall/SettingsWall:
 /// OnEnabled/OnValidate rebuild NotSaved GOs; OnUpdate rebuilds on a room resize.
@@ -25,28 +25,25 @@ namespace Gambit.World;
 /// </summary>
 public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 {
-	/// <summary>Intrinsic pixel size of SpectatorBoardPanel's &lt;root&gt; — the WorldPanel's
-	/// PanelSize is pinned to this so the 720×820 board isn't clipped to the 512-px default
-	/// (which cropped the board's lower ranks + status line and read as "squished").</summary>
-	const float PanelPxWidth = 720f;
-	const float PanelPxHeight = 820f;
-
 	/// <summary>Intrinsic pixel size of SpectatorInfoPanel's &lt;root&gt; — the walk-up
 	/// control board at eye height. Landscape so it reads as a sign, not a big square.</summary>
 	const float InfoPxWidth = 560f;
 	const float InfoPxHeight = 300f;
 
-	/// <summary>WorldPanel px→world-unit factor (Sandbox ScreenToWorldScale) — a panel of P
-	/// px renders P × scale × this many world units wide.</summary>
-	const float PxToWorld = 0.05f;
-
-	/// <summary>World units the board plane sits in front of the wall's inner face
+	/// <summary>World units the board sits in front of the wall's inner face
 	/// (RoomSize / 2), toward the room.</summary>
 	[Property] public float WallInset { get; set; } = 4f;
 
-	/// <summary>Uniform scale multiplier on the floating board WorldPanel — it floats high
-	/// above the wall and must read from across the whole room, so it's large.</summary>
-	[Property] public float BoardScale { get; set; } = 7.5f;
+	/// <summary>World-unit edge length of one board square. The 3D board is 8× this wide; it
+	/// floats high above the wall and must read from across the room, so it's large.
+	/// SpectatorBoard3D is sized directly to this and its GO is left <b>unscaled</b>, so the
+	/// board light's world-unit radius needs no transform-scale compensation.</summary>
+	[Property] public float BoardCellSize { get; set; } = 28f;
+
+	/// <summary>Degrees the board leans back from vertical (top toward the wall) so pieces,
+	/// standing out of the near-vertical face, cast shadows across it under the board light.
+	/// Tuned in-editor; flip the sign if the face ends up angled the wrong way.</summary>
+	[Property] public float TiltDegrees { get; set; } = 7f;
 
 	/// <summary>Uniform scale multiplier on the walk-up control board.</summary>
 	[Property] public float InfoBoardScale { get; set; } = 4.5f;
@@ -105,23 +102,31 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		// display panel and the engaged screen find it via SpectatorController.Instance.
 		_root.AddComponent<Gambit.Game.SpectatorController>();
 
-		// Floating display board: panel plane is local width/height, centred on the wall
-		// width and hovering just above the wall top so the whole lobby can watch one game
-		// from across the room. Its bottom edge clears the wall top by ClearAboveWall — the
-		// world half-height scales with BoardScale, so that gap holds at any size.
-		float halfHeight = PanelPxHeight * BoardScale * PxToWorld * 0.5f;
-		float boardZ = WallHeight + ClearAboveWall + halfHeight;
+		// Floating display board: a real 3D chess set (SpectatorBoard3D), centred on the wall
+		// width and hovering just above the wall top so the whole lobby can watch one game from
+		// across the room. SpectatorBoard3D builds the board FLAT (surface normal = local +Z,
+		// pieces standing up in +Z); we stand it up here and lean it back so the pieces throw
+		// shadows across the face:
+		//   • rotate +90° about the wall-horizontal axis (+X) → the flat +Z normal swings to
+		//     -Y (into the room) and the board's rank axis (+Y) swings to +Z (world up), so
+		//     rank 1 lands at the bottom and the a-file on the viewer's left (White bottom-left);
+		//   • take TiltDegrees off that angle so the top leans back toward the wall.
+		// Its bottom edge clears the wall top by ClearAboveWall (the board's world half-height
+		// is just half its edge length, since it's built at world size and left unscaled).
+		float boardSize = BoardCellSize * 8f;
+		float boardZ = WallHeight + ClearAboveWall + boardSize * 0.5f;
 
 		var board = new GameObject( true, "SpectatorBoard" );
+		board.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
 		board.Parent = _root;
 		board.LocalPosition = new Vector3( centreX, wallY, boardZ );
-		board.LocalRotation = facing;
-		board.LocalScale = new Vector3( 1f, 1f, 1f ) * BoardScale;
-		// Pin PanelSize to the panel's intrinsic px so the full board (not just its top-left
-		// 512 px) renders — the default 512 clipped the lower ranks and the status line.
-		var panel = board.AddComponent<WorldPanel>();
-		panel.PanelSize = new Vector2( PanelPxWidth, PanelPxHeight );
-		board.AddComponent<Gambit.UI.SpectatorBoardPanel>();
+		board.LocalRotation = Rotation.FromAxis( Vector3.Forward, 90f - TiltDegrees );
+		// Add disabled so we can set the size before it builds (OnEnabled), then enable — a
+		// [Property] set from code doesn't re-run OnValidate, so building at the final size in
+		// one pass beats building at the default and rebuilding.
+		var board3d = board.AddComponent<Gambit.World.SpectatorBoard3D>( false );
+		board3d.CellSize = BoardCellSize;
+		board3d.Enabled = true;
 
 		// Walk-up control board at eye height, directly under the floating board: shows the
 		// current source and invites "Press E to spectate". It carries the engage station so

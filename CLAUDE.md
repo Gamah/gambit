@@ -18,7 +18,7 @@ next, local validate, retry/reveal, "doesn't affect your rating"), a west-wall
 **spectator board** (`SpectatorWall`/`SpectatorStation`/`SpectatorController`,
 self-healed by LobbyRoom) that mirrors a live sbox table (M4 relay, real-time) or
 polls **lichess TV / a game by id** (channels JSON + PGN-export → FEN, coarse
-latency), rendered as a 2D Unicode grid (`SpectatorBoardPanel`) with a channel
+latency), rendered as a real 3D board (`SpectatorBoard3D` — ChessSetBuilder meshes + a raking light for shadows) with a channel
 picker (`SpectatorScreen`). M6: **floor glyph pops** (D6 — CC0 glyph atlas via
 `scripts/gen_glyph_atlas.py`, `floor_checker.shader` rewritten to blend piece
 glyphs opposite the square colour — **needs in-editor shader iteration**), lichess/
