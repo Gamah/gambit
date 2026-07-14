@@ -17,7 +17,9 @@
 
 <root>
 	<div class="board" style="background-color:@WallTheme.Bg; border:2px solid @WallTheme.Border;">
-		<div class="title" style="color:@WallTheme.Text;">♟ SPECTATOR</div>
+		@* King glyph, not a pawn: s&box renders the pawn codepoint (U+265F) as a colour
+		   emoji; the other pieces are plain monochrome text. *@
+		<div class="title" style="color:@WallTheme.Text;">♚ SPECTATOR</div>
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 		<div class="line" style="color:@WallTheme.AccentCss;">@Source()</div>
 		<div class="sub" style="color:@WallTheme.TextDim;">@Detail()</div>

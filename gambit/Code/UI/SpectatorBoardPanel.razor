@@ -42,7 +42,7 @@
 						<div class="cell @( light ? "light" : "dark" ) @( moved ? "moved" : "" )">
 							@if ( pc != '\0' )
 							{
-								<div class="glyph @( char.IsUpper( pc ) ? "w" : "b" )">@Glyph( pc )</div>
+								<div class="piece @( char.IsUpper( pc ) ? "w" : "b" )" style="background-position:@( PieceIndex( pc ) * 20 )% 0%;"></div>
 							}
 						</div>
 					}
@@ -104,8 +104,6 @@
 		height: 72px;
 		justify-content: center;
 		align-items: center;
-		/* Solid chess glyphs overrun their em box; clip so a piece can't spill into the
-		   rank above/below (which read as a doubled/oversized mess). */
 		overflow: hidden;
 	}
 	.cell.light { background-color: #ededed; }
@@ -113,24 +111,28 @@
 	.cell.moved.light { background-color: #c7d16a; }
 	.cell.moved.dark { background-color: #6f7a2f; }
 
-	/* Fixed to the cell so the glyph centres and its overflow is clipped by the cell. */
-	.glyph {
+	/* Pieces are drawn from our own monochrome CC0 glyph atlas (the same
+	   Assets/textures/chess_glyphs.png the floor pops use), NOT the Unicode chess
+	   characters — s&box renders the pawn codepoint (U+265F) as a colour EMOJI (it came
+	   out purple regardless of `color`), while the atlas is a plain white silhouette we
+	   tint per side. 6 cells wide (King Queen Rook Bishop Knight Pawn); background-position
+	   selects the piece (set inline). */
+	.piece {
 		width: 72px;
 		height: 72px;
-		font-size: 52px;
-		line-height: 72px;
-		text-align: center;
+		background-image: url( "textures/chess_glyphs.png" );
+		background-repeat: no-repeat;
+		background-size: 600% 100%;
 	}
-	/* Solid glyphs for both sides, driven to pure white / pure black with a hard
-	   opposite-colour outline (offset shadows) so a piece reads on either square colour —
-	   and stays legible under the lobby's coloured night light, which tints everything. */
-	.glyph.w {
-		color: #ffffff;
-		text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 0 3px rgba(0, 0, 0, 0.9);
+	/* Tint the white silhouette to the side colour and outline it in the opposite colour
+	   (drop-shadow follows the alpha shape) so a piece reads on either square colour. */
+	.piece.w {
+		background-image-tint: #ffffff;
+		filter: drop-shadow( 0px 0px 2px #000 ) drop-shadow( 0px 0px 1px #000 );
 	}
-	.glyph.b {
-		color: #050505;
-		text-shadow: -2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff, 2px 2px 0 #fff, 0 0 3px rgba(255, 255, 255, 0.85);
+	.piece.b {
+		background-image-tint: #0b0b0b;
+		filter: drop-shadow( 0px 0px 2px #fff ) drop-shadow( 0px 0px 1px #fff );
 	}
 
 	.status {
@@ -177,17 +179,18 @@
 		return ( rank - '1' ) * 8 + ( file - 'a' );
 	}
 
-	/// <summary>Filled Unicode chess glyph for a FEN char (same solid shape for both
-	/// colours — the CSS colour + shadow distinguishes side and keeps contrast).</summary>
-	static string Glyph( char fenChar ) => char.ToLowerInvariant( fenChar ) switch
+	/// <summary>0-based cell index into chess_glyphs.png for a FEN char, matching the atlas
+	/// order (King Queen Rook Bishop Knight Pawn — see scripts/gen_glyph_atlas.py). Drives
+	/// the piece div's background-position; the side (upper/lower case) drives the tint.</summary>
+	static int PieceIndex( char fenChar ) => char.ToLowerInvariant( fenChar ) switch
 	{
-		'k' => "♚",
-		'q' => "♛",
-		'r' => "♜",
-		'b' => "♝",
-		'n' => "♞",
-		'p' => "♟",
-		_ => "",
+		'k' => 0,
+		'q' => 1,
+		'r' => 2,
+		'b' => 3,
+		'n' => 4,
+		'p' => 5,
+		_ => 0,
 	};
 
 	protected override int BuildHash()
