@@ -141,16 +141,28 @@ public sealed class PuzzleController : Component, IBoardGame
 	// ── Starting ──
 
 	/// <summary>Load the daily puzzle (same for everyone, no auth).</summary>
-	public void StartDaily() => Load( LichessApi.GetPuzzleDaily() );
+	public void StartDaily() => Load( () => LichessApi.GetPuzzleDaily() );
 
-	/// <summary>Load the next puzzle. Called <b>unauthenticated</b> on purpose: our
-	/// sign-in token carries board:play/challenge scopes but not puzzle:read, and lichess
-	/// 403s a token that lacks the scope an endpoint would use — even here where auth is
-	/// optional. We can't submit solves anyway, so the token bought nothing but a 403.</summary>
-	public void StartNext() =>
-		Load( LichessApi.GetPuzzleNext() );
+	/// <summary>Load the next puzzle. When signed in we send the token so lichess picks a
+	/// puzzle matched to your rating (needs the puzzle:read scope) — but a token without
+	/// that scope 403s, so we fall back to an unauthenticated random puzzle. Note: there is
+	/// NO lichess API to submit a solve, so solving never changes your puzzle rating either
+	/// way — puzzle:read only affects which puzzle you're handed.</summary>
+	public void StartNext() => Load( NextRequest );
 
-	async void Load( System.Threading.Tasks.Task<LichessApi.Result> request )
+	async System.Threading.Tasks.Task<LichessApi.Result> NextRequest()
+	{
+		if ( LichessAuth.SignedIn )
+		{
+			var res = await LichessApi.GetPuzzleNext( LichessAuth.Token ); // rating-matched
+			if ( res.Ok || res.Status != 403 ) return res;
+			// 403 = the token lacks puzzle:read → fall back to a public random puzzle.
+			Log.Info( "[Gambit] token has no puzzle:read scope — serving a random puzzle. Re-create the token to get rating-matched puzzles." );
+		}
+		return await LichessApi.GetPuzzleNext(); // unauthenticated random
+	}
+
+	async void Load( System.Func<System.Threading.Tasks.Task<LichessApi.Result>> request )
 	{
 		if ( _loading ) return;
 		if ( LocalSeatNow is null ) { Error = "Sit at a board first."; return; }
@@ -162,7 +174,7 @@ public sealed class PuzzleController : Component, IBoardGame
 
 		try
 		{
-			var res = await request;
+			var res = await request();
 			if ( !res.Ok ) { Fail( res.Error ?? "Couldn't fetch a puzzle." ); return; }
 
 			var p = LichessApi.Deserialize<LichessPuzzleResponse>( res.Body );

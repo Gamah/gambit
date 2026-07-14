@@ -300,10 +300,11 @@ public static class LichessApi
 	public static Task<Result> GetPuzzleDaily() =>
 		Send( Base + "/api/puzzle/daily", "GET", null, null );
 
-	/// <summary>The next puzzle. Call it <b>unauthenticated</b> (public random puzzle):
-	/// lichess 403s a token that lacks <c>puzzle:read</c>, and our sign-in token doesn't
-	/// carry that scope. Personalisation (rating-matched/no-repeats) isn't worth a 403,
-	/// and we can't submit solves regardless — so leave <paramref name="token"/> null.</summary>
+	/// <summary>The next puzzle. With a <paramref name="token"/> that has the
+	/// <c>puzzle:read</c> scope, lichess picks one matched to your rating (no repeats);
+	/// a token lacking that scope 403s, so the caller falls back to calling this with a
+	/// null token for a public random puzzle. Either way there is NO endpoint to submit a
+	/// solve, so solving never changes your lichess puzzle rating.</summary>
 	public static Task<Result> GetPuzzleNext( string token = null ) =>
 		Send( Base + "/api/puzzle/next", "GET", null, token );
 

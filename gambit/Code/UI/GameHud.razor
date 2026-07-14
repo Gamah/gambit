@@ -54,7 +54,7 @@
 							<div class="url">@pz.PuzzleUrl</div>
 						}
 					}
-					<div class="lc-note">Solving here doesn't affect your lichess puzzle rating.</div>
+					<div class="lc-note">Rating-matched when signed in — but lichess has no API to submit a solve, so this never changes your puzzle rating.</div>
 					<div class="button ghost" onclick="@( () => pz.Close() )">Leave puzzles</div>
 					@if ( pz.Error != null )
 					{
@@ -205,7 +205,7 @@
 
 						<div class="lc-divider">— or train —</div>
 						<div class="lc-head">PUZZLES</div>
-						<div class="lc-you">Solve lichess puzzles right here (no sign-in needed).</div>
+						<div class="lc-you">Solve lichess puzzles right here — signed in gives puzzles at your rating.</div>
 						<div class="button" onclick="@( () => pz?.StartDaily() )">Daily puzzle</div>
 						<div class="button ghost" onclick="@( () => pz?.StartNext() )">Random puzzle</div>
 						@if ( pz?.Error != null )

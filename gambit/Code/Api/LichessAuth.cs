@@ -29,7 +29,7 @@ public static class LichessAuth
 	/// the user, but the whole page is prepared once they paste the URL.</summary>
 	public const string TokenCreateUrl =
 		"https://lichess.org/account/oauth/token/create" +
-		"?scopes[]=board:play&scopes[]=challenge:read&scopes[]=challenge:write" +
+		"?scopes[]=board:play&scopes[]=challenge:read&scopes[]=challenge:write&scopes[]=puzzle:read" +
 		"&description=Terry's+Gambit";
 
 	/// <summary>Is there a stored lichess token right now?</summary>
