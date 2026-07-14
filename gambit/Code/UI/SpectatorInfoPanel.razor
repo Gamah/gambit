@@ -17,9 +17,9 @@
 
 <root>
 	<div class="board" style="background-color:@WallTheme.Bg; border:2px solid @WallTheme.Border;">
-		@* King glyph, not a pawn: s&box renders the pawn codepoint (U+265F) as a colour
-		   emoji; the other pieces are plain monochrome text. *@
-		<div class="title" style="color:@WallTheme.Text;">♚ SPECTATOR</div>
+		@* No chess glyphs here — s&box renders some of them as colour emoji / stray
+		   floating glyphs. Keep this board plain text. *@
+		<div class="title" style="color:@WallTheme.Text;">SPECTATOR</div>
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 		<div class="line" style="color:@WallTheme.AccentCss;">@Source()</div>
 		<div class="sub" style="color:@WallTheme.TextDim;">@Detail()</div>
@@ -59,9 +59,9 @@
 	.title {
 		justify-content: center;
 		white-space: nowrap;
-		font-size: 38px;
+		font-size: 30px;
 		font-weight: bold;
-		letter-spacing: 8px;
+		letter-spacing: 5px;
 	}
 
 	.divider { height: 2px; margin: 4px 0; }
@@ -69,7 +69,7 @@
 	.line {
 		justify-content: center;
 		white-space: nowrap;
-		font-size: 22px;
+		font-size: 19px;
 		font-weight: bold;
 		letter-spacing: 1px;
 	}
@@ -77,14 +77,14 @@
 	.sub {
 		justify-content: center;
 		white-space: nowrap;
-		font-size: 16px;
+		font-size: 14px;
 		letter-spacing: 0.5px;
 	}
 
 	.hint {
 		justify-content: center;
 		white-space: nowrap;
-		font-size: 20px;
+		font-size: 17px;
 		letter-spacing: 2px;
 		margin-top: 6px;
 	}
@@ -113,8 +113,8 @@
 		var c = C;
 		if ( c == null ) return "";
 		if ( c.HasPosition )
-			return $"♔ {c.WhiteName}   vs   ♚ {c.BlackName}";
-		return "Featured tables · lichess TV · watch a game";
+			return $"{c.WhiteName}  vs  {c.BlackName}";
+		return "Live tables · lichess TV · watch a game";
 	}
 
 	protected override int BuildHash() => HashCode.Combine(
