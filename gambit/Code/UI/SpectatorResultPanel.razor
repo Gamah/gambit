@@ -1,0 +1,89 @@
+@using System
+@using Sandbox
+@using Sandbox.UI
+@using Gambit.Game
+@using Gambit.World
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	Big end-of-game fanfare centred over the spectator board (PLAN.md M5 — buffered playout). The
+	buffered playout fires this when it replays to a finished game's final position, and holds it
+	for at least SpectatorController.FanfareSeconds before the next game is picked. Display-only
+	WorldPanel; renders nothing until a result is up. Colours track the winning side.
+*@
+
+<root>
+	@{ var c = SpectatorController.Instance; }
+	@if ( c is { ShowingResult: true } )
+	{
+		<div class="banner" style="background-color:@WallTheme.Bg; border:4px solid @Accent( c );">
+			<div class="over" style="color:@WallTheme.TextDim;">GAME OVER</div>
+			<div class="headline" style="color:@Accent( c );">@c.ResultHeadline</div>
+			@if ( !string.IsNullOrEmpty( c.ResultReason ) )
+			{
+				<div class="reason" style="color:@WallTheme.Text;">@c.ResultReason</div>
+			}
+		</div>
+	}
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.banner {
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 40px 80px;
+		border-radius: 24px;
+		font-family: $wall-font;
+		gap: 10px;
+	}
+
+	.over {
+		font-size: 56px;
+		font-weight: bold;
+		letter-spacing: 16px;
+	}
+
+	.headline {
+		font-size: 120px;
+		font-weight: bold;
+		letter-spacing: 2px;
+		white-space: nowrap;
+	}
+
+	.reason {
+		font-size: 64px;
+		letter-spacing: 4px;
+		white-space: nowrap;
+	}
+</style>
+
+@code
+{
+	/// <summary>Winner-tinted accent: light for a White win, dark for Black, the theme accent for
+	/// a draw.</summary>
+	static string Accent( SpectatorController c ) => c.ResultWinner switch
+	{
+		> 0 => "#f5f5f7",
+		< 0 => "#c8c8d0",
+		_ => WallTheme.AccentCss,
+	};
+
+	protected override int BuildHash()
+	{
+		var c = SpectatorController.Instance;
+		return HashCode.Combine( c?.ShowingResult, c?.ResultHeadline, c?.ResultReason, c?.ResultWinner,
+			SettingsModel.SettingsVersion );
+	}
+}

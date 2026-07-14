@@ -98,39 +98,52 @@ public sealed class SpectatorController : Component
 	string _tvGameId;
 	string _watchId;
 	RealTimeSince _sincePoll = 999f;
-	RealTimeSince _sinceTvChannel = 999f; // time since the featured game id was (re)picked
-	bool _tvGameOver;                 // the featured game finished — re-pick on the next poll
+	bool _tvGameOver;                 // featured game finished AND its fanfare shown — re-pick next poll
 	bool _polling;
-	// Poll rarely: lichess already delays the public export a few moves, so there's no benefit
-	// to a tight loop. Each poll usually spans several moves; we replay them one at a time,
-	// spread across the interval (AdvanceReplay), so the board keeps moving continuously between
-	// polls instead of teleporting a burst of moves then sitting idle.
-	const float PollInterval = 8f;
-	// lichess rotates a channel's featured game and games end; re-pick the featured game
-	// this often so the board keeps following live play instead of freezing on a finished
-	// game (a finished game also forces an immediate re-pick via _tvGameOver).
-	const float TvChannelRefresh = 20f;
+	// Poll every few seconds (lichess delays the public export anyway). We don't render straight
+	// from the poll — see the buffered playout below.
+	const float PollInterval = 3f;
 
-	// ── Move replay: reveal buffered plies one at a time (a smooth slide each) rather than
-	//    teleporting several moves when a poll spans several. Paced to the data rate — the
-	//    backlog is spread across roughly one poll interval, clamped so moves neither blur
-	//    together nor stall. ──
+	// ── Buffered playout (a jitter buffer) ──
+	// Each poll batches several moves. Instead of showing them as they arrive (which bursts and
+	// hangs, and can't pace bullet), we hold a cushion of PreRollLag moves and reveal them at the
+	// game's OWN average rate — so the board plays smoothly and continuously, bullet included, at
+	// the cost of running a few more seconds behind live (fine: it's delayed, not real-time). The
+	// cushion absorbs poll jitter; "Buffering…" shows while it first fills; if we ever fall past
+	// MaxLag we drop old moves to catch up.
 	List<(string fen, string uci)> _positions = new();
-	int _shownPly;                    // plies currently revealed to the board (1-based count)
-	bool _hasShownPly;                // seen at least one position (first sight snaps to current)
-	bool _replayActive;               // a PGN source is driving replay (false for sbox tables)
-	string _shownGameId;              // game the buffer belongs to (id change ⇒ snap, don't replay)
+	int _shownPly;                    // playout cursor (revealed plies, 1-based)
+	string _shownGameId;              // game the buffer belongs to (id change ⇒ new game)
+	bool _replayActive;               // a PGN source is driving playout (false for sbox tables)
+	bool _playing;                    // past the pre-roll cushion; actively revealing
+	int _prevCount;                   // _positions.Count at the previous poll (per-poll move delta)
+	float _avgMovesPerPoll = 3f;      // EMA of moves added per poll (incoming-rate estimate)
 	RealTimeSince _sinceReveal;
 	float _nextGap;                   // seconds until the next ply is revealed
-	// The export gives us only whole-second %clk, so there's no true sub-second move timing to
-	// replay bullet by (real-time needs the wss relay — #7). Client-side, we pace the backlog to
-	// drain over roughly a whole poll interval, so the board moves CONTINUOUSLY at about the
-	// game's own average rate — no burst-then-hang (draining faster just empties the buffer and
-	// idles till the next poll). The floor keeps each slide crisp; the cap stops a slow game from
-	// stalling too long; and if we somehow fall a long way behind we snap forward.
+	const int PreRollLag = 8;         // buffer this many moves before starting to play (the "clumps")
+	const int MaxLag = 22;            // fall this far behind ⇒ drop old moves to catch up
 	const float MinReplayGap = 0.2f;  // = SpectatorBoard3D.MoveSeconds — fast games chain moves, no blur
-	const float MaxReplayGap = 1.5f;  // slow games: don't stall too long between moves
-	const int ReplayBacklogCap = 12;  // snap forward if we somehow fall this far behind
+	const float MaxReplayGap = 1.2f;  // slow games: don't stall too long between moves
+
+	/// <summary>True while the pre-roll cushion is still filling (the walk-up board shows
+	/// "Buffering…"). Distinct from <see cref="ShowingResult"/>.</summary>
+	public bool Buffering => _replayActive && !_playing && !ShowingResult;
+
+	// ── End-of-game fanfare ──
+	bool _bufferGameOver;             // the buffered game has a decisive result queued
+	string _resultDoneGameId;         // game whose fanfare has already been shown (don't repeat it)
+	string _pendingHeadline, _pendingReason;
+	int _pendingWinner;
+	/// <summary>True while the end-of-game result banner is held on screen (before the next game).</summary>
+	public bool ShowingResult { get; private set; }
+	/// <summary>"White wins" / "Black wins" / "Draw" — set while <see cref="ShowingResult"/>.</summary>
+	public string ResultHeadline { get; private set; }
+	/// <summary>"Checkmate" / "on time" / "by resignation" / … — set while <see cref="ShowingResult"/>.</summary>
+	public string ResultReason { get; private set; }
+	/// <summary>+1 White won, −1 Black won, 0 draw — for banner colouring.</summary>
+	public int ResultWinner { get; private set; }
+	RealTimeSince _sinceResultShown;
+	const float FanfareSeconds = 3f;  // hold the result at least this long before the next game
 
 	protected override void OnEnabled() => Instance = this;
 	protected override void OnDisabled() { if ( Instance == this ) Instance = null; }
@@ -165,7 +178,6 @@ public sealed class SpectatorController : Component
 		_tvChannelKey = channelKey;
 		_tvGameId = null;
 		_tvGameOver = false;
-		_sinceTvChannel = 999f;
 		ClearPosition();
 		StatusText = "Loading lichess TV…";
 		_sincePoll = 999f; // poll promptly
@@ -278,10 +290,12 @@ public sealed class SpectatorController : Component
 
 	async System.Threading.Tasks.Task PollTv()
 	{
-		// (Re)pick the channel's current featured game when we have none, when the one we
-		// were watching ended, or periodically — lichess rotates the featured game and games
-		// finish, so a pinned id would eventually freeze the board on a stale/finished game.
-		if ( _tvGameId == null || _tvGameOver || _sinceTvChannel > TvChannelRefresh )
+		// (Re)pick the channel's featured game only when we have none, or when the one we were
+		// watching has finished playing out AND its end-of-game fanfare has been shown
+		// (_tvGameOver is set by the playout, not the poll — so we don't yank to a new game while
+		// still buffering/replaying the current one). We poll our pinned game id until it ends, so
+		// no periodic refresh is needed.
+		if ( _tvGameId == null || _tvGameOver )
 		{
 			var chres = await LichessApi.GetTvChannels();
 			if ( !chres.Ok )
@@ -300,12 +314,17 @@ public sealed class SpectatorController : Component
 				return;
 			}
 
+			// If lichess is still featuring the game we just finished + fanfared, wait for it to
+			// rotate to a live one — retry next poll (keep _tvGameOver set) rather than re-showing
+			// a finished game.
+			if ( _tvGameOver && ch.gameId == _resultDoneGameId )
+				return;
+
 			// A new featured game — reset the board so the last position doesn't linger under
 			// the incoming one.
 			if ( ch.gameId != _tvGameId ) ClearPosition();
 			_tvGameId = ch.gameId;
 			_tvGameOver = false;
-			_sinceTvChannel = 0f;
 			WhiteName = ch.color == "black" ? "opponent" : ch.user?.name ?? "White";
 			BlackName = ch.color == "black" ? ch.user?.name ?? "Black" : "opponent";
 			ChannelLabel = $"LICHESS TV · {_tvChannelKey ?? "featured"}";
@@ -341,19 +360,19 @@ public sealed class SpectatorController : Component
 		string latestFen = positions.Count > 0 ? positions[^1].fen : Fen;
 		ApplyPlayerMeta( res.Body, latestFen );
 
-		// Feed the replay buffer; AdvanceReplay reveals the plies one at a time.
-		IngestPositions( gameId, positions );
+		// Feed the buffered playout. Parse the result up front so the fanfare can fire once the
+		// playout reaches the end. We do NOT re-pick on `over` here — the playout owns that, after
+		// the board has actually replayed to the finish and the banner has had its moment.
+		var result = over ? ParseResult( res.Body ) : default;
+		IngestPositions( gameId, positions, over, result );
 		StatusText = delayNote;
-
-		// On TV, note when the featured game has finished so PollTv re-picks the channel's
-		// next game rather than freezing on the final position. Watch-by-id stays put.
-		if ( _channel == Channel.LichessTv && over )
-			_tvGameOver = true;
 	}
 
-	/// <summary>Take a poll's full position list and either snap to the current position (first
-	/// sight of a game) or leave the backlog for AdvanceReplay to reveal one move at a time.</summary>
-	void IngestPositions( string gameId, List<(string fen, string uci)> positions )
+	/// <summary>Fold a poll's position list into the jitter buffer. First sight of a game freezes
+	/// on the current position and fills the pre-roll cushion; later polls extend the buffer and
+	/// track the incoming move rate. AdvanceReplay does the actual paced reveal.</summary>
+	void IngestPositions( string gameId, List<(string fen, string uci)> positions, bool over,
+		(string headline, string reason, int winner) result )
 	{
 		if ( positions.Count == 0 )
 		{
@@ -364,45 +383,142 @@ public sealed class SpectatorController : Component
 			return;
 		}
 
-		bool freshGame = gameId != _shownGameId || !_hasShownPly;
-		_shownGameId = gameId;
-		_positions = positions;
-		_replayActive = true;
-
-		if ( freshGame )
+		if ( gameId != _shownGameId )
 		{
-			// First sight of this game: jump straight to the current position (lichess already
-			// delays us a few moves — don't replay the whole game from move 1).
+			// New game: tune in HERE (skip the history before now). The board freezes on the
+			// current position and shows "Buffering…" until the cushion fills.
+			_shownGameId = gameId;
+			_positions = positions;
+			_replayActive = true;
+			_bufferGameOver = false;
 			_shownPly = positions.Count;
-			_hasShownPly = true;
+			_prevCount = positions.Count;
+			_avgMovesPerPoll = 3f;
+			if ( over )
+			{
+				// Tuned into an already-finished game (watch-by-id) — show the final position and
+				// fanfare it straight away, no buffering.
+				_playing = true;
+				_bufferGameOver = true;
+				_pendingHeadline = result.headline;
+				_pendingReason = result.reason;
+				_pendingWinner = result.winner;
+			}
+			else
+			{
+				_playing = false; // fill the cushion before playing
+			}
+			ApplyShown();
+			return;
 		}
-		else
+
+		// Same game, later poll: extend the buffer and update the incoming-rate estimate (EMA of
+		// moves added per poll — what we pace playout to).
+		int added = positions.Count - _prevCount;
+		if ( added > 0 ) _avgMovesPerPoll = _avgMovesPerPoll * 0.6f + added * 0.4f;
+		_prevCount = positions.Count;
+		_positions = positions;
+
+		// Queue the result; the fanfare fires only once playout reaches the final position.
+		if ( over && !_bufferGameOver )
 		{
-			if ( _shownPly > positions.Count ) _shownPly = positions.Count; // game replaced/shrank
-			int backlog = positions.Count - _shownPly;
-			if ( backlog > ReplayBacklogCap ) _shownPly = positions.Count - ReplayBacklogCap;
-			_nextGap = 0f; // start revealing on the next frame
+			_bufferGameOver = true;
+			_pendingHeadline = result.headline;
+			_pendingReason = result.reason;
+			_pendingWinner = result.winner;
 		}
-		ApplyShown();
+
+		int lag = positions.Count - _shownPly;
+		// Start playing once the cushion has filled (or the game's already over — no point waiting).
+		if ( !_playing && ( lag >= PreRollLag || _bufferGameOver ) ) _playing = true;
+		// If we somehow fell way behind, drop old moves to catch back up toward the cushion.
+		if ( _playing && lag > MaxLag ) _shownPly = positions.Count - PreRollLag;
 	}
 
-	/// <summary>Reveal the next buffered ply once its adaptive gap has elapsed, then pace the
-	/// remaining backlog across roughly one poll interval (clamped).</summary>
+	/// <summary>Paced playout: reveal one buffered ply at the game's own average rate, hold the
+	/// end-of-game banner, and release the next-game re-pick once it's had its moment.</summary>
 	void AdvanceReplay()
 	{
-		if ( !_replayActive || _shownPly >= _positions.Count ) return;
-		if ( _sinceReveal < _nextGap ) return;
+		if ( !_replayActive ) return;
 
+		// Holding the end-of-game result banner (at least FanfareSeconds).
+		if ( ShowingResult )
+		{
+			if ( _sinceResultShown >= FanfareSeconds )
+			{
+				ShowingResult = false;
+				_resultDoneGameId = _shownGameId;                       // don't re-fanfare this game
+				if ( _channel == Channel.LichessTv ) _tvGameOver = true; // now let PollTv pick the next game
+			}
+			return;
+		}
+
+		if ( !_playing ) return;
+
+		// Reached the end of the buffer: if the game just ended (and we haven't already fanfared
+		// it), fire the banner; else hold on the final position and wait for the next game.
+		if ( _shownPly >= _positions.Count )
+		{
+			if ( _bufferGameOver && _shownGameId != _resultDoneGameId ) StartResult();
+			return;
+		}
+
+		if ( _sinceReveal < _nextGap ) return;
 		_shownPly++;
 		_sinceReveal = 0f;
 		ApplyShown();
 
-		// Spread the remaining backlog across the rest of a poll interval so the board keeps
-		// moving continuously (rather than dumping the batch and idling). Clamped: the floor keeps
-		// slides crisp / lets a fast game chain moves; the cap stops a slow game stalling.
-		int backlog = _positions.Count - _shownPly;
-		_nextGap = backlog <= 0 ? MaxReplayGap
-			: System.Math.Clamp( PollInterval / backlog, MinReplayGap, MaxReplayGap );
+		// Pace at the game's own average rate (EMA), nudged to bleed the cushion back toward its
+		// target; once the game is over, drain fast to reach the final position for the fanfare.
+		int lag = _positions.Count - _shownPly;
+		if ( _bufferGameOver )
+		{
+			_nextGap = MinReplayGap;
+		}
+		else
+		{
+			float perInterval = System.Math.Max( 1f, _avgMovesPerPoll + ( lag - PreRollLag ) * 0.5f );
+			_nextGap = System.Math.Clamp( PollInterval / perInterval, MinReplayGap, MaxReplayGap );
+		}
+	}
+
+	void StartResult()
+	{
+		ShowingResult = true;
+		_sinceResultShown = 0f;
+		ResultHeadline = _pendingHeadline;
+		ResultReason = _pendingReason;
+		ResultWinner = _pendingWinner;
+	}
+
+	/// <summary>Winner + reason for the end-of-game fanfare, from the export PGN. Winner: +1 White,
+	/// −1 Black, 0 draw. Reason is best-effort from the movetext + Termination header.</summary>
+	(string headline, string reason, int winner) ParseResult( string pgn )
+	{
+		int winner = 0;
+		int i = pgn.IndexOf( "[Result \"", System.StringComparison.Ordinal );
+		if ( i >= 0 )
+		{
+			i += 9;
+			int end = pgn.IndexOf( '"', i );
+			var r = end > i ? pgn[i..end] : "";
+			winner = r == "1-0" ? 1 : r == "0-1" ? -1 : 0;
+		}
+
+		var term = PgnHeader( pgn, "Termination" );
+		bool onTime = term != null && term.IndexOf( "Time", System.StringComparison.OrdinalIgnoreCase ) >= 0;
+		bool abandoned = term != null && term.IndexOf( "Aband", System.StringComparison.OrdinalIgnoreCase ) >= 0;
+		bool checkmate = pgn.IndexOf( '#' ) >= 0; // '#' only appears on a checkmating SAN move
+
+		string reason =
+			winner == 0 ? "" :               // draw — the headline says it all
+			checkmate ? "by checkmate" :
+			onTime ? "on time" :
+			abandoned ? "abandoned" :
+			"by resignation";
+
+		string headline = winner == 0 ? "Draw" : $"{( winner > 0 ? WhiteName : BlackName )} wins";
+		return (headline, reason, winner);
 	}
 
 	/// <summary>Point Fen/LastMoveUci at the currently-revealed ply (same string instances until
@@ -475,13 +591,16 @@ public sealed class SpectatorController : Component
 		BlackName = "Black";
 		ClearPlayerMeta();
 
-		// Reset the replay buffer so the next game snaps to its current position instead of
-		// trying to continue from a stale ply.
+		// Reset the buffered playout + fanfare so the next game starts clean.
 		_positions = new();
 		_shownPly = 0;
-		_hasShownPly = false;
-		_replayActive = false;
 		_shownGameId = null;
+		_replayActive = false;
+		_playing = false;
+		_bufferGameOver = false;
+		_resultDoneGameId = null;
+		_prevCount = 0;
+		ShowingResult = false;
 	}
 
 	void ClearPlayerMeta()

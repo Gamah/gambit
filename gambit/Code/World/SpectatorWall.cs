@@ -42,6 +42,10 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// <summary>Keep a seat tag this far off the side wall when auto-fitting its width.</summary>
 	const float SeatWallMargin = 10f;
 
+	/// <summary>Intrinsic pixel size of the end-of-game fanfare banner (SpectatorResultPanel).</summary>
+	const float ResultPxWidth = 900f;
+	const float ResultPxHeight = 420f;
+
 	/// <summary>World units the board sits in front of the wall's inner face
 	/// (RoomSize / 2), toward the room.</summary>
 	[Property] public float WallInset { get; set; } = 4f;
@@ -66,6 +70,13 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// <summary>Gap between a player's board edge and the near edge of their tag (the tag sits
 	/// just outside the edge, coplanar with the board).</summary>
 	[Property] public float SeatEdgeGap { get; set; } = 6f;
+
+	/// <summary>Uniform scale of the end-of-game fanfare banner centred over the board.</summary>
+	[Property] public float ResultBoardScale { get; set; } = 6f;
+
+	/// <summary>How far the fanfare banner pops out in front of the board face so it reads clearly
+	/// over the pieces.</summary>
+	[Property] public float ResultPop { get; set; } = 40f;
 
 	/// <summary>Gap between the wall top and the bottom edge of the floating board. The
 	/// board's clearance tracks the scale automatically (centre = wall-top + this +
@@ -179,6 +190,19 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 
 		AddSeatTag( "SpectatorWhiteTag", boardCentre + boardRot * WhiteOffset, inPlane, seatPxW, white: true );
 		AddSeatTag( "SpectatorBlackTag", boardCentre + boardRot * BlackOffset, inPlane, seatPxW, white: false );
+
+		// End-of-game fanfare banner, centred over the board and popped toward the room so it reads
+		// over the pieces. Display-only; SpectatorResultPanel renders it only while the controller
+		// is holding a result.
+		var banner = new GameObject( true, "SpectatorResultBanner" );
+		banner.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
+		banner.Parent = _root;
+		banner.LocalPosition = boardCentre + boardRot * new Vector3( 0f, 0f, ResultPop );
+		banner.LocalRotation = inPlane;
+		banner.LocalScale = new Vector3( 1f, 1f, 1f ) * ResultBoardScale;
+		var bannerPanel = banner.AddComponent<WorldPanel>();
+		bannerPanel.PanelSize = new Vector2( ResultPxWidth, ResultPxHeight );
+		banner.AddComponent<Gambit.UI.SpectatorResultPanel>();
 
 		// Walk-up control board at walk-up height, directly under the floating board: shows the
 		// current source, players, time control/move, and live status, and invites "Press E to

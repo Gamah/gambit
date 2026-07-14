@@ -31,7 +31,7 @@
 		<div class="channel" style="color:@WallTheme.AccentCss;">@Channel()</div>
 		<div class="players" style="color:@WallTheme.Text;">@Players()</div>
 		<div class="meta" style="color:@WallTheme.TextDim;">@Meta()</div>
-		<div class="status" style="color:@WallTheme.TextFaint;">@Status()</div>
+		<div class="status" style="color:@LiveColor();">@LiveText()</div>
 
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 		<div class="hint" style="color:@WallTheme.TextFaint;">Press E to spectate</div>
@@ -156,18 +156,31 @@
 		return parts.Count > 0 ? string.Join( " · ", parts ) : "";
 	}
 
-	/// <summary>Live/latency line — the controller's own status note, or a plain LIVE tag.</summary>
-	string Status()
+	/// <summary>True only for the real-time sbox-table source; lichess TV / watch are polled.</summary>
+	bool Realtime => C?.Current == SpectatorController.Channel.Featured;
+
+	/// <summary>Liveness line — clear about what the viewer is seeing (live vs delayed vs
+	/// buffering), so nobody mistakes the polled/averaged TV feed for real-time play.</summary>
+	string LiveText()
 	{
 		var c = C;
 		if ( c == null ) return "";
-		if ( !string.IsNullOrEmpty( c.StatusText ) ) return c.StatusText;
-		return c.HasPosition ? "● LIVE" : "";
+		if ( c.Buffering ) return "BUFFERING — building a smooth feed…";
+		if ( !c.HasPosition ) return string.IsNullOrEmpty( c.StatusText ) ? "" : c.StatusText;
+		return Realtime ? "LIVE · table game" : "DELAYED · a few moves behind — not live";
+	}
+
+	/// <summary>Amber for the polled/buffering states, green for the truly-live table source.</summary>
+	string LiveColor()
+	{
+		var c = C;
+		if ( c == null || ( !c.HasPosition && !c.Buffering ) ) return WallTheme.TextFaint;
+		return Realtime && !c.Buffering ? WallTheme.AccentCss : "#d9a441";
 	}
 
 	protected override int BuildHash() => HashCode.Combine(
 		C?.Current, C?.ChannelLabel, C?.WhiteName, C?.BlackName, C?.HasPosition,
-		HashCode.Combine( C?.TimeControl, C?.MoveNumber, C?.StatusText ),
+		HashCode.Combine( C?.TimeControl, C?.MoveNumber, C?.StatusText, C?.Buffering ),
 		SettingsModel.SettingsVersion );
 
 	protected override void OnUpdate()
