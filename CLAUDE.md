@@ -12,7 +12,8 @@ M0–M6, and risks. This file carries the s&box engineering lore inherited from 
 parent project — hard-won gotchas that still apply.
 
 Current status: **M0–M4 done** (M4 merged to master 2026-07-14); **M5 + M6
-code-complete on branch `m5-m6-spectate-puzzles`, gate pending user test.** M5:
+code-complete and gates PASSED on branch `m5-m6-spectate-puzzles` (2026-07-14) —
+ready to merge.** M5:
 lichess **puzzles** solvable at any board (`PuzzleController`, IBoardGame — daily/
 next, local validate, retry/reveal, "doesn't affect your rating"), a west-wall
 **spectator board** (`SpectatorWall`/`SpectatorStation`/`SpectatorController`,
@@ -21,9 +22,11 @@ polls **lichess TV / a game by id** (channels JSON + PGN-export → FEN, coarse
 latency), rendered as a real 3D board (`SpectatorBoard3D` — ChessSetBuilder meshes + a raking light for shadows) with a channel
 picker (`SpectatorScreen`). M6: **floor glyph pops** (D6 — CC0 glyph atlas via
 `scripts/gen_glyph_atlas.py`, `floor_checker.shader` rewritten to blend piece
-glyphs opposite the square colour — **needs in-editor shader iteration**), lichess/
-puzzle **move sounds**, and rate-limit + token-hygiene audits (clean). A few M4
-items still await a *live* second-account confirm — deferred, not blocking.
+glyphs opposite the square colour — **confirmed rendering in-editor**), lichess/
+puzzle **move sounds** (confirmed), and rate-limit + token-hygiene audits (clean).
+Deferred (post-v1/optional): draw offer/abort, rated toggle, lichess chat, Poly
+Haven 3D pieces, branding, and a general sound-design revisit. One untested-but-
+low-risk item: the featured-sbox-table wall mirror (proven M4 relay path).
 **`PLAN.md` is the authoritative milestone status.** All legacy Rotaliate gameplay
 code is deleted.
 The world is chess: `ChessRing` builds tables (LobbyRoom auto-adds the ring
