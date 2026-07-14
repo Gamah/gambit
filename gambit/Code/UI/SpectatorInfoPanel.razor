@@ -1,0 +1,121 @@
+@using System
+@using Sandbox
+@using Sandbox.UI
+@using Gambit.Game
+@using Gambit.World
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	Walk-up control board (PLAN.md M5) at eye height, directly under the giant floating
+	spectator board (SpectatorWall). It's what invites the player over: it shows what the
+	board is currently watching and prompts "Press E to spectate", which opens the
+	interactive channel picker (SpectatorScreen) via the co-located SpectatorStation.
+	Display-only — no pointer events; colours track the world light via WallTheme so it
+	sits with the other lobby boards.
+*@
+
+<root>
+	<div class="board" style="background-color:@WallTheme.Bg; border:2px solid @WallTheme.Border;">
+		<div class="title" style="color:@WallTheme.Text;">♟ SPECTATOR</div>
+		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+		<div class="line" style="color:@WallTheme.AccentCss;">@Source()</div>
+		<div class="sub" style="color:@WallTheme.TextDim;">@Detail()</div>
+		<div class="hint" style="color:@WallTheme.TextFaint;">Press E to spectate</div>
+	</div>
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	/* Colours are runtime-driven (WallTheme, bound inline above); only layout + static
+	   tokens live here. Layout in the WorldPanel's fixed intrinsic pixel space, fixed px
+	   fonts, uniform GO scale — change these, not the GO scale, to fix spacing. */
+	.board {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		flex-direction: column;
+		align-items: stretch;
+		justify-content: center;
+		padding: 22px 30px;
+		border-radius: $wall-radius;
+		font-family: $wall-font;
+		gap: 8px;
+	}
+
+	.board > div { flex-shrink: 0; }
+
+	.title {
+		justify-content: center;
+		white-space: nowrap;
+		font-size: 38px;
+		font-weight: bold;
+		letter-spacing: 8px;
+	}
+
+	.divider { height: 2px; margin: 4px 0; }
+
+	.line {
+		justify-content: center;
+		white-space: nowrap;
+		font-size: 22px;
+		font-weight: bold;
+		letter-spacing: 1px;
+	}
+
+	.sub {
+		justify-content: center;
+		white-space: nowrap;
+		font-size: 16px;
+		letter-spacing: 0.5px;
+	}
+
+	.hint {
+		justify-content: center;
+		white-space: nowrap;
+		font-size: 20px;
+		letter-spacing: 2px;
+		margin-top: 6px;
+	}
+</style>
+
+@code
+{
+	SpectatorController C => SpectatorController.Instance;
+
+	/// <summary>Headline line — what the board is watching right now.</summary>
+	string Source()
+	{
+		var c = C;
+		if ( c == null ) return "Live tables · lichess TV";
+		return c.Current switch
+		{
+			SpectatorController.Channel.LichessTv => c.ChannelLabel,
+			SpectatorController.Channel.WatchId => c.ChannelLabel,
+			_ => "FEATURED · live tables",
+		};
+	}
+
+	/// <summary>Second line — the players when a game is up, else a short hint.</summary>
+	string Detail()
+	{
+		var c = C;
+		if ( c == null ) return "";
+		if ( c.HasPosition )
+			return $"♔ {c.WhiteName}   vs   ♚ {c.BlackName}";
+		return "Featured tables · lichess TV · watch a game";
+	}
+
+	protected override int BuildHash() => HashCode.Combine(
+		C?.Current, C?.ChannelLabel, C?.WhiteName, C?.BlackName, C?.HasPosition,
+		SettingsModel.SettingsVersion );
+}

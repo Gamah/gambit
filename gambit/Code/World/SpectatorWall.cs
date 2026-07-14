@@ -3,11 +3,12 @@ using Sandbox;
 namespace Gambit.World;
 
 /// <summary>
-/// Hangs the giant spectator board over the lobby's west wall (PLAN.md M5 —
+/// Hangs the giant spectator board over the lobby's north wall (PLAN.md M5 —
 /// SpectatorBoard rewrite; mirrors rotaliate-client's floating SpectatorBoard) and
-/// fronts it with a SpectatorStation engage target ("Press E to spectate") on the wall
-/// at walk-up height that opens the interactive channel picker. The board is a
-/// display-only WorldPanel (SpectatorBoardPanel) driven by a single
+/// fronts it with a walk-up control board (SpectatorInfoPanel) at eye height that carries
+/// the SpectatorStation engage target ("Press E to spectate") and opens the interactive
+/// channel picker. The big board is a display-only WorldPanel (SpectatorBoardPanel) driven
+/// by a single
 /// <see cref="Gambit.Game.SpectatorController"/> living on this wall — it mirrors a live
 /// sbox game, streams lichess TV (polled), or watches a game by id.
 ///
@@ -30,6 +31,11 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	const float PanelPxWidth = 720f;
 	const float PanelPxHeight = 820f;
 
+	/// <summary>Intrinsic pixel size of SpectatorInfoPanel's &lt;root&gt; — the walk-up
+	/// control board at eye height. Landscape so it reads as a sign, not a big square.</summary>
+	const float InfoPxWidth = 560f;
+	const float InfoPxHeight = 300f;
+
 	/// <summary>WorldPanel px→world-unit factor (Sandbox ScreenToWorldScale) — a panel of P
 	/// px renders P × scale × this many world units wide.</summary>
 	const float PxToWorld = 0.05f;
@@ -38,9 +44,12 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// (RoomSize / 2), toward the room.</summary>
 	[Property] public float WallInset { get; set; } = 4f;
 
-	/// <summary>Uniform scale multiplier on the board WorldPanel — it floats high above the
-	/// wall and must read from across the whole room, so it's large.</summary>
-	[Property] public float BoardScale { get; set; } = 9f;
+	/// <summary>Uniform scale multiplier on the floating board WorldPanel — it floats high
+	/// above the wall and must read from across the whole room, so it's large.</summary>
+	[Property] public float BoardScale { get; set; } = 7.5f;
+
+	/// <summary>Uniform scale multiplier on the walk-up control board.</summary>
+	[Property] public float InfoBoardScale { get; set; } = 4.5f;
 
 	/// <summary>Gap between the wall top and the bottom edge of the floating board. The
 	/// board's clearance tracks the scale automatically (centre = wall-top + this +
@@ -50,9 +59,9 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// <summary>Board centre along the wall, as a fraction of wall width (0 = centred).</summary>
 	[Property] public float BoardYFrac { get; set; } = 0f;
 
-	/// <summary>Height up the wall of the "Press E to spectate" engage target, as a fraction
-	/// of wall height — kept at walk-up height (the board itself floats out of reach).</summary>
-	[Property] public float StationHeightFrac { get; set; } = 0.35f;
+	/// <summary>Height up the wall of the walk-up control board + "Press E" engage target, as
+	/// a fraction of wall height — kept at eye level (the big board floats out of reach).</summary>
+	[Property] public float StationHeightFrac { get; set; } = 0.4f;
 
 	GameObject _root;
 	Vector2 _builtWall;
@@ -81,10 +90,12 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		Clear();
 		_builtWall = new Vector2( WallWidth, WallHeight );
 
-		// West wall runs along Y; the panel faces +X, back into the room.
-		var facing = Rotation.FromYaw( 0f );
-		float wallX = -( WallWidth * 0.5f - WallInset );
-		float centreY = BoardYFrac * WallWidth;
+		// North wall runs along X at +RoomSize/2; panels face -Y, back into the room
+		// (one wall clockwise from the old west wall — the west wall's neighbour on the
+		// player's right). Width runs along X, depth along Y.
+		var facing = Rotation.FromYaw( -90f );
+		float wallY = WallWidth * 0.5f - WallInset;
+		float centreX = BoardYFrac * WallWidth;
 
 		_root = new GameObject( true, "SpectatorWall" );
 		_root.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
@@ -94,17 +105,16 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		// display panel and the engaged screen find it via SpectatorController.Instance.
 		_root.AddComponent<Gambit.Game.SpectatorController>();
 
-		// Floating display board: panel plane is local Y (width) / Z (height), centred on
-		// the wall width and hovering just above the wall top so the whole lobby can watch
-		// one game from across the room. Its bottom edge clears the wall top by
-		// ClearAboveWall — the world half-height scales with BoardScale, so that gap holds
-		// at any size.
+		// Floating display board: panel plane is local width/height, centred on the wall
+		// width and hovering just above the wall top so the whole lobby can watch one game
+		// from across the room. Its bottom edge clears the wall top by ClearAboveWall — the
+		// world half-height scales with BoardScale, so that gap holds at any size.
 		float halfHeight = PanelPxHeight * BoardScale * PxToWorld * 0.5f;
 		float boardZ = WallHeight + ClearAboveWall + halfHeight;
 
 		var board = new GameObject( true, "SpectatorBoard" );
 		board.Parent = _root;
-		board.LocalPosition = new Vector3( wallX, centreY, boardZ );
+		board.LocalPosition = new Vector3( centreX, wallY, boardZ );
 		board.LocalRotation = facing;
 		board.LocalScale = new Vector3( 1f, 1f, 1f ) * BoardScale;
 		// Pin PanelSize to the panel's intrinsic px so the full board (not just its top-left
@@ -113,15 +123,20 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		panel.PanelSize = new Vector2( PanelPxWidth, PanelPxHeight );
 		board.AddComponent<Gambit.UI.SpectatorBoardPanel>();
 
-		// Engage target on the wall at walk-up height (the board floats out of reach):
-		// "Press E to spectate" opens the channel picker. The player-distance check is 3D,
-		// so this must stay near the floor, not up at the floating board.
-		var station = new GameObject( true, "SpectatorStation" );
-		station.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
-		station.Parent = _root;
-		station.LocalPosition = new Vector3( wallX, centreY, WallHeight * StationHeightFrac );
-		station.LocalRotation = facing;
-		station.AddComponent<SpectatorStation>();
+		// Walk-up control board at eye height, directly under the floating board: shows the
+		// current source and invites "Press E to spectate". It carries the engage station so
+		// the visible sign and the walk-up target line up (the player-distance check is 3D,
+		// so it must stay near the floor, not up at the floating board).
+		var info = new GameObject( true, "SpectatorInfoBoard" );
+		info.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
+		info.Parent = _root;
+		info.LocalPosition = new Vector3( centreX, wallY, WallHeight * StationHeightFrac );
+		info.LocalRotation = facing;
+		info.LocalScale = new Vector3( 1f, 1f, 1f ) * InfoBoardScale;
+		var infoPanel = info.AddComponent<WorldPanel>();
+		infoPanel.PanelSize = new Vector2( InfoPxWidth, InfoPxHeight );
+		info.AddComponent<Gambit.UI.SpectatorInfoPanel>();
+		info.AddComponent<SpectatorStation>();
 	}
 
 	void Clear()

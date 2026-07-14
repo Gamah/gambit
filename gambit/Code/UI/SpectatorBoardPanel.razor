@@ -104,20 +104,34 @@
 		height: 72px;
 		justify-content: center;
 		align-items: center;
+		/* Solid chess glyphs overrun their em box; clip so a piece can't spill into the
+		   rank above/below (which read as a doubled/oversized mess). */
+		overflow: hidden;
 	}
-	.cell.light { background-color: #d9d9dc; }
-	.cell.dark { background-color: #171717; }
-	.cell.moved.light { background-color: #b6c46a; }
+	.cell.light { background-color: #ededed; }
+	.cell.dark { background-color: #2b2b2b; }
+	.cell.moved.light { background-color: #c7d16a; }
 	.cell.moved.dark { background-color: #6f7a2f; }
 
+	/* Fixed to the cell so the glyph centres and its overflow is clipped by the cell. */
 	.glyph {
-		font-size: 58px;
+		width: 72px;
+		height: 72px;
+		font-size: 52px;
+		line-height: 72px;
 		text-align: center;
 	}
-	/* Solid glyphs for both sides, coloured by side with a contrasting shadow so a
-	   piece reads on either square colour. */
-	.glyph.w { color: #f5f5f7; text-shadow: 0px 0px 4px rgba(0, 0, 0, 0.95); }
-	.glyph.b { color: #101014; text-shadow: 0px 0px 4px rgba(255, 255, 255, 0.55); }
+	/* Solid glyphs for both sides, driven to pure white / pure black with a hard
+	   opposite-colour outline (offset shadows) so a piece reads on either square colour —
+	   and stays legible under the lobby's coloured night light, which tints everything. */
+	.glyph.w {
+		color: #ffffff;
+		text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 0 3px rgba(0, 0, 0, 0.9);
+	}
+	.glyph.b {
+		color: #050505;
+		text-shadow: -2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff, 2px 2px 0 #fff, 0 0 3px rgba(255, 255, 255, 0.85);
+	}
 
 	.status {
 		font-size: 17px;
