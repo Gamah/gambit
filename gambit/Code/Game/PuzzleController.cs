@@ -143,9 +143,12 @@ public sealed class PuzzleController : Component, IBoardGame
 	/// <summary>Load the daily puzzle (same for everyone, no auth).</summary>
 	public void StartDaily() => Load( LichessApi.GetPuzzleDaily() );
 
-	/// <summary>Load the next puzzle (rating-matched + no repeats when signed in).</summary>
+	/// <summary>Load the next puzzle. Called <b>unauthenticated</b> on purpose: our
+	/// sign-in token carries board:play/challenge scopes but not puzzle:read, and lichess
+	/// 403s a token that lacks the scope an endpoint would use — even here where auth is
+	/// optional. We can't submit solves anyway, so the token bought nothing but a 403.</summary>
 	public void StartNext() =>
-		Load( LichessApi.GetPuzzleNext( LichessAuth.SignedIn ? LichessAuth.Token : null ) );
+		Load( LichessApi.GetPuzzleNext() );
 
 	async void Load( System.Threading.Tasks.Task<LichessApi.Result> request )
 	{

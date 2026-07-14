@@ -300,8 +300,10 @@ public static class LichessApi
 	public static Task<Result> GetPuzzleDaily() =>
 		Send( Base + "/api/puzzle/daily", "GET", null, null );
 
-	/// <summary>The next puzzle. Signed-in requests are personalised (rating-matched,
-	/// no repeats) — pass the token when we have one, else it's a public random puzzle.</summary>
+	/// <summary>The next puzzle. Call it <b>unauthenticated</b> (public random puzzle):
+	/// lichess 403s a token that lacks <c>puzzle:read</c>, and our sign-in token doesn't
+	/// carry that scope. Personalisation (rating-matched/no-repeats) isn't worth a 403,
+	/// and we can't submit solves regardless — so leave <paramref name="token"/> null.</summary>
 	public static Task<Result> GetPuzzleNext( string token = null ) =>
 		Send( Base + "/api/puzzle/next", "GET", null, token );
 
