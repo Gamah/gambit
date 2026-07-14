@@ -123,14 +123,13 @@ public sealed class SpectatorController : Component
 	RealTimeSince _sinceReveal;
 	float _nextGap;                   // seconds until the next ply is revealed
 	// The export gives us only whole-second %clk, so there's no true sub-second move timing to
-	// replay bullet by (real-time needs the wss relay — deferred). Client-side, the best we can
-	// do is play each buffered move DISCRETELY: let its slide fully finish (its full ease-out
-	// slope, not a cut-off linear jerk), then a short beat, then the next. When we're near live
-	// that beat gives a natural cadence; when a poll drops several moves we drop the beat and
-	// chain the completed slides back-to-back so the board drains promptly instead of crawling.
-	const float ReplaySlide = 0.22f;  // ≥ SpectatorBoard3D.MoveSeconds — a move's slide finishes within this
-	const float ReplayHold = 0.13f;   // the small beat between moves once we're near live
-	const int ReplayHoldBacklog = 4;  // ≥ this far behind ⇒ drop the beat, chain slides back-to-back
+	// replay bullet by (real-time needs the wss relay — #7). Client-side, we pace the backlog to
+	// drain over roughly a whole poll interval, so the board moves CONTINUOUSLY at about the
+	// game's own average rate — no burst-then-hang (draining faster just empties the buffer and
+	// idles till the next poll). The floor keeps each slide crisp; the cap stops a slow game from
+	// stalling too long; and if we somehow fall a long way behind we snap forward.
+	const float MinReplayGap = 0.2f;  // = SpectatorBoard3D.MoveSeconds — fast games chain moves, no blur
+	const float MaxReplayGap = 1.5f;  // slow games: don't stall too long between moves
 	const int ReplayBacklogCap = 12;  // snap forward if we somehow fall this far behind
 
 	protected override void OnEnabled() => Instance = this;
@@ -398,11 +397,12 @@ public sealed class SpectatorController : Component
 		_sinceReveal = 0f;
 		ApplyShown();
 
-		// Let this move's slide finish, then hold a short beat — unless we're several moves
-		// behind, in which case drop the beat and chain the completed slides back-to-back so the
-		// buffer drains promptly instead of growing.
+		// Spread the remaining backlog across the rest of a poll interval so the board keeps
+		// moving continuously (rather than dumping the batch and idling). Clamped: the floor keeps
+		// slides crisp / lets a fast game chain moves; the cap stops a slow game stalling.
 		int backlog = _positions.Count - _shownPly;
-		_nextGap = ReplaySlide + ( backlog >= ReplayHoldBacklog ? 0f : ReplayHold );
+		_nextGap = backlog <= 0 ? MaxReplayGap
+			: System.Math.Clamp( PollInterval / backlog, MinReplayGap, MaxReplayGap );
 	}
 
 	/// <summary>Point Fen/LastMoveUci at the currently-revealed ply (same string instances until
