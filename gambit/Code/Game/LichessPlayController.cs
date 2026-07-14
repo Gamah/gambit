@@ -842,11 +842,40 @@ public sealed class LichessPlayController : Component, IBoardGame
 		IsMyTurn = false;
 		StatusText = null;
 		StopPresence(); // game's over — release the held-open game stream
-		ClearRelay();   // and take the relayed board off every watcher
 
 		var res = await LichessApi.GameExport( _gameId );
 		var st = res.Ok ? LichessApi.Deserialize<LichessGameStatus>( res.Body ) : null;
+
+		// account/playing drops a game the instant it ends, so the move that ENDED it (a
+		// mate / final move by the opponent) never arrived via the poll — the board froze a
+		// move short. Rebuild the final position from the export's movetext and set it so
+		// the board animates that last move into place (with the mating-move highlight),
+		// then publish it to any watchers instead of yanking their board away.
+		if ( st?.moves is { Length: > 0 } && ChessGame.TryFromPgn( st.moves, out var final ) )
+		{
+			_playGame = final;
+			_lastMoveUci = final.LastMoveUci ?? _lastMoveUci;
+			RelayFinal( final );
+		}
+		else
+		{
+			ClearRelay(); // no final position to show — take the relayed board off watchers
+		}
+
 		OverText = DescribeEnd( st );
+	}
+
+	/// <summary>Host-fold the finished position to spectators so their board lands on the
+	/// same final move rather than clearing. It stays up until the player leaves / the
+	/// table empties (LeaveSeat → ClearPlay → ClearRelay, or the OnUpdate auto-recycle).</summary>
+	void RelayFinal( ChessGame final )
+	{
+		string me = LichessAuth.Username;
+		if ( string.IsNullOrEmpty( me ) ) me = "You";
+		string opp = OpponentName ?? "Opponent";
+		string white = _myColor == ChessSeat.White ? me : opp;
+		string black = _myColor == ChessSeat.White ? opp : me;
+		HostRelay( final.Fen, _lastMoveUci, white, black );
 	}
 
 	string DescribeEnd( LichessGameStatus st )

@@ -300,20 +300,19 @@
 	.hud {
 		position: absolute;
 		right: 24px;
-		top: 3%;
-		/* Fit the screen: cap to (almost) full height and scroll the overflow, so the
-		   panel never runs off the bottom regardless of how much the play/puzzle/incoming
-		   sections add or the screen resolution. */
-		max-height: 94%;
-		overflow-y: scroll;
+		/* Size to content (no fixed height, no overflow: scroll — scroll drag-pans and
+		   fights clicks, CLAUDE.md). Anchored near the top so the tall signed-in panel
+		   uses the full height downward; the tight gaps/padding/font below keep it on
+		   screen at normal resolutions. */
+		top: 2%;
 		width: 250px;
 		flex-direction: column;
-		gap: 8px;
-		padding: 14px;
+		gap: 5px;
+		padding: 12px;
 		background-color: rgba(10, 10, 14, 0.78);
 		border-radius: 10px;
 		color: rgba(255, 255, 255, 0.9);
-		font-size: 14px;
+		font-size: 13px;
 	}
 
 	.title {
@@ -333,7 +332,7 @@
 
 	.moves {
 		flex-direction: column;
-		max-height: 260px;
+		max-height: 180px;
 		overflow: hidden;
 		background-color: rgba(255, 255, 255, 0.05);
 		border-radius: 6px;
@@ -342,12 +341,12 @@
 	.move-row { font-size: 13px; font-family: monospace; color: rgba(255, 255, 255, 0.8); }
 
 	.button {
-		padding: 8px 12px;
+		padding: 6px 12px;
 		background-color: rgba(90, 140, 255, 0.25);
 		border-radius: 6px;
 		cursor: pointer;
 		pointer-events: all;
-		font-size: 14px;
+		font-size: 13px;
 		justify-content: center;
 	}
 	.button:hover { background-color: rgba(90, 140, 255, 0.45); }
@@ -363,12 +362,12 @@
 	}
 	.error { font-size: 12px; color: #ff8080; }
 
-	.lichess { flex-direction: column; gap: 6px; }
+	.lichess { flex-direction: column; gap: 4px; }
 	.lc-head { font-size: 12px; letter-spacing: 2px; color: rgba(255, 255, 255, 0.45); }
-	.lc-you { font-size: 13px; color: #7fd47f; }
-	.lc-sub { font-size: 12px; color: rgba(255, 255, 255, 0.6); margin-top: 4px; }
-	.lc-note { font-size: 11px; color: rgba(255, 255, 255, 0.4); margin-top: 4px; }
-	.lc-divider { font-size: 11px; color: rgba(255, 255, 255, 0.35); margin: 8px 0 2px 0; justify-content: center; }
+	.lc-you { font-size: 12px; color: #7fd47f; }
+	.lc-sub { font-size: 11px; color: rgba(255, 255, 255, 0.6); margin-top: 2px; }
+	.lc-note { font-size: 11px; color: rgba(255, 255, 255, 0.4); margin-top: 2px; }
+	.lc-divider { font-size: 11px; color: rgba(255, 255, 255, 0.35); margin: 5px 0 1px 0; justify-content: center; }
 	.lc-input {
 		pointer-events: all;
 		background-color: rgba(255, 255, 255, 0.08);

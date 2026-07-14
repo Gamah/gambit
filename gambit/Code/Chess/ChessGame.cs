@@ -64,7 +64,23 @@ public sealed class ChessGame
 		int target = ply < 0 ? 0 : ply > count ? count : ply;
 		board.MoveIndex = target - 1; // -1 = the start position (before any move)
 
-		return board.ToFen() is { } fen && TryFromFen( fen, out game );
+		if ( board.ToFen() is not { } fen || !TryFromFen( fen, out game ) ) return false;
+
+		// Carry the last displayed move as UCI so callers can highlight it (the move that
+		// led to a puzzle, or the move that ended a finished game — the board view keys its
+		// last-move highlight off this). Same class, so we can set the private field.
+		if ( target >= 1 )
+			game._lastMoveUci = UciOf( board.ExecutedMoves[target - 1] );
+		return true;
+	}
+
+	/// <summary>UCI of a vendor move ("e2e4", "e7e8q").</summary>
+	static string UciOf( ChessLib.Move move )
+	{
+		string uci = move.OriginalPosition.ToString() + move.NewPosition.ToString();
+		if ( move.Parameter is ChessLib.MovePromotion promo )
+			uci += char.ToLowerInvariant( promo.PromotionResult.AsChar );
+		return uci;
 	}
 
 	/// <summary>Reconstruct the final position of a PGN/movetext (TV snapshots).</summary>

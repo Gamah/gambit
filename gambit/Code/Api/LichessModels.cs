@@ -115,6 +115,7 @@ public sealed class LichessGameStatus
 	public string id { get; set; }
 	public string status { get; set; }       // "mate","resign","outoftime","draw","stalemate",…
 	public string winner { get; set; }       // "white"/"black"/null
+	public string moves { get; set; }        // full SAN movetext — lets us rebuild the final position
 }
 
 // ── Puzzles (M5) ──
