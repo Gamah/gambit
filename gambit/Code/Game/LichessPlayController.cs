@@ -131,6 +131,12 @@ public sealed class LichessPlayController : Component, IBoardGame
 
 	public RealTimeSince SinceCopied { get; private set; } = 999f;
 
+	/// <summary>Incoming lichess challenges (someone challenged YOU — from the web, mobile,
+	/// or another client), polled while idle + seated here (M4 #4). The HUD lists them with
+	/// Accept / Decline. id, challenger name, speed.</summary>
+	public IReadOnlyList<(string id, string from, string speed)> Incoming => _incoming;
+	readonly List<(string id, string from, string speed)> _incoming = new();
+
 	// ── Internals ──
 
 	ChessSeat _myColor;
@@ -147,7 +153,11 @@ public sealed class LichessPlayController : Component, IBoardGame
 	bool _polling;
 	bool _moveInFlight;
 
+	RealTimeSince _sinceChallengePoll = 999f;
+	bool _challengePolling;
+
 	const float PollInterval = 1.5f; // ~lichess-friendly; a full-minute 429 back-off would flag-loss anyway
+	const float ChallengePollInterval = 4f; // idle inbound-challenge watch — slower, it's just a notification
 
 	ChessSeat? LocalSeatNow =>
 		ChessStation.Active == Station && Station != null ? ChessStation.ActiveSeat : null;
@@ -168,8 +178,13 @@ public sealed class LichessPlayController : Component, IBoardGame
 			&& Station.WhiteSteamId == 0 && Station.BlackSteamId == 0 )
 			ClearRelayFields();
 
-		// Only the client that started a game here is non-Idle; everyone else no-ops.
-		if ( _phase != PlayPhase.Challenging && _phase != PlayPhase.Playing ) return;
+		// Idle + seated here: watch for INCOMING challenges so they can be accepted in
+		// sbox (only the station the local player is sitting at polls — challenges are
+		// account-global, so one poller is enough).
+		if ( _phase == PlayPhase.Idle ) { PollIncomingIfSeated(); return; }
+		if ( _phase == PlayPhase.Over ) return;
+
+		// Remaining: Challenging or Playing — the client that started a game here.
 
 		// While a game is live, hold the game stream open so lichess sees us present —
 		// without it the opponent's client shows us as having left after every move
@@ -291,6 +306,82 @@ public sealed class LichessPlayController : Component, IBoardGame
 		_presenceCts?.Cancel();
 		_presenceCts = null;
 		_presenceTask = null;
+	}
+
+	// ── Incoming challenges (M4 #4) ──
+
+	void PollIncomingIfSeated()
+	{
+		// Only poll while the local player is actually sitting here and signed in.
+		if ( LocalSeatNow == null || !LichessAuth.SignedIn )
+		{
+			if ( _incoming.Count > 0 ) _incoming.Clear();
+			return;
+		}
+		if ( _challengePolling || _polling || LichessApi.Busy ) return;
+		if ( _sinceChallengePoll < ChallengePollInterval ) return;
+		_sinceChallengePoll = 0f;
+		PollIncoming();
+	}
+
+	async void PollIncoming()
+	{
+		_challengePolling = true;
+		try
+		{
+			var res = await LichessApi.GetChallenges( LichessAuth.Token );
+			// Don't treat a 401 here as a dead token — a token missing only the
+			// challenge:read scope 401s this endpoint while still being fine for play. Just
+			// skip quietly (real token death is caught by the play/account polls).
+			if ( !res.Ok ) return; // unauthorized/transient — try again next tick
+
+			var list = LichessApi.Deserialize<LichessChallengeList>( res.Body );
+			_incoming.Clear();
+			if ( list?.@in != null )
+				foreach ( var c in list.@in )
+					if ( !string.IsNullOrEmpty( c.id ) )
+						_incoming.Add( (c.id, c.challenger?.name ?? "someone", c.speed ?? "") );
+		}
+		finally
+		{
+			_challengePolling = false;
+		}
+	}
+
+	/// <summary>Accept an incoming challenge and play it on this board. Colours were set by
+	/// the challenger, so lichess assigns ours on accept — we adopt the new game via the
+	/// poll (like a seek) and swoop the camera to whichever side we're given.</summary>
+	public async void AcceptIncoming( string id )
+	{
+		if ( string.IsNullOrEmpty( id ) ) return;
+		if ( !CanStart( out var seat ) ) return;
+
+		// Snapshot ongoing games so the poll adopts only the newly-accepted one.
+		var pre = await LichessApi.GetAccountPlaying( LichessAuth.Token );
+		if ( pre.Unauthorized ) { FailStart( pre ); return; }
+		var preList = pre.Ok ? LichessApi.Deserialize<LichessNowPlaying>( pre.Body )?.nowPlaying : null;
+		if ( _phase == PlayPhase.Challenging || _phase == PlayPhase.Playing ) return;
+
+		BeginChallenge( seat, expectOpponent: null, ai: false );
+		_expectAny = true;
+		_preexistingIds = CollectGameIds( preList );
+		StatusText = "Accepting the challenge…";
+
+		var res = await LichessApi.AcceptChallenge( id, null, LichessAuth.Token );
+		if ( !res.Ok )
+			// Non-fatal: if it doesn't land the poll simply finds no new game and standing
+			// up clears the stuck Challenging state.
+			Log.Warning( $"[Gambit] accept incoming failed ({res.Status}): {LichessApi.Truncate( res.Body, 160 )}" );
+
+		_sincePoll = 999f;
+	}
+
+	/// <summary>Decline an incoming challenge — drop it locally and tell lichess.</summary>
+	public async void DeclineIncoming( string id )
+	{
+		if ( string.IsNullOrEmpty( id ) ) return;
+		_incoming.RemoveAll( c => c.id == id );
+		await LichessApi.DeclineChallenge( id, LichessAuth.Token );
 	}
 
 	// ── Starting a game ──
@@ -485,6 +576,7 @@ public sealed class LichessPlayController : Component, IBoardGame
 		IsOpenGame = false;
 		SeatUrl = null;
 		ShareUrl = null;
+		_incoming.Clear();
 		_phase = PlayPhase.Challenging;
 	}
 

@@ -119,11 +119,11 @@ public sealed class LichessGameStatus
 
 // ── Puzzles (M5) ──
 
-/// <summary>Reply from <c>GET /api/puzzle/{daily|next|id}</c>. The puzzle position is
-/// the source <see cref="game"/>'s PGN played out to <c>puzzle.initialPly</c> half-moves;
-/// from there <c>puzzle.solution</c> is the UCI line, opponent-move-first (lichess
-/// convention: the position is one ply before the solver's turn, so solution[0] is the
-/// opponent's setup move, solution[1] the solver's first move, and so on).</summary>
+/// <summary>Reply from <c>GET /api/puzzle/{daily|next|id}</c>. The puzzle position is the
+/// END of the source <see cref="game"/>'s PGN (its last move is the opponent's setup move;
+/// <c>puzzle.initialPly</c> is that move's 0-based index, so the position is after
+/// initialPly+1 half-moves). From there it is the solver's turn: <c>puzzle.solution</c> is
+/// the UCI line SOLVER-move-first (solution[0] = solver, solution[1] = opponent reply, …).</summary>
 public sealed class LichessPuzzleResponse
 {
 	public PuzzleGame game { get; set; }

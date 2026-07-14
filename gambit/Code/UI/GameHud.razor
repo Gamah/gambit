@@ -122,6 +122,17 @@
 				var mySeat = ChessStation.ActiveSeat;
 
 				<div class="lichess">
+					@if ( ( lp?.Incoming.Count ?? 0 ) > 0 )
+					{
+						<div class="lc-head">INCOMING CHALLENGE</div>
+						@foreach ( var ch in lp.Incoming )
+						{
+							<div class="lc-you">@ch.from challenges you@( string.IsNullOrEmpty( ch.speed ) ? "" : $" ({ch.speed})" )</div>
+							<div class="button" onclick="@( () => lp.AcceptIncoming( ch.id ) )">Accept & play here</div>
+							<div class="button ghost" onclick="@( () => lp.DeclineIncoming( ch.id ) )">Decline</div>
+						}
+						<div class="lc-divider">— or start your own —</div>
+					}
 					@if ( lc != null && lc.HasOpenGame )
 					{
 						var myUrl = lc.PlayUrlFor( mySeat );
@@ -289,7 +300,12 @@
 	.hud {
 		position: absolute;
 		right: 24px;
-		top: 15%;
+		top: 3%;
+		/* Fit the screen: cap to (almost) full height and scroll the overflow, so the
+		   panel never runs off the bottom regardless of how much the play/puzzle/incoming
+		   sections add or the screen resolution. */
+		max-height: 94%;
+		overflow-y: scroll;
 		width: 250px;
 		flex-direction: column;
 		gap: 8px;
@@ -511,8 +527,10 @@
 		var lc = Lichess();
 		var lp = LichessPlay();
 		var pz = Puzzle();
-		var puzzleHash = System.HashCode.Combine( pz?.Active, pz?.Solving, pz?.Solved, pz?.WasRevealed,
-			pz?.StatusText, pz?.Game?.Fen, pz?.ShowWrong, pz?.Error );
+		var puzzleHash = System.HashCode.Combine(
+			System.HashCode.Combine( pz?.Active, pz?.Solving, pz?.Solved, pz?.WasRevealed,
+				pz?.StatusText, pz?.Game?.Fen, pz?.ShowWrong, pz?.Error ),
+			lp?.Incoming?.Count ?? 0 );
 		var lichessHash = System.HashCode.Combine(
 			System.HashCode.Combine( lc?.HasOpenGame, lc?.UrlWhite, lc?.Creating, lc?.Error, lc?.SinceCopied < 2f, _joinError ),
 			System.HashCode.Combine( lp?.Active, lp?.Playing, lp?.Challenging, lp?.IsMyTurn, lp?.Game?.Fen,

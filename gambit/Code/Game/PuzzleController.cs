@@ -18,10 +18,11 @@ namespace Gambit.Game;
 /// implements <see cref="IBoardGame"/> so <see cref="ChessBoardView"/> renders and drives
 /// it with zero per-source branching — the solver clicks moves exactly as in a real game.</para>
 ///
-/// <para>lichess convention: the position is set <c>initialPly</c> half-moves into the
-/// game, one ply BEFORE the solver's turn. So <c>solution[0]</c> is the opponent's setup
-/// move (auto-played), <c>solution[1]</c> the solver's first move, <c>solution[2]</c> the
-/// opponent's reply (auto-played), and so on — solver plays the odd indices.</para>
+/// <para>lichess convention (confirmed against a live <c>/api/puzzle/daily</c>): the
+/// position is the END of <c>game.pgn</c> — its last move is the opponent's setup move,
+/// already played — and it is the SOLVER's turn. So <c>solution[0]</c> is the solver's
+/// first move, <c>solution[1]</c> the opponent's reply (auto-played), <c>solution[2]</c>
+/// the solver's next, and so on — the solver plays the EVEN indices.</para>
 /// </summary>
 public sealed class PuzzleController : Component, IBoardGame
 {
@@ -175,17 +176,18 @@ public sealed class PuzzleController : Component, IBoardGame
 		if ( p?.game?.pgn == null || p.puzzle?.solution == null || p.puzzle.solution.Count == 0 )
 			return false;
 
-		if ( !ChessGame.TryFromPgnAtPly( p.game.pgn, p.puzzle.initialPly, out var pos ) )
-			return false;
-
-		// solution[0] is the opponent's setup move — play it so the solver is on move.
-		if ( !pos.ApplyUci( p.puzzle.solution[0] ) )
+		// The puzzle position is the END of game.pgn — its last move IS the opponent's
+		// setup move (already played), and initialPly is the 0-based index of that move, so
+		// the position is after initialPly+1 half-moves. From here the SOLVER moves first:
+		// solution[0] is the solver's move, solution[1] the opponent's reply, and so on
+		// (solver = even indices). Confirmed against a live /api/puzzle/daily.
+		if ( !ChessGame.TryFromPgnAtPly( p.game.pgn, p.puzzle.initialPly + 1, out var pos ) )
 			return false;
 
 		_game = pos;
 		_startFen = pos.Fen;
 		_solution = p.puzzle.solution;
-		_solutionIndex = 1;
+		_solutionIndex = 0;
 		_solverColor = pos.WhiteToMove ? ChessSeat.White : ChessSeat.Black;
 		PuzzleId = p.puzzle.id;
 		Rating = p.puzzle.rating;

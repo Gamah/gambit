@@ -246,6 +246,29 @@ public static class LichessSpikes
 			Log.Info( "[Gambit]   (none live — a challenge shows here only until it's accepted/declined/expired)" );
 	}
 
+	/// <summary>Accept an incoming challenge on the board you're seated at (M4 #4). With no
+	/// id, accepts the first one lichess lists as incoming. Sit down first.</summary>
+	[ConCmd( "gambit_accept" )]
+	public static void Accept( string id = null ) => _ = AcceptIncoming( id );
+
+	static async Task AcceptIncoming( string id )
+	{
+		var pc = Gambit.Game.LichessPlayController.For( Gambit.World.ChessStation.Active );
+		if ( pc == null ) { Log.Warning( "[Gambit] sit at a board first, then: gambit_accept [challengeId]" ); return; }
+
+		if ( string.IsNullOrEmpty( id ) )
+		{
+			if ( !LichessAuth.SignedIn ) { Log.Warning( "[Gambit] sign in first." ); return; }
+			var res = await LichessApi.GetChallenges( LichessAuth.Token );
+			var list = res.Ok ? LichessApi.Deserialize<LichessChallengeList>( res.Body ) : null;
+			id = list?.@in is { Count: > 0 } inc ? inc[0].id : null;
+			if ( string.IsNullOrEmpty( id ) ) { Log.Info( "[Gambit] no incoming challenges to accept." ); return; }
+		}
+
+		Log.Info( $"[Gambit] accepting challenge {id}…" );
+		pc.AcceptIncoming( id );
+	}
+
 	// ── M5: spectate / TV / puzzles ──
 
 	/// <summary>Load a puzzle on the board you're seated at (M5). <c>daily</c> (default)
