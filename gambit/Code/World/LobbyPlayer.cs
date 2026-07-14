@@ -230,7 +230,9 @@ public sealed class LobbyPlayer : Component
 			// Escape or Back stands up / closes the wall board. (Start auto-sets
 			// EscapePressed; the Back button is wired through the "Back" action.)
 			// Standing up mid-game resigns, so that path is two-stage (RequestLeave).
-			if ( Input.EscapePressed || Input.Pressed( "Back" ) )
+			// The info/welcome board also closes on E (its own hint says "E or Esc").
+			if ( Input.EscapePressed || Input.Pressed( "Back" )
+				|| ( InfoStation.Active != null && Input.Pressed( "use" ) ) )
 			{
 				Input.EscapePressed = false;
 				RequestLeave();
