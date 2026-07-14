@@ -45,6 +45,23 @@ public sealed class SpectatorController : Component
 	public string StatusText { get; private set; }
 	public bool HasPosition => !string.IsNullOrEmpty( Fen );
 
+	/// <summary>Full-move number the board is currently showing, from the FEN's last field
+	/// (0 when there's no position). Derived, so it's free to poll every frame.</summary>
+	public int MoveNumber
+	{
+		get
+		{
+			var fen = Fen;
+			if ( string.IsNullOrEmpty( fen ) ) return 0;
+			int sp = fen.LastIndexOf( ' ' );
+			return sp >= 0 && sp + 1 < fen.Length && int.TryParse( fen[( sp + 1 )..], out var n ) && n > 0 ? n : 0;
+		}
+	}
+
+	/// <summary>Time control in "3+2" form parsed from the export PGN, or null (the sbox-table
+	/// featured source carries no PGN, so it's TV / watch-by-id only).</summary>
+	public string TimeControl { get; private set; }
+
 	// ── Player metadata for the scoreboard panel (parsed from the export PGN for lichess
 	//    sources; unknown for the sbox-table featured source). ──
 	/// <summary>Elo, or 0 when unknown (sbox players, unrated games, missing header).</summary>
@@ -376,6 +393,7 @@ public sealed class SpectatorController : Component
 	{
 		WhiteRating = BlackRating = 0;
 		WhiteTitle = BlackTitle = null;
+		TimeControl = null;
 		_whiteClockBase = _blackClockBase = -1;
 		_clocksFrozen = false;
 	}
@@ -394,6 +412,7 @@ public sealed class SpectatorController : Component
 		BlackRating = ParseInt( PgnHeader( pgn, "BlackElo" ) );
 		WhiteTitle = PgnHeader( pgn, "WhiteTitle" );
 		BlackTitle = PgnHeader( pgn, "BlackTitle" );
+		TimeControl = PrettyTimeControl( PgnHeader( pgn, "TimeControl" ) );
 
 		// %clk comments alternate White, Black, White, Black… The last belongs to whoever just
 		// moved, i.e. the OPPOSITE of the side to move (which is holding its previous value).
@@ -428,6 +447,22 @@ public sealed class SpectatorController : Component
 	}
 
 	static int ParseInt( string s ) => int.TryParse( s, out var n ) ? n : 0;
+
+	/// <summary>lichess writes the PGN TimeControl header as "&lt;base-seconds&gt;+&lt;inc-seconds&gt;"
+	/// (e.g. "180+2"). Turn it into the familiar minutes form ("3+2"); return null for
+	/// correspondence / unlimited / unparsable ("-", "?", "1/86400").</summary>
+	static string PrettyTimeControl( string tc )
+	{
+		if ( string.IsNullOrEmpty( tc ) || tc is "-" or "?" ) return null;
+		int plus = tc.IndexOf( '+' );
+		if ( plus < 0 ) return null; // correspondence ("1/86400") — not a base+inc clock
+		if ( !int.TryParse( tc[..plus], out var baseSec ) || !int.TryParse( tc[( plus + 1 )..], out var inc ) )
+			return null;
+		double mins = baseSec / 60.0;
+		// Whole minutes print bare (10+0); sub-minute controls keep one decimal (0.5+0).
+		string b = mins == Math.Floor( mins ) ? ( (int)mins ).ToString() : mins.ToString( "0.#" );
+		return $"{b}+{inc}";
+	}
 
 	/// <summary>True when it's White to move (FEN's active-colour field is not 'b').</summary>
 	static bool SideToMove( string fen )

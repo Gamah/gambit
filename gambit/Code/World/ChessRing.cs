@@ -417,20 +417,47 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			sign.AddComponent<WorldPanel>().LookAtCamera = true;
 			sign.AddComponent<Gambit.UI.StationScreenPanel>();
 
-			// Board number, floated well clear of the table so it reads across the
-			// room (same panel the cabinets wore).
-			var number = new GameObject( true, $"BoardNumber {i}" );
-			number.Parent = station;
-			number.LocalPosition = new Vector3( 0, 0, 116f );
-			number.LocalScale = 0.35f * TableScale;
-			number.AddComponent<WorldPanel>().LookAtCamera = true;
-			number.AddComponent<Gambit.UI.MarqueeNumberPanel>().Number = i.ToString();
-
 			if ( BuildTables )
+			{
 				BuildChessTable( station );
+				// Board number on a little angled plaque at the board's front-left, instead of a
+				// number floating overhead (needs the table/board to sit against).
+				BuildStationPlaque( station, i );
+			}
 		}
 
 		return _spawned;
+	}
+
+	/// <summary>Small angled name-plate at the board's front-left carrying the table number.
+	/// Local +X is Black's side (radially inward), −X is White's (the walk-up side); +Y is
+	/// White's left (the a-file edge). The plaque sits just outside the board's left edge, on
+	/// the tabletop below the board, tilted back 45° so it faces up toward an approaching
+	/// player. All offsets are in base units × TableScale — tune in-editor.</summary>
+	void BuildStationPlaque( GameObject station, int number )
+	{
+		float s = TableScale;
+		float boardHalf = ( BoardSize + 3f ) * 0.5f; // board-frame half-extent, base units
+
+		var plaque = new GameObject( true, $"BoardPlaque {number}" );
+		plaque.Parent = station;
+		// Front-left corner: forward toward White (−X), out past the left edge (+Y), resting on
+		// the tabletop just below the board.
+		plaque.LocalPosition = new Vector3( -boardHalf * 0.45f, ( boardHalf + 2.5f ), TableTopZ + 2f ) * s;
+		// Face the walk-up side (−X → yaw 180°) and tilt the top back 45° so the face angles up.
+		plaque.LocalRotation = Rotation.From( -45f, 180f, 0f );
+
+		// The physical plate (thin along the plaque's facing normal = local +X).
+		AddBox( plaque, "Plate", Vector3.Zero, new Vector3( 0.6f, 8f, 5.5f ) * s, null, FrameColor );
+
+		// The number, flush on the plate's front face (+X), not billboarded — it rides the
+		// plaque's tilt like a real plate.
+		var num = new GameObject( true, "Number" );
+		num.Parent = plaque;
+		num.LocalPosition = new Vector3( 0.4f * s, 0f, 0f );
+		num.LocalScale = 0.16f * s;
+		num.AddComponent<WorldPanel>();
+		num.AddComponent<Gambit.UI.MarqueeNumberPanel>().Number = number.ToString();
 	}
 
 	/// <summary>Locked-camera anchor for one seat. side −1 = White (outward),

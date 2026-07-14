@@ -1,4 +1,6 @@
 @using System
+@using System.Collections.Generic
+@using System.Linq
 @using Sandbox
 @using Sandbox.UI
 @using Gambit.Game
@@ -7,22 +9,31 @@
 @inherits PanelComponent
 
 @*
-	Walk-up control board (PLAN.md M5) at eye height, directly under the giant floating
-	spectator board (SpectatorWall). It's what invites the player over: it shows what the
-	board is currently watching and prompts "Press E to spectate", which opens the
-	interactive channel picker (SpectatorScreen) via the co-located SpectatorStation.
-	Display-only — no pointer events; colours track the world light via WallTheme so it
-	sits with the other lobby boards.
+	Walk-up control board (PLAN.md M5) at walk-up height on the north wall, under the giant
+	floating spectator board (SpectatorWall). It shows what the board is watching — channel,
+	players, time control + move number, and a live/latency status line — and prompts "Press E
+	to spectate", which opens the interactive channel picker (SpectatorScreen) via the
+	co-located SpectatorStation.
+
+	Sized and floor-anchored to match the east-wall info board exactly (WallBoardGeometry) so
+	every wall sign reads as one size — hence the small info-board font scale (more info, smaller
+	text). Display-only: no pointer events; colours track the world light via WallTheme.
+
+	No chess glyphs here — s&box renders some of them as colour emoji / stray floating glyphs.
+	Keep this board plain text.
 *@
 
 <root>
-	<div class="board" style="background-color:@WallTheme.Bg; border:2px solid @WallTheme.Border;">
-		@* No chess glyphs here — s&box renders some of them as colour emoji / stray
-		   floating glyphs. Keep this board plain text. *@
+	<div class="board" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
 		<div class="title" style="color:@WallTheme.Text;">SPECTATOR</div>
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
-		<div class="line" style="color:@WallTheme.AccentCss;">@Source()</div>
-		<div class="sub" style="color:@WallTheme.TextDim;">@Detail()</div>
+
+		<div class="channel" style="color:@WallTheme.AccentCss;">@Channel()</div>
+		<div class="players" style="color:@WallTheme.Text;">@Players()</div>
+		<div class="meta" style="color:@WallTheme.TextDim;">@Meta()</div>
+		<div class="status" style="color:@WallTheme.TextFaint;">@Status()</div>
+
+		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 		<div class="hint" style="color:@WallTheme.TextFaint;">Press E to spectate</div>
 	</div>
 </root>
@@ -36,57 +47,69 @@
 		pointer-events: none;
 	}
 
-	/* Colours are runtime-driven (WallTheme, bound inline above); only layout + static
-	   tokens live here. Layout in the WorldPanel's fixed intrinsic pixel space, fixed px
-	   fonts, uniform GO scale — change these, not the GO scale, to fix spacing. */
+	/* Colours are runtime-driven (WallTheme, bound inline above); only layout + static tokens
+	   live here. Fixed px in the default WorldPanel's intrinsic space — the SAME font scale as
+	   CenterInfoPanel so the boards match. Change these px (not the GO scale) to fix spacing. */
 	.board {
-		position: absolute;
-		top: 0;
-		left: 0;
 		width: 100%;
-		height: 100%;
+		height: auto;
 		flex-direction: column;
 		align-items: stretch;
-		justify-content: center;
-		padding: 22px 30px;
-		border-radius: $wall-radius;
+		justify-content: flex-start;
+		padding: 9px 12px;
+		border-radius: 7.5px;
 		font-family: $wall-font;
-		gap: 8px;
+		gap: 4px;
 	}
 
+	/* Fixed-height flex column: without this, items shrink to ~one line and wrapped text
+	   spills under the following divider. */
 	.board > div { flex-shrink: 0; }
 
 	.title {
-		justify-content: center;
-		white-space: nowrap;
-		font-size: 30px;
+		font-size: 13px;
 		font-weight: bold;
-		letter-spacing: 5px;
+		letter-spacing: 3px;
+		text-align: center;
 	}
 
-	.divider { height: 2px; margin: 4px 0; }
+	.divider { height: 0.75px; margin: 1.5px 0; }
 
-	.line {
-		justify-content: center;
-		white-space: nowrap;
-		font-size: 19px;
+	.channel {
+		font-size: 6px;
 		font-weight: bold;
-		letter-spacing: 1px;
+		letter-spacing: 1.5px;
+		text-align: center;
+		white-space: nowrap;
 	}
 
-	.sub {
-		justify-content: center;
-		white-space: nowrap;
-		font-size: 14px;
+	.players {
+		font-size: 7px;
+		font-weight: bold;
 		letter-spacing: 0.5px;
+		text-align: center;
+		white-space: nowrap;
+	}
+
+	.meta {
+		font-size: 5px;
+		letter-spacing: 0.75px;
+		text-align: center;
+		white-space: nowrap;
+	}
+
+	.status {
+		font-size: 5px;
+		font-style: italic;
+		letter-spacing: 0.5px;
+		text-align: center;
 	}
 
 	.hint {
-		justify-content: center;
-		white-space: nowrap;
-		font-size: 17px;
-		letter-spacing: 2px;
-		margin-top: 6px;
+		font-size: 6px;
+		letter-spacing: 1.5px;
+		text-align: center;
+		margin-top: 1px;
 	}
 </style>
 
@@ -94,30 +117,72 @@
 {
 	SpectatorController C => SpectatorController.Instance;
 
-	/// <summary>Headline line — what the board is watching right now.</summary>
-	string Source()
+	/// <summary>World half-height of the panel's intrinsic rect per unit of GO Z-scale (same
+	/// calibration as CenterInfoPanel — tune in-editor if the board floats or sinks).</summary>
+	[Property] public float HalfHeightPerScale { get; set; } = 18f;
+
+	/// <summary>World units to keep between the content's bottom edge and the floor.</summary>
+	[Property] public float FloorClearance { get; set; } = 30f;
+
+	/// <summary>Headline — what the board is watching right now.</summary>
+	string Channel()
 	{
 		var c = C;
-		if ( c == null ) return "Live tables · lichess TV";
+		if ( c == null ) return "LIVE TABLES · LICHESS TV";
 		return c.Current switch
 		{
 			SpectatorController.Channel.LichessTv => c.ChannelLabel,
 			SpectatorController.Channel.WatchId => c.ChannelLabel,
-			_ => "FEATURED · live tables",
+			_ => "FEATURED · LIVE TABLES",
 		};
 	}
 
-	/// <summary>Second line — the players when a game is up, else a short hint.</summary>
-	string Detail()
+	/// <summary>The two players when a game is up, else a short invite.</summary>
+	string Players()
+	{
+		var c = C;
+		if ( c == null || !c.HasPosition ) return "Live tables · lichess TV";
+		return $"{c.WhiteName}  vs  {c.BlackName}";
+	}
+
+	/// <summary>Time control + move number (whichever is known).</summary>
+	string Meta()
+	{
+		var c = C;
+		if ( c == null || !c.HasPosition ) return "Walk up and pick a game to watch";
+		var parts = new List<string>();
+		if ( !string.IsNullOrEmpty( c.TimeControl ) ) parts.Add( c.TimeControl );
+		if ( c.MoveNumber > 0 ) parts.Add( $"move {c.MoveNumber}" );
+		return parts.Count > 0 ? string.Join( " · ", parts ) : "";
+	}
+
+	/// <summary>Live/latency line — the controller's own status note, or a plain LIVE tag.</summary>
+	string Status()
 	{
 		var c = C;
 		if ( c == null ) return "";
-		if ( c.HasPosition )
-			return $"{c.WhiteName}  vs  {c.BlackName}";
-		return "Live tables · lichess TV · watch a game";
+		if ( !string.IsNullOrEmpty( c.StatusText ) ) return c.StatusText;
+		return c.HasPosition ? "● LIVE" : "";
 	}
 
 	protected override int BuildHash() => HashCode.Combine(
 		C?.Current, C?.ChannelLabel, C?.WhiteName, C?.BlackName, C?.HasPosition,
+		HashCode.Combine( C?.TimeControl, C?.MoveNumber, C?.StatusText ),
 		SettingsModel.SettingsVersion );
+
+	protected override void OnUpdate()
+	{
+		// Floor-anchor exactly like CenterInfoPanel so this board matches the info board's size
+		// and anchor. .board is height:auto; measure its share of the intrinsic rect and lift
+		// the GO so the content bottom sits FloorClearance above z=0.
+		var board = Panel?.Children.FirstOrDefault();
+		if ( board is null || Panel.Box.Rect.Height <= 0f ) return;
+
+		float rootHalf = HalfHeightPerScale * WorldScale.z;
+		float contentHeight = 1.5f * rootHalf * ( board.Box.Rect.Height / Panel.Box.Rect.Height );
+
+		var pos = LocalPosition;
+		pos.z = FloorClearance + contentHeight - rootHalf;
+		LocalPosition = pos;
+	}
 }
