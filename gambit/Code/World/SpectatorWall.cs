@@ -73,6 +73,11 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// just outside the edge, coplanar with the board).</summary>
 	[Property] public float SeatEdgeGap { get; set; } = 6f;
 
+	/// <summary>How far up the board (as a fraction of its height) each tag sits, measured from
+	/// that player's own edge — 0 = at the edge, 0.5 = centred. Default 1/3 biases each tag toward
+	/// its own half.</summary>
+	[Property] public float SeatEdgeBias { get; set; } = 1f / 3f;
+
 	/// <summary>Uniform scale of the end-of-game fanfare banner centred over the board (world
 	/// width ≈ ResultPxWidth × this × 0.05).</summary>
 	[Property] public float ResultBoardScale { get; set; } = 5f;
@@ -169,27 +174,30 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 
 		// Two player tags (replacing the single overhead scoreboard that tried to show both sides
 		// at once and read poorly). Each lies coplanar with the board and sits just OUTSIDE its
-		// player's RIGHT edge — White faces up the board so its right is the +X (h-file) edge and
-		// sits at the bottom; Black faces down so its right is the −X (a-file) edge and sits at the
-		// top. Placed in the board's local frame (files X, ranks Y, out-of-face +Z) and transformed
-		// through the board's own position/rotation, so they track the tilt automatically. Each
-		// tag's WIDTH is auto-fit to the gap between the board edge and the side wall so a wide
-		// strip never pokes through the wall.
-		float seatHalfH = SeatPxHeight * SeatBoardScale * PxToWorld * 0.5f;
+		// player's RIGHT edge — White faces up the board so its right is the +X (h-file) edge; Black
+		// faces down so its right is the −X (a-file) edge. Vertically each is biased toward its own
+		// player's half (SeatEdgeBias up the board from that player's edge), not centred. Placed in
+		// the board's local frame (files X, ranks Y, out-of-face +Z) and transformed through the
+		// board's own position/rotation, so they track the tilt automatically. Each tag's WIDTH is
+		// auto-fit to the gap between the board edge and the side wall so a wide strip never pokes
+		// through the wall.
 		// World width available beside the board on the tighter side (both tags share it, so they
 		// match); guards against the board being off-centre along the wall.
-		float sideSpace = ( WallWidth * 0.5f - WallInset ) - ( halfBoard + MathF.Abs( centreX ) )
+		float sideSpace = ( WallWidth * 0.5f - MathF.Abs( centreX ) - WallInset ) - halfBoard
 			- SeatEdgeGap - SeatWallMargin;
 		float tagWorldW = MathF.Max( MathF.Min( sideSpace, SeatMaxWorldWidth ), 1f );
 		float seatPxW = tagWorldW / ( SeatBoardScale * PxToWorld ); // px that renders tagWorldW wide
 		float outX = halfBoard + SeatEdgeGap + tagWorldW * 0.5f;    // tag centre just outside the edge
+		// Vertical bias: SeatEdgeBias of the board's height in from each player's edge (0 = at the
+		// edge, 0.5 = centred). White (bottom) sits below centre, Black (top) above.
+		float seatY = halfBoard - SeatEdgeBias * boardSize;
 
 		// A WorldPanel faces its GO +X with up +Z; rotate it to lie in the board plane facing out
 		// of the face (board +Z) with text up along the ranks (board +Y).
 		var inPlane = boardRot * Rotation.LookAt( new Vector3( 0f, 0f, 1f ), new Vector3( 0f, 1f, 0f ) );
 
-		Vector3 WhiteOffset = new( outX, -halfBoard + seatHalfH, 0f );  // right of board, bottom-aligned
-		Vector3 BlackOffset = new( -outX, halfBoard - seatHalfH, 0f );  // left of board, top-aligned
+		Vector3 WhiteOffset = new( outX, -seatY, 0f );  // right of board, biased toward the bottom
+		Vector3 BlackOffset = new( -outX, seatY, 0f );  // left of board, biased toward the top
 
 		AddSeatTag( "SpectatorWhiteTag", boardCentre + boardRot * WhiteOffset, inPlane, seatPxW, white: true );
 		AddSeatTag( "SpectatorBlackTag", boardCentre + boardRot * BlackOffset, inPlane, seatPxW, white: false );
