@@ -10,31 +10,144 @@ This file is the durable reference: how the game is built and the s&box lore tha
 biting. **`PLAN.md` is only upcoming work and open issues** — read it for what's left,
 not for how things work.
 
-### Lichess: gone, and rebuilt from scratch when it returns
+### Lichess: real games, and gamchess holds the token
 
-There is **no lichess in the tree today**. It was built against the lichess API through
-M3–M5 and all of that was ripped out on `m7-gamchess-identity`: no API client, no OAuth,
-no puzzles, no TV, no token, no allowlist entry. The codebase stands alone and **must keep
-working with no lichess at all** — gamchess is the only backend Gambit depends on.
+Gambit plays **real lichess games** from a table (M8): link your lichess account, and a game
+here is a game there, in your real history. Two ways in — play the person sitting opposite
+you (a direct challenge), or play a stranger (a lobby seek).
 
-A lichess integration **is planned again, as a clean-slate rebuild**. Two rules for that
-work, whenever it starts:
+The old pre-M7 lichess integration is **still not the starting point** for anything. It was
+ripped out on `m7-gamchess-identity` and M8 was a clean-slate rebuild against re-derived API
+facts. The `lichess-final` tag holds the old one for reference only; do not restore those
+files.
 
-- **The old implementation is not the starting point.** It lives at the **`lichess-final`**
-  tag for reference only. Do not restore those files; do not treat their design as decided.
-  It was written around assumptions (an `Http` polling loop, a splash-screen OAuth flow, an
-  anonymous display name) that no longer match how Gambit works — we now have Steam
-  identity, gamchess, and s&box netcode carrying local play.
-- **Re-derive the API facts.** The lichess API details that used to live in this file were
-  cut deliberately. Anything about Board API rules, rate limits, or streaming must be
-  re-read from lichess's current docs, not recalled from this repo's history or from
-  memory. A stale constraint is worse than no constraint.
+**Re-derive the API facts. This rule keeps earning its keep.** Everything below was read from
+the live `lichess-org/api` OpenAPI spec and `lichess-org/lila` master on 2026-07-15, not
+recalled. Re-read before trusting any of it — a stale constraint is worse than none. Facts
+marked **[SOURCE]** are inferred from lila's source, not a documented contract, and can change
+without notice.
 
-Until that rebuild starts, a stray lichess mention in code, comment, scene, asset, or doc
-is residue — gut it.
+#### The custody decision: gamchess holds the token (position 2)
 
-Status: gamchess client + server built, **never compiled or deployed** — this host has no
-s&box toolchain, no Go and no Docker. Expect a fixup pass on first open in the editor.
+**Why it is not a preference.** Playing a lichess game requires holding a long-lived ndjson
+stream open, and lichess has no polling substitute (they answer a poller with a literal
+*"Please don't poll this endpoint, it is intended to be streamed"* 429). The s&box client
+**cannot read a stream**: `Http.RequestAsync` buffers the whole body before returning,
+`HttpCompletionOption` is off the API whitelist, and `Http.RequestStreamAsync` is broken
+upstream (it `using`s the response then returns its stream). So whoever reads the stream must
+hold the token. `board:play` is also a single all-or-nothing scope — there is no read-only
+subset to give gamchess while keeping write capability on the client.
+
+The ideal (client-only token) is **two small upstream engine changes away**. Nothing here may
+foreclose that migration.
+
+**What that costs, and what pays it down.** An RCE or DB dump hands over every linked player's
+account for up to a year, and **lichess has no bulk revoke** — `DELETE /api/token` kills one
+token and must be signed by *that* token. So:
+
+- **Tokens are encrypted at rest** (AES-256-GCM, per-row nonce, `LICHESS_TOKEN_KEY`). A blank
+  key switches lichess **off**; it never falls back to plaintext. **No rotation path exists
+  yet** — changing the key invalidates every link. Back it up.
+- **The audit sweep is the only fast lever we own.** `POST /api/v1/lichess/audit` →
+  `POST /api/token/test` (1000 tokens/call) says which of our tokens are still live, in
+  seconds. It cannot revoke them. Auditing is the capability; mass revocation is not.
+- **Unlink revokes then deletes**, best-effort revoke, never fatal.
+
+**Incident-response reality** (verified against lila):
+
+| Lever | Real? |
+|---|---|
+| User revokes our grant | ✅ on **`/account/security`** — NOT `/account/oauth/token`, which lists *personal* tokens only and hides app grants. A documented trap; the copy must name the right page. |
+| A password change unlinks us | ❌ **does nothing.** Password change / "log out everywhere" touch web sessions only; `OAuthServer.auth` never reads the session flag. The in-game and web copy must say this plainly. |
+| We mass-revoke | ❌ no bulk endpoint. N serial signed calls. |
+| We audit | ✅ seconds. |
+| Lichess kills our whole app | ✅ but manual on their side, keyed on **`clientOrigin`** (our redirect URI's scheme+host). Ask via Discord. |
+
+#### Identity and authorisation
+
+- **`client_id` is `net.gamah.gambit`, a CONSTANT in `internal/lichess`, not config and not a
+  credential.** lichess has no client registration (`client_id required (choose any)`), and
+  **does not record it on the token** — an `AccessToken` stores `clientOrigin` and has no
+  client_id field. So changing it revokes nothing and configures nothing; the player's "revoke
+  this app" button and any lichess-side kill both key on the ORIGIN. It is public and
+  **impersonable by design** (lichess cannot bind a redirect_uri to an unregistered client_id),
+  so it authenticates nothing: PKCE secures the exchange, the redirect URI decides who gets a code.
+- **`redirect_uri` is derived once** from `PUBLIC_BASE_URL` (`+ "/lichess/callback"`), exactly as
+  `steamReturnURL()` is. lichess compares it **byte-for-byte** between authorize and token, and
+  deriving it once is also what keeps the test instance pointing at itself rather than prod.
+- **Starting a game against the other seat needs BOTH seats to POST** an intent for the same
+  `client_game_id`, each FP-authenticated. This is the whole authorisation story, not a
+  formality: gamchess holds a token for every linked player, so a one-sided start would let any
+  linked player drag any other into a game from anywhere. `client_game_id` is **not a secret**
+  (it is `[Sync]`ed to the lobby) — it is the rendezvous key; the two FP tokens are the
+  authority. A **seek** needs one caller: nobody else is being committed to anything.
+- gamchess holds both seats' tokens, so it **challenges with White's and accepts by id with
+  Black's** — it never watches `/api/stream/event` for the paired flow, and so is not bound by
+  the one-event-stream-per-token rule there. A seek DOES need the event stream (a seek's own
+  response carries no game id), which is why only one seek per user may run.
+
+#### The traps
+
+- **lila has TWO functions called `isBoardCompatible`, with different thresholds.**
+  `Challenge.isBoardCompatible` is `speed >= Blitz` (estimate ≥ 180s) and gates **challenges**;
+  `lila.core.game.isBoardCompatible` is `Speed(clock) >= Rapid` (≥ 480s) and gates **seeks**
+  (via `SetupForm.boardApiHook`). Same name, different files, different answers. `Speed` comes
+  from scalachess's `byTime(limit + 40*increment)`. **[SOURCE]**
+  → **Bullet never reaches lichess by any path.** The default table (Blitz 3+2, estimate 260)
+  is challengeable but **not** seekable — which is why a direct challenge is the primary flow.
+  Unlimited *is* challengeable (no clock → Correspondence speed) but not seekable.
+- **A seek's `time` is MINUTES; a challenge's `clock.limit` is SECONDS.** An easy way to ask
+  for a ten-second game while meaning ten minutes.
+- **Omitting both clock fields is how you ask for an unlimited challenge.** Sending `0/0` asks
+  for a rejected 0+0 clock instead.
+- **`clock.limit` has a domain**: 0, 15, 30, 45, 60, 90, or any multiple of 60 up to 10800.
+- Tokens are long-lived (~1 year) with **no refresh tokens**. A scope change forces a full
+  re-link for everyone, so `board:play` is the only scope we ever request.
+- **Imported games are unrated and attributed to NOBODY** — `[White]`/`[Black]` are display
+  strings, never account links. `POST /api/import` makes a game *viewable*, not *counted*. It
+  is a strictly weaker outcome than playing live, and the copy must not imply otherwise.
+
+#### Being a good API citizen (`internal/lichess/etiquette.go`)
+
+**Gambit's whole relay is ONE IP**, and lichess's limits are per-IP — so every player shares one
+budget, and misbehaving breaks the feature for everyone rather than throttling one user. Their
+published rules (`lichess.org/page/api-tips`) are short and we follow all of them:
+
+- **User-Agent on every request, streams included**, via a RoundTripper so no call site can
+  forget. It names the project, URL and a contact — lichess records a `userAgent` per token, so
+  this is how they can attribute or reach us. This matters if we ever ask for headroom.
+- **A 429 anywhere stops everything for a full minute.** Their words: "wait a full minute before
+  resuming API usage". Per-IP means a 429 on one call means we are collectively too fast.
+- **Self-limit lobby seeks** to lila's own 5/min/IP (`Limiters.setupPost` **[SOURCE]**), refusing
+  locally with a legible reason rather than spending the shared budget to earn a 429.
+- **Never retry into a throttle.** Report the reason; let the player decide.
+
+The accommodation channel is **Discord `#lichess-api-support`** (`https://discord.gg/MS9MejQqha`)
+— **not email**; there is no API branch in their contact form. Bring real traffic numbers and the
+specific limit hit; outcome is discretionary.
+
+#### Corrections to old repo folklore (verified against `sbox-public` @ `ca96c2a9`)
+
+Three long-standing claims in this file were **wrong** and are now removed:
+
+1. **`HttpAllowList` gates nothing — the "D8 allowlist" mechanism does not exist.**
+   `Http.IsAllowed` checks only scheme, loopback-port rules, IP-literals and DNS-rebinding.
+   There is no per-package host allowlist in the engine. The entry in `gambit.sbproj` is inert;
+   "add a host to the allowlist" is a non-step, and the old "blocked before connecting →
+   allowlist is wrong" diagnostic diagnosed a mechanism that isn't there.
+2. **The client cannot read a stream** — see the custody decision above. This is a fact about
+   the engine, not a preference, and it is what forces server-side custody.
+3. **`Sandbox.WebSocket` streams fine**, supports custom headers and incremental receive, and
+   its `Connect` goes through the **same** `Http.IsAllowedAsync` — which closes the old open
+   spike: yes, the URL policy covers WS, and since that policy is just scheme/IP checks,
+   `wss://chess.gamah.net` is allowed. We still use a long poll, for a Go-side reason: gamchess
+   would need a WebSocket library, and this repo cannot add a dependency (no Go, no Docker here
+   to regenerate `go.sum`). If that changes, the transport is one function each side.
+
+Status: gamchess client + server built, plus the M8 lichess link + Board API relay. The
+**Go half compiles and its tests pass** (fetch a Go 1.22 toolchain into scratch; `go test
+./... -race`). The **engine half has never been compiled** — this host has no s&box toolchain
+— so expect a fixup pass on first open in the editor. Nothing is deployed (no Docker here).
 
 ---
 
@@ -83,8 +196,15 @@ never go back in the root file — they match at any depth and would swallow `se
 **Paths in csproj/slnx** assume Steam at `D:\Steam\`; the editor regenerates them.
 
 This dev host has **no s&box toolchain** — no *engine* code compiles or runs locally.
-Verify by careful review + grep; the user tests in their editor. `node
-scripts/chess_js_perft.mjs` DOES run here — it is the gate on the web viewer's chess rules.
+Verify by careful review + grep; the user tests in their editor.
+
+**Three things DO run here, and all three are gates worth using:**
+- `node scripts/chess_js_perft.mjs` — the web viewer's chess rules.
+- **The Go server.** No toolchain is installed, but one can be fetched into scratch
+  (`go1.22.x.linux-amd64.tar.gz`) and `go build/vet/test ./... -race` all pass. `server/` is
+  fully testable; do not claim otherwise.
+- **Sandbox-free C#** via a scratch csproj (see below) — which now includes `Code/Game/
+  LichessTable.cs`, the client's copy of lichess's speed floors.
 
 **Sandbox-free C# is genuinely testable here**, and worth reaching for: `dotnet` (10.x) is
 installed, and everything under `Code/Chess/` except `PerftCommand.cs` — plus
@@ -93,8 +213,9 @@ Include>`s those files runs real games, real PGN, real perft. Two settings matte
 `<TargetFramework>net10.0` (net8 builds but won't launch — only the 10.x runtime is here)
 and `<ImplicitUsings>enable`, because the vendored library leans on s&box's global usings
 for `System.Collections.Generic`. Verified 2026-07-15. This is also how the vendored rules
-were proven originally, and how a `[TimeControl]`-bearing PGN was checked against the real
-writer — prefer it over review whenever the code in question can be isolated from Sandbox.
+were proven originally, how a `[TimeControl]`-bearing PGN was checked against the real
+writer, and how `LichessTable`'s challenge/seek floors were checked against every preset in
+`TimeControl.All` — prefer it over review whenever the code can be isolated from Sandbox.
 
 ---
 
@@ -165,14 +286,23 @@ captured from the dotnet harness, so regenerate them there rather than hand-edit
 
 ### Game controllers (per-station, added by ChessRing beside `ChessStation`)
 `Game/IBoardGame.cs` is the render/drive abstraction; `ChessBoardView` renders the
-active source with no per-source branching. There is only one source now
-(`Source => Controller`), but the seam stays: gamchess-backed play slots in there
-rather than rewriting the renderer.
+active source with **one** branch (`Source => Lichess is { Engaged: true } ? Lichess :
+Controller`). The seam paid for itself: M8 added a whole second kind of game with no renderer
+change at all. Anything that reads the position should go through it — `GameHud` does too, for
+the same reason.
 
 | Controller | Networked? | What it does |
 |---|---|---|
 | `LocalGameController` | host-folded `[Sync] BoardFen`/`Phase`/`ClientGameId` | the two-seat game at a table, and the archive upload (**D7**) |
+| `LichessGameController` | **no** — each client polls gamchess for itself | a real lichess game on this table (**M8**). Runs no clock and adjudicates nothing: lichess is the only authority, and the position is rebuilt from the UCI list it sends |
 | `SpectatorController` | reads the host-folded FEN | west wall: mirrors a live table (116 lines; it was 740 before TV went) |
+
+**While a lichess game runs, the local controller is a shell** holding the seats and the
+`ClientGameId`. Its `ChessGame` never advances (moves go to the relay, not `NetChessMove`), so
+its clocks and result are stale by construction — the host stops ticking them
+(`HostTickClocks` early-returns on `LichessGame`) precisely so it can't flag a player who is
+fine on lichess's clock. Anything reading a clock, a turn or a result during a lichess game
+must read the lichess source, not `ctrl`.
 
 ### Networking (D7)
 - `LobbyNetworkManager` (`ISceneStartup.OnHostInitialize` → `Networking.CreateLobby`)
@@ -199,9 +329,11 @@ rather than rewriting the renderer.
 
 ### Dev console commands
 `gambit_perft [depth]` — re-prove the chess rules in-sandbox.
-`gambit_gamchess_ping` — is gamchess up, and is the D8 allowlist right?
+`gambit_gamchess_ping` — is gamchess up?
 `gambit_gamchess_signin` — mint an FP token and prove the auth round-trip.
 `gambit_gamchess_games` — list your archived games.
+`gambit_lichess` — am I linked, and where do I link/revoke?
+`gambit_lichess_unlink` — revoke at lichess and forget the token.
 
 ---
 
@@ -245,21 +377,49 @@ CC0 sources on file for the D5 3D upgrade: Poly Haven "Chess Set" by Riley Queen
 (https://freesvg.org/portablejim-2d-chess-set-pieces); OpenGameArt /content/chess-pieces-0,
 /content/3d-chess-pieces, /content/chess-set-1, /content/chess. Kenney has no chess pack.
 
-### HTTP allowlist (D8)
-`"HttpAllowList": ["https://chess.gamah.net/"]` in `gambit.sbproj` — the only entry.
-Any new host needs adding here or every request fails.
+### HTTP: there is no allowlist (the old "D8" was folklore)
+
+**`HttpAllowList` gates nothing.** Verified by reading the shipped engine
+(`sbox-public` @ `ca96c2a9`): `Http.IsAllowed` checks only the scheme (http/https/ws/wss),
+loopback-port rules, IP-literal rejection, and DNS-rebinding into private ranges. **There is
+no per-package host allowlist anywhere in the engine.** The
+`"HttpAllowList": ["https://chess.gamah.net/"]` entry in `gambit.sbproj` is inert — the client
+can already reach any host — and "add a host to the allowlist" is a zero-cost non-step.
+
+The entry is kept as a **declaration of intent** (it documents the only backend we mean to
+talk to), not as a control. Do not rely on it, and do not diagnose against it: the old
+"blocked before connecting → the allowlist is wrong" advice diagnosed a mechanism that does
+not exist.
+
+`Sandbox.WebSocket.Connect` goes through the **same** `Http.IsAllowedAsync`, which closes the
+old open spike: the URL policy does cover WS, and since that policy is only scheme/IP checks,
+`wss://` to our own host is allowed.
 
 Reading a `gambit_gamchess_ping` failure (verified in-editor 2026-07-15):
-- **TLS/SSL error** → the request LEFT the sandbox and reached a handshake, so the
-  allowlist is **fine**; Caddy has no cert for that host (vhost down/not configured).
-- **blocked before connecting** → the allowlist is wrong.
+- **TLS/SSL error** → the request reached a handshake; Caddy has no cert for that host
+  (vhost down/not configured).
 - **any HTTP status** → we reached gamchess; read the status.
-
-Whether the allowlist also gates `Sandbox.WebSocket` is an open spike.
 
 ### gamchess deployment facts
 
-**Written, never compiled or deployed** (this host has no Go/Docker).
+**Never deployed** (this host has no Docker). The Go DOES now compile and test here when a
+toolchain is fetched into scratch — `make test` runs `go test ./... -race` in a container on a
+machine that has Docker, and the same suite passes locally with a downloaded Go 1.22. If you
+are changing the server, run the tests; "can't build it here" is no longer true for Go.
+
+**Secrets live in `.env` and are generated, not requested.** lichess issues nothing — no client
+id, no secret, no API key — so `LICHESS_TOKEN_KEY` (encrypts every stored lichess token; blank
+= lichess off; **no rotation path, back it up**) and `LICHESS_AUDIT_KEY` (gates the audit sweep)
+are ours. `make up` / `make testinst` mint any that `.env` lacks and **never overwrite one that
+has a value** — regenerating `LICHESS_TOKEN_KEY` would silently orphan every link.
+
+Test and prod **share** the token key deliberately: same host, same `.env`, so a second key
+isolates nothing, and each only ever decrypts its own already-separate database. What does
+differ is the redirect ORIGIN — lichess records `clientOrigin` per token, so `testchess` and
+`chess` are **two separate apps** to lichess. A player who links on both has two grants and two
+`/account/security` entries. **Linking on test is a real grant against a real account**, not a
+sandbox.
+
 Ports/hosts are allocated in the server's Caddyfile (host-side, unversioned — not in
 this repo):
 
@@ -285,10 +445,11 @@ that range. Check the host's Caddyfile before allocating anything new.
 dev machine has a Go toolchain. `make up` builds and migrates in-process at startup.
 `make dev` is the one target that wants a local Go.
 
-**Add no `log` directive to these vhosts.** Auth returns land on `/auth/steam/return` with
-credentials in the query string, and Caddy would write them to disk. Caddy writes no access
-log unless configured, so the default is already safe — the job is not to start. Any future
-auth-callback route inherits this rule.
+**Add no `log` directive to these vhosts.** Auth returns land on `/auth/steam/return` **and
+`/lichess/callback`** with credentials in the query string (a Steam assertion, an OAuth code),
+and Caddy would write them to disk. Caddy writes no access log unless configured, so the
+default is already safe — the job is not to start. Any future auth-callback route inherits
+this rule.
 
 ### Identity / auth primitives (in use — see `server/internal/steam/`)
 

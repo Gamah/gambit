@@ -12,11 +12,13 @@ arranged in a ring and:
 - **Keep your games** — every finished game is archived to gamchess and replayable at
   [chess.gamah.net](https://chess.gamah.net), signed in with Steam. Your archive is
   private: you only ever see games you sat in.
+- **Play for real on lichess** — link your lichess account and a game at a Gambit table can
+  be a real lichess game, in your real lichess history: either against the person sitting
+  opposite you, or against a random opponent from lichess's lobby. Rated if you want.
 - **Watch** — a live game from the tables mirrors onto the big wall board.
 
 Forked from rotaliate-client; the lobby/station scaffolding is inherited. See
-**[CLAUDE.md](CLAUDE.md)** for how it's built. **[PLAN.md](PLAN.md)** is what's left, and
-is currently empty.
+**[CLAUDE.md](CLAUDE.md)** for how it's built. **[PLAN.md](PLAN.md)** is what's left.
 
 ## Stack
 
@@ -27,6 +29,7 @@ is currently empty.
 | UI | s&box Razor Panels |
 | Backend | gamchess — Go 1.22 + Postgres 16, `server/` |
 | Identity | Steam: Facepunch auth token in-game, OpenID 2.0 on the web |
+| Lichess | OAuth2 Authorization Code + PKCE, `board:play` scope; gamchess relays the Board API |
 | Lobby networking | s&box multiplayer (`[Sync]`/`[Rpc]`) |
 
 ## Assets
@@ -48,11 +51,10 @@ this contract — there is no shared directory and no codegen, so **this section
 place it is written down**. A contract change should be one atomic commit across both
 halves. Additive fields only; annotate them here.
 
-**There is no lichess in the tree.** Gambit was built against the lichess API through M3–M5
-and all of it was ripped out — no API client, no OAuth, no puzzles, no TV, no token. The
-game stands alone on gamchess and must keep working that way. A lichess integration is
-planned again as a **clean-slate rebuild**; the `lichess-final` tag holds the old one for
-reference only and is not the starting point. See CLAUDE.md.
+**gamchess is never required.** If it is down the game plays exactly the same — walking the
+lobby and playing at a board never touch it. Nothing may block scene load, `OnStart`, or a
+game ending. Lichess is likewise never required: unlinked, refused or offline all degrade to
+"no lichess", never to a broken game.
 
 ### Auth
 
@@ -106,5 +108,82 @@ Move history lives in each seated client's own `ChessGame`, not the host's, so t
 have no PGN to submit — **either seat may POST**, and the second is a no-op that returns the
 stored row rather than an overwrite.
 
+### Lichess (M8)
+
+Gambit plays **real games on lichess** from a table. The client holds **no lichess token and
+speaks no lichess protocol** — it authenticates to gamchess with its Facepunch token, and
+gamchess acts on lichess with the token it stores.
+
+**Why gamchess holds the token.** Playing a lichess game requires holding a long-lived ndjson
+stream open (`/api/board/game/stream/{id}`); lichess has no polling substitute and answers a
+poller with a 429. The s&box client cannot read a stream at all — `Sandbox.Http` buffers the
+whole body before returning, and `HttpCompletionOption` is off the API whitelist. So whoever
+reads the stream must hold the token, and today that can only be gamchess. This is the
+"position 2" custody decision; see CLAUDE.md for the blast radius and what mitigates it.
+
+**Scope: `board:play`, and nothing else.** It is a single all-or-nothing grant — there is no
+read-only subset. It also satisfies the challenge endpoints (their spec lists the acceptable
+scopes as *alternatives*), so the play flow needs no second scope. Widening it would force
+every linked player through a full re-link: lichess tokens are long-lived (~1 year) and there
+are **no refresh tokens**.
+
+**`client_id` is `net.gamah.gambit`, a constant, and not a credential.** lichess has no client
+registration — its own error text is `client_id required (choose any)`. It is not recorded on
+the token (lichess stores `clientOrigin`, the scheme+host of our redirect URI), so changing it
+revokes and configures nothing. It is public and impersonable by design; PKCE secures the
+exchange and the redirect URI decides who receives a code.
+
+**The token is encrypted at rest** (AES-256-GCM, per-row nonce, `LICHESS_TOKEN_KEY`). A blank
+key switches lichess off entirely rather than storing plaintext.
+
+| Route | Auth | Notes |
+|---|---|---|
+| `GET /lichess/link` | session | the disclosure page; the constant URL the in-game board copies. 302s to Steam sign-in if needed |
+| `GET /lichess/start` | session | mints the PKCE pair, 302 to lichess's consent screen |
+| `GET /lichess/callback` | the `state` (burned on use) | exchanges the code, stores the encrypted token, renders the result |
+| `POST /lichess/unlink` | session | the web unlink button (POST, so no prefetch can unlink you) |
+| `GET /api/v1/lichess` | session **or** FP | `{linked, lichess_id, username, link_url}`. **Only ever about the caller** |
+| `DELETE /api/v1/lichess` | session **or** FP | revoke at lichess (best-effort), then delete the row |
+| `POST /api/v1/lichess/play` | FP | play the person opposite you. `{client_game_id, white_steam_id, black_steam_id, limit_seconds, increment_seconds, unlimited}` — **both seats must POST** |
+| `POST /api/v1/lichess/seek` | FP | play a random opponent. `{client_game_id, time_minutes, increment_seconds, rated, rating_range, color}` — one caller |
+| `GET /api/v1/lichess/play/{id}?since=N` | FP | **long poll** (held ~5s) for game state; 404 if you aren't in it |
+| `POST /api/v1/lichess/play/{id}/{action}` | FP | `move` (body `{uci}`) · `resign` · `draw` · `draw-decline` · `abort` |
+| `DELETE /api/v1/lichess/play/{id}` | FP | withdraw a seek / drop a pending pairing |
+| `POST /api/v1/lichess/audit` | `LICHESS_AUDIT_KEY` | sweep our token store against lichess. 404 when unconfigured |
+
+**Starting a game against the person opposite needs BOTH seats to POST** `/play` with the same
+`client_game_id`, each with their own Facepunch token, agreeing on seats and clock. That is the
+whole authorisation story, not a formality: gamchess holds a token for every linked player, so
+if one seat could start a game alone, any linked player could drag any other into a lichess game
+at will. `client_game_id` is **not a secret** — it is `[Sync]`ed to the lobby — it is only the
+rendezvous key; the two FP tokens are the authority. A **seek** needs one caller, because there
+is nobody to get consent from: you spend your own grant on a stranger who opted in on lichess.
+
+**Two speed floors, and they are not the same.** lila has two functions named
+`isBoardCompatible` with different thresholds:
+
+| Flow | Floor | Which presets |
+|---|---|---|
+| direct challenge | blitz — estimate ≥ 180s | Blitz 3+2, Rapid 10+0, Classical 30+0, Unlimited |
+| lobby seek | rapid — estimate ≥ 480s | Rapid 10+0, Classical 30+0 |
+
+(estimate = `limit + 40×increment`.) **Bullet can never reach lichess from any path.** The
+default table is Blitz 3+2, which is challengeable but *not* seekable — which is exactly why a
+direct challenge is the primary flow. Note also that a seek's `time` is in **minutes** while a
+challenge's `clock.limit` is in **seconds**.
+
+**Rate limits are shared by the whole playerbase**, because gamchess is one IP and lichess's
+limits are per-IP. Lobby seeks are ~5/minute for *all* of Gambit (lila's `setupPost`), so
+gamchess self-limits and refuses locally with a reason rather than earning a 429. A 429 anywhere
+stops every outbound call for a full minute, per lichess's own instruction. Every request —
+streams included — carries a `User-Agent` naming the project and a contact, which is how lichess
+can attribute our traffic (they record a `userAgent` per token).
+
+**The state transport is a long poll, not a WebSocket.** s&box *can* speak WebSocket, but the Go
+side would need a WS library and this repo cannot add a dependency (the machine that writes the
+server has neither Go nor Docker to regenerate `go.sum`). Each `gameState` carries the **whole**
+UCI move list from the start, so the client rebuilds rather than reconciles and a dropped or
+duplicated poll costs nothing.
+
 **gamchess is never required.** If it is unreachable, the client degrades to archive-off and
-token-paste sign-in; local play, puzzles and spectating never touch it.
+lichess-off; local play and spectating never touch it.
