@@ -1,30 +1,49 @@
-.PHONY: dev build test tidy fmt lint migrate-up migrate-down migrate-status \
+.PHONY: dev build test tidy fmt vet lint migrate-up migrate-down migrate-status \
         up rebuild down logs ps psql \
         testinst testinst-down testinst-logs testinst-ps
 
-# ── Local dev (no Docker) ───────────────────────────────────────────────────
+# ── Go (all containerised) ──────────────────────────────────────────────────
+# Every Go target runs in a container, deliberately: neither the deploy host nor
+# the dev machine has a Go toolchain, and the whole point of the 2-stage
+# Dockerfile is that deploying needs only Docker. A host `go` would be a hidden
+# prerequisite that works on one machine and not the other.
+#
+# The named volume keeps the module cache warm between runs, so only the first
+# invocation pays for the download.
+#
+# GO_IMG is Debian-based, not alpine: `go test -race` needs cgo + gcc, which the
+# alpine image doesn't ship. Not worth two images to save a few MB on a target
+# nobody runs in prod.
+GO_IMG  := golang:1.22
+GO_RUN  := docker run --rm -v "$(CURDIR)":/src -w /src -v gamchess-gomod:/go/pkg/mod $(GO_IMG)
+
+# Runs the server directly on the host — needs a local Go and a reachable
+# DATABASE_URL. `make up` is the normal path; this is for iterating without a
+# rebuild.
 dev:
 	go run ./cmd/server
 
 build:
-	go build -ldflags="-s -w" -o bin/gamchess ./cmd/server
+	$(GO_RUN) go build -ldflags="-s -w" -o bin/gamchess ./cmd/server
 
 test:
-	go test ./... -v -race
+	$(GO_RUN) go test ./... -race
 
-# Run this FIRST on a fresh checkout. go.sum was seeded from rotaliate (whose
-# module graph is a superset of ours) because the machine that wrote this server
-# has no Go toolchain — tidy prunes it to what gamchess actually imports and
-# fills in anything missing.
+# Prune/repair go.mod + go.sum. Only needed if a build fails on a module error:
+# go.sum was seeded from rotaliate (a superset of our graph) because the machine
+# that wrote this server has no Go either.
 tidy:
-	go mod tidy
+	$(GO_RUN) go mod tidy
 
 fmt:
-	gofmt -w .
-	goimports -w . 2>/dev/null || true
+	$(GO_RUN) gofmt -w .
+
+vet:
+	$(GO_RUN) go vet ./...
 
 lint:
-	golangci-lint run ./...
+	docker run --rm -v "$(CURDIR)":/src -w /src \
+		-v gamchess-gomod:/go/pkg/mod golangci/golangci-lint:latest golangci-lint run ./...
 
 # ── Database ────────────────────────────────────────────────────────────────
 # The server also runs migrations in-process at startup, so these are for
