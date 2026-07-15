@@ -1,5 +1,5 @@
 .PHONY: dev build test tidy fmt vet lint migrate-up migrate-down migrate-status \
-        up rebuild down logs ps psql \
+        up rebuild down logs ps psql keys keys-note \
         testinst testinst-down testinst-logs testinst-ps
 
 # ── Go (all containerised) ──────────────────────────────────────────────────
@@ -57,33 +57,107 @@ migrate-down:
 migrate-status:
 	goose -dir migrations postgres "$(DATABASE_URL)" status
 
+# ── Secrets gamchess generates for itself ───────────────────────────────────
+# LICHESS_TOKEN_KEY and LICHESS_AUDIT_KEY are OURS — nothing is requested from
+# lichess, which issues no client id, no secret and no API key (it has no client
+# registration at all). So there is no reason to make a human invent them: `up`
+# and `testinst` mint any that .env doesn't already have, and say so.
+#
+# THE RULE HERE IS NEVER OVERWRITE. Every stored link is encrypted under
+# LICHESS_TOKEN_KEY, and there is no rotation path (an open spike) — regenerating
+# it would silently turn every linked account into an undecryptable row and force
+# everyone to re-link. So a key with ANY value is left strictly alone; only a
+# missing or blank one is filled in.
+#
+# /dev/urandom rather than `openssl rand`: openssl is not guaranteed on a host
+# whose only stated dependency is Docker, and this must not become a hidden
+# prerequisite of `make up`.
+LICHESS_KEYS := LICHESS_TOKEN_KEY LICHESS_AUDIT_KEY
+
+keys:
+	@set -e; \
+	if [ ! -f .env ]; then \
+		echo "ERROR: no .env here. Copy it first:  cp .env.example .env" >&2; \
+		exit 1; \
+	fi; \
+	made=""; \
+	for key in $(LICHESS_KEYS); do \
+		cur=$$(sed -n "s/^$$key=//p" .env | head -1); \
+		if [ -n "$$cur" ]; then continue; fi; \
+		val=$$(head -c 32 /dev/urandom | base64 | tr -d '\n'); \
+		if grep -q "^$$key=" .env; then \
+			tmp=$$(mktemp); \
+			awk -v k="$$key" -v v="$$val" \
+				'$$0 ~ "^" k "=" && !seen { print k "=" v; seen=1; next } { print }' \
+				.env > "$$tmp"; \
+			cat "$$tmp" > .env; rm -f "$$tmp"; \
+		else \
+			printf '%s=%s\n' "$$key" "$$val" >> .env; \
+		fi; \
+		made="$$made $$key"; \
+	done; \
+	if [ -n "$$made" ]; then \
+		echo "Generated into .env:$$made"; \
+	fi
+
+# Printed after every up/testinst, deliberately unconditionally: anyone running a
+# gamchess needs to know these exist, that they are self-generated rather than
+# requested, and above all that TOKEN_KEY must be backed up.
+keys-note:
+	@echo ""
+	@echo "── lichess keys ────────────────────────────────────────────────────"
+	@echo "Both live in .env and are generated here — nothing is requested from"
+	@echo "lichess (it has no client registration: no client id, no secret, no"
+	@echo "API key)."
+	@echo ""
+	@echo "  LICHESS_TOKEN_KEY   encrypts every linked player's lichess token at"
+	@echo "                      rest. BACK IT UP. There is no rotation path yet:"
+	@echo "                      lose or change it and every linked player must"
+	@echo "                      re-link. Blank switches lichess off entirely —"
+	@echo "                      it never falls back to storing plaintext."
+	@echo "  LICHESS_AUDIT_KEY   gates POST /api/v1/lichess/audit, which asks"
+	@echo "                      lichess which of our stored tokens are still"
+	@echo "                      live. That sweep is the ONLY fast incident lever"
+	@echo "                      we have — lichess has no bulk revoke. Blank"
+	@echo "                      hides the route."
+	@echo ""
+	@echo ".env is gitignored and must stay that way: it is the only copy."
+	@echo "───────────────────────────────────────────────────────────────────"
+
 # ── Docker Compose ──────────────────────────────────────────────────────────
 # GIT_HASH is computed on the host and passed as a Docker build arg so the
 # version stamp is reliably per-commit. Computing it inside the container is
 # unreliable for the test instance (its build context is a worktree whose .git
 # lives outside the context).
-up:
-	GIT_HASH=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
-	docker compose -f docker/docker-compose.yml --env-file .env up -d --build
+COMPOSE := docker compose -f docker/docker-compose.yml --env-file .env
 
-rebuild:
+up: keys
 	GIT_HASH=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
-	docker compose -f docker/docker-compose.yml --env-file .env build --no-cache app
-	docker compose -f docker/docker-compose.yml --env-file .env up -d
+	$(COMPOSE) up -d --build
+	@$(MAKE) --no-print-directory keys-note
 
+rebuild: keys
+	GIT_HASH=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+	$(COMPOSE) build --no-cache app
+	$(COMPOSE) up -d
+	@$(MAKE) --no-print-directory keys-note
+
+# All of these pass --env-file, like up/rebuild do. Without it, compose still
+# works but prints a WARN per unset variable ("PUBLIC_BASE_URL is not set…") —
+# which is pure noise, and worse, it's noise on exactly the commands you run when
+# the server is already broken. It reads like the cause and isn't.
 down:
-	docker compose -f docker/docker-compose.yml down
+	$(COMPOSE) down
 
 logs:
-	docker compose -f docker/docker-compose.yml logs -f app
+	$(COMPOSE) logs -f app
 
 ps:
-	docker compose -f docker/docker-compose.yml ps
+	$(COMPOSE) ps
 
 # ── DB shell ────────────────────────────────────────────────────────────────
 psql:
-	docker compose -f docker/docker-compose.yml exec postgres \
-		psql -U gamchess -d gamchess
+	$(COMPOSE) exec postgres psql -U gamchess -d gamchess
 
 # ── Test instance (parallel stack for a feature branch) ─────────────────────
 # Spins up a SECOND, isolated copy of the app + Postgres alongside prod so you
@@ -121,7 +195,7 @@ psql:
 TEST_COMPOSE  := docker compose -f docker/docker-compose.test.yml --env-file .env
 TEST_WORKTREE := .worktrees/testinst
 
-testinst:
+testinst: keys
 ifndef BRANCH
 	$(error Usage: make testinst BRANCH=<branch-name>)
 endif
@@ -156,6 +230,7 @@ endif
 	TEST_BUILD_CONTEXT=$(abspath $(TEST_WORKTREE))/server \
 		docker compose -f "$$compose" --env-file .env up -d --build; \
 	echo "Test instance '$(BRANCH)' ($$sha) up — app on 127.0.0.1:$${TEST_PORT:-6465} (see TEST_PORT in .env)"
+	@$(MAKE) --no-print-directory keys-note
 
 testinst-down:
 	$(TEST_COMPOSE) down

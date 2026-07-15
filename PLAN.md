@@ -3,319 +3,263 @@
 How the game is built and the s&box lore live in **`CLAUDE.md`**. The gamchess API
 contract lives in **`README.md`**. This file is only ever upcoming work.
 
+**M8 (lichess link + Board API relay) is built** and is not repeated here — read CLAUDE.md's
+"Lichess" section for the custody decision, the traps, and the API-citizen rules. What
+remains of it is the open spikes below.
+
 ---
 
-## M8: Lichess account linking — the auth flow, and only the auth flow
+## M9: lichess TV on the west wall
 
-Lichess comes back here, as the clean-slate rebuild CLAUDE.md describes. **The `lichess-final`
-tag is reference-only — do not restore those files.** M8 builds exactly one thing: a
-trustworthy link between a lichess account and a Terry's Gambit (Steam) account. Puzzles,
-TV and play-on-lichess all sit on top of that link and are explicitly **not** in scope.
+Put real lichess games on the spectator wall, streamed through gamchess, loaded lazily so
+we only hold a feed while someone is actually watching it.
 
-Two constraints drive the whole design:
+Done looks like: you walk up to the west wall in an idle lobby and there's a live 2000+
+blitz game from lichess on it, with clocks and names; "Next" still steps through your
+lobby's own tables; and if you don't want it, you turn it off and it stays off.
 
-1. **s&box cannot open a browser** (no documented URL/overlay API — CLAUDE.md), so linking
-   is click-to-copy a URL and the player pastes it themselves.
-2. **The user must be able to revoke us, and gamchess must be structurally unable to act on
-   their lichess account** — not merely trusted not to.
+### Why this one is easy, and why that's worth saying
 
-Done looks like: walk up to a board next to the info station, press E, click a button,
-paste the URL in a browser, sign in to Steam and lichess, and the panel flips to "linked as
-&lt;username&gt;". gamchess stores **no lichess credential at all**.
+**TV is the one lichess feature with no security surface UPSTREAM.** `GET /api/tv/feed`,
+`/api/tv/{channel}/feed`, `/api/tv/channels` are `security: []` — **anonymous**. No token,
+no scope, no custody question, nothing to encrypt, nothing to revoke, nothing to audit.
+None of M8's hard part applies. Do not let it drift into the token machinery: it must keep
+working for a player who has never linked and never will.
 
-### Lichess API facts — re-derived 2026-07-15 from live sources
+**That is a fact about lichess's side, not ours.** Our proxy of it is still session-gated —
+see "Do this first" below. Anonymous upstream is exactly why an open endpoint here would be
+attractive to abuse, and every byte of that abuse would be attributed to our IP and our
+User-Agent.
 
-Per CLAUDE.md's re-derive rule these were read from lichess's current docs, not from repo
-history. Sources: the `lichess-org/api` OpenAPI spec (`doc/specs/lichess-api.yaml`),
-`tors42/lichess-oauth-pkce-app`, and lichess's OAuth docs. **Re-check them before M9** — a
-stale constraint is worse than no constraint.
+It also lands almost exactly on the shape `SpectatorController` already has. A `fen`
+message is `{fen, lm, wc, bc}` — position, last move, and both clocks **in seconds**,
+which is the unit `TimeControl.Format` already takes. The wall wants
+Fen/LastMoveUci/White/Black/WhiteClock/BlackClock/TickingSeat, and the feed gives all of
+it. This is a data-plumbing milestone, not a design one.
 
-- OAuth 2.0 **Authorization Code + PKCE**, `S256` only. Public/unregistered clients:
-  **no client secret, no client registration** — `client_id` is any constant string we pick.
-- Authorize: `https://lichess.org/oauth` — `response_type=code`, `client_id`, `redirect_uri`,
-  `scope`, `state`, `code_challenge`, `code_challenge_method=S256`.
-- Token: `POST https://lichess.org/api/token`, `application/x-www-form-urlencoded` —
-  `grant_type=authorization_code`, `code`, `code_verifier`, `redirect_uri`, `client_id`.
-- Revoke: `DELETE https://lichess.org/api/token`, `Authorization: Bearer <token>`.
-- Identity: `GET https://lichess.org/api/account` → `{ id, username, ... }`. `id` is the
-  canonical lowercase key; `username` is display casing.
-- Tokens are **long-lived (~1 year), and there are no refresh tokens.**
-- 21 scopes exist (`board:play`, `puzzle:read`, `email:read`, …). **M8 requests none.**
+### The shape
 
-### The trust path, and why it closes
+**Per-client, and that's the existing pattern rather than a new one.** The west wall is
+already per-client: `SpectatorController._featuredIndex` / `CycleFeatured()` are local, so
+two players at that wall already see different tables today. Everything below just extends
+the cycle.
 
-The only real question is *who gets bound to whom*. Three independent attestations, and
-gamchess writes the link row only when it holds all three:
+- **TV is one more channel in the cycle.** "Next" steps through each live table and then
+  the TV channel. Lobby tables don't get priority — a player who wants lichess can sit on
+  it while a game runs at a table.
+- **The client decides whether TV exists.** A setting on the *local* settings board
+  (`SettingsModel.BuildLocalRows`), **default on**, persisted to `PlayerData` — so only
+  someone who turns it OFF has anything saved. Off means TV leaves the cycle; the wall
+  still mirrors tables exactly as it does now.
+- **The client decides the channel**, one of two ways: *follow the host's suggestion*
+  (default) or *pick my own*. Both persisted.
+- **The host suggests**, it doesn't dictate: a `[Sync]` suggested channel, **default
+  blitz**, admin-gated like the BOARDS row (`LobbyNetworkManager.LocalIsAdmin`, routed via
+  the host — remember the admin may not be the network host on a dedi).
 
-| Claim | Attested by | Never trusted from |
-|---|---|---|
-| "this browser is SteamID N" | Steam OpenID 2.0 → signed session cookie | a header/body/query SteamID |
-| "this is lichess user X" | lichess `/api/account`, via a token *we* exchanged | anything the client says |
-| "N wants to link" | the Steam session on the callback | the copied URL |
+### gamchess: one upstream per channel, ref-counted
 
-**The copied URL carries no secret and no capability.** It is the constant string
-`https://chess.gamah.net/lichess/link`. Losing it, sharing it, or pasting it on stream costs
-nothing — whoever opens it links *their own* accounts, because the page is gated on *their*
-Steam session.
+**This is the whole point of routing TV through gamchess rather than letting clients hit
+lichess directly.** lichess advocates exactly this: one stream held by a central server,
+fanned out to N sessions. So:
 
-This is why we **do not** mint an in-game `state` bound to the FP-verified SteamID and paste
-that instead. It would skip the Steam web sign-in, but it turns the URL into a bearer
-capability: get someone else to complete it and **their** lichess binds to **your** Steam
-account — and lichess's consent screen only says "Terry's Gambit", so the victim cannot see
-the mismatch. The Steam session gate makes that impossible rather than merely unlikely.
+- `GET /api/v1/tv/{channel}?since=N` — long poll, same transport as the M8 relay (held
+  ~5s, under the client's 8s ceiling).
+- The upstream `GET /api/tv/{channel}/feed` opens **on the first watcher** and is dropped
+  after an idle TTL once the last one stops polling. Ref-count by pollers, not by lobbies.
+- **N clients cost lichess nothing.** 100 players on blitz = 1 upstream stream. That
+  invariant is the deal, and it's why per-client channel choice is affordable: the cost of
+  everyone picking differently is bounded by the channel count (~6), not the player count.
+- Reuse `internal/lichess`'s stream reader and the etiquette governor — a 429 here must
+  back off like everywhere else, and the User-Agent still identifies us.
 
-Cost of the gate: one Steam web sign-in per browser per 30 days (`sessionTTL`), reusing
-`/auth/steam/login` exactly as it already exists.
+### Channels: standard only
 
-### Why gamchess cannot act on your lichess account
+lichess's channel keys (lcfirst of lila's `Tv.Channel`): `best` ("Top Rated"), `bullet`,
+`blitz`, `rapid`, `classical`, `ultraBullet`, `bot`, `computer`, plus the variant channels
+`chess960`, `crazyhouse`, `kingOfTheHill`, `threeCheck`, `antichess`, `atomic`, `horde`,
+`racingKings`.
 
-- **Zero scopes requested.** A no-scope lichess token cannot play, challenge, message,
-  follow, or read email — it can only read the public account. Enforced by lichess, not by
-  our code.
-- **Revoked immediately.** `DELETE /api/token` fires in the same handler, right after
-  `/api/account` returns.
-- **Nothing stored.** The `lichess_links` row holds `lichess_id` and `username`. No token
-  column. No secret to leak, encrypt, rotate, or subpoena.
+**Offer the standard speed channels only** — Top Rated, Bullet, Blitz, Rapid, Classical,
+UltraBullet — for the same reason the M8 seek offers no variants: our board can't draw
+them. Crazyhouse FENs carry pockets (`…/RNBQKBNR[] w …`) and Chess960 castling is X-FEN
+file letters (`HAha`), neither of which the vendored standard-only rules will parse. A
+channel that renders an empty board is worse than a channel that isn't there. `bot` and
+`computer` would parse fine but are noise on a wall in a chess bar; leave them out unless
+someone asks.
 
-Three guarantees, and the strongest (scope) is lichess's rather than ours.
+**Default: `blitz`.**
 
-### Server (`server/`)
+### Do this first: gamchess sessions for the game client
 
-Existing conventions are non-negotiable: `os.Getenv` in `main.go` only, new keys degrade to
-feature-off with a warning (never fatal), SteamIDs are `BIGINT`/`int64` and **string on the
-JSON wire**, all SQL in `store.go`, fail closed everywhere.
+**gamchess verifies the FP token against Facepunch on EVERY authed request** — a live HTTP
+call per request (`api/auth.go` → `steam.ValidateToken`). That is already wrong for M8's
+relay poll (one Facepunch round-trip per player per ~5s of a live game), and TV multiplies
+it by everyone standing at a wall: 8 idle spectators is ~1.6 Facepunch calls/second,
+forever, for a public feed.
 
-**`server/migrations/00002_lichess_links.sql`** (new; goose runs it at startup):
-
-```sql
-CREATE TABLE lichess_links (
-    steam_id   BIGINT      PRIMARY KEY REFERENCES players(steam_id),
-    lichess_id TEXT        NOT NULL UNIQUE,   -- canonical lowercase id from /api/account
-    username   TEXT        NOT NULL,          -- display casing, cosmetic only
-    linked_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
-
-Deliberately **no token column**. `PRIMARY KEY` on `steam_id` + `UNIQUE` on `lichess_id`
-make the link 1:1 both ways: one Steam account can't hoard lichess identities, one lichess
-account can't be claimed by two Steam accounts. Re-linking replaces
-(`ON CONFLICT … DO UPDATE`); a `lichess_id` already bound to a *different* `steam_id` is a
-**409, not a silent steal**.
-
-Pending link state (verifier + state + SteamID) goes in a **new in-memory TTL store**
-modelled on `nonceStore` (`server/internal/api/web_auth.go:30-56`) — same mutex + lazy
-sweep-on-write, 10-minute TTL, check-and-burn in one method. In-memory is right: one
-container, and a restart mid-link just means "click the button again".
-
-**`server/internal/lichess/oauth.go`** (new package, mirroring `internal/steam/`):
-
-```go
-var authorizeEndpoint = "https://lichess.org/oauth"        // package vars so tests stub them
-var tokenEndpoint     = "https://lichess.org/api/token"
-var accountEndpoint   = "https://lichess.org/api/account"
-var client = &http.Client{Timeout: 10 * time.Second}
-
-func AuthorizeURL(clientID, redirectURI, state, challenge string) string
-func Exchange(ctx context.Context, clientID, redirectURI, code, verifier string) (token string, err error)
-func Account(ctx context.Context, token string) (id, username string, err error)
-func Revoke(ctx context.Context, token string) error       // best-effort; log on failure
-func NewVerifier() (verifier, challenge string, err error) // crypto/rand 32B, base64url, S256
-```
-
-Reuse `internal/steam/`'s shape verbatim: package-var endpoints for test stubbing,
-`io.LimitReader` on bodies, fail closed on every error. A `Revoke` failure is logged, not
-fatal — the token is scopeless and the link is already written.
-
-Routes (`server/internal/api/router.go`, new `lichess.go`):
-
-| Route | Gate | Notes |
-|---|---|---|
-| `GET /lichess/link` | `sessions.read`; 302 → `/auth/steam/login` if absent | mint verifier+state bound to the session SteamID, 302 → lichess |
-| `GET /lichess/callback` | the `state` → SteamID map (burned on use) | exchange, `/api/account`, revoke, upsert, render result page |
-| `GET /api/v1/lichess` | `callerSteamID` (session **or** FP) | `{linked, lichess_id, username}` — the client polls this |
-| `DELETE /api/v1/lichess` | `callerSteamID` | unlink; deletes the row |
-
-Register above the `GET /` file server (Go 1.22's mux makes `/` least-specific so ordering is
-safe, but keep them grouped with the other auth routes).
-
-New env in `main.go` + `.env.example` + `docker/docker-compose.yml`: `LICHESS_CLIENT_ID`
-(default `terrys-gambit`). The redirect URI derives from the existing `PUBLIC_BASE_URL`
-(`+ "/lichess/callback"`) exactly as `steamReturnURL()` does — so the test instance points at
-itself, never at prod. **`redirect_uri` must match byte-for-byte** between authorize and
-token exchange (lichess enforces it): derive it once, never hand-build it twice.
-
-**Caddy**: `/lichess/callback` takes an OAuth `code` **in the query string**, so CLAUDE.md's
-existing *"add no `log` directive to these vhosts"* rule — written for `/auth/steam/return` —
-now covers it too. Caddy logs nothing by default; the job is not to start.
-
-**No client allowlist change.** The s&box client still only talks to `chess.gamah.net`;
-gamchess is the only thing that talks to lichess.org. `HttpAllowList` is untouched in M8.
-
-### Web page (`server/frontend/`)
-
-The callback renders a real page, not a bare redirect. This is where the **heavy verbiage**
-lives — it's the only surface that can tell the player what they actually granted:
-
-- **Before** (`/lichess/link` when it needs a Steam sign-in): what's about to happen, in
-  order; that Steam and lichess each ask for *their own* password on *their own* domain; that
-  **Terry's Gambit never sees, asks for, or stores either password**; that we request **no
-  lichess permissions at all** and will only learn the username.
-- **After** (callback success): "Linked **&lt;username&gt;** to your Steam account." Then,
-  explicitly: what gamchess stored (username + id, nothing else); that the access token was
-  **already revoked** and gamchess kept no credential; that we cannot play, message, or
-  challenge as them; and how to unlink (in-game, or the button on this page).
-- **Failure**: detail-free, matching `steamReturn`'s `/?error=signin` discipline.
-
-Reuse the existing frontend CSS — and note the standing warning below: the frontend is baked
-into the Docker image, so changes need `git pull && make rebuild`, not a restart.
-
-### Client (`client/`)
-
-**`Code/Api/LichessApi.cs`** (new, thin — all calls go to gamchess). Follow
-`Code/Api/GamchessApi.cs` exactly: the `Result` struct, `SendAuthed` (which already re-mints
-the FP token once on 401), the 8s timeout, the shared circuit breaker.
-
-```csharp
-public const string LinkUrl = GamchessApi.Base + "/lichess/link";   // no secret, constant
-public static Task<Result> Status();    // GET    /api/v1/lichess
-public static Task<Result> Unlink();    // DELETE /api/v1/lichess
-```
-
-Add `LichessLink { bool linked; string lichess_id; string username; }` to
-`Code/Api/GamchessModels.cs` — snake_case props matching the wire, no attributes, as the
-existing models do.
-
-**`Code/World/LichessButton.cs`** (new, ~15 lines): copy `Code/World/DiscordButton.cs`
-verbatim in shape — `Clipboard.SetText( LichessApi.LinkUrl )` plus `RealTimeSince SinceCopied`
-for the 2s "✓ copied" feedback. That is the whole clipboard mechanism; there is no other.
-
-**Polling**: the link completes in a browser, so the game must poll. `Status()` on a
-`RealTimeUntil` gate (~3s), **only while the lichess station is engaged**, never in the
-background. Copy the in-flight guard lesson from `LocalGameController.TryArchive()` — *claim
-before you await*, or `OnUpdate` fires a request per frame. Cache in a static; stop once
-linked. gamchess unreachable ⇒ say so and keep playing (**gamchess is never required** —
-nothing here may block scene load, `OnStart`, or a game ending).
-
-**UI — a third board next to the info station.** `InfoStation.StationKind` already exists for
-exactly this:
-
-- `Code/World/InfoStation.cs` — add `Lichess` to the enum.
-- `Code/World/InfoWall.cs` — one more board GameObject + one more
-  `AddStation( "LichessStation", LichessYFrac, facing, InfoStation.StationKind.Lichess )`,
-  beside the info board. The existing `AddStation` helper is unchanged.
-- `Code/UI/Screens/InfoScreen.razor` — branch on `Kind == Lichess`. Reuse `WallTheme` tokens,
-  the `.screen-fit` wrapper (centering must **not** go on `root`), `pointer-events: all` only
-  on the interactive card, and the `BuildHash()` discipline — add `LichessButton.SinceCopied
-  < 2f` and the cached status, which is what makes the label revert with no timer.
-
-In-game copy (the other half of the heavy verbiage). One div per line — panels are flex
-containers and a div's auto height does not grow for wrapped text:
+**Fix it by issuing the client a gamchess session token**, and note that *the code already
+exists* — `internal/api/session.go` mints exactly this today for the web viewer's cookie:
+a stateless HMAC-signed `steamID|expiry|MAC`, verified with no I/O at all. The game client
+should carry the same thing as a bearer.
 
 ```
-LICHESS                                    [ not linked ]
-
-Link your lichess account to Terry's Gambit.
-
-You'll sign in to Steam and to lichess, each on their own
-site. Terry's Gambit never sees your password for either.
-
-We ask lichess for NO permissions. We learn your username.
-We cannot play, message, or challenge as you.
-
-  [ ✓  Link copied to clipboard  ]
-  Paste it into your browser to finish.
-
-  [ copy again ]
+POST /api/v1/session   FP-gated  →  { "token": "gcs_…", "expires_at": … }
 ```
 
-Linked state: `linked as <username>` + `[ unlink ]` + one line stating gamchess holds no
-lichess credential.
+One Facepunch call per session; every later request is a local HMAC check — **zero**
+network on the hot path. Better than caching verifications, which still pays Facepunch
+once per TTL per player and needs server-side state to do it.
 
-No scene rewire: `InfoWall` builds its own boards, `InfoStation` self-registers, `InfoScreen`
-is already attached by `LobbyPlayer`, and `InfoStation` is already in `LobbyPlayer.Engaged` /
-`BoardEngaged` — so a new `StationKind` needs no `LobbyPlayer` change at all. That's why this
-is three small edits rather than a new station type. Keep `Editor/HotloadRebuild.cs` current
-if `InfoWall` gains a builder entry.
+- **Distinguish it from an FP token by prefix** (`gcs_`), not a new header. `callerSteamID`
+  already tries session-then-FP; it grows one branch — read the bearer, and if it's ours,
+  verify the MAC.
+- **Keep the FP path.** It stays the only way to *get* a session, and the console commands
+  and any one-shot call can keep using it directly.
+- **Short TTL — an hour, not the web's 30 days**, and this is the one real tradeoff to
+  understand. A gamchess session authorises everything that SteamID can do, including
+  *playing lichess games as them*. An FP token is short-lived by nature; a 30-day bearer
+  for the same authority is a much bigger thing to leak, and sessions are stateless so
+  **there is no way to revoke one** (short of rotating `SESSION_SECRET`, which signs
+  everyone out). An hour still cuts Facepunch calls by ~700× on a polling client, which is
+  the entire point — there is no reason to reach for a longer window.
+- **Memory only, never `FileSystem.Data`.** `GamchessAuth` already holds the FP token in
+  memory and nothing else; the session must live the same way. "Can a rogue lobby host read
+  another client's FileSystem.Data?" is still an open spike below — do not hand it a
+  long-lived credential to find.
+- Re-mint on 401 exactly as `SendAuthed` already re-mints the FP token once. That path is
+  built; point it at the session instead.
 
-### Docs — same commit, both halves
+**TV goes behind the session too — it is NOT a public endpoint.** The tempting shortcut is
+that TV is anonymous upstream, so a proxy of it needs no identity; the only thing that ever
+argued for gating it was the Facepunch cost, and the session removes that. Two reasons it
+stays gated anyway:
 
-The contract is hand-mirrored with no codegen, so a contract change is one atomic commit.
+1. **We must not become a free unauthed lichess TV relay.** An open `/api/v1/tv/{channel}`
+   is a public CDN for someone else's content, pointable by any script, costing us
+   bandwidth to serve lichess's feed to people who have never touched Gambit.
+2. **The abuse would be attributed to us.** Our IP and our User-Agent are what lichess sees
+   — we went out of our way to make that traffic identifiable (`etiquette.go`) precisely so
+   they can attribute it. An open relay means anything done through it is done *as Gambit*,
+   against the one IP whose limits every real player shares, and it's our standing that
+   pays. Being identifiable and being an open relay are a bad combination.
 
-- **`README.md`** — the API contract section is *"the one place it is written down"*: add the
-  four routes, the no-scope / no-token-stored rule, the `client_id` constant. Replace the
-  "There is no lichess in the tree" paragraph; that invariant ends with this commit.
-- **`CLAUDE.md`** — rewrite the "Lichess: gone" section into what now exists, but **keep the
-  re-derive-the-API-facts rule** (it still governs puzzles/TV/play). Add `/lichess/callback`
-  to the no-Caddy-log rule. Record the M9 custody design and the open spikes below.
+So: session-gated like everything else. A Steam identity to watch TV is a trivial ask for a
+Steam-gated game, and it costs one local HMAC.
+
+Decide before building the poll loop, not after.
 
 ### Verification
 
-This host has no s&box toolchain, no Go, and no Docker — **nothing in M8 compiles or runs
-here, and no session may claim otherwise.** Verify by careful review + grep; the user tests.
+Provable in the container: channel-key validation (an arbitrary string off the wire must
+never reach a lichess URL), the ndjson `featured`/`fen` state machine against canned
+frames, ref-counting (second watcher doesn't open a second upstream; last one leaving
+drops it after the TTL; a new watcher during the TTL reuses it), and that a 429 backs off.
+The `LichessTv` channel list is Sandbox-free — put it beside `LichessTable` so the dotnet
+harness can check it.
 
-Provable in the `golang:1.22` container (`make test`):
+Needs the user, in the editor: the wall shows a real blitz game; "Next" still cycles
+tables; TV off removes it from the cycle and survives a restart; follow-host tracks the
+admin's suggestion; **kill gamchess → the wall falls back to mirroring tables and local
+chess is untouched.**
 
-1. **`internal/lichess` unit tests** — stub `authorizeEndpoint`/`tokenEndpoint`/
-   `accountEndpoint` the way `steam/auth_test.go` already stubs `endpoint`. Cover:
-   `NewVerifier` produces a correct `S256` challenge (RFC 7636 test vector), `Exchange` posts
-   the right form fields, `Account` parses, every error path fails closed.
-2. **State-store tests** — mirror `openid_test.go`: burn-on-use, TTL expiry, replay false,
-   unknown state false.
-3. **Handler tests** — mirror `auth_test.go` / `games_test.go`: `/lichess/link` with no
-   session 302s to Steam login; `/lichess/callback` with unknown/replayed `state` fails
-   closed; a `lichess_id` bound to another `steam_id` 409s; `/api/v1/lichess` returns
-   `{linked:false}` for a stranger and never leaks another player's link.
-4. **Grep gates** — no token column in the migration; no `scope=` with a non-empty value;
-   `redirect_uri` derived from `PUBLIC_BASE_URL` in exactly one place.
+### Open questions
 
-Needs the user, in the editor and on the deploy host:
-
-5. `make testinst BRANCH=<branch>` → `testchess.gamah.net` (`TEST_PUBLIC_BASE_URL` must be the
-   test URL or the callback returns to prod).
-6. Walk up to the new board, press E, click copy, paste in a browser. Expect: Steam sign-in →
-   lichess consent naming **no permissions** → success page → the panel flips to "linked as
-   &lt;username&gt;" within ~3s.
-7. Confirm on lichess that the token is **already gone** (this also resolves the
-   `/account/oauth/token` spike below).
-8. `[ unlink ]` → back to "not linked"; re-linking works.
-9. Kill gamchess → the board says so, and local chess still plays. Non-negotiable.
+- **Does "TV off" hide the whole west wall, or just the TV channel?** Taken as: just the
+  channel. The wall keeps mirroring tables, because that's its original job and it predates
+  TV. Say so if you meant the board itself.
+- **Does the featured game changing under you need anything?** lichess swaps the featured
+  game when it ends and sends a fresh `featured` message. Probably just render it; worth a
+  look in case it's jarring mid-watch.
 
 ---
 
-## M9+: playing on lichess — decide token custody before writing any of it
+## M8 follow-ups — none of this is verified in a real editor yet
 
-Not M8, and nothing in M8 forecloses it. **A scope change forces a re-link regardless** —
-tokens can't be re-scoped and there are no refresh tokens — so M8 storing nothing costs the
-user nothing later.
+The Go half compiles and its tests pass (197 cases, `-race`). **The engine half has never
+been compiled**, and nothing has been deployed. Everything below needs the user.
 
-The intended shape, recorded so M9 doesn't default to the easy-but-worse option: the **s&box
-client** generates `code_verifier`, never transmits it, and builds the authorize URL with
-`redirect_uri` pointing at gamchess. lichess redirects to gamchess with the `code`; gamchess
-relays that `code` back over the FP-gated channel and **cannot exchange it — PKCE requires
-the verifier gamchess never saw**. The token lives only in the client. gamchess is *unable*
-to play as the user rather than trusted not to. This costs adding `lichess.org` to
-`HttpAllowList`, and means the client holds a credential it currently never does (the FP
-token is 120s-cached, never persisted).
+### First-run verification
 
-**Open spikes — resolve before shipping M9; do not guess:**
+1. `make testinst BRANCH=m8-lichess` → `testchess.gamah.net`. `TEST_PUBLIC_BASE_URL` must be
+   the test URL or the OAuth callback returns to prod. `make up` mints the two lichess keys
+   into `.env` if they're absent and prints a note; **back `LICHESS_TOKEN_KEY` up** — there is
+   no rotation path, so losing it forces every player to re-link.
+2. Walk to the lichess board on the east wall, copy, paste in a browser: Steam sign-in →
+   the disclosure page → lichess consent naming **`board:play`** → success page → the panel
+   flips to "linked as <username>" within ~3s.
+3. Two linked players at a **Blitz 3+2** table both press "play on lichess", both ready up:
+   a real blitz game runs on lichess between their accounts, mirrors to the board, and lands
+   in both players' lichess history. Moves/resign/draw round-trip.
+4. One linked player at a **Rapid 10+0** table presses "find a game": a real opponent from
+   lichess's lobby. Test **cancel** too — the seek must actually disappear from lichess's
+   lobby, because the held connection *is* the seek.
+5. `[ unlink ]` → "not linked"; confirm on lichess the token is gone; re-linking works.
+6. **Kill gamchess → local chess still plays.** Non-negotiable.
 
-- **Can a rogue lobby host read a client-held token?** Analysis says no: s&box peers all run
-  the same sandboxed package code, a host has no code execution on clients, `FileSystem.Data`
-  is per-package, and we would never `[Sync]`/RPC the token. Residual risk is plaintext on
-  local disk (as with any local credential) against a ~1-year no-refresh token. This is a
-  Facepunch platform question, not a gambit one — **confirm it, don't assume it.**
-- **Does `lichess.org/account/oauth/token` list OAuth-app-issued tokens** for user-initiated
-  revocation? That page documents **personal** tokens; live docs did not confirm it covers app
-  grants. Checkable during M8 step 7 above. Doesn't block M8, which revokes its own token
-  server-side and stores none.
+### Open spikes — resolve, don't guess
+
+- **`code_verifier` length.** lichess has a `CodeVerifierTooShort` error whose threshold is
+  undocumented. Ours is 43 chars — exactly RFC 7636's floor. If linking fails at the exchange,
+  this is the first suspect; widen to 64 bytes and re-test.
+- **`LICHESS_TOKEN_KEY` rotation.** No path exists. Changing the key orphans every link. Needs
+  a re-encrypt migration before there are real users worth not annoying. **Do not forget this.**
+- **The upstream engine streaming fix.** `Http.RequestStreamAsync` is broken (it `using`s the
+  response, then returns its stream) and `HttpCompletionOption` is off the whitelist. Fixing
+  both upstream is what would let the token move to the client and delete the custody problem
+  entirely. File the PR: drop the `using`, pass `ResponseHeadersRead`, add the missing test.
+  Not a dependency for anything shipped.
+- **Can a rogue lobby host read another client's `FileSystem.Data`?** Only matters if the token
+  ever moves client-side. Facepunch platform question — confirm, don't assume.
+- **Does the long poll hold up under real latency?** 5s server hold vs the client's 8s ceiling
+  is not much headroom. If polls start reading as timeouts and tripping the breaker, shorten
+  the hold before reaching for WebSocket.
+
+### Talking to lichess about limits
+
+**Discord `#lichess-api-support`** (`https://discord.gg/MS9MejQqha`), **not email** — there is
+no API branch in their contact form, and `contact@lichess.org` is the general/commercial
+address. Do not ask pre-emptively.
+
+The ask is only credible with real numbers, so: ship, measure actual 429s, and bring the
+specific limit hit. The one to watch is the lobby seek — **5/min per IP, which is 5/min for
+the entire playerbase** (lila `Limiters.setupPost`). gamchess already self-limits to it and
+identifies itself by User-Agent on every request, which is what makes the traffic auditable
+from their side. Outcome is discretionary; there is no registration or blessing process.
+
+### Known gaps in what shipped
+
+- **Every authed request re-verifies the FP token against Facepunch.** A live HTTP call on
+  *each* request (`api/auth.go` → `steam.ValidateToken`), so a relayed game costs one
+  Facepunch round-trip per player per poll (~5s). Nothing has run yet, so nobody has felt
+  it. The fix is a gamchess session token for the game client — the minter already exists
+  (`session.go`, the web cookie) — spelled out under M9, which makes the problem materially
+  worse. Do it there, or here first.
+- **A relayed lichess game is never archived to gamchess.** It lives on lichess and nowhere
+  else. The PGN + `%clk` writer already exists — wiring the relay's final state into
+  `POST /api/v1/games` would put it in the web viewer too.
+- **The rating-range filter is a guess.** gamchess can't read a player's lichess rating (no
+  scope for it), so "near my rating" asks for a fixed 1400-1800 band rather than one centred
+  on them. Either fetch the rating at link time (it comes back from `/api/account` — no new
+  scope needed) or drop the control.
+- **No takeback, no berserk, no chat.** All exist on the Board API and none are wired up.
+- **No correspondence.** `SeekCorrespondence` exists in the lichess package and has no route:
+  it's the one seek shape that costs the relay nothing (buffered, no held stream, no per-IP
+  seek cap), but days-per-move doesn't fit sitting down at a table.
+- **Variants can never work** without replacing the vendored rules library, which is
+  standard-only. A Crazyhouse game would arrive as moves the board can't render. Don't offer
+  what can't be drawn.
+- **The relay is in-memory.** A gamchess restart mid-game drops the relay's state and the
+  board goes quiet, though the lichess game itself carries on (and can be finished on
+  lichess.org). Acceptable; worth knowing.
 
 ---
 
 ## The web viewer needs a lot of work
 
-`server/frontend/` (`index.html` / `app.js` / `chess.js` / `style.css`) — the archive
-viewer at chess.gamah.net. It works, but it has never had a design pass, and **nobody has
-ever looked at it on anything but a desktop browser**. Treat the list below as observations,
+`server/frontend/` (`index.html` / `app.js` / `chess.js` / `style.css`) — the archive viewer
+at chess.gamah.net. It works, but it has never had a design pass, and **nobody has ever
+looked at it on anything but a desktop browser**. Treat the list below as observations,
 not a spec — the real first step is to open it and decide what it should be.
 
 What's already known to be weak:
@@ -334,8 +278,15 @@ What's already known to be weak:
   `0:` so a bullet clock reads `0:51.63`; that call was made without ever seeing it
   rendered next to the SAN.
 - **Sign-in is a bare button.** The Steam OpenID round trip works, but the signed-out and
-  error states have had no thought. M8 adds the lichess link page alongside it — worth
-  doing these together.
+  error states have had no thought.
+- **The lichess pages are server-rendered and unstyled beyond `/style.css`.** `/lichess/link`
+  and the callback page are `html/template` in `internal/api/lichess_pages.go`, deliberately
+  (the callback has to name the account it just linked). They reuse the viewer's stylesheet
+  and a small inline block. If the viewer gets a design pass, they should come with it — and
+  the disclosure copy in them is load-bearing, not decoration: **do not trim the two warnings**
+  (a lichess password change does NOT unlink; `/account/oauth/token` does NOT list this grant).
+- **The viewer says nothing about lichess.** A linked player has no way to see or manage the
+  link from the web except by knowing the `/lichess/link` URL.
 
 Constraints worth knowing before starting:
 

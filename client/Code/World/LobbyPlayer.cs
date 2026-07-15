@@ -437,13 +437,22 @@ public sealed class LobbyPlayer : Component
 	{
 		var station = ChessStation.Active;
 		var controller = Gambit.Game.LocalGameController.For( station );
+		var lichess = Gambit.Game.LichessGameController.For( station );
+
+		// A lichess game is the one that counts: it is on the player's real record,
+		// so standing up must resign it THERE. The local controller can't do that —
+		// during a lichess game its ChessGame never advances, so it doesn't even
+		// know a game is in progress.
+		bool lichessForfeits = lichess is { Engaged: true, Playing: true }
+			&& lichess.LocalSeat != null;
 
 		// Standing up mid-game forfeits it — true for both the local two-seat game and
 		// a live game arms the two-stage confirm.
-		bool localForfeits = controller is { Playing: true }
+		bool localForfeits = !lichessForfeits
+			&& controller is { Playing: true }
 			&& controller.LocalSeat != null
 			&& ( controller.Game?.MoveCount ?? 0 ) > 0;
-		bool forfeits = localForfeits;
+		bool forfeits = localForfeits || lichessForfeits;
 
 		if ( forfeits && !LeaveArmed )
 		{
@@ -452,7 +461,21 @@ public sealed class LobbyPlayer : Component
 		}
 
 		_leaveArm = 999f;
-		if ( localForfeits )
+
+		// Walking away while still looking for an opponent WITHDRAWS the seek — the
+		// held connection is the seek, so without this we stay pairable and get
+		// dropped into a game nobody is sitting at.
+		//
+		// Below the arm gate, not above it: a press that only arms the confirm must
+		// not silently bin the player's seek while they read "Sure? This resigns"
+		// and then decline. (Seeking and Playing are mutually exclusive — Adopt
+		// drops Seeking the moment a game goes live — so this never races a resign.)
+		if ( lichess is { Seeking: true } )
+			lichess.CancelSeek();
+
+		if ( lichessForfeits )
+			lichess.ResignLocal();
+		else if ( localForfeits )
 			controller.ResignLocal();
 		Disengage();
 	}

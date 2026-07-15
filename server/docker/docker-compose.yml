@@ -30,6 +30,10 @@ services:
       PUBLIC_BASE_URL: "${PUBLIC_BASE_URL}"
       FRONTEND_DIR: "/frontend"
       SESSION_SECRET: "${SESSION_SECRET}"
+      # Lichess (M8). A blank LICHESS_TOKEN_KEY switches linking and play off and
+      # the server starts anyway — it never falls back to plaintext tokens.
+      LICHESS_TOKEN_KEY: "${LICHESS_TOKEN_KEY}"
+      LICHESS_AUDIT_KEY: "${LICHESS_AUDIT_KEY}"
     depends_on:
       postgres:
         condition: service_healthy

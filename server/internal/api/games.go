@@ -35,35 +35,35 @@ var validResults = map[string]bool{"1-0": true, "0-1": true, "1/2-1/2": true, "*
 // The archive is public and read by a web page eventually, so the wire format
 // has to be right now — this contract is hand-mirrored in C#, not generated.
 type gamePost struct {
-	ClientGameID  string  `json:"client_game_id"`
-	Pgn           string  `json:"pgn"`
-	WhiteSteamID  string  `json:"white_steam_id"` // "" or "0" = empty seat
-	BlackSteamID  string  `json:"black_steam_id"`
-	Result        string  `json:"result"`
+	ClientGameID string `json:"client_game_id"`
+	Pgn          string `json:"pgn"`
+	WhiteSteamID string `json:"white_steam_id"` // "" or "0" = empty seat
+	BlackSteamID string `json:"black_steam_id"`
+	Result       string `json:"result"`
 }
 
 // gameJSON is the response shape — store.Game with SteamIDs stringified.
 type gameJSON struct {
-	ID            string  `json:"id"`
-	ClientGameID  string  `json:"client_game_id"`
-	Pgn           string  `json:"pgn"`
-	WhiteSteamID  *string `json:"white_steam_id"`
-	BlackSteamID  *string `json:"black_steam_id"`
-	Result        string  `json:"result"`
-	PlayedAt      string  `json:"played_at"`
-	SubmittedBy   string  `json:"submitted_by"`
+	ID           string  `json:"id"`
+	ClientGameID string  `json:"client_game_id"`
+	Pgn          string  `json:"pgn"`
+	WhiteSteamID *string `json:"white_steam_id"`
+	BlackSteamID *string `json:"black_steam_id"`
+	Result       string  `json:"result"`
+	PlayedAt     string  `json:"played_at"`
+	SubmittedBy  string  `json:"submitted_by"`
 }
 
 func toGameJSON(g store.Game) gameJSON {
 	return gameJSON{
-		ID:            g.ID,
-		ClientGameID:  g.ClientGameID,
-		Pgn:           g.Pgn,
-		WhiteSteamID:  seatString(g.WhiteSteamID),
-		BlackSteamID:  seatString(g.BlackSteamID),
-		Result:        g.Result,
-		PlayedAt:      g.PlayedAt.UTC().Format(time.RFC3339),
-		SubmittedBy:   strconv.FormatInt(g.SubmittedBy, 10),
+		ID:           g.ID,
+		ClientGameID: g.ClientGameID,
+		Pgn:          g.Pgn,
+		WhiteSteamID: seatString(g.WhiteSteamID),
+		BlackSteamID: seatString(g.BlackSteamID),
+		Result:       g.Result,
+		PlayedAt:     g.PlayedAt.UTC().Format(time.RFC3339),
+		SubmittedBy:  strconv.FormatInt(g.SubmittedBy, 10),
 	}
 }
 
@@ -159,12 +159,12 @@ func (h *handler) postGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	g, err := store.UpsertGame(ctx, h.db, store.Game{
-		ClientGameID:  in.ClientGameID,
-		Pgn:           in.Pgn,
-		WhiteSteamID:  white,
-		BlackSteamID:  black,
-		Result:        in.Result,
-		SubmittedBy:   steamID,
+		ClientGameID: in.ClientGameID,
+		Pgn:          in.Pgn,
+		WhiteSteamID: white,
+		BlackSteamID: black,
+		Result:       in.Result,
+		SubmittedBy:  steamID,
 	})
 	if err != nil {
 		h.log.Error("archive game failed", zap.Error(err))

@@ -11,7 +11,8 @@ namespace Gambit.World;
 /// </summary>
 public sealed class InfoStation : Component
 {
-	public enum StationKind { Info, DevNotes }
+	/// <summary>Append only — InfoWall builds one board per kind.</summary>
+	public enum StationKind { Info, DevNotes, Lichess }
 
 	/// <summary>The station the local player is currently locked onto, if any.</summary>
 	public static new InfoStation Active { get; private set; }

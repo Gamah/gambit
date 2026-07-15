@@ -122,15 +122,11 @@
 
 @code
 {
-	/// <summary>
-	/// World half-height of the panel's intrinsic rect per unit of GO Z-scale.
-	/// Same calibration constant as the cabinet screens (half-extent = 18 * scale);
-	/// WorldPanel sizing is undocumented, so tune in the editor if the board
-	/// floats or sinks.
-	/// </summary>
-	[Property] public float HalfHeightPerScale { get; set; } = 18f;
-
-	/// <summary>World units to keep between the content's bottom edge and the floor.</summary>
+	/// <summary>World units to keep between the content's bottom edge and the floor.
+	/// <para>The calibration behind the anchor (half-extent = 18 × scale) now lives in
+	/// WallBoardGeometry, since every wall board shares it. WorldPanel sizing is
+	/// undocumented, so tune it there if the boards float or sink — they'll move
+	/// together.</para></summary>
 	[Property] public float FloorClearance { get; set; } = 60f;
 
 	// Re-render when the world light colour (and thus the theme) changes.
@@ -138,19 +134,8 @@
 
 	protected override void OnUpdate()
 	{
-		// .board is height:auto, so it can be shorter or taller than the panel's
-		// intrinsic rect. Measure the content/root pixel ratio (unit-agnostic) and
-		// lift the GO so the content's bottom edge sits FloorClearance above z=0.
-		// The intrinsic rect is centered on the GO with content anchored at its top:
-		// contentBottom = z + rootHalf - contentHeight.
-		var board = Panel?.Children.FirstOrDefault();
-		if ( board is null || Panel.Box.Rect.Height <= 0f ) return;
-
-		float rootHalf = HalfHeightPerScale * WorldScale.z;
-		float contentHeight = 1.5f * rootHalf * ( board.Box.Rect.Height / Panel.Box.Rect.Height );
-
-		var pos = LocalPosition;
-		pos.z = FloorClearance + contentHeight - rootHalf;
-		LocalPosition = pos;
+		// Every wall board anchors the same way, from one place — see
+		// WallBoardGeometry. Do not re-derive this here.
+		Gambit.World.WallBoardGeometry.FloorAnchor( this, FloorClearance );
 	}
 }

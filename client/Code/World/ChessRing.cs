@@ -383,9 +383,19 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			// preview: neither is ExecuteInEditor).
 			var controller = station.AddComponent<Gambit.Game.LocalGameController>();
 			controller.Station = component;
+
+			// The lichess relay client (M8), beside the local controller rather than
+			// replacing it: a table plays locally until both seats opt in, and falls
+			// back to local the moment lichess isn't available. Purely local state —
+			// each client polls gamchess for itself, so nothing here is networked.
+			var lichess = station.AddComponent<Gambit.Game.LichessGameController>();
+			lichess.Station = component;
+			lichess.Local = controller;
+
 			var view = station.AddComponent<ChessBoardView>();
 			view.Station = component;
 			view.Controller = controller;
+			view.Lichess = lichess;
 
 
 			// Floating occupancy sign over the table (blank while the table is

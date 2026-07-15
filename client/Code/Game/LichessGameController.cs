@@ -1,0 +1,604 @@
+using System;
+using System.Threading.Tasks;
+using Gambit.Api;
+using Gambit.Chess;
+using Gambit.World;
+using Sandbox;
+
+namespace Gambit.Game;
+
+/// <summary>
+/// A real lichess game, rendered on a Gambit table (M8).
+///
+/// <para>Slots in beside <see cref="LocalGameController"/> behind
+/// <see cref="IBoardGame"/>, so <see cref="ChessBoardView"/> renders it with no
+/// change at all — that seam was built for exactly this.</para>
+///
+/// <para><b>Lichess is the only authority here.</b> This controller runs no
+/// clock, adjudicates nothing, and never decides a game is over: it polls
+/// gamchess for lichess's state and rebuilds the position from the UCI move list
+/// lichess sends. That mirrors the local table's rule that only the host's tick
+/// counts — one authority, and it isn't us.</para>
+///
+/// <para>Because every state carries the WHOLE move list from the start, a
+/// dropped poll, a duplicate, or an out-of-order answer costs nothing: we rebuild
+/// rather than reconcile. There is no incremental state to corrupt.</para>
+///
+/// <para>Local moves are optimistic only in the view's sense — we ask gamchess to
+/// play them and wait for lichess to confirm via the next poll. We never apply a
+/// move to <see cref="Game"/> ourselves, because lichess may refuse it (not your
+/// turn, already flagged) and a board that showed a move lichess rejected would
+/// be lying.</para>
+///
+/// <para><b>Never required.</b> Every failure path here degrades to "lichess play
+/// didn't happen" and leaves the local game untouched.</para>
+/// </summary>
+public sealed class LichessGameController : Component, IBoardGame
+{
+	/// <summary>Occupancy/seat source for this table. Set by ChessRing at build.</summary>
+	[Property] public ChessStation Station { get; set; }
+
+	/// <summary>The local table controller beside us — the source of the table's
+	/// client_game_id, seats and time control, and the thing we are standing in
+	/// for while a lichess game runs.</summary>
+	[Property] public LocalGameController Local { get; set; }
+
+	/// <summary>The controller living beside the given station, or null.</summary>
+	public static LichessGameController For( ChessStation station ) =>
+		station?.Components.Get<LichessGameController>();
+
+	/// <summary>Latest state gamchess published, or null before the first answer.</summary>
+	public LichessPlayState State { get; private set; }
+
+	/// <summary>True from the moment this client asks for a lichess game until the
+	/// table goes idle. The view and HUD read this to know which controller owns
+	/// the board.</summary>
+	public bool Engaged { get; private set; }
+
+	/// <summary>Why the last attempt failed, for the HUD. Null when nothing's wrong.</summary>
+	public string Error { get; private set; }
+
+	// ── IBoardGame ──
+
+	/// <summary>Position rebuilt from lichess's move list. Null until the first
+	/// live state lands.</summary>
+	public ChessGame Game { get; private set; }
+
+	/// <summary>A lichess game is live at this table right now.</summary>
+	public bool Playing => Engaged && State != null && State.status == "live" && !State.finished;
+
+	/// <summary>The side the local player holds in the lichess game, or null.
+	///
+	/// <para>Read from <c>your_color</c>, which gamchess stamps per caller — not by
+	/// matching SteamIDs. Two reasons: in a SEEK the opponent is a stranger with no
+	/// SteamID to match against, and in either flow gamchess knows what game it
+	/// actually started, so if its answer ever disagreed with the local station the
+	/// board must follow lichess.</para></summary>
+	public ChessSeat? LocalSeat => State?.your_color switch
+	{
+		"white" => ChessSeat.White,
+		"black" => ChessSeat.Black,
+		_ => null,
+	};
+
+	/// <summary>This is a game against a random lichess opponent, not the player
+	/// opposite. Nobody is sitting in the other seat.</summary>
+	public bool IsSeek => State?.seek ?? false;
+
+	/// <summary>The opponent's lichess name, whichever side they're on.</summary>
+	public string OpponentName => LocalSeat switch
+	{
+		ChessSeat.White => State?.black_name,
+		ChessSeat.Black => State?.white_name,
+		_ => null,
+	};
+
+	public bool IsMyTurn =>
+		Playing && Game != null && LocalSeat is { } seat
+		&& Game.WhiteToMove == ( seat == ChessSeat.White ) && !_moveInFlight;
+
+	/// <summary>UCI of the last move, for the last-move highlight.</summary>
+	public string LastMoveUci => _lastMoveUci;
+
+	string _lastMoveUci;
+
+	/// <summary>Submit a move: ask gamchess, which asks lichess with our token.
+	/// The board doesn't change until lichess confirms it on the next poll.</summary>
+	public bool TryMakeMove( string uci )
+	{
+		if ( !IsMyTurn || string.IsNullOrEmpty( uci ) ) return false;
+
+		// Validate against the local rules first — the same courtesy the local
+		// table pays. An illegal move never reaches the network.
+		if ( Game == null || !Game.LegalTargets( uci[..2] ).Contains( uci[2..4] ) ) return false;
+
+		// Claim before awaiting, or OnUpdate fires a POST per frame until the
+		// first returns — the TryArchive lesson.
+		_moveInFlight = true;
+		_ = SendMove( uci );
+		return true;
+	}
+
+	bool _moveInFlight;
+
+	async Task SendMove( string uci )
+	{
+		var res = await LichessApi.Move( _clientGameId, uci );
+		_moveInFlight = false;
+
+		if ( res.Ok ) return;
+
+		// lichess refused it (not your turn, game gone, token revoked). Say so and
+		// let the next poll re-assert the true position — we never guessed at one.
+		Error = ReadError( res );
+		Log.Info( $"[Gambit] lichess refused a move: {Error}" );
+	}
+
+	// ── State ──
+
+	string _clientGameId;   // the table id we asked to play, and the poll key
+	ulong _version;         // long-poll cursor
+	bool _pollInFlight;
+	string _renderedMoves;  // the move list our Game was built from
+
+	/// <summary>Have we already told the host this game's result? Claimed once, so
+	/// a poll that repeats a finished state doesn't re-report every ~5s.</summary>
+	bool _reportedResult;
+
+	/// <summary>A ClientGameId whose lichess play already failed. Never asked for
+	/// again.
+	///
+	/// <para>Needed because failing hands the board back (Engaged goes false), and
+	/// AutoEngage's whole job is to engage an un-engaged lichess table — so without
+	/// this the two would ping-pong: fail, disengage, re-request, fail, forever.
+	/// Survives Clear() on purpose; only a NEW game at this table resets it.</para></summary>
+	string _failedGameId;
+
+	/// <summary>
+	/// Ask gamchess to play this table's game on lichess.
+	///
+	/// <para>Called only by a SEATED client, for itself. The other seat's client
+	/// makes the same call independently — gamchess pairs the two intents and only
+	/// then issues a challenge. See LichessApi.Play for why that is the whole
+	/// authorisation story rather than a formality.</para>
+	///
+	/// <para>Spectators never call this: they aren't seated, and gamchess would
+	/// refuse them anyway.</para>
+	/// </summary>
+	public void RequestPlay()
+	{
+		if ( Engaged || Local == null || Station == null ) return;
+		if ( LocalStationSeat == null ) return;   // only the two players ask
+
+		string id = Local.ClientGameId;
+		if ( string.IsNullOrEmpty( id ) ) return;
+		if ( id == _failedGameId ) return;       // already refused; don't loop on it
+
+		// Bullet can never reach lichess from any path — the Board API refuses
+		// anything faster than blitz. Don't offer it, and don't spend a request.
+		if ( !LichessTable.CanMirror( Local.Tc ) ) return;
+
+		ulong white = Station.WhiteSteamId, black = Station.BlackSteamId;
+		if ( white == 0 || black == 0 ) return;
+
+		Engaged = true;
+		_clientGameId = id;
+		_version = 0;
+		Error = null;
+		_ = SendPlay( id, white, black, Local.Tc );
+	}
+
+	/// <summary>
+	/// Find a RANDOM lichess opponent from this table.
+	///
+	/// <para>Needs only this player — no pairing, because there is nobody to get
+	/// consent from: you are spending your own grant to play a stranger who opts in
+	/// on lichess's side by their own choice. So it works at a table you're sitting
+	/// at alone, and the other seat is irrelevant.</para>
+	///
+	/// <para>The id is minted here rather than taken from the table: a seek isn't a
+	/// table game, no local game starts, and there's nobody to share a rendezvous
+	/// key with. It's just this client's handle on its own seek.</para>
+	/// </summary>
+	public void RequestSeek( bool rated, string ratingRange = null, string color = null )
+	{
+		if ( Engaged || Local == null || Station == null ) return;
+		if ( LocalStationSeat == null ) return;
+		if ( !LichessTable.CanSeek( Local.Tc ) ) return;
+
+		Engaged = true;
+		Seeking = true;
+		_clientGameId = GamchessApi.NewClientGameId();
+		_version = 0;
+		Error = null;
+		_ = SendSeek( _clientGameId, Local.Tc, rated, ratingRange, color );
+	}
+
+	/// <summary>We asked for a random opponent and are still waiting for one. Drops
+	/// to false once a game exists.</summary>
+	public bool Seeking { get; private set; }
+
+	async Task SendSeek( string id, TimeControl tc, bool rated, string ratingRange, string color )
+	{
+		var res = await LichessApi.Seek( id, LichessTable.SeekTimeMinutes( tc ),
+			tc.IncrementSeconds, rated, ratingRange, color );
+		if ( res.Ok )
+		{
+			Adopt( GamchessApi.Deserialize<LichessPlayState>( res.Body ) );
+			return;
+		}
+
+		// Expected outcomes here include the shared 5/min lobby budget being spent.
+		// Report it and stop — never retry, which is how a throttle becomes a ban.
+		Error = ReadError( res );
+		Seeking = false;
+		Engaged = false;
+		Log.Info( $"[Gambit] lichess seek refused: {Error}" );
+	}
+
+	/// <summary>Withdraw a seek we're still waiting on.
+	///
+	/// <para>Load-bearing, not politeness: the held connection IS the seek, so this
+	/// is what actually removes us from lichess's lobby. Without it a player who
+	/// walked away stays pairable and gets dropped into a game nobody is sitting
+	/// at.</para></summary>
+	public void CancelSeek()
+	{
+		if ( !Engaged || string.IsNullOrEmpty( _clientGameId ) ) return;
+		if ( Playing ) return;   // too late — that's a resign, not a cancel
+
+		string id = _clientGameId;
+		Clear();
+		_ = LichessApi.Cancel( id );
+	}
+
+	/// <summary>Where the local player is sitting at this table, per the station.
+	/// <para>Distinct from <see cref="LocalSeat"/>, which reads the seats gamchess
+	/// echoed back for the lichess game: this one answers "should I be asking?",
+	/// that one answers "which side am I playing?".</para></summary>
+	ChessSeat? LocalStationSeat =>
+		ChessStation.Active == Station && Station != null ? ChessStation.ActiveSeat : null;
+
+	async Task SendPlay( string id, ulong white, ulong black, TimeControl tc )
+	{
+		var res = await LichessApi.Play( id, white, black, tc );
+		if ( res.Ok )
+		{
+			Adopt( GamchessApi.Deserialize<LichessPlayState>( res.Body ) );
+			return;
+		}
+
+		// Hand the board straight back, exactly as SendSeek does. Staying Engaged
+		// with a null Game would blank the board — ChessBoardView.Source would keep
+		// resolving to us and render nothing — while the local game carried on
+		// invisibly underneath. AutoEngage can't rescue that: the table isn't idle
+		// and LichessGame is still true.
+		// A late failure for a game the table has already moved on from must not
+		// clear the one now in flight.
+		if ( id != _clientGameId ) return;
+
+		string why = ReadError( res );
+		Clear();
+		_failedGameId = id;
+		Error = why;
+
+		// The host froze this table's clocks when it set LichessGame. Only a seated
+		// client can see that lichess said no, so only we can unfreeze it — without
+		// this the players get a live board with dead clocks and no explanation.
+		Local?.ReportLichessFailed();
+		Log.Info( $"[Gambit] lichess play refused: {Error}" );
+	}
+
+	/// <summary>
+	/// Start (or stop) relaying automatically, following the host's decision.
+	///
+	/// <para>The host freezes <c>LocalGameController.LichessGame</c> at game start
+	/// from both seats' opt-in flags, so both clients see the same answer at the
+	/// same moment and each asks gamchess for itself. Driving off the synced flag
+	/// rather than a button press is what keeps the two seats in step — they don't
+	/// have to click at the same time, only both agree before the game starts.</para>
+	/// </summary>
+	void AutoEngage()
+	{
+		if ( Local == null ) return;
+
+		// A SEEK is not a table game — it has its own id, it starts from an idle
+		// table, and the local controller knows nothing about it. So none of the
+		// table-following logic below applies: leave it entirely alone or we'd
+		// cancel the player's seek the instant they asked for it.
+		if ( Seeking || IsSeek ) return;
+
+		// The table went idle, or the game wasn't a lichess one — hand the board
+		// back to the local controller. (Idle is "neither playing nor showing a
+		// result"; the result stays on display while anyone lingers.)
+		bool tableIdle = !Local.Playing && !Local.GameOver;
+		if ( !Local.LichessGame || tableIdle )
+		{
+			if ( Engaged ) Clear();
+			// An idle table means the next game is a fresh one — stop remembering
+			// that the last one was refused.
+			if ( tableIdle ) _failedGameId = null;
+			return;
+		}
+
+		if ( !Engaged && Local.Playing )
+			RequestPlay();
+	}
+
+	/// <summary>Stand down: the table went idle, or the player left. Stops polling
+	/// and hands the board back to the local controller.</summary>
+	public void Clear()
+	{
+		Engaged = false;
+		Seeking = false;
+		_pollBackoff = 0f;   // never let a dead game's backoff gag the next one
+		_reportedResult = false;
+		State = null;
+		Game = null;
+		Error = null;
+		_clientGameId = null;
+		_version = 0;
+		_renderedMoves = null;
+		_lastMoveUci = null;
+	}
+
+	protected override void OnUpdate()
+	{
+		AutoEngage();
+
+		if ( !Engaged || string.IsNullOrEmpty( _clientGameId ) ) return;
+
+		// The table reset under us (both players stood up) — drop it. Only for a
+		// table game: a seek mints its own id and the table never knows it.
+		if ( !Seeking && !IsSeek && Local != null && Local.ClientGameId != _clientGameId )
+		{
+			Clear();
+			return;
+		}
+
+		// One poll at a time. The request hangs server-side for ~5s, so this is a
+		// long poll and not a busy loop: it re-issues as each answer lands.
+		if ( _pollInFlight ) return;
+		if ( (float)_pollBackoff > 0f ) return;
+		if ( State != null && State.finished ) return; // nothing more to hear
+
+		_pollInFlight = true;
+		_ = Poll();
+	}
+
+	/// <summary>Gate on re-polling after a failure.
+	///
+	/// <para>Load-bearing: a long poll re-issues the instant its answer lands, which
+	/// is right when the answer is a 200 held for ~5s and catastrophic when it isn't.
+	/// GamchessApi's circuit breaker only opens on 5xx and transport errors, so a
+	/// 4xx returns immediately and <c>OnUpdate</c> would fire another request the
+	/// very next frame — hundreds per second at our own server, for as long as
+	/// someone sat at the table.</para></summary>
+	RealTimeUntil _pollBackoff;
+
+	/// <summary>How long to wait after a poll we can't act on.</summary>
+	const float PollBackoffSeconds = 3f;
+
+	async Task Poll()
+	{
+		var res = await LichessApi.PollState( _clientGameId, _version );
+		_pollInFlight = false;
+
+		if ( !res.Ok )
+		{
+			// 404 means gamchess has no such game: it aged out of the relay's store,
+			// or never started. Nothing more will ever come of this one, so stop
+			// rather than back off — hand the board back to the local game.
+			if ( res.NotFound )
+			{
+				// Blacklist BEFORE clearing wipes the id: without this, AutoEngage
+				// re-requests the same game next frame and we loop POST→404→POST.
+				string dead = _clientGameId;
+				bool wasTableGame = !IsSeek;
+				Log.Info( "[Gambit] gamchess has no record of this lichess game — dropping it" );
+				Clear();
+				if ( wasTableGame )
+				{
+					_failedGameId = dead;
+					Local?.ReportLichessFailed();
+				}
+				Error = "gamchess lost track of this game.";
+				return;
+			}
+
+			// Anything else (offline, 401, 400): wait before asking again. Never
+			// fatal — the local game is untouched either way.
+			_pollBackoff = PollBackoffSeconds;
+			return;
+		}
+
+		_pollBackoff = 0f;
+		Adopt( GamchessApi.Deserialize<LichessPlayState>( res.Body ) );
+	}
+
+	/// <summary>Take a published state and rebuild the board from it.</summary>
+	void Adopt( LichessPlayState st )
+	{
+		if ( st == null ) return;
+
+		// A game that failed (seek budget spent, nobody took it, lichess refused,
+		// cancelled) hands the board straight back to the local game.
+		//
+		// Clear(), not two assignments: leaving State set would keep IsSeek true
+		// forever, and AutoEngage early-returns on IsSeek — so one failed seek would
+		// stop that table ever auto-engaging a lichess game again, while the host
+		// went on freezing its clocks because LichessGame was still set. Dead table.
+		if ( st.status == "failed" )
+		{
+			string why = string.IsNullOrEmpty( st.error ) ? "lichess couldn't start the game." : st.error;
+			bool wasTableGame = !st.seek;
+			string id = _clientGameId;
+
+			Clear();
+			// A table game must not be retried — AutoEngage would re-ask forever. A
+			// seek mints a fresh id per attempt, so there's nothing to blacklist and
+			// the player is free to press the button again.
+			if ( wasTableGame )
+			{
+				_failedGameId = id;
+				Local?.ReportLichessFailed();   // unfreeze the table's clocks
+			}
+			Error = why;
+			Log.Info( $"[Gambit] lichess game failed: {Error}" );
+			return;
+		}
+
+		State = st;
+		_version = st.version;
+
+		// A fresh answer supersedes whatever went wrong last time — otherwise one
+		// refused move would replace the turn indicator for the rest of the game
+		// (GameHud reads Error ahead of everything else).
+		Error = string.IsNullOrEmpty( st.error ) ? null : st.error;
+
+		// Once lichess has actually paired us, we're no longer waiting.
+		if ( st.status == "live" || st.finished ) Seeking = false;
+
+		// Lichess says it's over. The host's own rules never saw a single move of
+		// this game, so its Phase would sit at Playing forever and the table would
+		// never reset or offer a rematch — it has to be told. Both seats report;
+		// the host's guards make the second a no-op. A seek isn't a table game and
+		// has nothing to report.
+		if ( st.finished && !st.seek && !_reportedResult )
+		{
+			_reportedResult = true;
+
+			// An abort has no result to report (see ResultString). Release the table
+			// the same way a refusal does — nothing happened on lichess, so the
+			// table falls back to being an ordinary local game rather than showing
+			// a score nobody earned.
+			if ( ResultString is string result )
+			{
+				Local?.ReportLichessResult( result, OverReason );
+			}
+			else
+			{
+				// Say so. Without this the board silently flips from the aborted
+				// position to a fresh local game with running clocks and no
+				// explanation — the exact failure the lichess-err line exists for.
+				//
+				// Order matters twice: read OverReason BEFORE Clear() nulls State,
+				// and set Error AFTER Clear() wipes it.
+				string why = OverReason ?? "Aborted";
+				string id = _clientGameId;
+
+				Local?.ReportLichessFailed();
+				Clear();
+				// Clearing hands the board back immediately, which opens a window
+				// where a non-host client's LichessGame hasn't synced false yet —
+				// AutoEngage would re-POST this very game. Blacklisting the id shuts
+				// that window.
+				_failedGameId = id;
+				Error = $"lichess {why.ToLower()} the game";
+			}
+		}
+
+		Rebuild( st.moves );
+	}
+
+	/// <summary>
+	/// Rebuild <see cref="Game"/> from lichess's UCI move list.
+	///
+	/// <para>Rebuilt from the start every time the list changes, rather than
+	/// applying a delta. That sounds wasteful and isn't: a game is a few dozen
+	/// moves, the rules are the vendored library that runs perft here, and it
+	/// buys total immunity to poll ordering — there is no incremental state that
+	/// can drift from lichess's.</para>
+	/// </summary>
+	void Rebuild( string moves )
+	{
+		moves ??= "";
+		if ( moves == _renderedMoves && Game != null ) return;
+		_renderedMoves = moves;
+
+		var game = new ChessGame();
+		_lastMoveUci = null;
+
+		if ( moves.Length > 0 )
+		{
+			foreach ( var uci in moves.Split( ' ', StringSplitOptions.RemoveEmptyEntries ) )
+			{
+				if ( !game.ApplyUci( uci ) )
+				{
+					// lichess sent something our rules won't take. That is either a
+					// variant we never asked for or a bug on our side; either way the
+					// honest thing is to stop rather than render a wrong board.
+					Log.Warning( $"[Gambit] lichess sent a move our rules refused ({uci}) — board frozen" );
+					return;
+				}
+				_lastMoveUci = uci;
+			}
+		}
+		Game = game;
+	}
+
+	// ── Endings ──
+
+	/// <summary>Local seated player resigns the lichess game.</summary>
+	public void ResignLocal()
+	{
+		if ( !Playing || LocalSeat == null ) return;
+		_ = LichessApi.Resign( _clientGameId );
+	}
+
+	/// <summary>Offer a draw, or accept one already offered — lichess treats both
+	/// as the same call, and the state tells us which it'll be.</summary>
+	public void OfferDraw()
+	{
+		if ( !Playing || LocalSeat == null ) return;
+		_ = LichessApi.OfferDraw( _clientGameId );
+	}
+
+	/// <summary>True when the OTHER side has a draw offer standing.</summary>
+	public bool DrawOffered =>
+		State != null && LocalSeat is { } seat
+		&& ( seat == ChessSeat.White ? State.black_draw : State.white_draw );
+
+	/// <summary>Result string for the HUD, once lichess says it's over — or null
+	/// when lichess ended the game WITHOUT a result.
+	///
+	/// <para>An aborted game is not a draw. lichess aborts a game nobody moved in,
+	/// scores nothing and rates nothing, so falling through to "1/2-1/2" (as any
+	/// "finished with no winner" rule would) would invent a half point that neither
+	/// player earned.</para></summary>
+	public string ResultString
+	{
+		get
+		{
+			if ( State == null || !State.finished ) return null;
+			if ( State.lichess_status is "aborted" or "noStart" ) return null;
+			return State.winner switch
+			{
+				"white" => "1-0",
+				"black" => "0-1",
+				_ => "1/2-1/2",
+			};
+		}
+	}
+
+	/// <summary>Why it ended, in lichess's words, mapped to ours.</summary>
+	public string OverReason => State?.lichess_status switch
+	{
+		"mate" => "Checkmate",
+		"resign" => "Resignation",
+		"stalemate" => "Stalemate",
+		"timeout" or "outoftime" => "Out of time",
+		"draw" => "Draw",
+		"aborted" => "Aborted",
+		"noStart" => "Never started",
+		"insufficientMaterialClaim" => "Insufficient material",
+		_ => State != null && State.finished ? "Game over" : null,
+	};
+
+	static string ReadError( GamchessApi.Result res )
+	{
+		var body = GamchessApi.Deserialize<GamchessError>( res.Body );
+		return !string.IsNullOrEmpty( body?.error ) ? body.error
+			: res.Error ?? "Something went wrong.";
+	}
+}

@@ -90,6 +90,29 @@ public sealed class LocalGameController : Component, IBoardGame
 	[Sync( SyncFlags.FromHost )] public bool WhiteReady { get; set; }
 	[Sync( SyncFlags.FromHost )] public bool BlackReady { get; set; }
 
+	/// <summary>Per-seat "play this on lichess" opt-in (M8). Settable while the
+	/// table is idle, exactly like <see cref="WhiteReady"/>, and cleared by all the
+	/// same things — an empty seat is never opted in, and changing the time control
+	/// or the pairing retracts it.
+	/// <para>Per-seat rather than per-table because it is a decision about YOUR
+	/// lichess account. Both seats must opt in, and gamchess independently requires
+	/// both to ask before it will start anything — this flag is the UI's half of
+	/// that agreement, not the authorisation.</para></summary>
+	[Sync( SyncFlags.FromHost )] public bool WhiteLichess { get; set; }
+	[Sync( SyncFlags.FromHost )] public bool BlackLichess { get; set; }
+
+	/// <summary>Captured by the host at game start: this game is being played on
+	/// lichess. Frozen for the game's duration, so a toggle can't change the rules
+	/// under a game in progress.</summary>
+	[Sync( SyncFlags.FromHost )] public bool LichessGame { get; set; }
+
+	/// <summary>Both seats want this table's next game on lichess.</summary>
+	public bool BothWantLichess => WhiteLichess && BlackLichess;
+
+	/// <summary>Lichess opt-in for a seat.</summary>
+	public bool LichessFor( ChessSeat seat ) =>
+		seat == ChessSeat.White ? WhiteLichess : BlackLichess;
+
 	/// <summary>Seconds left on each clock. Host-authoritative and throttled to
 	/// <see cref="ClockSyncInterval"/> — the host holds the precise value locally
 	/// (<c>_whiteRemaining</c>) and publishes a rounded-off copy for display, rather
@@ -266,6 +289,16 @@ public sealed class LocalGameController : Component, IBoardGame
 		// POST wins and can't be corrected.
 		if ( !_historyIntact ) return;
 
+		// Same rule, different cause: a LICHESS game's moves went to the relay and
+		// never touched this ChessGame, so _historyIntact is still true and every
+		// guard above passes — but BuildPgn() would produce headers with no moves,
+		// no clocks and Result "*". Archiving that would be permanent (the POST is
+		// idempotent on client_game_id, so it could never be corrected).
+		//
+		// lichess holds that game and gamchess relayed it. Wiring the relay's final
+		// state into the archive is worth doing; posting a stub is not.
+		if ( LichessGame ) return;
+
 		// Claim it BEFORE awaiting: OnUpdate runs every frame and would otherwise
 		// fire a POST per frame until the first one returned.
 		_archivedId = ClientGameId;
@@ -298,6 +331,12 @@ public sealed class LocalGameController : Component, IBoardGame
 		// in a game they never agreed to, on someone else's time control.
 		if ( !whiteSeated ) WhiteReady = false;
 		if ( !blackSeated ) BlackReady = false;
+
+		// Same reasoning, and it matters more here: inheriting someone else's lichess
+		// opt-in would mean a game played on the new occupant's real lichess account
+		// because the previous occupant asked for it.
+		if ( !whiteSeated ) WhiteLichess = false;
+		if ( !blackSeated ) BlackLichess = false;
 
 		switch ( Phase )
 		{
@@ -352,6 +391,14 @@ public sealed class LocalGameController : Component, IBoardGame
 	{
 		if ( Tc.IsUnlimited || Game == null || GameOver ) return;
 
+		// A lichess game has exactly one clock authority, and it is lichess. If the
+		// host kept burning its own copy, it would flag a player who is perfectly
+		// fine on lichess's clock — the local ChessGame never advances during a
+		// lichess game (moves go to the relay, not NetChessMove), so White's local
+		// clock would run to zero every time. LichessGameController renders the
+		// clocks lichess sends instead.
+		if ( LichessGame ) return;
+
 		bool white = Game.WhiteToMove;
 		float remaining = ( white ? _whiteRemaining : _blackRemaining ) - Time.Delta;
 
@@ -387,6 +434,13 @@ public sealed class LocalGameController : Component, IBoardGame
 	{
 		GameId++;
 		ClientGameId = GamchessApi.NewClientGameId();
+
+		// Freeze the lichess decision for this game. Read once, exactly as Tc is:
+		// the flags are free to change again once the result is on display, and
+		// this game must not change character halfway through. A control lichess
+		// won't accept (bullet) can never be a lichess game, whatever the seats ask
+		// for — gamchess refuses it too, this just avoids the round trip.
+		LichessGame = BothWantLichess && LichessTable.CanMirror( Tc );
 		BoardFen = null;
 		LastMoveUci = null;
 		OverReason = null;
@@ -680,11 +734,110 @@ public sealed class LocalGameController : Component, IBoardGame
 		BlackReady = false;
 	}
 
+	// ── Lichess outcome reporting (M8) ──
+	//
+	// The host sets LichessGame at game start and then knows NOTHING about how the
+	// lichess game goes: its own ChessGame never advances (moves go to the relay,
+	// not NetChessMove), so it cannot see a mate, a resignation, a flag, or a
+	// refusal. Without these two reports the table wedges: LichessGame stays true
+	// so HostTickClocks never runs, and Phase stays Playing forever, so the table
+	// never returns to idle and never offers a rematch.
+	//
+	// Reported by the SEATED clients, because they are the only ones who can see
+	// lichess's answer. Both seats report; the guards make the second a no-op.
+
+	/// <summary>A seated client: gamchess/lichess refused to start this table's
+	/// game. Fall back to an ordinary local game.</summary>
+	public void ReportLichessFailed()
+	{
+		if ( LocalSeat == null || !LichessGame ) return;
+		ReportLichessFailedHost( GameId );
+	}
+
+	[Rpc.Host]
+	void ReportLichessFailedHost( int gameId )
+	{
+		if ( gameId != GameId || !LichessGame ) return;
+		if ( !IsSeatedCaller( out _ ) ) return;
+
+		// Drop back to a normal local game rather than leaving a dead table: the
+		// clocks start ticking from here (HostTickClocks stops early-returning),
+		// the pieces already move, and the players get a real game instead of a
+		// frozen board. "gamchess is never required" — this is what that means at
+		// a table that asked for lichess and didn't get it.
+		LichessGame = false;
+	}
+
+	/// <summary>The only endings a lichess game may report. Everything a client
+	/// sends is an arbitrary string off the wire, and OverReason is [Sync]ed to
+	/// every peer's HUD — so a seated modified client could otherwise paint
+	/// whatever it liked onto both players' screens. Every other OverReason in this
+	/// file comes from ChessGame.ResultReason's fixed vocabulary; this keeps that
+	/// true. Must stay in step with LichessGameController.OverReason.
+	///
+	/// <para>"Aborted" and "Never started" are deliberately absent: those endings
+	/// carry no result, so they arrive via ReportLichessFailed instead — an aborted
+	/// game is one that never happened, not a draw.</para></summary>
+	/// <para>A List, not an array: <c>System.Array</c>'s statics are a whitelist
+	/// risk we can't test for here (<c>Array.Clone</c> is already an SB1000 blocker
+	/// and the whitelist is per-member), while <c>List&lt;T&gt;.Contains</c> is
+	/// proven all over this codebase.</para>
+	static readonly List<string> LichessReasons = new()
+	{
+		"Checkmate", "Resignation", "Stalemate", "Out of time",
+		"Draw", "Insufficient material", "Game over",
+	};
+
+	/// <summary>A seated client: lichess says this game is over. Close the table on
+	/// lichess's verdict, since the host's own rules never saw a single move.</summary>
+	public void ReportLichessResult( string result, string reason )
+	{
+		if ( LocalSeat == null || !LichessGame ) return;
+		ReportLichessResultHost( GameId, result, reason );
+	}
+
+	[Rpc.Host]
+	void ReportLichessResultHost( int gameId, string result, string reason )
+	{
+		if ( gameId != GameId || !LichessGame || GameOver ) return;
+		if ( !IsSeatedCaller( out _ ) ) return;
+
+		// Arbitrary strings off the wire — never display one we didn't expect.
+		if ( result != "1-0" && result != "0-1" && result != "1/2-1/2" ) return;
+		if ( !LichessReasons.Contains( reason ) ) reason = "Game over";
+
+		HostEnd( reason, result );
+	}
+
 	/// <summary>Local seated player toggles their ready flag (HUD).</summary>
 	public void ToggleReady()
 	{
 		if ( LocalSeat == null || Playing ) return;
 		RequestReadyHost( !ReadyFor( LocalSeat.Value ) );
+	}
+
+	/// <summary>Local seated player toggles "play my next game here on lichess"
+	/// (HUD). Idle tables only — the host enforces that.</summary>
+	public void ToggleLichess()
+	{
+		if ( LocalSeat == null || Playing ) return;
+		RequestLichessHost( !LichessFor( LocalSeat.Value ) );
+	}
+
+	[Rpc.Host]
+	void RequestLichessHost( bool want )
+	{
+		if ( Station == null || Phase == PhasePlaying ) return;
+		if ( !IsSeatedCaller( out var seat ) ) return;
+
+		if ( seat == ChessSeat.White ) WhiteLichess = want;
+		else BlackLichess = want;
+
+		// Opting in or out changes what the game IS — a real game on your lichess
+		// account versus a casual one in a lobby. Nobody carries a ready across
+		// that, for the same reason changing the time control retracts it.
+		WhiteReady = false;
+		BlackReady = false;
 	}
 
 	[Rpc.Host]

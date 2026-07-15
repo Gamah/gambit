@@ -38,6 +38,24 @@ services:
       PUBLIC_BASE_URL: "${TEST_PUBLIC_BASE_URL}"
       FRONTEND_DIR: "/frontend"
       SESSION_SECRET: "${SESSION_SECRET}"
+      # Lichess (M8). The redirect URI derives from PUBLIC_BASE_URL above, so the
+      # test instance sends players back to ITSELF — never to prod.
+      #
+      # The token key is deliberately the SAME as prod's, because a separate one
+      # would buy nothing: both instances run on this host and read this .env, so
+      # anything that can read one key can read both. The key only ever decrypts
+      # rows in its own database, and those are already separate (distinct Compose
+      # projects, distinct volumes) — so a link made on test grants prod nothing,
+      # key or no key. Set LICHESS_TOKEN_KEY once, in .env.
+      #
+      # What DOES differ, and matters, is the redirect origin. lichess records
+      # clientOrigin on each token, so testchess.gamah.net and chess.gamah.net are
+      # two separate apps as far as lichess is concerned: a player who links on
+      # both has TWO grants and two entries on /account/security, and revoking one
+      # leaves the other live. Linking on test is a real grant against a real
+      # account — it is not a sandbox.
+      LICHESS_TOKEN_KEY: "${LICHESS_TOKEN_KEY}"
+      LICHESS_AUDIT_KEY: "${LICHESS_AUDIT_KEY}"
     depends_on:
       postgres:
         condition: service_healthy

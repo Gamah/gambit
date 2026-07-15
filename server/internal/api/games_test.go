@@ -242,7 +242,7 @@ func TestSeatMatches(t *testing.T) {
 
 func TestClampInt(t *testing.T) {
 	cases := []struct {
-		raw            string
+		raw               string
 		def, lo, hi, want int
 	}{
 		{"", 50, 1, 200, 50},
