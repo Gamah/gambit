@@ -54,28 +54,28 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// <summary>Keep a seat tag this far off the side wall when fitting it beside the board.</summary>
 	const float SeatWallMargin = 10f;
 
-	/// <summary>Intrinsic pixel size of the end-of-game banner (SpectatorFanfarePanel) —
-	/// a headline over a reason.
+	/// <summary>Intrinsic pixel size of the end-of-game banner (SpectatorFanfarePanel).
 	///
-	/// <para>Sized against its longest LINE the same way <see cref="SeatPxWidth"/> is,
-	/// because <c>white-space: nowrap</c> means getting it wrong CLIPS rather than wraps.
-	/// Two lines, so the widest of the two decides it (0.6em/char is this file's own
-	/// calibration):</para>
-	/// <code>
-	///   headline "Game never started" 18 × 0.6em × 64px + 18×2 = 727   ← the binding one
-	///   reason   "insufficient material" 21 × 0.6em × 40px + 21×2 = 546
-	///   + padding 54 × 2 + border 4 × 2                          = 116  → ~843
-	/// </code>
-	/// <para>1000 rounds that up with headroom. It was 1600 when the result was one long
-	/// line ("Black wins — insufficient material"); splitting it in two made the banner
-	/// narrower as well as more readable, and leaving 1600 would have hung a mostly-empty
-	/// panel across the board.</para>
+	/// <para><b>Deliberately far larger than the text needs, and that is the design.</b>
+	/// Unlike <see cref="SeatPxWidth"/>, this panel's bounds are INVISIBLE: its
+	/// <c>root</c> is transparent and the banner box sizes to its own content, so the
+	/// only thing an oversized panel costs is empty transparent area nobody can see. What
+	/// a too-small one costs is a clipped result, because <c>white-space: nowrap</c>
+	/// clips rather than wraps.</para>
 	///
-	/// <para>It renders at the seat tags' fit scale, so it grows and shrinks with them:
-	/// 1000 × 3.53 × 0.05 ≈ 176 world units against a 448-unit board — a block over the
-	/// middle of it rather than a strip across it.</para></summary>
-	const float FanfarePxWidth = 1000f;
-	const float FanfarePxHeight = 200f;
+	/// <para>Sizing it exactly was tried twice and was wrong twice — the estimate turns on
+	/// a per-character width that depends on which font actually resolves ($wall-font is
+	/// Consolas → Roboto Mono → generic monospace, and those differ). Given a free choice
+	/// between "precise" and "cannot clip", take the second: the widest banner is ~1970px
+	/// at these sizes and ~2700px even if every character came out a third wider than
+	/// expected, so 4096 swallows the question whole and nobody has to do this arithmetic
+	/// again.</para>
+	///
+	/// <para>The bounds land at ~720 world units against a 448-unit board — bigger than
+	/// the board and completely invisible, which is the point. Only the banner box inside
+	/// is drawn, and it is exactly as wide as the result it carries.</para></summary>
+	const float FanfarePxWidth = 4096f;
+	const float FanfarePxHeight = 1024f;
 
 	/// <summary>How far the banner floats out of the board's FACE, in world units.
 	///
