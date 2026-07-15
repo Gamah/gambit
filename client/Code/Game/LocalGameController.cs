@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using Gambit.Api;
 using Gambit.Chess;
 using Gambit.World;
@@ -49,6 +50,14 @@ public sealed class LocalGameController : Component, IBoardGame
 	/// never hosted a game. Clients reset their local ChessGame on change.</summary>
 	[Sync( SyncFlags.FromHost )] public int GameId { get; set; }
 
+	/// <summary>Idempotency key for the gamchess archive (M7), minted by the host at
+	/// game start. Synced precisely so BOTH seats can submit the same game and the
+	/// second POST is a no-op: move history lives in each seated client's own
+	/// ChessGame, not the host's, so the host often has no PGN to submit and can't
+	/// be the one to upload. Null when no game is in progress.
+	/// <para>Not a secret — an idempotency key, safe to sync.</para></summary>
+	[Sync( SyncFlags.FromHost )] public string ClientGameId { get; set; }
+
 	/// <summary>Latest position, folded by the host from NetChessMove relays.
 	/// Null/empty = start position.</summary>
 	[Sync( SyncFlags.FromHost )] public string BoardFen { get; set; }
@@ -77,6 +86,10 @@ public sealed class LocalGameController : Component, IBoardGame
 	int _localGameId;      // GameId our Game instance was built for
 	string _pgnWhiteName;  // seat names captured at game start (seats may empty before import)
 	string _pgnBlackName;
+	ulong _pgnWhiteSteamId; // and their SteamIds, for the gamchess archive (M7)
+	ulong _pgnBlackSteamId;
+	bool _historyIntact;    // false once our ChessGame came from a FEN snapshot — no moves to archive
+	string _archivedId;     // ClientGameId this client has already POSTed
 
 	// Host-only bookkeeping
 	(ulong White, ulong Black) _endedPair; // pair seated when the last game ended — don't auto-restart them
@@ -97,6 +110,7 @@ public sealed class LocalGameController : Component, IBoardGame
 	protected override void OnUpdate()
 	{
 		SyncLocalGame();
+		TryArchive();
 
 		if ( Networking.IsHost )
 			HostUpdate();
@@ -126,12 +140,16 @@ public sealed class LocalGameController : Component, IBoardGame
 
 		_localGameId = GameId;
 		Game = new ChessGame();
+		_historyIntact = true;
 
 		// Late joiner (or resync): the table is mid-game — adopt the snapshot.
 		// Move history before this point is lost, see class remarks.
 		if ( !string.IsNullOrEmpty( BoardFen ) && BoardFen != Game.Fen
 			&& ChessGame.TryFromFen( BoardFen, out var snapshot ) )
+		{
 			Game = snapshot;
+			_historyIntact = false;
+		}
 
 		// A late joiner can also arrive after resign/abandon — those don't live
 		// in the FEN. The exact result doesn't matter locally (only players who
@@ -142,9 +160,63 @@ public sealed class LocalGameController : Component, IBoardGame
 		_pgnWhiteName = Station?.WhiteName;
 		_pgnBlackName = Station?.BlackName;
 
+		// Seats captured at game start for the same reason as the names: by the time
+		// the game is Over the seats may have emptied (resign/abandon vacate them),
+		// and the archive needs to know who actually played.
+		_pgnWhiteSteamId = Station?.WhiteSteamId ?? 0;
+		_pgnBlackSteamId = Station?.BlackSteamId ?? 0;
+
 		// New game voids any previous import result for this table
 		LichessUrl = null;
 		_importError = null;
+	}
+
+	// ── gamchess archive (M7) ──
+
+	/// <summary>
+	/// Post the finished game to the gamchess archive, once per client per game.
+	///
+	/// <para>This runs on the SEATED CLIENTS, not the host — deliberately. Move
+	/// history lives in each seated client's own ChessGame, so the host usually has
+	/// no PGN to submit. Both seats post the same <see cref="ClientGameId"/> and the
+	/// server's unique constraint makes the second a no-op.</para>
+	///
+	/// <para>Entirely best-effort: gamchess being down must never be something a
+	/// player notices. No await blocks the game ending, and a failure is a log line.</para>
+	/// </summary>
+	void TryArchive()
+	{
+		if ( !GameOver || Game == null ) return;
+		if ( string.IsNullOrEmpty( ClientGameId ) || ClientGameId == _archivedId ) return;
+
+		// Only the two players archive. Spectators have no PGN worth keeping and the
+		// server would 403 them anyway — you may only archive a game you sat in.
+		ulong me = Connection.Local?.SteamId ?? 0;
+		if ( me == 0 || ( me != _pgnWhiteSteamId && me != _pgnBlackSteamId ) ) return;
+
+		// A resynced/late-joined client holds the position but not the moves, so its
+		// PGN would be a stub. Staying quiet leaves the archive to the other seat,
+		// who almost certainly has the full history. Losing the game entirely is the
+		// rarer, more acceptable failure than archiving a truncated one — the first
+		// POST wins and can't be corrected.
+		if ( !_historyIntact ) return;
+
+		// Claim it BEFORE awaiting: OnUpdate runs every frame and would otherwise
+		// fire a POST per frame until the first one returned.
+		_archivedId = ClientGameId;
+
+		_ = ArchiveGame( ClientGameId, BuildPgn(), _pgnWhiteSteamId, _pgnBlackSteamId,
+			string.IsNullOrEmpty( OverResult ) ? "*" : OverResult );
+	}
+
+	static async Task ArchiveGame( string id, string pgn, ulong white, ulong black, string result )
+	{
+		var res = await GamchessApi.PostGame( id, pgn, white, black, result );
+		if ( res.Ok ) return;
+
+		// Expected whenever gamchess is down or the player isn't on Steam. Info, not
+		// a warning: nothing is broken and there is nothing for the player to do.
+		Log.Info( $"[Gambit] game not archived: {res.Error}" );
 	}
 
 	// ── Host game lifecycle ──
@@ -210,6 +282,7 @@ public sealed class LocalGameController : Component, IBoardGame
 	void HostStartFresh()
 	{
 		GameId++;
+		ClientGameId = GamchessApi.NewClientGameId();
 		BoardFen = null;
 		LastMoveUci = null;
 		OverReason = null;
@@ -220,6 +293,7 @@ public sealed class LocalGameController : Component, IBoardGame
 
 	void HostSetIdle()
 	{
+		ClientGameId = null;
 		BoardFen = null;
 		LastMoveUci = null;
 		OverReason = null;

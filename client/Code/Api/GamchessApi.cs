@@ -215,6 +215,32 @@ public static class GamchessApi
 
 	// ── Helpers ──
 
+	/// <summary>A fresh <c>client_game_id</c> — a RFC 4122 v4 UUID string.
+	///
+	/// <para>Hand-rolled from <c>Random.Shared</c> rather than <c>Guid.NewGuid()</c>:
+	/// Guid appears nowhere else in this codebase, and NewGuid reaches into platform
+	/// crypto interop — precisely the shape the s&amp;box whitelist rejects with
+	/// SB1000. Same reasoning that left SHA-256 and base64url hand-rolled in
+	/// <see cref="LichessOAuth"/>. Random.Shared is already proven here.</para>
+	///
+	/// <para>This is an idempotency key, not a secret — it is [Sync]ed to both seats
+	/// on purpose so either can submit the same game — so a non-cryptographic source
+	/// is fine. The server parses it strictly (Go's uuid.Parse), so the layout has to
+	/// be exact: 8-4-4-4-12, version nibble '4', variant nibble in 8..b.</para></summary>
+	public static string NewClientGameId()
+	{
+		const string hex = "0123456789abcdef";
+		var sb = new StringBuilder( 36 );
+		for ( int i = 0; i < 36; i++ )
+		{
+			if ( i is 8 or 13 or 18 or 23 ) sb.Append( '-' );
+			else if ( i == 14 ) sb.Append( '4' );                                  // version 4
+			else if ( i == 19 ) sb.Append( hex[8 + System.Random.Shared.Next( 4 )] ); // variant 10xx
+			else sb.Append( hex[System.Random.Shared.Next( 16 )] );
+		}
+		return sb.ToString();
+	}
+
 	/// <summary>Parse a JSON body, or null on any error (never throws into UI code).</summary>
 	public static T Deserialize<T>( string json ) where T : class
 	{
