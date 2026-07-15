@@ -51,8 +51,8 @@ services:
     ports:
       # Loopback only — the app reaches postgres over the internal network; this
       # mapping exists just for host-side tooling (make psql, local dev).
-      # 5432/5433 are rotaliate prod/test and 5434 is splitclicker, so gamchess
-      # continues the org's increment convention at 5435 (test takes 5436).
+      # 5432-5434 are already taken on the deploy host, so gamchess continues the
+      # org's increment convention at 5435 (test takes 5436).
       - "127.0.0.1:5435:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gamchess"]

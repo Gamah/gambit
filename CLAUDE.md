@@ -288,8 +288,11 @@ Both are plain subdomains (a `*.gamah.net` wildcard covers them; a sub-subdomain
 All bind `127.0.0.1` only — **never punch through ufw**. Docker's iptables chains are
 evaluated *before* ufw, so a `0.0.0.0` publish is internet-reachable even with ufw denying
 the port; loopback binding + Caddy fronting is the whole mechanism (rotaliate documents
-this at `docker/docker-compose.yml`). Neighbours on that box: rotaliate 8080/5432 +
-8081/5433, splitclicker 6969/5434, gamah.net 1337, skafinity 6970.
+this at `docker/docker-compose.yml`).
+
+Ports already taken on that host by other services: `1337`, `5432`–`5436`, `6969`, `6970`,
+`8080`, `8081`. gamchess's Postgres ports continue the org's increment convention from
+that range. Check the host's Caddyfile before allocating anything new.
 
 ### Identity / auth primitives (not used yet — gamchess, issue #7)
 
