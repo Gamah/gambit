@@ -67,22 +67,36 @@ public readonly struct TimeControl
 	public string PgnSpec => IsUnlimited ? "-" : $"{InitialSeconds}+{IncrementSeconds}";
 
 	/// <summary>
+	/// Below this many seconds left, a clock reads in tenths rather than m:ss. It also
+	/// sets how fast the host has to publish the clocks — a tenths display needs several
+	/// updates per digit or it visibly skips — so <c>LocalGameController</c> reads this
+	/// same constant rather than keeping its own copy in step.
+	/// </summary>
+	public const float DecimalBelowSeconds = 60f;
+
+	/// <summary>
 	/// A remaining-time bank as a clock face. Minutes:seconds normally, dropping to
-	/// tenths under ten seconds where they start to matter. Never renders negative —
-	/// a flagged clock reads 0:00.
+	/// tenths under <see cref="DecimalBelowSeconds"/>, where a whole second is an age —
+	/// the entire bullet time control lives down there. Never renders negative: a flagged
+	/// clock reads 0:00, which also makes the flag legible against the ticking 0.4/0.3.
 	/// </summary>
 	public static string Format( float seconds )
 	{
 		if ( float.IsNaN( seconds ) || seconds <= 0f ) return "0:00";
 
-		if ( seconds < 10f )
-			return $"{seconds:0.0}";
+		// Truncate, don't round — at every scale, a clock that reads higher than the time
+		// actually left is a lie. Note "{seconds:0.0}" would NOT do: .NET rounds it, so
+		// 59.96 would render "60.0" — a nonsense reading of a clock that has under a
+		// minute on it.
+		if ( seconds < DecimalBelowSeconds )
+		{
+			int tenths = (int)( seconds * 10f );
+			return $"{tenths / 10}.{tenths % 10}";
+		}
 
-		// Round down: showing 1:00 while a hair under a minute remains would let the
-		// clock read 1:00 twice in a row. Truncating means it ticks 1:00 → 0:59.
+		// Same reasoning one scale up: showing 1:00 while a hair under a minute remains
+		// would let the clock read 1:00 twice in a row. Truncating ticks 1:00 → 0:59.
 		int total = (int)seconds;
-		int mins = total / 60;
-		int secs = total % 60;
-		return $"{mins}:{secs:00}";
+		return $"{total / 60}:{total % 60:00}";
 	}
 }

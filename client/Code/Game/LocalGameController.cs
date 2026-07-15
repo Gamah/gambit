@@ -152,17 +152,13 @@ public sealed class LocalGameController : Component, IBoardGame
 	/// HUD reads mm:ss up here, so 10Hz is already far finer than anything it can show.</summary>
 	const float ClockSyncInterval = 0.1f;
 
-	/// <summary>Publish rate once a clock is inside <see cref="LowClockSeconds"/>, where the
-	/// HUD switches to tenths. 10Hz there would be exactly one update per displayed digit —
-	/// no headroom, so a frame-timing wobble visibly skips or repeats a tenth. ~33Hz gives
-	/// the display something to round. It costs nothing: this only applies to a live table
-	/// in the last ten seconds of someone's clock, which is also precisely when bullet is
-	/// worth watching.</summary>
+	/// <summary>Publish rate once a clock drops under <see cref="TimeControl.DecimalBelowSeconds"/>,
+	/// where the HUD switches to tenths. 10Hz there would be exactly one update per displayed
+	/// digit — no headroom, so a frame-timing wobble visibly skips or repeats a tenth. ~33Hz
+	/// gives the display something to land on. The cost is bounded: it only applies to a live
+	/// table inside the last minute of someone's clock. A whole bullet game sits down here,
+	/// which is the point.</summary>
 	const float ClockSyncIntervalLow = 0.03f;
-
-	/// <summary>Where the HUD starts showing tenths, and the clocks start publishing faster.
-	/// Keep in step with TimeControl.Format's own ten-second threshold.</summary>
-	const float LowClockSeconds = 10f;
 
 	/// <summary>A game has started at this table and hasn't been cleared yet
 	/// (over or not) — the view renders Game instead of the start position.</summary>
@@ -372,7 +368,10 @@ public sealed class LocalGameController : Component, IBoardGame
 		// Throttled publish, faster once the ticking clock is low enough that the HUD
 		// starts showing tenths — see ClockSyncInterval / ClockSyncIntervalLow.
 		_sinceClockSync += Time.Delta;
-		if ( _sinceClockSync >= ( remaining < LowClockSeconds ? ClockSyncIntervalLow : ClockSyncInterval ) )
+		float interval = remaining < TimeControl.DecimalBelowSeconds
+			? ClockSyncIntervalLow
+			: ClockSyncInterval;
+		if ( _sinceClockSync >= interval )
 			PublishClocks();
 	}
 

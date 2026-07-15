@@ -299,11 +299,17 @@
 		return $"{name}  {TimeControl.Format( ctrl.ClockFor( seat ) )}";
 	}
 
+	/// <summary>Where the ticking clock turns red. Its own threshold, deliberately not
+	/// TimeControl.DecimalBelowSeconds: that one decides when tenths are legible, this one
+	/// decides when you're in trouble. A whole bullet game reads in tenths, and colouring
+	/// all of it red would say nothing.</summary>
+	const float PanicSeconds = 10f;
+
 	/// <summary>Accent the side whose clock is running, and redden it near the flag.</summary>
 	static string SeatClass( LocalGameController ctrl, ChessSeat seat )
 	{
 		if ( ctrl == null || ctrl.TickingSeat != seat ) return "";
-		return ctrl.ClockFor( seat ) < 10f ? "ticking low" : "ticking";
+		return ctrl.ClockFor( seat ) < PanicSeconds ? "ticking low" : "ticking";
 	}
 
 	static bool Visible() =>
