@@ -20,6 +20,16 @@ func stubVerifier(t *testing.T, fn func(ctx context.Context, steamID64, token st
 	t.Cleanup(func() { validateToken = prev })
 }
 
+// okVerifier stubs the Facepunch boundary as "testSteamID + the token "good" is
+// genuine, nothing else is" — the happy path every handler test needs before it
+// can reach the logic it actually cares about.
+func okVerifier(t *testing.T) {
+	t.Helper()
+	stubVerifier(t, func(_ context.Context, id, tok string) (bool, error) {
+		return id == testSteamID && tok == "good", nil
+	})
+}
+
 func testHandler() *handler {
 	return &handler{log: zap.NewNop(), version: "test"}
 }

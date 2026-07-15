@@ -38,6 +38,15 @@ services:
       PUBLIC_BASE_URL: "${TEST_PUBLIC_BASE_URL}"
       FRONTEND_DIR: "/frontend"
       SESSION_SECRET: "${SESSION_SECRET}"
+      # Lichess (M8). The redirect URI derives from PUBLIC_BASE_URL above, so the
+      # test instance sends players back to ITSELF — never to prod.
+      #
+      # The token key is shared with prod deliberately: a link made on test is a
+      # real lichess grant either way, and a second key would mean a second set of
+      # tokens to audit and revoke. Set LICHESS_TOKEN_KEY once, in .env.
+      LICHESS_CLIENT_ID: "${LICHESS_CLIENT_ID:-net.gamah.gambit}"
+      LICHESS_TOKEN_KEY: "${LICHESS_TOKEN_KEY}"
+      LICHESS_AUDIT_KEY: "${LICHESS_AUDIT_KEY}"
     depends_on:
       postgres:
         condition: service_healthy
