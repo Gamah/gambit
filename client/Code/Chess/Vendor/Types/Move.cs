@@ -66,6 +66,17 @@ public class Move
     public string? San { get; internal set; }
 
     /// <summary>
+    /// GAMBIT VENDOR PATCH (new field, no upstream equivalent): PGN brace-comment text
+    /// for this move, without the braces — e.g. "[%clk 0:02:58]". Emitted by
+    /// PgnBuilder.BoardToPgn after the SAN; null/empty writes nothing at all, so an
+    /// un-annotated game is byte-for-byte what upstream produced.
+    /// <br/>
+    /// Set it through Gambit.Chess.ChessGame.SetMoveComment — the vendored types are
+    /// not a public seam. Purely decorative: nothing in the rules or the parser reads it.
+    /// </summary>
+    public string? Comment { get; internal set; }
+
+    /// <summary>
     /// Move is En Passant
     /// </summary>
     public bool IsEnPassant => this.Parameter is MoveEnPassant;

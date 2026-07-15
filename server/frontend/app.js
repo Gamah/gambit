@@ -53,6 +53,16 @@ function renderBoard(fen, from = -1, to = -1) {
   }
 }
 
+// "0:02:58" → "2:58" and "0:00:09.7" → "0:09.7", but "1:04:00" stays whole. The optional
+// fraction is bullet's: %clk carries up to 3 decimals and we write centiseconds, so it
+// has to survive the trim. Anything not shaped H:MM:SS[.f] passes through untouched — a
+// foreign PGN may carry a %clk we don't write.
+function shortClk(clk) {
+  const m = /^0:(\d{2}:\d{2}(?:\.\d+)?)$/.exec(clk);
+  if (!m) return clk;
+  return m[1].replace(/^0/, '');
+}
+
 function renderMoves() {
   const ol = $('moves');
   ol.replaceChildren();
@@ -67,6 +77,15 @@ function renderMoves() {
     }
     const li = document.createElement('li');
     li.textContent = pos.san;
+    // {[%clk]} from the PGN, when the game was played on a clock. Trimmed to m:ss:
+    // the tag is H:MM:SS, and the leading "0:" on every move of a sub-hour game is
+    // noise in a list this narrow.
+    if (pos.clock) {
+      const clk = document.createElement('span');
+      clk.className = 'clk';
+      clk.textContent = shortClk(pos.clock);
+      li.appendChild(clk);
+    }
     if (i === view.at) li.classList.add('on');
     li.onclick = () => goTo(i);
     ol.appendChild(li);

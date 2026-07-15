@@ -333,50 +333,69 @@ export function parsePgn(pgn) {
   const headers = {};
   for (const m of pgn.matchAll(/^\s*\[(\w+)\s+"([^"]*)"\]\s*$/gm)) headers[m[1]] = m[2];
 
-  // Everything after the header block is movetext.
-  let movetext = pgn.replace(/^\s*\[[^\]]*\]\s*$/gm, ' ');
-  movetext = movetext
-    .replace(/\{[^}]*\}/g, ' ')     // { comments }
-    .replace(/;[^\n]*/g, ' ')       // ; rest-of-line comments
-    .replace(/\$\d+/g, ' ')         // $NAG annotations
-    .replace(/\d+\s*\.(\.\.)?/g, ' ') // move numbers, incl. "12..."
-    .replace(/\s+/g, ' ')
-    .trim();
+  // Everything after the header block is movetext. Rest-of-line (;) comments are removed
+  // up front: they run to a newline and can't contain braces, so dropping them can't
+  // disturb the brace comments the tokenizer below is about to read.
+  const movetext = pgn
+    .replace(/^\s*\[[^\]]*\]\s*$/gm, ' ')
+    .replace(/;[^\n]*/g, ' ');
 
+  // One pass, brace comments intact. This used to strip comments and move numbers with
+  // separate global replaces, but the move-number pattern (\d+\.) happily matches inside
+  // a comment body — "{[%eval 1.5]}" contains "1." — so a comment could be corrupted
+  // before anything got to read it. Matching comments as whole tokens avoids that.
+  // Order matters: comment, then move number, then NAG, then anything else.
+  const TOKEN = /\{([^}]*)\}|\d+\s*\.(?:\.\.)?|\$\d+|([^\s{}]+)/g;
   const RESULTS = ['1-0', '0-1', '1/2-1/2', '*'];
-  const tokens = movetext.split(' ').filter(Boolean);
+
   const moves = [];
+  const clocks = [];    // clocks[i] = %clk left by the mover of moves[i], or undefined
   let result = headers.Result || '*';
-  for (const tok of tokens) {
+
+  for (let m; (m = TOKEN.exec(movetext)); ) {
+    if (m[1] !== undefined) {
+      // A comment annotates the move it follows (PGN spec §8.2.5).
+      const clk = /\[%clk\s+([\d:.]+)\]/.exec(m[1]);
+      if (clk && moves.length) clocks[moves.length - 1] = clk[1];
+      continue;
+    }
+    const tok = m[2];
+    if (!tok) continue;                                    // a move number or a $NAG
     if (RESULTS.includes(tok)) { result = tok; continue; }
     moves.push(tok);
   }
-  return { headers, moves, result };
+
+  return { headers, moves, clocks, result };
 }
 
 /**
  * Replay a PGN into a list of positions.
- * Returns { headers, result, positions: [{ fen, san, from, to }], error }.
- * Position 0 is the start; position i is after the i-th move.
+ * Returns { headers, result, positions: [{ fen, san, from, to, clock }], error }.
+ * Position 0 is the start; position i is after the i-th move. `clock` is the mover's
+ * remaining time from a {[%clk]} comment, or null when the PGN carries none.
  *
  * Never throws: a viewer showing a truncated game beats a viewer showing an
  * exception. `error` names the first token that didn't match a legal move.
  */
 export function replayPgn(pgn) {
-  const { headers, moves, result } = parsePgn(pgn);
+  const { headers, moves, clocks, result } = parsePgn(pgn);
   let st = headers.FEN ? parseFen(headers.FEN) : startPosition();
 
-  const positions = [{ fen: toFen(st), san: null, from: -1, to: -1 }];
+  const positions = [{ fen: toFen(st), san: null, from: -1, to: -1, clock: null }];
   let error = null;
 
-  for (const token of moves) {
+  for (let i = 0; i < moves.length; i++) {
+    const token = moves[i];
     const want = bareSan(token);
     const legal = generateMoves(st);
     const match = legal.find((m) => moveToSan(st, m) === want);
     if (!match) { error = `Couldn't play "${token}"`; break; }
 
     st = makeMove(st, match);
-    positions.push({ fen: toFen(st), san: token, from: match.from, to: match.to });
+    positions.push({
+      fen: toFen(st), san: token, from: match.from, to: match.to,
+      clock: clocks[i] ?? null,
+    });
   }
 
   return { headers, result, positions, error };

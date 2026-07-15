@@ -75,6 +75,73 @@ if (!brokenOk) failed++;
 console.log(`${brokenOk ? 'PASS' : 'FAIL'} malformed PGN degrades instead of throwing` +
   (brokenOk ? ` ("${broken.error}", kept ${broken.positions.length - 1} plies)` : ''));
 
+// ── {[%clk]} annotations ────────────────────────────────────────────────────
+// This block is the cross-language seam: LocalGameController writes the PGN below via
+// the patched vendored writer, and this parser is the only thing that reads it back.
+// CLKED is real output captured from the dotnet harness — if the C# writer's format
+// drifts, this is what catches it. Regenerate it there, don't hand-edit it here.
+const CLKED = `[Event "Terry's Gambit casual game"]
+[Site "Terry's Gambit (s&box)"]
+[Date "2026.07.15"]
+[White "Alice"]
+[Black "Bob"]
+[Result "1-0"]
+[TimeControl "180+2"]
+
+1. e4 {[%clk 0:02:54]} e5 {[%clk 0:02:50]} 2. Bc4 {[%clk 0:02:49]} Nc6 {[%clk 0:02:41]} 3. Qh5 {[%clk 0:02:43]} Nf6 {[%clk 0:02:32]} 4. Qxf7# {[%clk 0:02:38]} 1-0`;
+const c = replayPgn(CLKED);
+// Clocks must land on their own move and descend per side, not run together.
+const clkOk = !c.error
+  && c.positions.length === 8
+  && c.headers.TimeControl === '180+2'
+  && c.positions[0].clock === null
+  && c.positions[1].clock === '0:02:54'   // White's 1st
+  && c.positions[2].clock === '0:02:50'   // Black's 1st
+  && c.positions[7].clock === '0:02:38'   // the mate
+  && c.positions[7].san === 'Qxf7#';      // no comment leaked into the SAN
+if (!clkOk) failed++;
+console.log(`${clkOk ? 'PASS' : 'FAIL'} {[%clk]} parses onto the right moves` +
+  (clkOk ? ` (${c.positions.length - 1} plies, TimeControl ${c.headers.TimeControl})` : `  ← ${c.error ?? 'clock mismatch'}`));
+
+// A comment body containing "1." must not be mistaken for a move number and swallow
+// the move after it — the reason the parser tokenizes rather than strip-then-splits.
+const evil = replayPgn('1. e4 {[%eval 1.5] 1... best} e5 {[%clk 0:01:00]} *');
+const evilOk = !evil.error && evil.positions.length === 3 && evil.positions[2].clock === '0:01:00';
+if (!evilOk) failed++;
+console.log(`${evilOk ? 'PASS' : 'FAIL'} a comment containing "1." doesn't eat the next move` +
+  (evilOk ? '' : `  ← ${evil.error ?? 'lost a ply or a clock'}`));
+
+// An un-annotated PGN must stay clock-free rather than inventing one.
+const bare = replayPgn('1. e4 e5 *');
+const bareOk = !bare.error && bare.positions.length === 3 && bare.positions[1].clock === null;
+if (!bareOk) failed++;
+console.log(`${bareOk ? 'PASS' : 'FAIL'} PGN without clocks replays with clock === null`);
+
+// Bullet: sub-second clocks must survive the round trip. Also captured from the dotnet
+// harness. ChessGame.ClkField emits centiseconds with trailing zeros stripped, matching
+// what lichess's own dartchess and python-chess read — if the fraction ever stops
+// parsing, bullet games silently lose their clocks and this is the only thing watching.
+const BULLET = `[Result "1-0"]
+[TimeControl "60+0"]
+
+1. e4 {[%clk 0:00:51.63]} e5 {[%clk 0:00:45.38]} 2. Bc4 {[%clk 0:00:43.26]} Nc6 {[%clk 0:00:30.76]} 3. Qh5 {[%clk 0:00:34.89]} Nf6 {[%clk 0:00:16.14]} 4. Qxf7# {[%clk 0:00:26.52]} 1-0`;
+const bl = replayPgn(BULLET);
+const bulletOk = !bl.error
+  && bl.positions.length === 8
+  && bl.positions[1].clock === '0:00:51.63'
+  && bl.positions[2].clock === '0:00:45.38'
+  && bl.positions[7].clock === '0:00:26.52';
+if (!bulletOk) failed++;
+console.log(`${bulletOk ? 'PASS' : 'FAIL'} sub-second {[%clk]} survives (bullet)` +
+  (bulletOk ? ` (${bl.positions[1].clock})` : `  ← ${bl.error ?? 'lost the fraction'}`));
+
+// A stripped trailing zero (.7, not .70) is what both reference writers emit, so the
+// parser has to take a one-digit fraction as readily as two.
+const tenth = replayPgn('1. e4 {[%clk 0:00:09.7]} *');
+const tenthOk = !tenth.error && tenth.positions[1].clock === '0:00:09.7';
+if (!tenthOk) failed++;
+console.log(`${tenthOk ? 'PASS' : 'FAIL'} one-digit fraction (trailing zero stripped) parses`);
+
 console.log(failed
   ? `\n${failed} FAILURE(S) — the viewer's rules do NOT match the client's.`
   : `\nALL PASS — viewer rules agree with Code/Chess/PerftCommand.cs`);

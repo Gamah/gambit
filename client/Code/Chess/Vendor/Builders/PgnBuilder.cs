@@ -138,6 +138,15 @@ internal static class PgnBuilder
 
             builder.Append(' ' + board.executedMoves[i].San);
 
+            // GAMBIT VENDOR PATCH (new behaviour, no upstream equivalent): emit this
+            // move's brace comment, which is how Gambit writes {[%clk H:MM:SS]}. Move
+            // numbers are appended before the SAN above, so a comment placed here lands
+            // directly after the move it annotates, per PGN spec §8.2.5. No comment set
+            // (the norm) appends nothing, leaving upstream's output untouched.
+            var comment = board.executedMoves[i].Comment;
+            if (!string.IsNullOrEmpty(comment))
+                builder.Append(" {" + comment + "}");
+
             board.moveIndex++;
         }
 

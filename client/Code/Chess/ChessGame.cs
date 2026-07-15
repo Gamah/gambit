@@ -311,6 +311,67 @@ public sealed class ChessGame
 		_board.AddHeader( name, value );
 	}
 
+	/// <summary>
+	/// Attach a PGN brace comment to an already-played move, by 0-based ply (ply 0 is
+	/// White's first). Written after the SAN as <c>{text}</c> — pass the text without
+	/// braces, e.g. <c>[%clk 0:02:58]</c>. Purely decorative: nothing in the rules reads it.
+	/// <para>Returns false when the ply isn't in this game's history, so a caller whose
+	/// clock record has drifted out of step simply annotates nothing rather than throwing
+	/// or mislabelling a move.</para>
+	/// </summary>
+	public bool SetMoveComment( int ply, string comment )
+	{
+		if ( ply < 0 ) return false;
+
+		// ExecutedMoves hands back a fresh list, but the Move objects in it are the
+		// board's own — mutating one here is what reaches the PGN writer.
+		var moves = _board.ExecutedMoves;
+		if ( ply >= moves.Count ) return false;
+
+		moves[ply].Comment = comment;
+		return true;
+	}
+
+	/// <summary>
+	/// Format seconds as a PGN <c>%clk</c> field, matching what lichess's own PGN library
+	/// reads and writes: <c>H:MM:SS</c> with an optional fraction — hours unpadded,
+	/// minutes and seconds zero-padded to two, and trailing zeros stripped from the
+	/// fraction so a whole second is plain <c>0:03:00</c>.
+	///
+	/// <para>Verified 2026-07-15 against two independent implementations that agree:
+	/// dartchess (lichess-org's own, <c>lib/src/pgn.dart</c>) parses
+	/// <c>(\d{1,5}):(\d{1,2}):(\d{1,2}(?:\.\d{0,3})?)</c> and strips trailing zeros when
+	/// writing; python-chess (<c>chess/pgn.py</c>) writes
+	/// <c>f"{seconds:06.3f}".rstrip("0").rstrip(".")</c>. Both cap the fraction at three
+	/// decimals.</para>
+	///
+	/// <para>We emit at most CENTIseconds, not milliseconds. Three decimals is legal but
+	/// would be false precision: the clock is decremented by a frame delta (~16ms), so a
+	/// millisecond digit is noise, and lichess itself keeps clocks in centiseconds.
+	/// Two decimals is a strict subset of the format, so every reader above still takes it.</para>
+	///
+	/// <para>Rounds to the nearest centisecond, which is what python-chess's
+	/// <c>:06.3f</c> does at its own precision. Truncating instead would systematically
+	/// shave a centisecond off, because float32 can't hold these values exactly — 9.73f
+	/// is really 9.7299995, which floors to 9.72. Note this is the opposite choice from
+	/// <c>TimeControl.Format</c>, deliberately: that one drives a live clock, where
+	/// reading high is a lie, whereas this writes an archival record, where matching the
+	/// reference implementations matters more than a 5ms bias. Never negative — a flagged
+	/// clock is 0:00:00.</para>
+	/// </summary>
+	public static string ClkField( float seconds )
+	{
+		if ( float.IsNaN( seconds ) || seconds <= 0f ) return "0:00:00";
+
+		int cs = (int)( seconds * 100f + 0.5f );   // nearest centisecond
+		int total = cs / 100;
+		int frac = cs % 100;
+
+		string body = $"{total / 3600}:{( total % 3600 ) / 60:00}:{total % 60:00}";
+		if ( frac == 0 ) return body;                      // trailing zeros stripped
+		return frac % 10 == 0 ? $"{body}.{frac / 10}" : $"{body}.{frac:00}";
+	}
+
 	/// <summary>Full PGN (headers + SAN movetext + result) for POST /api/import.</summary>
 	public string Pgn => _board.ToPgn();
 

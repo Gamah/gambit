@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Gambit.Api;
 using Gambit.Chess;
@@ -139,10 +140,29 @@ public sealed class LocalGameController : Component, IBoardGame
 	// copy of these; these are the ones that actually decrement.
 	float _whiteRemaining, _blackRemaining;
 	float _sinceClockSync;
+	int _hostPly; // moves the host has folded this game — the ply NetClockStamp keys on
 
-	/// <summary>How often the host publishes the clocks. The HUD reads mm:ss above ten
-	/// seconds and tenths below, so 10Hz is already finer than anything it can show.</summary>
+	/// <summary>Authoritative post-move clocks per 0-based ply, for the PGN's {[%clk]}
+	/// comments. Filled by <see cref="NetClockStamp"/> on every client, because the
+	/// seated clients are the ones that archive and only the host knows the real time.
+	/// Empty for untimed games and for anyone who joined mid-game.</summary>
+	readonly Dictionary<int, (float White, float Black)> _clockLog = new();
+
+	/// <summary>How often the host publishes the clocks while there's time to spare. The
+	/// HUD reads mm:ss up here, so 10Hz is already far finer than anything it can show.</summary>
 	const float ClockSyncInterval = 0.1f;
+
+	/// <summary>Publish rate once a clock is inside <see cref="LowClockSeconds"/>, where the
+	/// HUD switches to tenths. 10Hz there would be exactly one update per displayed digit —
+	/// no headroom, so a frame-timing wobble visibly skips or repeats a tenth. ~33Hz gives
+	/// the display something to round. It costs nothing: this only applies to a live table
+	/// in the last ten seconds of someone's clock, which is also precisely when bullet is
+	/// worth watching.</summary>
+	const float ClockSyncIntervalLow = 0.03f;
+
+	/// <summary>Where the HUD starts showing tenths, and the clocks start publishing faster.
+	/// Keep in step with TimeControl.Format's own ten-second threshold.</summary>
+	const float LowClockSeconds = 10f;
 
 	/// <summary>A game has started at this table and hasn't been cleared yet
 	/// (over or not) — the view renders Game instead of the start position.</summary>
@@ -189,6 +209,7 @@ public sealed class LocalGameController : Component, IBoardGame
 		_localGameId = GameId;
 		Game = new ChessGame();
 		_historyIntact = true;
+		_clockLog.Clear();
 
 		// Late joiner (or resync): the table is mid-game — adopt the snapshot.
 		// Move history before this point is lost, see class remarks.
@@ -348,9 +369,10 @@ public sealed class LocalGameController : Component, IBoardGame
 
 		if ( white ) _whiteRemaining = remaining; else _blackRemaining = remaining;
 
-		// Throttled publish — see ClockSyncInterval.
+		// Throttled publish, faster once the ticking clock is low enough that the HUD
+		// starts showing tenths — see ClockSyncInterval / ClockSyncIntervalLow.
 		_sinceClockSync += Time.Delta;
-		if ( _sinceClockSync >= ClockSyncInterval )
+		if ( _sinceClockSync >= ( remaining < LowClockSeconds ? ClockSyncIntervalLow : ClockSyncInterval ) )
 			PublishClocks();
 	}
 
@@ -376,6 +398,7 @@ public sealed class LocalGameController : Component, IBoardGame
 		var tc = Tc;
 		_whiteRemaining = tc.InitialSeconds;
 		_blackRemaining = tc.InitialSeconds;
+		_hostPly = 0;
 		PublishClocks();
 
 		// Consumed by the start, so a rematch needs a fresh pair of presses.
@@ -410,10 +433,29 @@ public sealed class LocalGameController : Component, IBoardGame
 
 		HostApplyIncrement( fenAfter );
 
+		// Stamp the authoritative post-move clocks for the PGN. Only the host knows
+		// them, and the host usually has no move history to archive — so it publishes
+		// them to the seated clients, who do. Untimed games stamp nothing, which is
+		// what keeps their PGN free of {[%clk]} noise.
+		//
+		// This is a broadcast raised from inside a broadcast handler (NetChessMove →
+		// HostFold → here). Worth an eye on first run in the editor.
+		if ( !Tc.IsUnlimited && Phase == PhasePlaying )
+			NetClockStamp( GameId, _hostPly++, _whiteRemaining, _blackRemaining );
+
 		// The host's own ChessGame just applied the move — if the rules say the
 		// game ended (mate/stalemate/auto-draw), publish it.
 		if ( Game != null && Game.IsGameOver && !GameOver )
 			HostEnd( Game.ResultReason, Game.ResultString );
+	}
+
+	/// <summary>Host → everyone: the real clocks after ply <paramref name="ply"/>
+	/// (0-based, ply 0 is White's first move), increment already applied.</summary>
+	[Rpc.Broadcast]
+	void NetClockStamp( int gameId, int ply, float white, float black )
+	{
+		if ( gameId != GameId || ply < 0 ) return;
+		_clockLog[ply] = (white, black);
 	}
 
 	/// <summary>Host-side: credit the increment to whoever just moved. Driven off the
@@ -680,11 +722,34 @@ public sealed class LocalGameController : Component, IBoardGame
 		Game.SetHeader( "White", string.IsNullOrEmpty( _pgnWhiteName ) ? "Anonymous" : _pgnWhiteName );
 		Game.SetHeader( "Black", string.IsNullOrEmpty( _pgnBlackName ) ? "Anonymous" : _pgnBlackName );
 		Game.SetHeader( "Result", Game.ResultString );
-		// Captured at game start — see _pgnTimeControl. Per-move {[%clk]} comments are
-		// not written: the vendored PGN writer has no comment path (PgnBuilder.BoardToPgn
-		// emits SAN only), and this client's own clock record would be the throttled
-		// synced copy rather than the host's authoritative one.
+		// Captured at game start — see _pgnTimeControl.
 		Game.SetHeader( "TimeControl", string.IsNullOrEmpty( _pgnTimeControl ) ? "-" : _pgnTimeControl );
+		AttachClockComments();
 		return Game.Pgn;
+	}
+
+	/// <summary>
+	/// Annotate each move with the clock its mover had left, as PGN <c>{[%clk H:MM:SS]}</c>.
+	/// Reads the host's stamps (<see cref="NetClockStamp"/>) — never this client's synced
+	/// copy, which lags the increment.
+	///
+	/// <para>Ply parity identifies the mover: ply 0 is White's first. That holds because a
+	/// game always starts from the standard position — a client whose board came from a FEN
+	/// resync has no history and never reaches this code (<c>_historyIntact</c>).</para>
+	///
+	/// <para>A ply with no stamp is left bare rather than guessed at: a gap means a dropped
+	/// relay, and a wrong clock on a move is worse than no clock.</para>
+	/// </summary>
+	void AttachClockComments()
+	{
+		if ( _clockLog.Count == 0 || Game == null ) return;
+
+		for ( int ply = 0; ply < Game.MoveCount; ply++ )
+		{
+			if ( !_clockLog.TryGetValue( ply, out var stamp ) ) continue;
+
+			float remaining = ply % 2 == 0 ? stamp.White : stamp.Black;
+			Game.SetMoveComment( ply, $"[%clk {ChessGame.ClkField( remaining )}]" );
+		}
 	}
 }

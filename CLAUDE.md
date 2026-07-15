@@ -130,11 +130,38 @@ writer — prefer it over review whenever the code in question can be isolated f
   `GAMBIT VENDOR PATCH`. Verified on this host via a dotnet harness mirroring s&box
   compile settings: perft depths 1–4 on six reference positions, upstream's 67 xunit
   tests, 32 wrapper tests.
+- Most vendor patches only *remove* off-whitelist constructs, but **two add behaviour**:
+  `Move.Comment` and the `PgnBuilder.BoardToPgn` line that emits it, which is how
+  `{[%clk]}` reaches the PGN. Both are marked and both no-op when no comment is set, so
+  an un-annotated game still serialises byte-for-byte as upstream did.
 - **`Code/Chess/ChessGame.cs` is the only seam callers may touch.** It caches
   `Fen`/`LastMoveUci`/`MoveCount` between moves so per-frame polling is free.
-  `TryFromPgnAtPly(pgn, ply)` / `TryFromPgn(pgn)` reconstruct a position from movetext
-  (feeds puzzles and TV).
+  `TryFromPgnAtPly(pgn, ply)` / `TryFromPgn(pgn)` reconstruct a position from movetext.
+  `SetMoveComment(ply, text)` / `ClkField(seconds)` write the clock annotations.
 - `gambit_perft [depth]` re-proves the rules in-sandbox — run it before trusting a gate.
+
+### PGN clock annotations (`%clk`)
+
+`{[%clk H:MM:SS[.ff]]}` per move, plus a `[TimeControl "180+2"]` header (seconds+increment;
+`-` when untimed). **This is the one format Gambit shares with the outside world**, so it
+follows lichess's rather than inventing one. Verified 2026-07-15 against two independent
+implementations that agree — lichess-org's own **dartchess** (`lib/src/pgn.dart`) and
+**python-chess** (`chess/pgn.py`):
+
+- Hours unpadded, minutes/seconds zero-padded to two, fraction optional, **trailing zeros
+  stripped** — so a whole second is plain `0:03:00`, and `.70` is written `.7`.
+- Both readers cap the fraction at **three** decimals. We emit at most **two**
+  (centiseconds): a third digit is false precision when the clock is decremented by a
+  ~16ms frame delta, and lichess itself keeps clocks in centiseconds. Two is a strict
+  subset, so both still parse it.
+- `ChessGame.ClkField` **rounds**; `TimeControl.Format` (the live HUD) **truncates**. Not
+  an inconsistency: a live clock must never read higher than the time actually left,
+  whereas the archive should match the reference writers.
+
+Clocks are stamped by the **host** (`NetClockStamp`), never read from a client's own
+synced copy — that copy lags the increment. The `chess_js_perft.mjs` gate holds the JS
+parser to real C# writer output, including a sub-second bullet fixture; both fixtures were
+captured from the dotnet harness, so regenerate them there rather than hand-editing.
 
 ### Game controllers (per-station, added by ChessRing beside `ChessStation`)
 `Game/IBoardGame.cs` is the render/drive abstraction; `ChessBoardView` renders the

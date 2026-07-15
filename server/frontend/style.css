@@ -110,7 +110,13 @@ tbody tr:hover td { background: var(--panel); }
 
 .board {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
+  /* minmax(0, 1fr), NOT 1fr: a bare 1fr means minmax(auto, 1fr), and that auto floor
+     stops a track shrinking below its content's min-content size. The glyphs have
+     different advance widths (the queen is wider than the pawn), so bare 1fr let a
+     square resize to fit whichever piece was standing on it. Rows are declared for the
+     same reason — implicit rows default to auto, i.e. sized to content. */
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-rows: repeat(8, minmax(0, 1fr));
   width: min(28rem, 100%);
   aspect-ratio: 1;
   border: 1px solid var(--line);
@@ -126,6 +132,11 @@ tbody tr:hover td { background: var(--panel); }
   font-size: clamp(1rem, 6.5cqw, 2.4rem);
   line-height: 1;
   user-select: none;
+  /* Belt and braces: a grid item's default min-width/height is auto, so a stubborn
+     glyph could still push its cell out even with minmax(0, 1fr) tracks. */
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 .board { container-type: inline-size; }
 .sq.light { background: var(--light-sq); }
@@ -159,6 +170,15 @@ tbody tr:hover td { background: var(--panel); }
 .moves li.on { background: var(--accent); color: #14151a; }
 .moves li:not(.num):hover { background: var(--line); }
 .moves li.on:hover { background: var(--accent); }
+/* {[%clk]} beside its move. Tabular figures so the column doesn't jitter as the
+   digits change, and dimmed so the SAN stays the thing you read. */
+.moves .clk {
+  margin-left: .35rem;
+  color: var(--dim);
+  font-size: .75em;
+  font-variant-numeric: tabular-nums;
+}
+.moves li.on .clk { color: #14151a; opacity: .7; }
 
 .controls { display: flex; gap: .35rem; }
 .controls button { flex: 1; padding: .4rem; }
