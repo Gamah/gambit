@@ -60,7 +60,9 @@ public static class LichessOAuth
 	public static string Start()
 	{
 		_verifier = RandomUrlToken( 64 );
-		_state = RandomUrlToken( 16 );
+		// base64url and 32 chars, not TokenChars/16 — gamchess rejects anything
+		// shorter or outside [A-Za-z0-9_-]. See RandomState.
+		_state = RandomState();
 		var challenge = Base64Url( Sha256( Encoding.UTF8.GetBytes( _verifier ) ) );
 
 		return "https://lichess.org/oauth"
@@ -162,13 +164,37 @@ public static class LichessOAuth
 	// Unreserved chars for a PKCE verifier / state (RFC 7636 / 3986).
 	const string TokenChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
 
-	static string RandomUrlToken( int length )
+	static string RandomUrlToken( int length ) => RandomFromAlphabet( TokenChars, length );
+
+	static string RandomFromAlphabet( string alphabet, int length )
 	{
 		var sb = new StringBuilder( length );
 		for ( int i = 0; i < length; i++ )
-			sb.Append( TokenChars[System.Random.Shared.Next( TokenChars.Length )] );
+			sb.Append( alphabet[System.Random.Shared.Next( alphabet.Length )] );
 		return sb.ToString();
 	}
+
+	/// <summary>Length of an OAuth <c>state</c>, in base64url chars. 32 chars is
+	/// ~192 bits.</summary>
+	public const int StateLength = 32;
+
+	/// <summary>A fresh high-entropy <c>state</c> for one sign-in attempt.
+	///
+	/// <para>Two constraints, both from gamchess (M7), and both easy to break by
+	/// accident:</para>
+	/// <list type="bullet">
+	/// <item>It must be <b>≥32 chars</b>. gamchess enforces that floor server-side
+	/// as a security control, not validation politeness: <c>state</c> is the only
+	/// thing binding a lichess redirect back to a SteamID, so a guessable one would
+	/// let an attacker deliver their code to a victim's client and sign the victim
+	/// into the attacker's account.</item>
+	/// <item>It must use the <b>base64url</b> alphabet, not <see cref="TokenChars"/>.
+	/// gamchess's charset is <c>[A-Za-z0-9_-]</c>; TokenChars' <c>.</c> and <c>~</c>
+	/// are RFC 3986 unreserved but would be rejected with a 400.</item>
+	/// </list>
+	/// (Entropy comes from <c>Random.Shared</c>, not a CSPRNG — <c>System.Security.Cryptography</c>
+	/// is off the s&amp;box whitelist, which is the same reason SHA-256 is hand-rolled here.)</summary>
+	public static string RandomState() => RandomFromAlphabet( B64Url, StateLength );
 
 	// base64url alphabet (RFC 4648 §5): '+'→'-', '/'→'_'.
 	const string B64Url = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
