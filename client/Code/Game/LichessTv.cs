@@ -164,19 +164,27 @@ public static class LichessTv
 	/// Long enough to read one line, short enough not to feel like a hang.</para></summary>
 	public const float FanfareSeconds = 3f;
 
-	/// <summary>"White wins — out of time". Turns lichess's status vocabulary into a line
-	/// a human reads, given the winner ("white"/"black", or null/empty for a DRAW).
+	/// <summary>A result in two parts: the HEADLINE ("White wins") and the REASON ("out of
+	/// time"), the latter null when there isn't one.
+	///
+	/// <para>Two parts because the wall wants two lines — a banner is read at a glance
+	/// from across a room, and "White wins — out of time" as one 34-character string is a
+	/// sentence, not a headline. <see cref="ResultLine"/> joins them for the places that
+	/// genuinely want one line.</para>
 	///
 	/// <para>The mapping lives here, on the Sandbox-free side, so the harness can prove
 	/// every status lichess documents produces a sentence — including the ones that are
 	/// awkward, like a draw that arrives as <c>outoftime</c> (a flag with no mating
 	/// material) or <c>timeout</c> (someone walked away).</para>
 	///
-	/// <para><paramref name="status"/> empty means we couldn't find out: the caller still
-	/// wants to say the game ended, so this returns a bare "Game over".</para></summary>
-	public static string ResultLine( string status, string winner )
+	/// <para><paramref name="winner"/> is "white"/"black", or null/empty for a DRAW —
+	/// lichess omits the field rather than sending a third value.
+	/// <paramref name="status"/> empty means we couldn't find out, and the caller still
+	/// wants to say the game ended: that is a bare "Game over".</para></summary>
+	public static void Result( string status, string winner, out string headline, out string reason )
 	{
 		string who = winner == "white" ? "White" : winner == "black" ? "Black" : null;
+		reason = null;
 
 		// DO NOT reorder this above the unknown check below.
 		//
@@ -194,16 +202,27 @@ public static class LichessTv
 			|| status is "created" or "started" or "unknownFinish";
 
 		// Neither a win nor a draw, so they can't share the shape below.
-		if ( status == "aborted" ) return "Game aborted";
+		if ( status == "aborted" )
+		{
+			headline = "Game aborted";
+			return;
+		}
 		if ( status == "noStart" )
+		{
 			// lila renders this as a forfeit when it knows who was left standing.
-			return who == null ? "Game never started" : $"{who} wins — forfeit";
+			headline = who == null ? "Game never started" : $"{who} wins";
+			reason = who == null ? null : "forfeit";
+			return;
+		}
 
 		if ( unknown )
-			return who == null ? "Game over" : $"{who} wins";
+		{
+			headline = who == null ? "Game over" : $"{who} wins";
+			return;
+		}
 
-		// The reason, in lichess's vocabulary. Anything unrecognised falls through to a
-		// plain result line rather than printing a raw key at a player.
+		// The reason, in lichess's vocabulary. Anything unrecognised leaves it null
+		// rather than printing a raw key at a player.
 		string why = status switch
 		{
 			"mate" => "checkmate",
@@ -225,10 +244,23 @@ public static class LichessTv
 		// draw would be the same claim-from-silence one layer up — a draw is a RESULT.
 		// Every real draw has a recognised reason, so this costs none of them.
 		if ( who == null )
-			return why == null ? "Game over" : $"Draw — {why}";
+		{
+			headline = why == null ? "Game over" : "Draw";
+			reason = why;
+			return;
+		}
 
 		// A winner with an unrecognised reason is still a winner: we know who, not how.
-		return why == null ? $"{who} wins" : $"{who} wins — {why}";
+		headline = $"{who} wins";
+		reason = why;
+	}
+
+	/// <summary>The result as ONE line — "White wins — out of time". For the places that
+	/// have a line rather than a banner (the walk-up board's status row).</summary>
+	public static string ResultLine( string status, string winner )
+	{
+		Result( status, winner, out var headline, out var reason );
+		return reason == null ? headline : $"{headline} — {reason}";
 	}
 
 	/// <summary>The next channel in the cycle, wrapping.</summary>

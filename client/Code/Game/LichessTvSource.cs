@@ -94,13 +94,21 @@ public sealed class LichessTvSource
 	/// wall would never advance past the finished game.</para></summary>
 	string _fanfareShownFor;
 
-	/// <summary>The result line for the game on the board, or null.
+	/// <summary>The result line for the game on the board, or null — the one-line form,
+	/// for callers that have a line rather than a banner.
 	///
 	/// <para><b>This — not <see cref="InFanfare"/> — is what "the game being shown has
 	/// finished" means</b>, and the two are not the same window. It is cleared in Poll at
 	/// the moment the new state is applied, so it is true for exactly as long as a
 	/// finished position is on the board.</para></summary>
 	public string FanfareText { get; private set; }
+
+	/// <summary>"White wins" — the banner's first line.</summary>
+	public string FanfareHeadline { get; private set; }
+
+	/// <summary>"out of time" — the banner's second line, or null when there's no reason
+	/// to give (an abort, or a result we couldn't fetch).</summary>
+	public string FanfareReason { get; private set; }
 
 	/// <summary>Is the finished game on the board right now? Anything that must not treat
 	/// a dead game as live — a running clock, a ticking highlight — asks this.</summary>
@@ -322,9 +330,14 @@ public sealed class LichessTvSource
 			// ending it saw, which after a missed poll may be a different game entirely.
 			bool haveResult = st.last_game_id == _gameId;
 			_fanfareShownFor = _gameId;
-			FanfareText = LichessTv.ResultLine(
-				haveResult ? st.last_status : null,
-				haveResult ? st.last_winner : null );
+
+			var status = haveResult ? st.last_status : null;
+			var winner = haveResult ? st.last_winner : null;
+			LichessTv.Result( status, winner, out var headline, out var reason );
+			FanfareHeadline = headline;
+			FanfareReason = reason;
+			FanfareText = reason == null ? headline : $"{headline} — {reason}";
+
 			_fanfareUntil = LichessTv.FanfareSeconds;
 			StatusText = null;
 
@@ -339,7 +352,7 @@ public sealed class LichessTvSource
 		if ( InFanfare ) return;
 
 		// The hold is over (or never started): the fanfare is history.
-		FanfareText = null;
+		ClearFanfare();
 
 		// Read BEFORE _gameId is overwritten below — comparing it afterwards would compare
 		// the id to itself and be false forever. See the clock snap.
@@ -401,11 +414,21 @@ public sealed class LichessTvSource
 		TickingSeat = null;
 
 		// There's no position, so there's nothing to hold on. Dropping _gameId matters
-		// most: it's what the next poll's last_game_id is matched against, and a stale
-		// one would announce the ending of a game we are no longer showing.
+		// most: it's what the next poll's ending is matched against, and a stale one
+		// would announce the ending of a game we are no longer showing.
 		_gameId = null;
-		FanfareText = null;
-		_fanfareUntil = 0f;
 		_fanfareShownFor = null;
+		ClearFanfare();
+	}
+
+	/// <summary>Drop the held result. One method because it is three fields that must
+	/// agree — <see cref="ShowingFinished"/> keys on FanfareText, and a headline left
+	/// behind would print under the next game's position.</summary>
+	void ClearFanfare()
+	{
+		FanfareText = null;
+		FanfareHeadline = null;
+		FanfareReason = null;
+		_fanfareUntil = 0f;
 	}
 }

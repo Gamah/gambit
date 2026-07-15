@@ -11,8 +11,11 @@
 
 	lichess TV cuts to the next game the instant one ends — the result never appears, the
 	pieces just jump. So when the game on the wall finishes we hold the final position
-	(SpectatorController.FanfareText is non-null for exactly that window) and put the
-	result over the middle of it.
+	(SpectatorController.FanfareHeadline is non-null for exactly that window) and put the
+	result over the middle of it: the headline big, the reason under it.
+
+	Two lines rather than one string with an em-dash. "White wins — out of time" reads as a
+	sentence; a banner glanced at from across a room wants a result and then a detail.
 
 	IN FRONT OF THE BOARD, not beside it, and that is the whole point of a separate panel.
 	The first attempt folded the result into SpectatorController.StatusText, which was
@@ -28,10 +31,19 @@
 *@
 
 <root>
-	@if ( !string.IsNullOrEmpty( Text() ) )
+	@if ( !string.IsNullOrEmpty( Headline() ) )
 	{
 		<div class="banner">
-			<div class="result">@Text()</div>
+			@* One div per line, always — a div's auto height does not grow for wrapped
+			   text, and the reason is a separate field rather than a suffix precisely so
+			   this can be two lines. The second is dropped entirely when there's no
+			   reason to give ("Game aborted", or a result we couldn't fetch), rather than
+			   left as an empty gap under the headline. *@
+			<div class="headline">@Headline()</div>
+			@if ( !string.IsNullOrEmpty( Reason() ) )
+			{
+				<div class="reason">@Reason()</div>
+			}
 		</div>
 	}
 </root>
@@ -60,10 +72,9 @@
 		border-radius: 18px;
 	}
 
-	/* One line, one div: a div's auto height doesn't grow for wrapped text, and inline
-	   spans would become separate flex items. The longest line we produce is
-	   "Black wins — insufficient material". */
-	.result {
+	/* The headline carries the result — it's what's read from the far side of the room,
+	   so it gets the size. Longest is "Game never started" (18 chars). */
+	.headline {
 		white-space: nowrap;
 		font-family: $wall-font;
 		font-size: 64px;
@@ -71,14 +82,30 @@
 		letter-spacing: 2px;
 		color: #ffffff;
 	}
+
+	/* The reason is the detail: smaller, dimmer, and never competing with the headline.
+	   Longest is "insufficient material" (21 chars) — longer than any headline, which is
+	   why it's sized down rather than matched. */
+	.reason {
+		white-space: nowrap;
+		font-family: $wall-font;
+		font-size: 40px;
+		letter-spacing: 2px;
+		color: rgba(255, 255, 255, 0.72);
+		margin-top: 6px;
+	}
 </style>
 
 @code
 {
 	SpectatorController C => SpectatorController.Instance;
 
-	/// <summary>The result line, or null/empty when no game has just ended.</summary>
-	string Text() => C?.FanfareText;
+	/// <summary>"White wins", or null/empty when no game has just ended. The headline is
+	/// what gates the whole banner — a result always has one, a reason is optional.</summary>
+	string Headline() => C?.FanfareHeadline;
 
-	protected override int BuildHash() => HashCode.Combine( Text() );
+	/// <summary>"out of time", or null when there's no reason to give.</summary>
+	string Reason() => C?.FanfareReason;
+
+	protected override int BuildHash() => HashCode.Combine( Headline(), Reason() );
 }

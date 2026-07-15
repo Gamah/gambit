@@ -81,6 +81,15 @@ public sealed class SpectatorController : Component
 	/// up.</para></summary>
 	public string FanfareText { get; private set; }
 
+	/// <summary>"White wins" — the banner's first line. The banner splits the result in
+	/// two because it's read at a glance from across a room; <see cref="FanfareText"/> is
+	/// the same thing joined, for the walk-up board's single status line.</summary>
+	public string FanfareHeadline { get; private set; }
+
+	/// <summary>"out of time" — the banner's second line, or null when there's no reason
+	/// to give.</summary>
+	public string FanfareReason { get; private set; }
+
 	public bool HasPosition => !string.IsNullOrEmpty( Fen );
 
 	/// <summary>Full-move number the board is showing, from the FEN's last field
@@ -260,7 +269,7 @@ public sealed class SpectatorController : Component
 		// Cycling away from a fanfare mid-hold must not leave a lichess result floating
 		// over somebody's table game. A table game's own end is the local controller's
 		// business, not this one's.
-		FanfareText = null;
+		ClearFanfare();
 	}
 
 	void ShowTv( int sources )
@@ -314,11 +323,13 @@ public sealed class SpectatorController : Component
 		if ( _tv.ShowingFinished )
 		{
 			FanfareText = _tv.FanfareText;
+			FanfareHeadline = _tv.FanfareHeadline;
+			FanfareReason = _tv.FanfareReason;
 			TickingSeat = null;
 			StatusText = null;
 			return;
 		}
-		FanfareText = null;
+		ClearFanfare();
 		StatusText = null;
 	}
 
@@ -372,7 +383,16 @@ public sealed class SpectatorController : Component
 		TimeControlLabel = null;
 		// No position means nothing to hold a result over. A stale fanfare would float
 		// a dead game's result across an empty board, or across a table game.
+		ClearFanfare();
+	}
+
+	/// <summary>Drop the held result — all three fields together, because they must
+	/// agree: the banner keys on the headline and the status row on the joined line.</summary>
+	void ClearFanfare()
+	{
 		FanfareText = null;
+		FanfareHeadline = null;
+		FanfareReason = null;
 	}
 
 	static string TableNumber( ChessStation st )

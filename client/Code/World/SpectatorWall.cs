@@ -54,26 +54,28 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// <summary>Keep a seat tag this far off the side wall when fitting it beside the board.</summary>
 	const float SeatWallMargin = 10f;
 
-	/// <summary>Intrinsic pixel size of the end-of-game banner (SpectatorFanfarePanel).
+	/// <summary>Intrinsic pixel size of the end-of-game banner (SpectatorFanfarePanel) —
+	/// a headline over a reason.
 	///
-	/// <para>Sized against its longest possible line the same way <see cref="SeatPxWidth"/>
-	/// is, because <c>white-space: nowrap</c> means getting it wrong CLIPS rather than
-	/// wraps. That line is <c>LichessTv.ResultLine</c>'s worst case, "Black wins —
-	/// insufficient material" — 34 chars at the banner's 64px bold:</para>
+	/// <para>Sized against its longest LINE the same way <see cref="SeatPxWidth"/> is,
+	/// because <c>white-space: nowrap</c> means getting it wrong CLIPS rather than wraps.
+	/// Two lines, so the widest of the two decides it (0.6em/char is this file's own
+	/// calibration):</para>
 	/// <code>
-	///   34 chars × 0.6em × 64px      = 1306   (0.6em/char is this file's own calibration)
-	///   + letter-spacing 2px × 34    =   68   → 1374 of text
-	///   + padding 54 × 2             =  108
-	///   + border 4 × 2               =    8   → ~1490
+	///   headline "Game never started" 18 × 0.6em × 64px + 18×2 = 727   ← the binding one
+	///   reason   "insufficient material" 21 × 0.6em × 40px + 21×2 = 546
+	///   + padding 54 × 2 + border 4 × 2                          = 116  → ~843
 	/// </code>
-	/// <para>1600 rounds that up with the same ~10% headroom SeatPxWidth took. A first
-	/// pass used 1400 and would have clipped the longest result on the board.</para>
+	/// <para>1000 rounds that up with headroom. It was 1600 when the result was one long
+	/// line ("Black wins — insufficient material"); splitting it in two made the banner
+	/// narrower as well as more readable, and leaving 1600 would have hung a mostly-empty
+	/// panel across the board.</para>
 	///
 	/// <para>It renders at the seat tags' fit scale, so it grows and shrinks with them:
-	/// 1600 × 3.53 × 0.05 ≈ 282 world units against a 448-unit board — centred, well
-	/// inside it.</para></summary>
-	const float FanfarePxWidth = 1600f;
-	const float FanfarePxHeight = 220f;
+	/// 1000 × 3.53 × 0.05 ≈ 176 world units against a 448-unit board — a block over the
+	/// middle of it rather than a strip across it.</para></summary>
+	const float FanfarePxWidth = 1000f;
+	const float FanfarePxHeight = 200f;
 
 	/// <summary>How far the banner floats out of the board's FACE, in world units.
 	///
