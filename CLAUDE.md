@@ -143,14 +143,35 @@ this was wrong when recalled from memory first):
 - **`wc`/`bc` are SECONDS.** The Board API sends the same idea in **milliseconds**. Seconds
   happens to be what `TimeControl.Format` takes, so nothing converts — don't generalise it.
 
-**Standard speed channels only** (`best`, `bullet`, `blitz`, `rapid`, `classical`,
-`ultraBullet`; default `blitz`) — a rendering constraint, not taste: the vendored rules are
-standard-only, so a Crazyhouse FEN (pockets, `…/RNBQKBNR[] w …`) or Chess960 X-FEN castling
-(`HAha`) arrives undrawable, and a channel showing an empty board is worse than one that
-isn't there. **The channel allowlist (`lichess.ValidChannel`) is a security boundary, not a
-menu**: the key comes off the wire and becomes a lichess URL, so nothing may build one from a
-key that didn't come out of it. `LichessTv` mirrors the list client-side for the UI only —
-if they disagree, the server wins.
+**lichess only sends a clock when a MOVE happens**, so a TV clock rendered raw sits frozen
+through every think and reads as a broken board rather than a thinking player.
+`LichessTvSource` runs the side-to-move's clock down locally from the last frame and snaps
+both to whatever the next one says. It never invents time, only spends it — which keeps the
+house rule that **a live clock must never read HIGHER than the time actually left** (the same
+rule that makes `TimeControl.Format` truncate where the PGN writer rounds). lichess stays the
+only authority, and local drift cannot outlive one move.
+
+**All 16 channels, variants included** (default `blitz`). This was **six** at first, excluded
+on the reasoning that the vendored rules are standard-only so a variant FEN can't be drawn —
+**that was wrong, and the mistake is instructive**: the standard-only rule governs *playing*
+(`ChessGame` parses the FEN and validates moves) and was carried over to the wall, which
+parses nothing. `SpectatorBoard3D` takes the placement field alone and walks its characters
+under a `file < 8 && rank >= 0` guard, so Chess960's X-FEN castling (`HDhd`) is never read,
+Crazyhouse's pockets (`…/RNBQKBNR[Pp]`) fall off the guard, Three-check's counters ride at
+the end of the FEN, and the rest are plain standard placement. Proven against every variant's
+real starting FEN in the dotnet harness. **Before excluding something for "the board can't
+draw it", check what actually reads the FEN.**
+
+Two channels hide state the 64 squares can't hold — Crazyhouse's pockets and Three-check's
+counts (`LichessTv.HidesState`) — and the settings board says so, because a viewer who can't
+see the pockets should know they exist rather than conclude the board is broken.
+
+**The channel allowlist (`lichess.ValidChannel`) is a security boundary, not a menu**: the key
+comes off the wire and becomes a lichess URL, so nothing may build one from a key that didn't
+come out of it. That it now holds every channel lichess offers doesn't make it decoration —
+the point is that the set is closed and ours. `LichessTv` mirrors it client-side for the UI
+only; if they disagree the server wins, and a Go test reads `LichessTv.cs` and holds the two
+lists to each other so they can't drift silently.
 
 #### The game session: one Facepunch call an hour, not one per request (M9)
 

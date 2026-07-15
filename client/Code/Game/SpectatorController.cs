@@ -263,8 +263,10 @@ public sealed class SpectatorController : Component
 		BlackTitle = _tv.BlackTitle;
 		WhiteRating = _tv.WhiteRating;
 		BlackRating = _tv.BlackRating;
-		// TV clocks arrive in SECONDS, which is what Format takes. A TV game always has
-		// a clock — lichess's channels are all timed — so there's no untimed branch here.
+		// SECONDS, which is what Format takes — and already counted down locally from the
+		// last frame (lichess only sends a clock on a move, so the raw value would sit
+		// frozen through every think). Re-formatted per frame, which is what makes the
+		// plaque tick. A TV game always has a clock: every lichess channel is timed.
 		WhiteClock = TimeControl.Format( _tv.WhiteClock );
 		BlackClock = TimeControl.Format( _tv.BlackClock );
 		TickingSeat = _tv.TickingSeat;

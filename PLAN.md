@@ -70,6 +70,14 @@ Worth checking specifically from a seat at the ring, which is where players actu
   a minute. Guessed, not measured.
 - **Should a TV game be archivable?** It's someone else's game and we have no rights to it;
   currently it isn't and probably shouldn't be. Noting it so it isn't re-litigated.
+- **Crazyhouse and Three-check are legible but incomplete.** The board draws 64 squares, so
+  the pockets and the check counts aren't there; `LichessTv.HidesState` puts a line on the
+  settings board saying so. If either channel actually gets watched, showing the pockets
+  needs somewhere to put them — the seat plaques are the obvious candidate.
+- **Is the local TV clock close enough?** It counts the side-to-move down from the last
+  frame and resnaps on every move, so it drifts LOW by roughly the network latency and
+  self-corrects constantly. Should be invisible; worth a glance on an UltraBullet game,
+  which is where a fraction of a second is most likely to show.
 
 ---
 
@@ -143,9 +151,13 @@ from their side. Outcome is discretionary; there is no registration or blessing 
 - **No correspondence.** `SeekCorrespondence` exists in the lichess package and has no route:
   it's the one seek shape that costs the relay nothing (buffered, no held stream, no per-IP
   seek cap), but days-per-move doesn't fit sitting down at a table.
-- **Variants can never work** without replacing the vendored rules library, which is
-  standard-only. A Crazyhouse game would arrive as moves the board can't render. Don't offer
-  what can't be drawn.
+- **Variants can never be PLAYED** without replacing the vendored rules library, which is
+  standard-only: `ChessGame` would have to parse the FEN and validate moves it has no rules
+  for. Don't offer what can't be played.
+  **Note the word.** This constraint is about *playing* and nothing else. It was carried over
+  to lichess TV — which parses nothing, and just walks a FEN's placement field onto 64 squares
+  — and cost M9 ten channels on a premise nobody checked. M9 now serves all 16. **"The board
+  can't draw it" is a claim about whatever actually reads the FEN; go and look at that.**
 - **The relay is in-memory.** A gamchess restart mid-game drops the relay's state and the
   board goes quiet, though the lichess game itself carries on (and can be finished on
   lichess.org). Acceptable; worth knowing.

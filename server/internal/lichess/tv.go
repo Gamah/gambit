@@ -35,18 +35,32 @@ var ErrBadChannel = errors.New("lichess: unknown TV channel")
 // Channel is a lichess TV channel key.
 type Channel string
 
-// The channels we offer. STANDARD SPEEDS ONLY, and that is a rendering
-// constraint rather than a preference: the vendored chess rules on the client are
-// standard-only, so a Crazyhouse FEN (pockets: `…/RNBQKBNR[] w …`) or a Chess960
-// X-FEN castling field (`HAha`) arrives as something the board cannot parse, and a
-// channel that draws an empty board is worse than a channel that isn't there.
+// Every channel lichess publishes, and we offer all of them.
 //
-// lichess also publishes `bot` and `computer` (which would parse fine, but are
-// noise on a wall in a chess bar) and the variant channels chess960, crazyhouse,
-// kingOfTheHill, threeCheck, antichess, atomic, horde, racingKings. Left out on
-// purpose; adding one means checking the client can draw it first.
+// # Why the variants ARE here
 //
-// Keys are the lcfirst of lila's Tv.Channel and are case-sensitive.
+// M9 first shipped the six standard speeds, on the reasoning that the client's
+// vendored chess rules are standard-only so a variant FEN could not be drawn.
+// That reasoning was wrong, and it is worth recording why: the rule is real for
+// PLAYING (the Board API path, where ChessGame parses the FEN and validates
+// moves) and does not apply to the wall, which parses nothing. The client's
+// SpectatorBoard3D takes the piece-placement field alone and walks its
+// characters, so:
+//
+//   - chess960's X-FEN castling field (HDhd) is never read;
+//   - crazyhouse's pockets ride on the end of the placement field
+//     (…/RNBQKBNR[Pp]) and fall off the board walker's `file < 8` guard;
+//   - threeCheck's counters ride at the end of the whole FEN;
+//   - kingOfTheHill/antichess/atomic/horde/racingKings are plain standard
+//     placement — only the RULES differ, and the wall doesn't know the rules.
+//
+// Verified against each variant's real starting FEN. Two of them hide state the
+// wall cannot show (crazyhouse pockets, threeCheck counts); the client says so
+// rather than letting a viewer think the board is broken.
+//
+// Keys are the lcfirst of lila's Tv.Channel and are CASE-SENSITIVE
+// ("ultraBullet", not "ultrabullet"). Read off GET /api/tv/channels 2026-07-15 —
+// all 16 of them, which is the whole set.
 const (
 	ChannelBest        Channel = "best" // "Top Rated"
 	ChannelBullet      Channel = "bullet"
@@ -54,6 +68,18 @@ const (
 	ChannelRapid       Channel = "rapid"
 	ChannelClassical   Channel = "classical"
 	ChannelUltraBullet Channel = "ultraBullet"
+
+	ChannelChess960      Channel = "chess960"
+	ChannelCrazyhouse    Channel = "crazyhouse"
+	ChannelKingOfTheHill Channel = "kingOfTheHill"
+	ChannelThreeCheck    Channel = "threeCheck"
+	ChannelAntichess     Channel = "antichess"
+	ChannelAtomic        Channel = "atomic"
+	ChannelHorde         Channel = "horde"
+	ChannelRacingKings   Channel = "racingKings"
+
+	ChannelBot      Channel = "bot"
+	ChannelComputer Channel = "computer"
 )
 
 // ChannelDefault is what a lobby suggests when nobody has chosen.
@@ -65,9 +91,10 @@ const ChannelDefault = ChannelBlitz
 // our IP and our User-Agent on it. Nothing may build a TV URL from a key that did
 // not come out of ValidChannel.
 //
-// A map rather than url.PathEscape: escaping makes a hostile key SAFE, but it
-// still sends it. An allowlist means we only ever ask lichess for the six things
-// we meant to ask for.
+// That it currently holds EVERY channel lichess offers does not make it
+// decoration: the point is that the set is closed and ours, not that it is small.
+// A map rather than url.PathEscape — escaping makes a hostile key safe, but it
+// still sends it.
 var channels = map[Channel]string{
 	ChannelBest:        "Top Rated",
 	ChannelBullet:      "Bullet",
@@ -75,12 +102,28 @@ var channels = map[Channel]string{
 	ChannelRapid:       "Rapid",
 	ChannelClassical:   "Classical",
 	ChannelUltraBullet: "UltraBullet",
+
+	ChannelChess960:      "Chess960",
+	ChannelCrazyhouse:    "Crazyhouse",
+	ChannelKingOfTheHill: "King of the Hill",
+	ChannelThreeCheck:    "Three-check",
+	ChannelAntichess:     "Antichess",
+	ChannelAtomic:        "Atomic",
+	ChannelHorde:         "Horde",
+	ChannelRacingKings:   "Racing Kings",
+
+	ChannelBot:      "Bot",
+	ChannelComputer: "Computer",
 }
 
-// ChannelOrder is the display order, most useful first. Kept separate from the
-// map because a Go map has no order and the wall wants a stable cycle.
+// ChannelOrder is the display order — speeds, then variants, then bots. Kept
+// separate from the map because a Go map has no order and the wall wants a
+// stable cycle. Must stay in step with the client's LichessTv.All.
 var ChannelOrder = []Channel{
 	ChannelBest, ChannelBullet, ChannelBlitz, ChannelRapid, ChannelClassical, ChannelUltraBullet,
+	ChannelChess960, ChannelCrazyhouse, ChannelKingOfTheHill, ChannelThreeCheck,
+	ChannelAntichess, ChannelAtomic, ChannelHorde, ChannelRacingKings,
+	ChannelBot, ChannelComputer,
 }
 
 // ValidChannel maps a wire string to a channel we're willing to ask lichess for.

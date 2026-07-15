@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Gambit.Api;
@@ -62,10 +63,36 @@ public sealed class LichessTvSource
 	public int WhiteRating { get; private set; }
 	public int BlackRating { get; private set; }
 
-	/// <summary>Seconds. lichess sends TV clocks in seconds (the Board API sends the
-	/// same idea in ms), which is exactly what <see cref="TimeControl.Format"/> takes.</summary>
-	public int WhiteClock { get; private set; }
-	public int BlackClock { get; private set; }
+	// The last clocks lichess told us, in SECONDS (the TV feed's unit; the Board API
+	// sends the same idea in ms), and when they landed.
+	int _whiteBank, _blackBank;
+	RealTimeSince _sinceBank;
+
+	/// <summary>Seconds left for each seat, counted down locally between frames.
+	///
+	/// <para><b>lichess only sends a clock when a move happens</b>, so a frame's value is
+	/// the truth at that instant and nothing arrives until the next move. Reporting it
+	/// raw leaves the clock frozen for the whole of someone's think — which on a wall
+	/// reads as a broken board, not a thinking player. So we run the side-to-move's clock
+	/// down from the last frame and snap both back to whatever the next one says.</para>
+	///
+	/// <para>lichess stays the only authority: this never invents time, only spends it,
+	/// and every frame overwrites it. That direction matters — the house rule is that a
+	/// live clock must never read HIGHER than the time actually left (it's why
+	/// <see cref="TimeControl.Format"/> truncates where the PGN writer rounds), and
+	/// counting down from a known-good value can only ever read low. It drifts low by
+	/// about the network latency, and corrects on every move.</para></summary>
+	public float WhiteClock => ClockFor( ChessSeat.White );
+	public float BlackClock => ClockFor( ChessSeat.Black );
+
+	float ClockFor( ChessSeat seat )
+	{
+		float bank = seat == ChessSeat.White ? _whiteBank : _blackBank;
+		// Only the side to move is spending time. Nothing to run down before the first
+		// frame either — TickingSeat is null until then.
+		if ( TickingSeat != seat ) return bank;
+		return MathF.Max( 0f, bank - (float)_sinceBank );
+	}
 
 	public ChessSeat? TickingSeat { get; private set; }
 
@@ -208,8 +235,14 @@ public sealed class LichessTvSource
 		BlackTitle = st.black_title;
 		WhiteRating = st.white_rating;
 		BlackRating = st.black_rating;
-		WhiteClock = st.white_clock;
-		BlackClock = st.black_clock;
+
+		// Better data has arrived: snap both clocks to it and restart the local
+		// countdown from now. Every frame does this, so local drift can never accumulate
+		// past one move.
+		_whiteBank = st.white_clock;
+		_blackBank = st.black_clock;
+		_sinceBank = 0f;
+
 		TickingSeat = st.ticking_seat switch
 		{
 			"white" => ChessSeat.White,
@@ -229,8 +262,10 @@ public sealed class LichessTvSource
 		BlackTitle = null;
 		WhiteRating = 0;
 		BlackRating = 0;
-		WhiteClock = 0;
-		BlackClock = 0;
+		_whiteBank = 0;
+		_blackBank = 0;
+		// TickingSeat null stops ClockFor counting down against a bank of 0 anyway, but
+		// clearing it is what makes "no position" mean no clock rather than 0:00.
 		TickingSeat = null;
 	}
 }

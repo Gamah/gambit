@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -50,12 +52,13 @@ func authed(t *testing.T, h *handler, r *http.Request) *http.Request {
 // it must reject before anything opens a stream.
 func TestTvChannelAllowlistRefusesJunk(t *testing.T) {
 	bad := []string{
-		"", "BLITZ", "Blitz", "blitz ", " blitz",
-		// Variants we deliberately don't offer: the client's vendored rules are
-		// standard-only and cannot draw them.
-		"crazyhouse", "chess960", "kingOfTheHill", "atomic", "horde", "racingKings",
-		// Channels that would parse but are noise on a wall in a chess bar.
-		"bot", "computer",
+		"", " ",
+		// Case matters: lichess spells it ultraBullet (lcfirst of lila's Tv.Channel).
+		"BLITZ", "Blitz", "ultrabullet", "UltraBullet", "threecheck", "kingofthehill",
+		// Whitespace is not trimmed anywhere, and must not be.
+		"blitz ", " blitz",
+		// Real lichess things that are NOT TV channels.
+		"tv", "feed", "channels", "swiss", "team",
 		// Traversal / injection shapes. These must never become a URL.
 		"../account", "blitz/../../account", "blitz?foo=1", "blitz#x",
 		"http://evil.example/", "//evil.example", "%2e%2e%2faccount",
@@ -67,8 +70,23 @@ func TestTvChannelAllowlistRefusesJunk(t *testing.T) {
 	}
 }
 
-func TestTvChannelAllowlistAcceptsTheSix(t *testing.T) {
-	want := []string{"best", "bullet", "blitz", "rapid", "classical", "ultraBullet"}
+// All 16 of lichess's channels, variants included.
+//
+// The variants were excluded at first on the reasoning that the client's vendored
+// rules are standard-only and so "can't draw them". That rule governs PLAYING (where
+// ChessGame parses the FEN and validates moves) and not the wall, which reads the
+// piece-placement field and walks its characters — chess960's X-FEN castling is never
+// read, crazyhouse's pockets fall off the `file < 8` guard, threeCheck's counters ride
+// at the end of the FEN, and the rest are plain standard placement.
+//
+// This list is the whole of GET /api/tv/channels, read 2026-07-15.
+func TestTvChannelAllowlistAcceptsEveryLichessChannel(t *testing.T) {
+	want := []string{
+		"best", "bullet", "blitz", "rapid", "classical", "ultraBullet",
+		"chess960", "crazyhouse", "kingOfTheHill", "threeCheck",
+		"antichess", "atomic", "horde", "racingKings",
+		"bot", "computer",
+	}
 	for _, s := range want {
 		c, ok := lichess.ValidChannel(s)
 		if !ok {
@@ -79,7 +97,7 @@ func TestTvChannelAllowlistAcceptsTheSix(t *testing.T) {
 		}
 	}
 	if len(lichess.ChannelOrder) != len(want) {
-		t.Errorf("ChannelOrder has %d entries, allowlist has %d — they must agree",
+		t.Errorf("ChannelOrder has %d entries, want %d — they must agree",
 			len(lichess.ChannelOrder), len(want))
 	}
 	// Every ordered channel must be valid: the order list is what the client
@@ -89,8 +107,62 @@ func TestTvChannelAllowlistAcceptsTheSix(t *testing.T) {
 			t.Errorf("ChannelOrder has %q, which ValidChannel rejects", c)
 		}
 	}
+	// ...and the order must have no duplicates, or the client's cycle stutters.
+	seen := map[lichess.Channel]bool{}
+	for _, c := range lichess.ChannelOrder {
+		if seen[c] {
+			t.Errorf("ChannelOrder lists %q twice", c)
+		}
+		seen[c] = true
+	}
+	// Every allowlisted channel must be REACHABLE from the order list, or it's a
+	// channel the server serves and no client can ever ask for.
+	for _, c := range want {
+		if !seen[lichess.Channel(c)] {
+			t.Errorf("%q is allowlisted but missing from ChannelOrder", c)
+		}
+	}
 	if lichess.ChannelDefault != lichess.ChannelBlitz {
 		t.Errorf("default channel is %q, want blitz", lichess.ChannelDefault)
+	}
+}
+
+// The client hand-mirrors this list in Code/Game/LichessTv.cs — no codegen, so the
+// two can drift, and a drift means gamchess 404s a channel the settings board offers.
+// This reads the client's file and holds it to ours.
+//
+// The dotnet harness checks the same agreement from the other side; this one exists so
+// a change made ONLY on the server still fails, on the machine where the Go tests run.
+func TestClientChannelListMatchesTheAllowlist(t *testing.T) {
+	src, err := os.ReadFile("../../../client/Code/Game/LichessTv.cs")
+	if err != nil {
+		t.Skipf("client source not present: %v", err)
+	}
+
+	// Each entry looks like: new( "kingOfTheHill", "King of the Hill", Group.Variant ),
+	re := regexp.MustCompile(`new\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*Group\.\w+\s*\)`)
+	found := map[string]string{}
+	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+		found[m[1]] = m[2]
+	}
+	if len(found) == 0 {
+		t.Fatal("parsed no channels out of LichessTv.cs — has the shape of LichessTv.All changed?")
+	}
+
+	for key, label := range found {
+		c, ok := lichess.ValidChannel(key)
+		if !ok {
+			t.Errorf("client offers %q, which gamchess's allowlist rejects — it would 404", key)
+			continue
+		}
+		if got := lichess.ChannelLabel(c); got != label {
+			t.Errorf("channel %q: client labels it %q, server %q", key, label, got)
+		}
+	}
+	for _, c := range lichess.ChannelOrder {
+		if _, ok := found[string(c)]; !ok {
+			t.Errorf("gamchess serves %q but the client never offers it", c)
+		}
 	}
 }
 
@@ -104,8 +176,8 @@ func TestTvStateUnknownChannel404s(t *testing.T) {
 		return ctx.Err()
 	}
 
-	r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/crazyhouse", nil))
-	r.SetPathValue("channel", "crazyhouse")
+	r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/notachannel", nil))
+	r.SetPathValue("channel", "notachannel")
 	w := httptest.NewRecorder()
 	h.tvState(w, r)
 
@@ -574,8 +646,8 @@ func TestTvChannelsRoute(t *testing.T) {
 	if out.Default != "blitz" {
 		t.Errorf("default %q, want blitz", out.Default)
 	}
-	if len(out.Channels) != 6 {
-		t.Fatalf("%d channels, want 6", len(out.Channels))
+	if len(out.Channels) != 16 {
+		t.Fatalf("%d channels, want all 16 of lichess's", len(out.Channels))
 	}
 	// Everything advertised must be something we'd actually serve.
 	for _, c := range out.Channels {

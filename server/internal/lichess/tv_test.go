@@ -76,7 +76,7 @@ func TestStreamTvRefusesAnInvalidChannel(t *testing.T) {
 	apiBase = srv.URL
 	defer func() { apiBase = prev }()
 
-	for _, bad := range []Channel{"crazyhouse", "../account", "", "BLITZ"} {
+	for _, bad := range []Channel{"notachannel", "../account", "", "BLITZ", "ultrabullet"} {
 		err := StreamTv(context.Background(), bad, func(TvEvent) {})
 		if err != ErrBadChannel {
 			t.Errorf("StreamTv(%q) = %v, want ErrBadChannel", bad, err)

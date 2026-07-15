@@ -254,14 +254,27 @@ gives us, and one missed decrement leaks a stream to lichess forever.
    Gambit*, against the one IP whose limits every real player shares. Being identifiable and
    being an open relay is a bad combination.
 
-**Channels: standard speeds only** — `best` ("Top Rated"), `bullet`, `blitz`, `rapid`,
-`classical`, `ultraBullet`. Default `blitz`. The variant channels (`crazyhouse`, `chess960`,
-…) are excluded because the vendored rules are standard-only and cannot parse their FENs —
-a Crazyhouse FEN carries pockets (`…/RNBQKBNR[] w …`), Chess960 castling is X-FEN file
-letters (`HAha`) — and a channel that draws an empty board is worse than one that isn't
-there. `bot`/`computer` would parse but are noise on a wall in a chess bar. The **channel
-allowlist is a security boundary, not a menu**: the key arrives off the wire and becomes a
-lichess URL, so nothing may build one from a key that didn't come out of `ValidChannel`.
+**Channels: all 16 of them**, default `blitz` — the six speeds (`best` = "Top Rated",
+`bullet`, `blitz`, `rapid`, `classical`, `ultraBullet`), the eight variants (`chess960`,
+`crazyhouse`, `kingOfTheHill`, `threeCheck`, `antichess`, `atomic`, `horde`, `racingKings`)
+and `bot`/`computer`.
+
+This shipped as six, on the reasoning that the vendored rules are standard-only so a variant
+FEN can't be drawn. **That was wrong.** The standard-only rule governs *playing* — where
+`ChessGame` parses the FEN and validates moves — and the wall does neither: `SpectatorBoard3D`
+reads the piece-placement field alone and walks its characters under a `file < 8 && rank >= 0`
+guard. So Chess960's X-FEN castling (`HDhd`) is never read, Crazyhouse's pockets
+(`…/RNBQKBNR[Pp]`) fall off the guard, Three-check's counters ride at the end of the FEN, and
+the rest are plain standard placement. Verified against every variant's real starting FEN.
+
+Two channels keep state the 64 squares can't hold — Crazyhouse's pockets, Three-check's
+counts — and the settings board says so rather than let a viewer think the board is broken.
+
+The **channel allowlist is a security boundary, not a menu**: the key arrives off the wire and
+becomes a lichess URL, so nothing may build one from a key that didn't come out of
+`ValidChannel`. Holding every channel lichess offers doesn't make it decoration — the point is
+that the set is closed and ours. The client mirrors it by hand, and a Go test reads
+`LichessTv.cs` to hold the two lists together.
 
 **Wire shape** (read off the live feed 2026-07-15, not recalled — the envelope is `{"t":…,
 "d":…}`, *not* the `{"type":…}` the Board API stream uses):
@@ -274,6 +287,11 @@ lichess URL, so nothing may build one from a key that didn't come out of `ValidC
 Note `players[]` nests name/title under `user` (absent for anon/AI) with rating/seconds as
 siblings, and **`wc`/`bc` are SECONDS** — where the Board API sends the same idea in
 milliseconds. Two endpoints, two units.
+
+**A clock only arrives on a move**, so the client counts the side-to-move's down locally from
+the last frame and snaps both to the next one. It only ever spends time, never invents it,
+which keeps a live clock from reading higher than what's actually left. lichess remains the
+only authority.
 
 **TV is per-client and off-able.** It's one more entry in the west wall's existing cycle
 (which was already per-client), with no priority over real tables. A local setting, default

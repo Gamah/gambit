@@ -86,44 +86,67 @@ public static class SettingsModel
 		rows.Add( ToggleRow( "LICHESS TV", data.LichessTvEnabled,
 			v => Mutate( d => d.LichessTvEnabled = v ) ) );
 		if ( data.LichessTvEnabled )
-			rows.Add( TvChannelRow( data ) );
+			AddTvChannelRows( rows, data );
 
 		return rows;
 	}
 
-	/// <summary>Channel picker: "follow the lobby" plus one cell per channel.
+	/// <summary>The channel picker: a "follow the lobby" row, then one row per group.
+	///
+	/// <para><b>Grouped because there are sixteen.</b> They were six until the variants
+	/// turned out to render fine on the wall (it reads the FEN's placement field and
+	/// knows none of the rules), and sixteen cells in one row is a strip of unreadable
+	/// slivers. Speeds first — they're what most people want — then variants, then bots.</para>
 	///
 	/// <para>Following is a real choice rather than an absence of one, so it gets its own
-	/// cell — picking a channel means "this one, whatever the admin says", and the two
-	/// are not the same state.</para></summary>
-	static SettingRow TvChannelRow( PlayerData data )
+	/// cell: picking a channel means "this one, whatever the admin says", and the two are
+	/// not the same state.</para></summary>
+	static void AddTvChannelRows( List<SettingRow> rows, PlayerData data )
 	{
 		string suggested = LichessTv.Coerce( LobbyNetworkManager.Instance?.SuggestedTvChannel );
-		string following = LichessTv.Label( suggested );
+		string current = LichessTv.Coerce( data.LichessTvChannel );
 
-		var row = new SettingRow
+		var follow = new SettingRow
 		{
 			Label = data.LichessTvFollowHost
-				? $"TV CHANNEL — following the lobby ({following})"
-				: "TV CHANNEL",
+				? $"TV CHANNEL — following the lobby ({LichessTv.Label( suggested )})"
+				: $"TV CHANNEL — {LichessTv.Label( current )}",
 		};
-
-		row.Cells.Add( new SettingCell
+		follow.Cells.Add( new SettingCell
 		{
-			Label = "LOBBY",
+			Label = "FOLLOW THE LOBBY",
 			Css = "num",
 			Selected = data.LichessTvFollowHost,
 			Activate = () => Mutate( d => d.LichessTvFollowHost = true ),
 		} );
+		rows.Add( follow );
 
-		foreach ( var key in LichessTv.Channels )
+		AddTvGroupRow( rows, data, LichessTv.Group.Speed, "SPEEDS", current );
+		AddTvGroupRow( rows, data, LichessTv.Group.Variant, "VARIANTS", current );
+		AddTvGroupRow( rows, data, LichessTv.Group.Other, "BOTS", current );
+
+		// Say what the board can't show, rather than let someone conclude it's broken.
+		// The position is always right; two variants keep state off the 64 squares.
+		string watching = data.LichessTvFollowHost ? suggested : current;
+		if ( LichessTv.HidesState( watching ) )
+			rows.Add( new SettingRow { Label = LichessTv.HiddenStateNote( watching ) } );
+	}
+
+	static void AddTvGroupRow( List<SettingRow> rows, PlayerData data, LichessTv.Group group,
+		string label, string current )
+	{
+		var row = new SettingRow { Label = label };
+		foreach ( var info in LichessTv.InGroup( group ) )
 		{
-			string c = key;
+			string c = info.Key;
 			row.Cells.Add( new SettingCell
 			{
-				Label = LichessTv.Label( c ),
+				Label = info.Label,
 				Css = "num",
-				Selected = !data.LichessTvFollowHost && LichessTv.Coerce( data.LichessTvChannel ) == c,
+				// A pick only reads as selected when we're not following: while following,
+				// the lobby's channel is what's on, and highlighting a stale personal pick
+				// would claim otherwise.
+				Selected = !data.LichessTvFollowHost && current == c,
 				Activate = () => Mutate( d =>
 				{
 					d.LichessTvFollowHost = false;
@@ -131,7 +154,7 @@ public static class SettingsModel
 				} ),
 			} );
 		}
-		return row;
+		rows.Add( row );
 	}
 
 
@@ -182,14 +205,28 @@ public static class SettingsModel
 		// the wall only for players who haven't picked a channel of their own, and does
 		// nothing at all for players with TV off. That's why it's safe to leave to the
 		// admin — nobody's wall is taken over.
+		//
+		// Grouped over three rows for the same reason the local picker is: sixteen cells
+		// in one row is a strip of slivers.
 		string suggested = LichessTv.Coerce( LobbyNetworkManager.Instance?.SuggestedTvChannel );
-		var tv = new SettingRow { Label = $"SUGGESTED TV CHANNEL — {LichessTv.Label( suggested )}" };
-		foreach ( var key in LichessTv.Channels )
+		rows.Add( new SettingRow { Label = $"SUGGESTED TV CHANNEL — {LichessTv.Label( suggested )}" } );
+		AddSuggestedTvRow( rows, LichessTv.Group.Speed, "SPEEDS", suggested );
+		AddSuggestedTvRow( rows, LichessTv.Group.Variant, "VARIANTS", suggested );
+		AddSuggestedTvRow( rows, LichessTv.Group.Other, "BOTS", suggested );
+
+		return rows;
+	}
+
+	static void AddSuggestedTvRow( List<SettingRow> rows, LichessTv.Group group, string label,
+		string suggested )
+	{
+		var row = new SettingRow { Label = label };
+		foreach ( var info in LichessTv.InGroup( group ) )
 		{
-			string c = key;
-			tv.Cells.Add( new SettingCell
+			string c = info.Key;
+			row.Cells.Add( new SettingCell
 			{
-				Label = LichessTv.Label( c ),
+				Label = info.Label,
 				Css = "num",
 				Selected = c == suggested,
 				Activate = () =>
@@ -201,9 +238,7 @@ public static class SettingsModel
 				},
 			} );
 		}
-		rows.Add( tv );
-
-		return rows;
+		rows.Add( row );
 	}
 
 	static SettingRow SwatchRow( string label, string current, Action<string> set )
