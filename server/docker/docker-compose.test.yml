@@ -32,9 +32,9 @@ services:
     environment:
       DATABASE_URL: "postgres://gamchess@postgres:5432/gamchess?sslmode=disable"
       PORT: "6464"
-      # The test instance's OWN public URL, so the lichess OAuth redirect returns
+      # The test instance's OWN public URL, so the Steam OpenID return comes back
       # here and not to prod. Must be distinct from PUBLIC_BASE_URL. Blank
-      # disables the code relay on test.
+      # disables web sign-in on test.
       PUBLIC_BASE_URL: "${TEST_PUBLIC_BASE_URL}"
       FRONTEND_DIR: "/frontend"
       SESSION_SECRET: "${SESSION_SECRET}"

@@ -61,7 +61,7 @@ public static class ChessSetBuilder
 
 		var tint = white ? WhiteColor : BlackColor;
 
-		// Drop-in real-model path (PLAN D5): import pieces as models/chess/*.vmdl
+		// Drop-in real-model path (CLAUDE.md D5): import pieces as models/chess/*.vmdl
 		// on the user's machine and the procedural fallback below never runs.
 		// Model.Load never returns null for a missing path — it hands back the
 		// engine ERROR model — so gate on IsError, not null.

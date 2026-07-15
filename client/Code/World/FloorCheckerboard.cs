@@ -17,7 +17,7 @@ namespace Gambit.World;
 /// 1–6 = king/queen/rook/bishop/knight/pawn): the shader looks that piece up in the
 /// CC0 glyph atlas (<c>Assets/textures/chess_glyphs.png</c>) and blends it over the
 /// square in the OPPOSITE colour (white glyph on a dark cell, dark on a light cell) —
-/// PLAN.md D6. The textures rebuild when the pops change or a property like BoardDim
+/// CLAUDE.md D6. The textures rebuild when the pops change or a property like BoardDim
 /// changes.
 ///
 /// Geometry builds in OnEnabled/OnValidate (NotSaved preview, like LobbyRoom); the pop

@@ -66,8 +66,7 @@
 		!string.IsNullOrWhiteSpace( Player?.GambitName ) &&
 		!string.Equals( Player.GambitName, SteamName(), StringComparison.OrdinalIgnoreCase );
 
-	// Just the display name. The "(1834)" rating suffix was the lichess rating and
-	// went with it; a Gambit rating would slot back in here.
+	// Just the display name. A rating, if Gambit ever grows one, slots in here.
 	string GambitLine() =>
 		Player?.GambitName ?? "";
 

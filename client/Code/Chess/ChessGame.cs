@@ -8,7 +8,7 @@ namespace Gambit.Chess;
 public enum GameResult { Ongoing, WhiteWon, BlackWon, Draw }
 
 /// <summary>
-/// The one seam between Gambit and the vendored Gera Chess Library (PLAN.md D2):
+/// The one seam between Gambit and the vendored Gera Chess Library (CLAUDE.md D2):
 /// every caller — board view, game controllers, HUD, PGN import — talks to this
 /// wrapper and never to global::Chess types, so the vendor stays swappable for
 /// the compact hand-written move-gen fallback if the whitelist ever bites.

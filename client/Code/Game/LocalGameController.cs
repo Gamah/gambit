@@ -9,18 +9,23 @@ using Sandbox.UI; // Clipboard
 namespace Gambit.Game;
 
 /// <summary>
-/// Anonymous two-seat chess at one table (PLAN.md D1/D7). One instance per
+/// Anonymous two-seat chess at one table (CLAUDE.md D1/D7). One instance per
 /// station, added by ChessRing next to ChessStation, replicating with the
 /// network-spawned station GO.
 ///
-/// Flow: the host starts a game the moment both seats fill. The mover's client
+/// Flow: both seats fill, each player picks a time control and readies up, and the
+/// host starts the game once both are ready. The mover's client
 /// validates its move against the embedded rules (ChessGame), applies it, and
 /// relays it with <see cref="NetChessMove"/>; every other client applies the
 /// UCI to its own ChessGame (falling back to the FEN snapshot on any mismatch),
 /// and the host folds the FEN into the synced <see cref="BoardFen"/> so late
 /// joiners can reconstruct the position. Mate/stalemate/auto-draws are detected
-/// independently on every client by the deterministic rules; only resignation
-/// and seat abandonment need their own RPCs.
+/// independently on every client by the deterministic rules; resignation, seat
+/// abandonment and flag-fall need their own RPCs.
+///
+/// Clocks are host-only: only the host decrements, calls the flag, and applies the
+/// increment, because only the host's tick is authoritative. Clients never run a
+/// clock of their own — they render the synced copy, so nobody can flag on lag.
 ///
 /// Move history (SAN, for the HUD list and the archived PGN) lives in each
 /// client's own ChessGame — players seated from move 1 have all of it; a FEN
@@ -71,6 +76,44 @@ public sealed class LocalGameController : Component, IBoardGame
 	/// <summary>"1-0" / "0-1" / "1/2-1/2" once over (sign + HUD display).</summary>
 	[Sync( SyncFlags.FromHost )] public string OverResult { get; set; }
 
+	// ── Time control + ready (issue: seated board panel) ──
+
+	/// <summary>Index into <see cref="TimeControl.All"/> for this table. Settable by
+	/// either seated player while the table is idle; frozen once a game starts.</summary>
+	[Sync( SyncFlags.FromHost )] public int TimeControlIndex { get; set; } = TimeControl.DefaultIndex;
+
+	/// <summary>Per-seat ready flag. Both must be set for the host to start a game —
+	/// occupying both seats is no longer enough, or there'd be no window in which to
+	/// pick a time control. Cleared on game start, game end, a seat emptying, and any
+	/// change of time control.</summary>
+	[Sync( SyncFlags.FromHost )] public bool WhiteReady { get; set; }
+	[Sync( SyncFlags.FromHost )] public bool BlackReady { get; set; }
+
+	/// <summary>Seconds left on each clock. Host-authoritative and throttled to
+	/// <see cref="ClockSyncInterval"/> — the host holds the precise value locally
+	/// (<c>_whiteRemaining</c>) and publishes a rounded-off copy for display, rather
+	/// than dirtying a synced float every frame on every table in the ring.</summary>
+	[Sync( SyncFlags.FromHost )] public float WhiteClock { get; set; }
+	[Sync( SyncFlags.FromHost )] public float BlackClock { get; set; }
+
+	/// <summary>The table's chosen control.</summary>
+	public TimeControl Tc => TimeControl.At( TimeControlIndex );
+
+	/// <summary>Ready flag for a seat.</summary>
+	public bool ReadyFor( ChessSeat seat ) =>
+		seat == ChessSeat.White ? WhiteReady : BlackReady;
+
+	/// <summary>Displayed seconds left for a seat.</summary>
+	public float ClockFor( ChessSeat seat ) =>
+		seat == ChessSeat.White ? WhiteClock : BlackClock;
+
+	/// <summary>Whose clock is running, or null when no clock is ticking (idle,
+	/// over, or an untimed game).</summary>
+	public ChessSeat? TickingSeat =>
+		Playing && Game != null && !Tc.IsUnlimited
+			? ( Game.WhiteToMove ? ChessSeat.White : ChessSeat.Black )
+			: null;
+
 	/// <summary>A game is live at this table right now.</summary>
 	public bool Playing => Phase == PhasePlaying;
 
@@ -88,11 +131,18 @@ public sealed class LocalGameController : Component, IBoardGame
 	string _pgnBlackName;
 	ulong _pgnWhiteSteamId; // and their SteamIds, for the gamchess archive (M7)
 	ulong _pgnBlackSteamId;
+	string _pgnTimeControl; // and the control it was played at — TimeControlIndex is free to change once the game is Over
 	bool _historyIntact;    // false once our ChessGame came from a FEN snapshot — no moves to archive
 	string _archivedId;     // ClientGameId this client has already POSTed
 
-	// Host-only bookkeeping
-	(ulong White, ulong Black) _endedPair; // pair seated when the last game ended — don't auto-restart them
+	// Host-only clock bookkeeping. The synced WhiteClock/BlackClock are a throttled
+	// copy of these; these are the ones that actually decrement.
+	float _whiteRemaining, _blackRemaining;
+	float _sinceClockSync;
+
+	/// <summary>How often the host publishes the clocks. The HUD reads mm:ss above ten
+	/// seconds and tenths below, so 10Hz is already finer than anything it can show.</summary>
+	const float ClockSyncInterval = 0.1f;
 
 	/// <summary>A game has started at this table and hasn't been cleared yet
 	/// (over or not) — the view renders Game instead of the start position.</summary>
@@ -164,6 +214,9 @@ public sealed class LocalGameController : Component, IBoardGame
 		_pgnWhiteSteamId = Station?.WhiteSteamId ?? 0;
 		_pgnBlackSteamId = Station?.BlackSteamId ?? 0;
 
+		// Same reasoning: the players may re-pick a time control while the result is
+		// still on display, and the PGN must record what this game was actually played at.
+		_pgnTimeControl = Tc.PgnSpec;
 	}
 
 	// ── gamchess archive (M7) ──
@@ -222,18 +275,28 @@ public sealed class LocalGameController : Component, IBoardGame
 
 		bool whiteSeated = Station.WhiteSteamId != 0;
 		bool blackSeated = Station.BlackSteamId != 0;
-		var pair = (Station.WhiteSteamId, Station.BlackSteamId);
+
+		// An empty seat is never ready. Without this a player who readied up, stood, and
+		// was replaced would hand their ready to the new occupant — who'd find themselves
+		// in a game they never agreed to, on someone else's time control.
+		if ( !whiteSeated ) WhiteReady = false;
+		if ( !blackSeated ) BlackReady = false;
 
 		switch ( Phase )
 		{
 			case PhaseIdle:
-				// A game starts the moment both seats fill — unless the board is spoken
-				if ( whiteSeated && blackSeated )
+				// Both seated is no longer enough — both must also ready up, which is
+				// what leaves a window to pick a time control.
+				if ( whiteSeated && blackSeated && WhiteReady && BlackReady )
 					HostStartFresh();
 				break;
 
 			case PhasePlaying:
-				if ( whiteSeated && blackSeated ) break;
+				if ( whiteSeated && blackSeated )
+				{
+					HostTickClocks();
+					break;
+				}
 
 				// A seat emptied mid-game (stand up or disconnect — ChessStation
 				// has already reconciled occupancy): leaving is resigning once
@@ -245,15 +308,58 @@ public sealed class LocalGameController : Component, IBoardGame
 				break;
 
 			case PhaseOver:
-				// Result stays on display while anyone lingers; the same pair
-				// needs the New Game button (RequestNewGame), a new pairing
-				// starts straight away, a vacated table resets.
+				// Result stays on display while anyone lingers; a vacated table resets.
+				// Any restart — rematch or fresh pairing — goes through ready, which
+				// HostEnd cleared, so nobody is dragged into a game by sitting still.
 				if ( !whiteSeated && !blackSeated )
 					HostSetIdle();
-				else if ( whiteSeated && blackSeated && pair != _endedPair )
+				else if ( whiteSeated && blackSeated && WhiteReady && BlackReady )
 					HostStartFresh();
 				break;
 		}
+	}
+
+	/// <summary>
+	/// Host-side: burn the ticking side's clock, and call the flag if it hits zero.
+	/// Runs only while both seats are filled and a game is live.
+	///
+	/// <para>The mover pays their own latency: the host keeps burning their clock until
+	/// the move relay lands. That is inherent to a host-authoritative clock and is the
+	/// safe direction to be wrong in — the alternative is trusting a client's timing.</para>
+	///
+	/// <para>Known simplification: a flag is always a loss. FIDE scores it a draw when the
+	/// opponent has no mating material, which needs material inspection the ChessGame seam
+	/// doesn't expose today.</para>
+	/// </summary>
+	void HostTickClocks()
+	{
+		if ( Tc.IsUnlimited || Game == null || GameOver ) return;
+
+		bool white = Game.WhiteToMove;
+		float remaining = ( white ? _whiteRemaining : _blackRemaining ) - Time.Delta;
+
+		if ( remaining <= 0f )
+		{
+			if ( white ) _whiteRemaining = 0f; else _blackRemaining = 0f;
+			PublishClocks();
+			NetFlag( GameId, whiteFlagged: white );
+			return;
+		}
+
+		if ( white ) _whiteRemaining = remaining; else _blackRemaining = remaining;
+
+		// Throttled publish — see ClockSyncInterval.
+		_sinceClockSync += Time.Delta;
+		if ( _sinceClockSync >= ClockSyncInterval )
+			PublishClocks();
+	}
+
+	/// <summary>Host-side: copy the precise clocks into the synced ones.</summary>
+	void PublishClocks()
+	{
+		_sinceClockSync = 0f;
+		WhiteClock = _whiteRemaining;
+		BlackClock = _blackRemaining;
 	}
 
 	void HostStartFresh()
@@ -264,7 +370,18 @@ public sealed class LocalGameController : Component, IBoardGame
 		LastMoveUci = null;
 		OverReason = null;
 		OverResult = null;
-		_endedPair = default;
+
+		// Both banks start full. Read Tc once: it is the control the whole game is
+		// played at, and RequestSetTimeControlHost refuses to move it from here on.
+		var tc = Tc;
+		_whiteRemaining = tc.InitialSeconds;
+		_blackRemaining = tc.InitialSeconds;
+		PublishClocks();
+
+		// Consumed by the start, so a rematch needs a fresh pair of presses.
+		WhiteReady = false;
+		BlackReady = false;
+
 		Phase = PhasePlaying;
 	}
 
@@ -275,7 +392,11 @@ public sealed class LocalGameController : Component, IBoardGame
 		LastMoveUci = null;
 		OverReason = null;
 		OverResult = null;
-		_endedPair = default;
+		WhiteReady = false;
+		BlackReady = false;
+		_whiteRemaining = 0f;
+		_blackRemaining = 0f;
+		PublishClocks();
 		Phase = PhaseIdle;
 	}
 
@@ -287,17 +408,60 @@ public sealed class LocalGameController : Component, IBoardGame
 		BoardFen = fenAfter;
 		LastMoveUci = uci;
 
+		HostApplyIncrement( fenAfter );
+
 		// The host's own ChessGame just applied the move — if the rules say the
 		// game ended (mate/stalemate/auto-draw), publish it.
 		if ( Game != null && Game.IsGameOver && !GameOver )
 			HostEnd( Game.ResultReason, Game.ResultString );
 	}
 
+	/// <summary>Host-side: credit the increment to whoever just moved. Driven off the
+	/// post-move FEN rather than <c>Game</c>, so a host whose local rules fell back to
+	/// a snapshot still banks the right side's time.</summary>
+	void HostApplyIncrement( string fenAfter )
+	{
+		if ( Tc.IsUnlimited || Phase != PhasePlaying ) return;
+
+		int inc = Tc.IncrementSeconds;
+		if ( inc <= 0 ) return;
+
+		// The side to move in fenAfter is the one who did NOT just move.
+		if ( !TryFenWhiteToMove( fenAfter, out bool whiteToMove ) ) return;
+
+		if ( whiteToMove ) _blackRemaining += inc;
+		else _whiteRemaining += inc;
+
+		PublishClocks();
+	}
+
+	/// <summary>Read the side-to-move field out of a FEN. False when the FEN is
+	/// unreadable — callers must not guess a side.</summary>
+	static bool TryFenWhiteToMove( string fen, out bool whiteToMove )
+	{
+		whiteToMove = false;
+		if ( string.IsNullOrEmpty( fen ) ) return false;
+
+		// "<placement> <side> <castling> ..." — field 1, space separated.
+		int start = fen.IndexOf( ' ' );
+		if ( start < 0 || start + 1 >= fen.Length ) return false;
+
+		char side = fen[start + 1];
+		if ( side == 'w' ) { whiteToMove = true; return true; }
+		if ( side == 'b' ) { whiteToMove = false; return true; }
+		return false;
+	}
+
 	void HostEnd( string reason, string result )
 	{
 		OverReason = reason;
 		OverResult = result;
-		_endedPair = (Station.WhiteSteamId, Station.BlackSteamId);
+
+		// Ready never survives a game: without this the losing pair would be dropped
+		// straight into a rematch they hadn't agreed to.
+		WhiteReady = false;
+		BlackReady = false;
+
 		Phase = PhaseOver;
 	}
 
@@ -433,22 +597,79 @@ public sealed class LocalGameController : Component, IBoardGame
 				whiteLeft ? "0-1" : "1-0" );
 	}
 
-	/// <summary>Seated player wants a rematch after game over (HUD button).</summary>
-	public void RequestNewGame()
+	/// <summary>Host → everyone: a clock hit zero; score it against its owner.</summary>
+	[Rpc.Broadcast]
+	void NetFlag( int gameId, bool whiteFlagged )
 	{
-		if ( LocalSeat == null || !GameOver ) return;
-		RequestNewGameHost();
+		if ( gameId != GameId || GameOver ) return;
+
+		SyncLocalGame();
+		Game?.Resign( whiteFlagged );
+
+		if ( Networking.IsHost )
+			HostEnd( whiteFlagged ? "White ran out of time" : "Black ran out of time",
+				whiteFlagged ? "0-1" : "1-0" );
+	}
+
+	// ── Time control + ready ──
+
+	/// <summary>Local seated player picks a time control (HUD). Idle tables only —
+	/// the host enforces that; this is just the early-out.</summary>
+	public void RequestSetTimeControl( int index )
+	{
+		if ( LocalSeat == null || Playing ) return;
+		if ( !TimeControl.IsValidIndex( index ) ) return;
+		RequestSetTimeControlHost( index );
 	}
 
 	[Rpc.Host]
-	void RequestNewGameHost()
+	void RequestSetTimeControlHost( int index )
 	{
-		if ( !GameOver || Station == null ) return;
-		if ( Station.WhiteSteamId == 0 || Station.BlackSteamId == 0 ) return;
-		// Only the two players at the table get a say
-		if ( Rpc.Caller.SteamId != Station.WhiteSteamId && Rpc.Caller.SteamId != Station.BlackSteamId ) return;
+		if ( Station == null || Phase == PhasePlaying ) return;
+		// An arbitrary int off the wire — never index the menu with it unchecked.
+		if ( !TimeControl.IsValidIndex( index ) ) return;
+		if ( !IsSeatedCaller( out _ ) ) return;
+		if ( index == TimeControlIndex ) return;
 
-		HostStartFresh();
+		TimeControlIndex = index;
+
+		// Changing the terms retracts both agreements — you readied up for the old
+		// control, not this one.
+		WhiteReady = false;
+		BlackReady = false;
+	}
+
+	/// <summary>Local seated player toggles their ready flag (HUD).</summary>
+	public void ToggleReady()
+	{
+		if ( LocalSeat == null || Playing ) return;
+		RequestReadyHost( !ReadyFor( LocalSeat.Value ) );
+	}
+
+	[Rpc.Host]
+	void RequestReadyHost( bool ready )
+	{
+		if ( Station == null || Phase == PhasePlaying ) return;
+		if ( !IsSeatedCaller( out var seat ) ) return;
+
+		// Readying alone is allowed (and sticks) — HostUpdate simply won't start until
+		// the other seat fills and matches it.
+		if ( seat == ChessSeat.White ) WhiteReady = ready;
+		else BlackReady = ready;
+	}
+
+	/// <summary>Host-side: which seat the RPC caller holds at this table, if any. The
+	/// caller is read from <see cref="Rpc.Caller"/>, never from an argument — a client
+	/// may not name the seat it is acting for.</summary>
+	bool IsSeatedCaller( out ChessSeat seat )
+	{
+		seat = default;
+		ulong id = Rpc.Caller?.SteamId ?? 0;
+		if ( id == 0 || Station == null ) return false;
+
+		if ( id == Station.WhiteSteamId ) { seat = ChessSeat.White; return true; }
+		if ( id == Station.BlackSteamId ) { seat = ChessSeat.Black; return true; }
+		return false;
 	}
 
 	string BuildPgn()
@@ -459,6 +680,11 @@ public sealed class LocalGameController : Component, IBoardGame
 		Game.SetHeader( "White", string.IsNullOrEmpty( _pgnWhiteName ) ? "Anonymous" : _pgnWhiteName );
 		Game.SetHeader( "Black", string.IsNullOrEmpty( _pgnBlackName ) ? "Anonymous" : _pgnBlackName );
 		Game.SetHeader( "Result", Game.ResultString );
+		// Captured at game start — see _pgnTimeControl. Per-move {[%clk]} comments are
+		// not written: the vendored PGN writer has no comment path (PgnBuilder.BoardToPgn
+		// emits SAN only), and this client's own clock record would be the throttled
+		// synced copy rather than the host's authoritative one.
+		Game.SetHeader( "TimeControl", string.IsNullOrEmpty( _pgnTimeControl ) ? "-" : _pgnTimeControl );
 		return Game.Pgn;
 	}
 }

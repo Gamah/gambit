@@ -395,7 +395,7 @@ public sealed class LobbyPlayer : Component
 	/// spots (ChessStation.SeatWorldPosition), and the closest free one wins. You
 	/// take the side you actually walk up to — the
 	/// you by that side, so we no longer override the first sitter to White (the old
-	/// PLAN D1 convention). White still moves first regardless of who sat first.</summary>
+	/// CLAUDE.md D1 convention). White still moves first regardless of who sat first.</summary>
 	void FindNearbySeat()
 	{
 		NearbyStation = null;

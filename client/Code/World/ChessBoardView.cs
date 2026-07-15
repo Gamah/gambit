@@ -35,10 +35,8 @@ public sealed class ChessBoardView : Component
 	[Property] public LocalGameController Controller { get; set; }
 
 	/// <summary>Which controller owns the board. The abstraction is kept even though
-	/// there is only one source now (puzzles and lichess play were the others, both
-	/// since removed): the
-	/// view has never branched on the source, and gamchess-backed play would slot in
-	/// here rather than rewrite the renderer.</summary>
+	/// there is only one source today: the view has never branched on the source, and
+	/// another source slots in here rather than rewrite the renderer.</summary>
 	IBoardGame Source => Controller;
 
 	/// <summary>Seconds a piece takes to slide to its new square.</summary>

@@ -1,8 +1,8 @@
 # Asset attribution
 
 All bundled art/audio is CC0 or self-generated, per the project's all-CC0 constraint
-(PLAN.md "CC0 assets"). Recorded here for auditability even when no attribution is
-legally required.
+(CLAUDE.md "Asset licensing"). Recorded here for auditability even when no attribution
+is legally required.
 
 ## Textures
 

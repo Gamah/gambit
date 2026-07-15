@@ -8,7 +8,8 @@
 @inherits PanelComponent
 
 @*
-	Minimal seated-game HUD (M2): whose turn, SAN move list, resign / new game,
+	Seated-game HUD: seat names and clocks, whose turn, the time-control picker and
+	ready button while the table is idle, SAN move list, resign,
 	promotion picker, and the result after the game. Attached to
 	the scene ScreenPanel at runtime by LobbyPlayer.EnsureGameHud. Screen-space
 	overlay: the board itself is the 3D world — this sits in a column on the
@@ -24,8 +25,8 @@
 		<div class="hud">
 			<div class="title">@BoardTitle( ctrl )</div>
 			<div class="names">
-				<div class="name">⬜ @( Station().WhiteName ?? "—" )</div>
-				<div class="name">⬛ @( Station().BlackName ?? "—" )</div>
+				<div class="name @SeatClass( ctrl, ChessSeat.White )">⬜ @SeatLine( ctrl, ChessSeat.White )</div>
+				<div class="name @SeatClass( ctrl, ChessSeat.Black )">⬛ @SeatLine( ctrl, ChessSeat.Black )</div>
 			</div>
 
 			@if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
@@ -36,15 +37,34 @@
 			{
 				<div class="status over">@( ctrl.OverResult ?? ctrl.Game?.ResultString )</div>
 				<div class="reason">@( ctrl.OverReason ?? ctrl.Game?.ResultReason )</div>
-
-				@if ( BothSeated() )
-				{
-					<div class="button" onclick="@( () => ctrl.RequestNewGame() )">New game</div>
-				}
 			}
 			else
 			{
 				<div class="status turn">@TurnText( ctrl )</div>
+			}
+
+			@* Time control + ready. Shown whenever the table is not mid-game, so it
+			   covers both a fresh table and the rematch after a result. *@
+			@if ( ShowSetup( ctrl ) )
+			{
+				<div class="setup-label">TIME CONTROL</div>
+				<div class="tc-list">
+					@for ( int i = 0; i < TimeControl.All.Count; i++ )
+					{
+						var index = i; // capture per iteration — the lambda outlives the loop
+						<div class="tc @( ctrl.TimeControlIndex == index ? "on" : "" )"
+							onclick="@( () => ctrl.RequestSetTimeControl( index ) )">@TimeControl.All[index].Name</div>
+					}
+				</div>
+
+				@if ( BothSeated() )
+				{
+					<div class="button ready @( LocalReady( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleReady() )">@ReadyText( ctrl )</div>
+				}
+				else
+				{
+					<div class="setup-hint">Ready unlocks when both seats fill</div>
+				}
 			}
 
 			@if ( ctrl?.HasGame ?? false )
@@ -117,6 +137,40 @@
 
 	.names { flex-direction: column; gap: 2px; }
 	.name { font-size: 14px; }
+	/* The side whose clock is running. */
+	.name.ticking { color: #7fd47f; font-weight: bold; }
+	.name.ticking.low { color: #ff453a; }
+
+	.setup-label {
+		font-size: 11px;
+		letter-spacing: 2px;
+		color: rgba(255, 255, 255, 0.45);
+		margin-top: 4px;
+	}
+	.tc-list { flex-direction: column; gap: 3px; }
+	.tc {
+		font-size: 13px;
+		padding: 4px 8px;
+		border-radius: 5px;
+		cursor: pointer;
+		pointer-events: all;
+		background-color: rgba(255, 255, 255, 0.06);
+		color: rgba(255, 255, 255, 0.75);
+	}
+	.tc:hover { background-color: rgba(255, 255, 255, 0.16); }
+	.tc.on {
+		background-color: rgba(90, 140, 255, 0.4);
+		color: white;
+	}
+	.setup-hint { font-size: 12px; color: rgba(255, 255, 255, 0.45); }
+
+	.button.ready { background-color: rgba(127, 212, 127, 0.22); }
+	.button.ready:hover { background-color: rgba(127, 212, 127, 0.4); }
+	.button.ready.on {
+		background-color: rgba(127, 212, 127, 0.55);
+		color: white;
+		font-weight: bold;
+	}
 
 	.status { font-size: 16px; font-weight: bold; }
 	.status.wait { color: #ffd60a; font-weight: normal; font-size: 14px; }
@@ -204,7 +258,52 @@
 	{
 		if ( Station() is not { } s ) return "";
 		if ( s.WhiteSteamId == 0 && s.BlackSteamId == 0 ) return "Waiting for players…";
-		return BothSeated() ? "Starting…" : "Waiting for an opponent to sit down…";
+		if ( !BothSeated() ) return "Waiting for an opponent to sit down…";
+
+		// Both seated: the game is now gated on ready, not on occupancy.
+		var ctrl = Controller();
+		if ( ctrl == null ) return "";
+		if ( ctrl.WhiteReady && ctrl.BlackReady ) return "Starting…";
+		if ( LocalReady( ctrl ) ) return "Waiting for your opponent to ready up…";
+		return "Pick a time control and ready up";
+	}
+
+	// ── Time control + ready ──
+
+	/// <summary>The setup block (time control + ready) shows whenever the table isn't
+	/// mid-game — a fresh table, or one showing a result and open to a rematch.</summary>
+	static bool ShowSetup( LocalGameController ctrl ) => ctrl != null && !ctrl.Playing;
+
+	static bool LocalReady( LocalGameController ctrl ) =>
+		ctrl?.LocalSeat is { } seat && ctrl.ReadyFor( seat );
+
+	static string ReadyText( LocalGameController ctrl )
+	{
+		if ( ctrl?.LocalSeat == null ) return "Ready";
+		return LocalReady( ctrl ) ? "Ready ✓ (click to cancel)" : "Ready";
+	}
+
+	/// <summary>Seat line: the name, plus the clock once there's a clock to show.
+	/// One div per line and no inline markup — CLAUDE.md UI Gotchas.</summary>
+	static string SeatLine( LocalGameController ctrl, ChessSeat seat )
+	{
+		string name = Station()?.SeatName( seat ) ?? "—";
+		if ( string.IsNullOrEmpty( name ) ) name = "—";
+
+		if ( ctrl == null || ctrl.Tc.IsUnlimited ) return name;
+
+		// Idle table: advertise the bank rather than a running clock.
+		if ( !ctrl.Playing && !ctrl.GameOver )
+			return ctrl.ReadyFor( seat ) ? $"{name}  ready" : name;
+
+		return $"{name}  {TimeControl.Format( ctrl.ClockFor( seat ) )}";
+	}
+
+	/// <summary>Accent the side whose clock is running, and redden it near the flag.</summary>
+	static string SeatClass( LocalGameController ctrl, ChessSeat seat )
+	{
+		if ( ctrl == null || ctrl.TickingSeat != seat ) return "";
+		return ctrl.ClockFor( seat ) < 10f ? "ticking low" : "ticking";
 	}
 
 	static bool Visible() =>
@@ -239,12 +338,20 @@
 		}
 	}
 
+	/// <summary>Repaint triggers. The seat lines are hashed as their rendered strings
+	/// rather than as raw clock floats: that is what drives the ticking display, and it
+	/// repaints exactly when the visible text changes instead of every frame.
+	/// <para>Nested because HashCode.Combine tops out at eight arguments.</para></summary>
 	protected override int BuildHash()
 	{
 		var ctrl = Controller();
 		return System.HashCode.Combine(
 			Visible(), ctrl?.GameId, ctrl?.Game?.MoveCount, ctrl?.GameOver,
 			ctrl?.IsMyTurn, View()?.PendingPromotion != null,
-			LobbyPlayer.Local?.LeaveArmed, BothSeated() );
+			LobbyPlayer.Local?.LeaveArmed,
+			System.HashCode.Combine(
+				BothSeated(), ctrl?.TimeControlIndex, ctrl?.WhiteReady, ctrl?.BlackReady,
+				ctrl?.TickingSeat,
+				SeatLine( ctrl, ChessSeat.White ), SeatLine( ctrl, ChessSeat.Black ) ) );
 	}
 }

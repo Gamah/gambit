@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the chess-piece glyph atlas for the floor pops (PLAN.md D6 / M6).
+"""Generate the chess-piece glyph atlas for the floor pops (CLAUDE.md D6 / M6).
 
 Renders the six piece silhouettes into a single horizontal alpha atlas
 `Assets/textures/chess_glyphs.png` (6 cells wide, 1 tall). The floor shader

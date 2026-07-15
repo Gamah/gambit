@@ -7,7 +7,7 @@
 // *****************************************************
 //                                    Made by Geras1mleo
 
-// GAMBIT VENDOR PATCH (s&box API whitelist, PLAN.md D2):
+// GAMBIT VENDOR PATCH (s&box API whitelist, CLAUDE.md D2):
 // - System.Text.RegularExpressions removed — Regexes.cs is now hand-written
 //   parsers with the same semantics.
 // - System.Collections.Concurrent removed — move generation is sequential

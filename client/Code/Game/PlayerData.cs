@@ -15,8 +15,8 @@ public sealed class PlayerData
 	/// player arrives with a name and an identity already — issue #7 §2: "no
 	/// anonymous/guest concept is needed". Names come from Steam, full stop.</para>
 	///
-	/// <para>An old save's <c>Username</c>/<c>Lichess*</c> keys are simply ignored on
-	/// load — System.Text.Json drops unknown members — so this needs no migration.</para></summary>
+	/// <para>An old save's now-unknown keys are simply ignored on load — System.Text.Json
+	/// drops unknown members — so a removed field never needs a migration.</para></summary>
 	public string DisplayName() => Connection.Local?.DisplayName ?? "";
 
 	/// <summary>Board/piece color theme (Theme/Colors.cs; also keys the floor pops).</summary>

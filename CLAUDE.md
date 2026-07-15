@@ -10,21 +10,31 @@ This file is the durable reference: how the game is built and the s&box lore tha
 biting. **`PLAN.md` is only upcoming work and open issues** — read it for what's left,
 not for how things work.
 
-### There is no lichess here
+### Lichess: gone, and rebuilt from scratch when it returns
 
-Gambit is **independent of lichess**. It was built against the lichess API through
-M3–M5 and that was all ripped out on `m7-gamchess-identity`: no API client, no OAuth,
-no puzzles, no TV, no token, no allowlist entry. **Do not add lichess back, and do not
-reason about lichess constraints** (Board API rules, rate limits, the `Http` streaming
-problem) — none of them apply any more.
+There is **no lichess in the tree today**. It was built against the lichess API through
+M3–M5 and all of that was ripped out on `m7-gamchess-identity`: no API client, no OAuth,
+no puzzles, no TV, no token, no allowlist entry. The codebase stands alone and **must keep
+working with no lichess at all** — gamchess is the only backend Gambit depends on.
 
-If you find a lichess reference anywhere — code, comment, scene, asset, doc — **it is
-residue and should be gutted**. The **`lichess-final`** tag is the last commit that had
-the full implementation — that's where it lives if any of it is ever wanted back (puzzles
-and TV are explicitly "much later" features), along with the lichess API facts cut from
-this file.
+A lichess integration **is planned again, as a clean-slate rebuild**. Two rules for that
+work, whenever it starts:
 
-Status: gamchess client + server built, **never compiled or deployed**. See PLAN.md.
+- **The old implementation is not the starting point.** It lives at the **`lichess-final`**
+  tag for reference only. Do not restore those files; do not treat their design as decided.
+  It was written around assumptions (an `Http` polling loop, a splash-screen OAuth flow, an
+  anonymous display name) that no longer match how Gambit works — we now have Steam
+  identity, gamchess, and s&box netcode carrying local play.
+- **Re-derive the API facts.** The lichess API details that used to live in this file were
+  cut deliberately. Anything about Board API rules, rate limits, or streaming must be
+  re-read from lichess's current docs, not recalled from this repo's history or from
+  memory. A stale constraint is worse than no constraint.
+
+Until that rebuild starts, a stray lichess mention in code, comment, scene, asset, or doc
+is residue — gut it.
+
+Status: gamchess client + server built, **never compiled or deployed** — this host has no
+s&box toolchain, no Go and no Docker. Expect a fixup pass on first open in the editor.
 
 ---
 
@@ -72,11 +82,19 @@ never go back in the root file — they match at any depth and would swallow `se
 
 **Paths in csproj/slnx** assume Steam at `D:\Steam\`; the editor regenerates them.
 
-This dev host has **no s&box toolchain** — nothing here compiles or runs locally.
-Verify by careful review + grep; the user tests in their editor. Standalone `dotnet`
-harnesses (plain HttpClient) may be used to validate API handling before porting to
-s&box idioms. `node scripts/chess_js_perft.mjs` DOES run here — it is the gate on the
-web viewer's chess rules.
+This dev host has **no s&box toolchain** — no *engine* code compiles or runs locally.
+Verify by careful review + grep; the user tests in their editor. `node
+scripts/chess_js_perft.mjs` DOES run here — it is the gate on the web viewer's chess rules.
+
+**Sandbox-free C# is genuinely testable here**, and worth reaching for: `dotnet` (10.x) is
+installed, and everything under `Code/Chess/` except `PerftCommand.cs` — plus
+`Code/Game/TimeControl.cs` — has no engine dependency. A scratch csproj that `<Compile
+Include>`s those files runs real games, real PGN, real perft. Two settings matter:
+`<TargetFramework>net10.0` (net8 builds but won't launch — only the 10.x runtime is here)
+and `<ImplicitUsings>enable`, because the vendored library leans on s&box's global usings
+for `System.Collections.Generic`. Verified 2026-07-15. This is also how the vendored rules
+were proven originally, and how a `[TimeControl]`-bearing PGN was checked against the real
+writer — prefer it over review whenever the code in question can be isolated from Sandbox.
 
 ---
 
@@ -214,7 +232,7 @@ Whether the allowlist also gates `Sandbox.WebSocket` is an open spike.
 
 ### gamchess deployment facts
 
-**Written, never compiled or deployed** (this host has no Go/Docker — see PLAN.md).
+**Written, never compiled or deployed** (this host has no Go/Docker).
 Ports/hosts are allocated in the server's Caddyfile (host-side, unversioned — not in
 this repo):
 
@@ -240,10 +258,10 @@ that range. Check the host's Caddyfile before allocating anything new.
 dev machine has a Go toolchain. `make up` builds and migrates in-process at startup.
 `make dev` is the one target that wants a local Go.
 
-**`/callback` no longer exists** (it was the lichess code relay), but the rule it carried
-still applies to `/auth/steam/return`: **add no `log` directive** to these vhosts. Caddy
-writes no access log unless configured, so the default is already safe — the job is not
-to start.
+**Add no `log` directive to these vhosts.** Auth returns land on `/auth/steam/return` with
+credentials in the query string, and Caddy would write them to disk. Caddy writes no access
+log unless configured, so the default is already safe — the job is not to start. Any future
+auth-callback route inherits this rule.
 
 ### Identity / auth primitives (in use — see `server/internal/steam/`)
 

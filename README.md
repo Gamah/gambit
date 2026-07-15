@@ -15,7 +15,8 @@ arranged in a ring and:
 - **Watch** — a live game from the tables mirrors onto the big wall board.
 
 Forked from rotaliate-client; the lobby/station scaffolding is inherited. See
-**[CLAUDE.md](CLAUDE.md)** for how it's built and **[PLAN.md](PLAN.md)** for what's left.
+**[CLAUDE.md](CLAUDE.md)** for how it's built. **[PLAN.md](PLAN.md)** is what's left, and
+is currently empty.
 
 ## Stack
 
@@ -47,10 +48,11 @@ this contract — there is no shared directory and no codegen, so **this section
 place it is written down**. A contract change should be one atomic commit across both
 halves. Additive fields only; annotate them here.
 
-**There is no lichess here.** Gambit was built against the lichess API through M3–M5 and
-all of it was ripped out — no API client, no OAuth, no puzzles, no TV, no token. Any
-lichess reference left anywhere is residue and should be gutted. The `lichess-final` tag is
-the last commit that had it.
+**There is no lichess in the tree.** Gambit was built against the lichess API through M3–M5
+and all of it was ripped out — no API client, no OAuth, no puzzles, no TV, no token. The
+game stands alone on gamchess and must keep working that way. A lichess integration is
+planned again as a **clean-slate rebuild**; the `lichess-final` tag holds the old one for
+reference only and is not the starting point. See CLAUDE.md.
 
 ### Auth
 

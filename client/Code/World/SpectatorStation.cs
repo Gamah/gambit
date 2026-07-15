@@ -3,7 +3,7 @@ using Sandbox;
 namespace Gambit.World;
 
 /// <summary>
-/// Engage target for the spectator wall (PLAN.md M5). Walking up and pressing E opens
+/// Engage target for the spectator wall (M5). Walking up and pressing E opens
 /// the interactive SpectatorScreen as a screen-space ScreenPanel — the camera stays put
 /// (like the info/settings boards); LobbyPlayer just frees the cursor so the channel
 /// buttons work. Purely local: no occupancy or networking. Created by SpectatorWall.

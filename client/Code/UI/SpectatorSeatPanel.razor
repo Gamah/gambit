@@ -15,9 +15,9 @@
 	Display-only WorldPanel (no pointer input); colours track the world light via WallTheme. The
 	colour chip and border key off which side this is.
 
-	This used to carry a second line of "rating | clock" — all of it lichess metadata from the
-	export PGN. The wall's only source is an sbox table, which carries names and a position and
-	nothing else, so the tag is just the name now.
+	The tag carries the name, plus the clock when the featured table is playing a timed game
+	(the wall's source is an sbox table, so the clock is our own host-run one). Untimed games
+	show the name alone. There is no rating line — Gambit has no rating.
 *@
 
 <root>
@@ -26,6 +26,12 @@
 			<div class="chip @( White ? "w" : "b" )"></div>
 			<div class="name" style="color:@WallTheme.Text;">@Name()</div>
 		</div>
+		@if ( !string.IsNullOrEmpty( Clock() ) )
+		{
+			<div class="sub">
+				<div class="clock" style="color:@( Ticking() ? "#7fd47f" : WallTheme.Text );">@Clock()</div>
+			</div>
+		}
 	</div>
 </root>
 
@@ -85,8 +91,6 @@
 		white-space: nowrap;
 	}
 
-	.rating { font-size: 26px; }
-	.sep { font-size: 26px; margin: 0 12px; }
 	.clock { font-size: 28px; font-weight: bold; letter-spacing: 1px; }
 </style>
 
@@ -103,6 +107,13 @@
 		return string.IsNullOrEmpty( name ) ? ( White ? "White" : "Black" ) : name;
 	}
 
+	/// <summary>Pre-formatted clock face, or null when the featured game is untimed.</summary>
+	string Clock() => White ? C?.WhiteClock : C?.BlackClock;
+
+	/// <summary>This seat's clock is the one running.</summary>
+	bool Ticking() => C?.TickingSeat == ( White ? ChessSeat.White : ChessSeat.Black );
+
 	protected override int BuildHash() =>
-		HashCode.Combine( White, C?.WhiteName, C?.BlackName, SettingsModel.SettingsVersion );
+		HashCode.Combine( White, C?.WhiteName, C?.BlackName, Clock(), Ticking(),
+			SettingsModel.SettingsVersion );
 }

@@ -12,12 +12,9 @@ namespace Gambit.Game;
 /// <see cref="LocalGameController"/> already publishes — so it works identically on
 /// every client, needs no network of its own, and is real-time rather than polled.</para>
 ///
-/// <para>This used to carry two more sources, lichess TV and watch-by-id, plus the
-/// clocks/ratings/titles/replay-buffering machinery they needed. All of it went when
-/// lichess did; the wall's own source never used any of it (a table relay carries a
-/// position and two names, nothing else — the old code cleared the player metadata
-/// for exactly this source). TV comes back if lichess does, or when gamchess grows a
-/// feed of its own.</para>
+/// <para>The wall has one source, and it is deliberately thin: a table relay carries a
+/// position and two names, nothing else. A broadcast/TV source would need
+/// clocks/ratings/titles/replay-buffering machinery that none of this has.</para>
 /// </summary>
 public sealed class SpectatorController : Component
 {
@@ -28,6 +25,18 @@ public sealed class SpectatorController : Component
 	public string LastMoveUci { get; private set; }
 	public string WhiteName { get; private set; } = "White";
 	public string BlackName { get; private set; } = "Black";
+
+	/// <summary>Clock face for each seat, or null/empty when the featured table is
+	/// untimed (or nothing is live). Already formatted — the wall panel just prints it.</summary>
+	public string WhiteClock { get; private set; }
+	public string BlackClock { get; private set; }
+
+	/// <summary>Which seat's clock is running on the featured table, or null.</summary>
+	public ChessSeat? TickingSeat { get; private set; }
+
+	/// <summary>Menu name of the featured table's time control ("Blitz 3+2"), or null
+	/// when nothing is live.</summary>
+	public string TimeControlLabel { get; private set; }
 
 	/// <summary>One-line label above the board ("FEATURED · Table 3").</summary>
 	public string ChannelLabel { get; private set; } = "SPECTATE";
@@ -74,29 +83,50 @@ public sealed class SpectatorController : Component
 
 		int idx = ( _featuredIndex % live.Count + live.Count ) % live.Count;
 		var t = live[idx];
-		Fen = t.fen;
-		LastMoveUci = t.lastMove;
-		WhiteName = t.white;
-		BlackName = t.black;
+		Fen = t.Fen;
+		LastMoveUci = t.LastMove;
+		WhiteName = t.White;
+		BlackName = t.Black;
+		WhiteClock = t.WhiteClock;
+		BlackClock = t.BlackClock;
+		TickingSeat = t.Ticking;
+		TimeControlLabel = t.TcLabel;
 		ChannelLabel = live.Count > 1
-			? $"FEATURED · Table {t.number} ({idx + 1}/{live.Count})"
-			: $"FEATURED · Table {t.number}";
+			? $"FEATURED · Table {t.Number} ({idx + 1}/{live.Count})"
+			: $"FEATURED · Table {t.Number}";
 		StatusText = null;
 	}
 
-	/// <summary>Every sbox table currently showing a live game, read from the
-	/// host-folded FEN — no token, no API, no poll.</summary>
-	List<(string fen, string lastMove, string white, string black, string number)> CollectLiveTables()
+	/// <summary>One live table, as the wall needs it.</summary>
+	sealed class LiveTable
 	{
-		var list = new List<(string, string, string, string, string)>();
+		public string Fen, LastMove, White, Black, Number, WhiteClock, BlackClock, TcLabel;
+		public ChessSeat? Ticking;
+	}
+
+	/// <summary>Every sbox table currently showing a live game, read from the
+	/// host-folded FEN and the host-run clocks — no token, no API, no poll.</summary>
+	List<LiveTable> CollectLiveTables()
+	{
+		var list = new List<LiveTable>();
 		foreach ( var st in Scene.GetAllComponents<ChessStation>() )
 		{
 			var lc = LocalGameController.For( st );
-			if ( lc is { Playing: true } && lc.Game != null )
+			if ( lc is not { Playing: true } || lc.Game == null ) continue;
+
+			bool timed = !lc.Tc.IsUnlimited;
+			list.Add( new LiveTable
 			{
-				list.Add( (lc.Game.Fen, lc.Game.LastMoveUci,
-					st.WhiteName ?? "White", st.BlackName ?? "Black", TableNumber( st )) );
-			}
+				Fen = lc.Game.Fen,
+				LastMove = lc.Game.LastMoveUci,
+				White = st.WhiteName ?? "White",
+				Black = st.BlackName ?? "Black",
+				Number = TableNumber( st ),
+				WhiteClock = timed ? TimeControl.Format( lc.ClockFor( ChessSeat.White ) ) : null,
+				BlackClock = timed ? TimeControl.Format( lc.ClockFor( ChessSeat.Black ) ) : null,
+				Ticking = lc.TickingSeat,
+				TcLabel = lc.Tc.Name,
+			} );
 		}
 		return list;
 	}
@@ -107,6 +137,10 @@ public sealed class SpectatorController : Component
 		LastMoveUci = null;
 		WhiteName = "White";
 		BlackName = "Black";
+		WhiteClock = null;
+		BlackClock = null;
+		TickingSeat = null;
+		TimeControlLabel = null;
 	}
 
 	static string TableNumber( ChessStation st )

@@ -9,7 +9,7 @@
 @inherits PanelComponent
 
 @*
-	Walk-up control board (PLAN.md M5) at walk-up height on the north wall, under the giant
+	Walk-up control board (M5) at walk-up height on the north wall, under the giant
 	floating spectator board (SpectatorWall). It shows what the board is watching — channel,
 	players, time control + move number, and a live/latency status line — and prompts "Press E
 	to spectate", which opens the interactive channel picker (SpectatorScreen) via the
@@ -139,17 +139,22 @@
 		return $"{c.WhiteName}  vs  {c.BlackName}";
 	}
 
-	/// <summary>Move number, when a game is up.</summary>
+	/// <summary>Time control and move number, when a game is up. One line, built as a
+	/// single string — inline spans would become separate flex items (CLAUDE.md).</summary>
 	string Meta()
 	{
 		var c = C;
 		if ( c == null || !c.HasPosition ) return "Sit at a table to start a game";
-		return c.MoveNumber > 0 ? $"move {c.MoveNumber}" : "";
+
+		string move = c.MoveNumber > 0 ? $"move {c.MoveNumber}" : "";
+		string tc = c.TimeControlLabel ?? "";
+		if ( tc.Length == 0 ) return move;
+		return move.Length == 0 ? tc : $"{tc} · {move}";
 	}
 
 	/// <summary>Liveness line. The wall's only source is the host-folded FEN from a
-	/// table, so it is always genuinely real-time — the DELAYED/BUFFERING states went
-	/// with the polled lichess feeds.</summary>
+	/// table, so it is always genuinely real-time — there are no DELAYED/BUFFERING
+	/// states to report.</summary>
 	string LiveText()
 	{
 		var c = C;
@@ -167,7 +172,7 @@
 
 	protected override int BuildHash() => HashCode.Combine(
 		C?.ChannelLabel, C?.WhiteName, C?.BlackName, C?.HasPosition,
-		C?.MoveNumber, C?.StatusText, SettingsModel.SettingsVersion );
+		C?.MoveNumber, C?.StatusText, C?.TimeControlLabel, SettingsModel.SettingsVersion );
 
 	protected override void OnUpdate()
 	{

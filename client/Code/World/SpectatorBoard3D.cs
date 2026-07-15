@@ -6,7 +6,7 @@ using Sandbox;
 namespace Gambit.World;
 
 /// <summary>
-/// Real 3D spectator board (PLAN.md M5 — the nuke-and-pave that replaces the flat
+/// Real 3D spectator board (M5 — the nuke-and-pave that replaces the flat
 /// <c>SpectatorBoardPanel</c> WorldPanel, whose CSS glyph-atlas pieces would not paint
 /// in-editor no matter how the atlas was regenerated/embedded). It builds a physical chess
 /// board — a frame slab, 64 boxed squares, and a dedicated raking light — and populates it

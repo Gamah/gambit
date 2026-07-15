@@ -128,6 +128,26 @@ const fmtDate = (iso) => {
   return Number.isNaN(+d) ? '—' : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 };
 
+// PGN [TimeControl] is "seconds+increment" (PGN spec §9.6), but chess convention shows
+// the initial bank in minutes — so the "180+2" Gambit writes reads back as "3+2".
+// Anything unparseable is shown verbatim rather than guessed at: the archive is durable
+// and may hold PGNs that predate our writer, or that came from elsewhere entirely.
+function fmtTimeControl(spec) {
+  if (!spec) return null;
+  const s = spec.trim();
+  if (s === '-') return 'Untimed';
+
+  const m = /^(\d+)\+(\d+)$/.exec(s);
+  if (!m) return s;
+
+  const secs = Number(m[1]);
+  const inc = Number(m[2]);
+  // Whole minutes stay integers (600 → 10); anything else keeps one decimal (90 → 1.5)
+  // rather than rounding a 90-second bullet game to "2+0".
+  const mins = secs % 60 === 0 ? secs / 60 : Math.round((secs / 60) * 10) / 10;
+  return `${mins}+${inc}`;
+}
+
 // PGN headers carry the display names; the archive itself only keys on SteamID64
 // (gamchess has no username of its own — names come from Steam).
 function namesFrom(pgn) {
@@ -176,11 +196,15 @@ async function loadGame(id) {
 
     const { white, black } = namesFrom(g.pgn);
     $('game-title').textContent = `${white} vs ${black} — ${g.result}`;
-    $('game-meta').textContent = fmtDate(g.played_at);
     $('pgn').textContent = g.pgn;
 
     const replay = replayPgn(g.pgn);
     view = { positions: replay.positions, at: 0, error: replay.error };
+
+    // Replay parses every header, so the time control rides along for free. Games
+    // archived before Gambit wrote the tag simply have no time control to show.
+    const tc = fmtTimeControl(replay.headers?.TimeControl);
+    $('game-meta').textContent = tc ? `${fmtDate(g.played_at)} · ${tc}` : fmtDate(g.played_at);
 
     const err = $('replay-error');
     err.hidden = !replay.error;

@@ -4,7 +4,7 @@ using Sandbox;
 namespace Gambit.Chess;
 
 /// <summary>
-/// Correctness gate for the vendored chess rules (PLAN.md D2): perft counts the
+/// Correctness gate for the vendored chess rules (CLAUDE.md D2): perft counts the
 /// legal-move tree from reference positions and compares against the published
 /// node counts (chessprogramming.org/Perft_Results). Run `gambit_perft` in the
 /// console — every line must PASS before trusting the rules for real games.
@@ -80,6 +80,6 @@ public static class PerftCommand
 		if ( failures == 0 )
 			Log.Info( $"[Gambit] perft ALL PASS in {total.Relative:0.00}s — chess rules are trustworthy" );
 		else
-			Log.Error( $"[Gambit] perft: {failures} FAILURES — do NOT trust game results; see PLAN.md D2 fallback" );
+			Log.Error( $"[Gambit] perft: {failures} FAILURES — do NOT trust game results; see CLAUDE.md D2 fallback" );
 	}
 }

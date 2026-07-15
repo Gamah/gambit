@@ -7,7 +7,7 @@ namespace Gambit.World;
 public enum ChessSeat { White = 0, Black = 1 }
 
 /// <summary>
-/// One chess table in the ring, with two claimable seats (PLAN D1). The
+/// One chess table in the ring, with two claimable seats (CLAUDE.md D1). The
 /// GameObject is network-spawned by the host (see LobbyNetworkManager /
 /// ChessRing) and the seat fields are host-authoritative [Sync] properties
 /// driven by Rpc.Host requests, so everyone in the lobby sees who sits where

@@ -4,7 +4,7 @@ using Sandbox;
 namespace Gambit.World;
 
 /// <summary>
-/// Hangs the giant spectator board over the lobby's north wall (PLAN.md M5 —
+/// Hangs the giant spectator board over the lobby's north wall (M5 —
 /// SpectatorBoard rewrite; mirrors rotaliate-client's floating SpectatorBoard) and
 /// fronts it with a walk-up control board (SpectatorInfoPanel) at eye height that carries
 /// the SpectatorStation engage target ("Press E to spectate") and opens the interactive
