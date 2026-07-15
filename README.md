@@ -1,22 +1,21 @@
 # Terry's Gambit
 
-Chess in a social s&box lobby, backed by [lichess](https://lichess.org).
-Published as **Terry's Gambit** (s&box package `gamah.gambit`).
+Chess in a social s&box lobby, backed by **gamchess** — our own Go/Postgres service
+at [chess.gamah.net](https://chess.gamah.net). Published as **Terry's Gambit** (s&box
+package `gamah.gambit`).
 
-Walk around a shared room with up to 8 players. Sit down at one of the chess
-boards arranged in a ring and:
+Walk around a shared room with up to 8 players. Sit down at one of the chess boards
+arranged in a ring and:
 
-- **Play real lichess games** — sign in with your lichess account and seek/challenge
-  anyone on lichess (Board API), with clocks, chat, and spectators at your board.
-- **Play anonymously** — two players share a board in the lobby, no account needed;
-  when the game ends you get a shareable lichess link (PGN import).
-- **Watch** — other boards in the room, or Lichess TV on the big wall board.
-- **Solve puzzles** — lichess puzzles at any board (local solving; doesn't affect
-  your lichess puzzle rating).
+- **Play** — two players share a board. You're already signed in: s&box is Steam-gated,
+  so your name and identity come with you.
+- **Keep your games** — every finished game is archived to gamchess and replayable at
+  [chess.gamah.net](https://chess.gamah.net), signed in with Steam. Your archive is
+  private: you only ever see games you sat in.
+- **Watch** — a live game from the tables mirrors onto the big wall board.
 
-Forked from rotaliate-client; the lobby/station scaffolding is inherited, the game
-and backend are being replaced. See **[PLAN.md](PLAN.md)** for the full design,
-lichess API notes, milestones, and current status.
+Forked from rotaliate-client; the lobby/station scaffolding is inherited. See
+**[CLAUDE.md](CLAUDE.md)** for how it's built and **[PLAN.md](PLAN.md)** for what's left.
 
 ## Stack
 
@@ -25,15 +24,16 @@ lichess API notes, milestones, and current status.
 | Engine | s&box (Source 2) |
 | Language | C# |
 | UI | s&box Razor Panels |
-| Chess backend | lichess API (OAuth2 PKCE, Board API, NDJSON streams) |
+| Backend | gamchess — Go 1.22 + Postgres 16, `server/` |
+| Identity | Steam: Facepunch auth token in-game, OpenID 2.0 on the web |
 | Lobby networking | s&box multiplayer (`[Sync]`/`[Rpc]`) |
 
 ## Assets
 
-All art is CC0 — procedural geometry from engine primitives, with the
-[Poly Haven chess set](https://polyhaven.com/a/chess_set) (CC0) as a planned model
-upgrade and the portablejim CC0 2D piece set for floor glyphs. Provenance is
-recorded in `Assets/ATTRIBUTION.md` as assets land.
+All art is CC0. Nothing is licensed in today: pieces are runtime meshes, floor glyphs are
+our own DejaVu raster, sounds are synthesized (`scripts/gen_sounds.py`), and the web
+viewer uses Unicode glyphs. The [Poly Haven chess set](https://polyhaven.com/a/chess_set)
+(CC0) is the planned model upgrade. Provenance is recorded in `Assets/ATTRIBUTION.md`.
 
 ## Development
 
@@ -47,10 +47,10 @@ this contract — there is no shared directory and no codegen, so **this section
 place it is written down**. A contract change should be one atomic commit across both
 halves. Additive fields only; annotate them here.
 
-**gamchess never holds a lichess token.** It relays OAuth *codes* (in memory, single-use,
-~2 min) and the client — which alone holds the PKCE verifier — does the exchange against
-lichess itself. There is no token column and no exchange path. See `CLAUDE.md` for the
-full posture.
+**There is no lichess here.** Gambit was built against the lichess API through M3–M5 and
+all of it was ripped out — no API client, no OAuth, no puzzles, no TV, no token. Any
+lichess reference left anywhere is residue and should be gutted. `master` has the old
+implementation if it's ever wanted back.
 
 ### Auth
 
@@ -62,8 +62,7 @@ There are **two ways to prove the same SteamID64**, and every private route acce
 | on the web (archive viewer) | **Steam OpenID 2.0** at `steamcommunity.com/openid/login`, then a signed session cookie |
 
 Steam's browser login is **OpenID 2.0, not OAuth2** — there is no Steam OAuth2 endpoint,
-whatever it gets called. It is unrelated to the lichess OAuth relay; they only share an
-outcome.
+whatever it gets called.
 
 FP-gated requests carry both headers:
 
@@ -86,18 +85,13 @@ header, body, or query string never authorises anything** — which is why the a
 | Route | Auth | Notes |
 |---|---|---|
 | `GET /health` | — | `{status, version}` |
-| `POST /api/v1/auth/lichess/begin` | FP | `{state}` → `{redirect_uri}`. state = 32–128 chars `[A-Za-z0-9_-]`, client-generated, high-entropy, **never the SteamID** |
-| `GET /callback?code&state` | — | lichess lands the browser here; renders a neutral page and **never the code** |
-| `GET /api/v1/auth/lichess/code` | FP | `{code}` once, then 404. 404 = "not yet" — this is a poll |
 | `GET /auth/steam/login` | — | 302 to Steam's OpenID provider |
 | `GET /auth/steam/return` | — | Steam lands the browser here; verifies, burns the nonce, sets the session cookie |
 | `POST /auth/steam/logout` | session | clears the cookie (POST so a stray link can't sign you out) |
 | `GET /api/v1/me` | session | `{steam_id}`; 401 when signed out |
-| `POST /api/v1/games` | FP | `{client_game_id, pgn, white_steam_id, black_steam_id, result, lichess_game_id?}`. Idempotent on `client_game_id`; **403 unless you sat in the game** |
+| `POST /api/v1/games` | FP | `{client_game_id, pgn, white_steam_id, black_steam_id, result}`. Idempotent on `client_game_id`; **403 unless you sat in the game** |
 | `GET /api/v1/games?limit=&offset=` | session **or** FP | **your games only**; `{games:[…]}`, newest first, limit ≤ 200 |
 | `GET /api/v1/games/{id}` | session **or** FP | one of your games; **404 (not 403) if you didn't play in it**, so ids aren't probeable |
-| `PUT /api/v1/links/lichess` | FP | `{lichess_username}`; 409 if another player claims it |
-| `DELETE /api/v1/links/lichess` | FP | idempotent unlink |
 
 **The archive is private.** You only ever see games you sat in. There is deliberately no
 `?steam_id=` — taking the SteamID from the request would make every player's history
