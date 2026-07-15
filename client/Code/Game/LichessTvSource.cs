@@ -294,19 +294,42 @@ public sealed class LichessTvSource
 
 		// Did the game WE are showing just end?
 		//
-		// Match on the id: gamchess reports the last ending until the next one, so "a
-		// game ended" is not news — "the game on MY board ended" is. And once per game:
-		// last_game_id goes on matching after the hold expires, so without
-		// _fanfareShownFor the fanfare would re-arm on the next poll and the wall would
-		// never move on.
-		if ( !string.IsNullOrEmpty( st.last_game_id )
-			&& st.last_game_id == _gameId
-			&& st.last_game_id != _fanfareShownFor )
+		// WE work that out, from the featured game changing away from the one on our
+		// board. Nothing else can mean that, and it needs nothing from the server.
+		//
+		// The first version asked gamchess instead — it fired only when `last_game_id`
+		// came back matching — which quietly made the whole feature depend on the server
+		// half being deployed. Against a gamchess that predates it, `last_game_id` is
+		// never sent, the condition is never true, and the wall silently never announces
+		// anything. That is exactly what happened, and it was invisible because a
+		// fanfare that never fires looks identical to a fanfare that isn't wired up.
+		//
+		// The server's contribution is now the REASON only, and it degrades: no result,
+		// or a result for some other game, and we still say the game ended — just not how.
+		//
+		// Once per game (_fanfareShownFor keyed on the game that ENDED): the ids go on
+		// differing for the whole hold, so without it the fanfare re-arms every poll and
+		// the wall never moves on. And `_gameId` non-empty is what stops the very first
+		// featured — a game we never showed — announcing an ending.
+		bool endedOnOurBoard = !string.IsNullOrEmpty( _gameId )
+			&& !string.IsNullOrEmpty( st.game_id )
+			&& st.game_id != _gameId
+			&& _gameId != _fanfareShownFor;
+
+		if ( endedOnOurBoard )
 		{
-			_fanfareShownFor = st.last_game_id;
-			FanfareText = LichessTv.ResultLine( st.last_status, st.last_winner );
+			// Only trust the result if it is THIS game's. gamchess reports the last
+			// ending it saw, which after a missed poll may be a different game entirely.
+			bool haveResult = st.last_game_id == _gameId;
+			_fanfareShownFor = _gameId;
+			FanfareText = LichessTv.ResultLine(
+				haveResult ? st.last_status : null,
+				haveResult ? st.last_winner : null );
 			_fanfareUntil = LichessTv.FanfareSeconds;
 			StatusText = null;
+
+			Log.Info( $"[Gambit] lichess TV: {_gameId} ended — {FanfareText}"
+				+ ( haveResult ? "" : " (gamchess sent no result for it)" ) );
 		}
 
 		// Hold the finished position. We keep POLLING (that's what tells gamchess someone

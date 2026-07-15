@@ -47,6 +47,9 @@ deployed.
 10. **Watch a game end** (UltraBullet is quickest): the wall should stop on the finished
     position for 3s with "White wins — out of time" or similar, clocks not running, and only
     then move to the next game. This is the one thing lichess TV itself won't do.
+    **If it says "Game over" with no reason, the server half isn't deployed** — the client
+    detects the ending itself, but only gamchess can say how it went. `gambit_tv` prints the
+    whole chain and will tell you which link is dead.
 
 ### There is no proximity gate, and there shouldn't be
 

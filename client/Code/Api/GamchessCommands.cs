@@ -157,4 +157,49 @@ public static class GamchessCommands
 			? "[Gambit] unlink failed — still linked. Is gamchess up?"
 			: "[Gambit] lichess: unlinked." );
 	}
+
+	/// <summary>What is the TV wall actually doing? Prints the whole chain in one line
+	/// each, because "nothing is showing" has now twice been diagnosed by guesswork and
+	/// once wrongly — the useful question is which link is dead, and none of it is
+	/// visible from outside.</summary>
+	[ConCmd( "gambit_tv" )]
+	public static void TvStatus() => _ = DoTvStatus();
+
+	static async Task DoTvStatus()
+	{
+		Log.Info( $"[Gambit] TV enabled (this client): {Gambit.Game.SpectatorController.TvEnabled}" );
+		Log.Info( $"[Gambit] channel: {Gambit.Game.SpectatorController.DesiredChannel}"
+			+ $" (lobby suggests {Gambit.Game.SpectatorController.SuggestedChannel},"
+			+ $" following: {Gambit.Game.SpectatorController.FollowingLobbyTv})" );
+
+		var c = Gambit.Game.SpectatorController.Instance;
+		if ( c == null )
+		{
+			Log.Warning( "[Gambit] no SpectatorController — the wall didn't build." );
+			return;
+		}
+		Log.Info( $"[Gambit] wall: {c.ChannelLabel} · tv-source={c.IsTvSource}"
+			+ $" · position={c.HasPosition} · fanfare={c.FanfareText ?? "(none)"}" );
+
+		// The raw state, which is the thing that actually decides whether a fanfare can
+		// ever happen: no last_status here means gamchess can't tell us how games end.
+		var res = await LichessTvApi.PollChannel( Gambit.Game.SpectatorController.DesiredChannel, 0 );
+		if ( !res.Ok )
+		{
+			Log.Warning( $"[Gambit] gamchess TV poll failed: {res.Error ?? res.Status.ToString()}"
+				+ ( res.NotFound ? " — this gamchess has no TV routes (deploy the server half)." : "" ) );
+			return;
+		}
+		var st = GamchessApi.Deserialize<TvState>( res.Body );
+		if ( st == null )
+		{
+			Log.Warning( "[Gambit] gamchess TV returned something unreadable." );
+			return;
+		}
+		Log.Info( $"[Gambit] gamchess: v{st.version} game={st.game_id} {st.white_name} vs {st.black_name}" );
+		Log.Info( st.last_game_id == null
+			? "[Gambit] gamchess reports NO last-game result — either no game has ended yet, "
+				+ "or this gamchess predates the fanfare (deploy the server half)."
+			: $"[Gambit] gamchess last game: {st.last_game_id} status={st.last_status} winner={st.last_winner}" );
+	}
 }

@@ -159,14 +159,26 @@ only authority, and local drift cannot outlive one move.
 
 **The feed NEVER says a game ended.** Ninety-five seconds of `ultraBullet` is 5 `featured` and
 203 `fen` and nothing else: a game ending is just a swap to a new `featured`. There is no
-gameOver frame — don't go looking for one. So the wall's end-of-game fanfare works like this:
-gamchess notices the swap, fetches the OLD game's result from **`GET /game/export/{id}`**
-(anonymous, like the feed; `status` + `winner`, where a **missing winner means a draw**), and
-publishes it as `last_game_id/last_status/last_winner` *atomically with* the new game. The
-client matches `last_game_id` against the game on its own board — "a game ended" isn't news,
-"**my** game ended" is — and holds the finished position for `LichessTv.FanfareSeconds` (3s)
-with a result line, because lichess TV cuts to the next game instantly and on a wall that
-reads as a glitch.
+gameOver frame — don't go looking for one.
+
+So the wall's fanfare splits the job in two, and **which half does what is the whole lesson**:
+
+- **The CLIENT decides a game ended**, from the featured id changing away from the one on its
+  board. Nothing else can mean that, and it needs nothing from the server.
+- **gamchess only supplies the REASON**: it notices the same swap, fetches the old game's
+  result from **`GET /game/export/{id}`** (anonymous, like the feed; `status` + `winner`, where
+  a **missing winner means a draw**) and publishes it as `last_game_id/last_status/last_winner`
+  *atomically with* the new game. The client uses it only if `last_game_id` is the game it was
+  actually showing.
+
+The first version had the client WAIT for `last_game_id` to appear before announcing anything
+— which silently made the entire feature depend on the server half being deployed. Against a
+gamchess without it, nothing ever fired, and **a fanfare that never fires looks identical to
+one that isn't wired up**: it cost two rounds of testing and a wrong diagnosis. Now an
+undeployed server costs the *reason* ("Game over") and never the announcement.
+
+The client holds the finished position for `LichessTv.FanfareSeconds` (3s) with a result line,
+because lichess TV cuts to the next game instantly and on a wall that reads as a glitch.
 
 That fetch is **one request per game END per channel**, not per move, and it goes through the
 same governor as everything else. It is synchronous inside the stream reader on purpose: it
@@ -481,6 +493,11 @@ must read the lichess source, not `ctrl`.
 `gambit_gamchess_games` — list your archived games.
 `gambit_lichess` — am I linked, and where do I link/revoke?
 `gambit_lichess_unlink` — revoke at lichess and forget the token.
+`gambit_tv` — why is the TV wall doing that? Prints the whole chain: the local setting,
+the channel, what the wall thinks it's showing, and gamchess's raw state. Exists because
+"nothing is showing" was twice diagnosed by guesswork and once wrongly — none of the chain
+is visible from outside, and a feature that never fires looks exactly like one that isn't
+wired up.
 
 ---
 
