@@ -1,5 +1,9 @@
-// Archive viewer. Talks only to the public endpoints (GET /api/v1/games*), so
-// there is no auth here and nothing to leak: PGNs are public chess.
+// Archive viewer.
+//
+// The archive is PRIVATE: every read needs a session, and the server only ever
+// returns games you sat in. There is no SteamID input on purpose — identity comes
+// from the session cookie, never from anything typed here. Sending a SteamID would
+// make it a request rather than a fact, and the server ignores it either way.
 import { replayPgn } from './chess.js';
 
 // U+FE0E VARIATION SELECTOR-15 forces TEXT presentation. Without it the pawn
@@ -9,7 +13,9 @@ const VS = '︎';
 const GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
 
 const $ = (id) => document.getElementById(id);
-const el = { status: $('status'), list: $('list'), game: $('game') };
+const el = { status: $('status'), list: $('list'), game: $('game'), signin: $('signin') };
+
+let me = null;   // { steam_id } once signed in
 
 let view = { positions: [], at: 0, error: null };
 
@@ -97,10 +103,18 @@ function status(msg, isErr = false) {
 const show = (which) => {
   el.list.hidden = which !== 'list';
   el.game.hidden = which !== 'game';
+  if (which) el.signin.hidden = true;
 };
 
 async function api(path) {
   const res = await fetch(path, { headers: { Accept: 'application/json' } });
+  if (res.status === 401) {
+    // Session expired mid-visit — fall back to the gate rather than a raw error.
+    me = null;
+    show(null);
+    el.signin.hidden = false;
+    throw new Error('Your session expired \u2014 sign in again.');
+  }
   if (!res.ok) {
     let msg = `Server returned ${res.status}`;
     try { msg = (await res.json()).error || msg; } catch { /* not JSON — keep the status */ }
@@ -122,13 +136,15 @@ function namesFrom(pgn) {
   return { white: w?.[1] || 'Anonymous', black: b?.[1] || 'Anonymous' };
 }
 
-async function loadList(steamId) {
+async function loadList() {
   show(null);
-  status('Loading games…');
+  status('Loading your games\u2026');
   try {
-    const { games } = await api(`/api/v1/games?steam_id=${encodeURIComponent(steamId)}&limit=200`);
+    const { games } = await api('/api/v1/games?limit=200');
     status('');
-    $('list-title').textContent = `${games.length} game${games.length === 1 ? '' : 's'} for ${steamId}`;
+    $('list-title').textContent = games.length
+      ? `Your games (${games.length})`
+      : 'Your games';
 
     const tbody = $('games').querySelector('tbody');
     tbody.replaceChildren();
@@ -144,7 +160,7 @@ async function loadList(steamId) {
       tr.onclick = () => navigate({ game: g.id });
       tbody.appendChild(tr);
     }
-    if (!games.length) status('No games archived for that SteamID yet.');
+    if (!games.length) status('No games archived yet — play one in Terry\u2019s Gambit.');
     show('list');
   } catch (e) {
     status(e.message, true);
@@ -189,31 +205,48 @@ function navigate(params, replace = false) {
   route();
 }
 
-function route() {
+/** Resolve who we are. 401 simply means signed out — not an error to shout about. */
+async function loadMe() {
+  try {
+    const res = await fetch('/api/v1/me', { headers: { Accept: 'application/json' } });
+    me = res.ok ? await res.json() : null;
+  } catch { me = null; }
+
+  const on = !!me;
+  $('who').hidden = !on;
+  $('signout').hidden = !on;
+  if (on) $('who').textContent = me.steam_id;
+  return on;
+}
+
+async function route() {
   const q = new URLSearchParams(location.search);
+
+  if (!(await loadMe())) {
+    show(null);
+    el.signin.hidden = false;
+    // The server bounces a failed OpenID return here rather than explaining why.
+    status(q.get('error') === 'signin' ? 'Steam sign-in failed \u2014 try again.' : '', true);
+    return;
+  }
+  el.signin.hidden = true;
+
   const game = q.get('game');
-  const steamId = q.get('steam_id');
-
   if (game) { loadGame(game); return; }
-  if (steamId) { $('steamid').value = steamId; loadList(steamId); return; }
-
-  show(null);
-  status('Enter a SteamID64 to see that player’s archived games.');
+  loadList();
 }
 
 // ── Wiring ──
 
-$('lookup').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const v = $('steamid').value.trim();
-  if (!/^[1-9][0-9]{0,19}$/.test(v)) { status('That doesn’t look like a SteamID64.', true); return; }
-  navigate({ steam_id: v });
+$('signout').addEventListener('click', async () => {
+  // POST, not a link: a GET logout can be fired by any stray <img> or prefetch.
+  await fetch('/auth/steam/logout', { method: 'POST' });
+  location.href = '/';
 });
 
 $('back').addEventListener('click', (e) => {
   e.preventDefault();
-  const sid = $('steamid').value.trim();
-  navigate(sid ? { steam_id: sid } : {});
+  navigate({});
 });
 
 $('first').onclick = () => goTo(0);

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -18,7 +19,14 @@ import (
 // because this host has no Postgres. They are exercised by `make testinst` +
 // curl — see issue #7 §9.
 func archiveHandler() *handler {
-	return &handler{log: zap.NewNop(), version: "test"}
+	return &handler{
+		log:     zap.NewNop(),
+		version: "test",
+		// Real instances: callerSteamID reads the session before falling back to
+		// the FP token, so a nil sessions would panic the moment a cookie appeared.
+		sessions: newSessions("test-secret"),
+		nonces:   newNonceStore(time.Minute),
+	}
 }
 
 const validUUID = "3f2b8c1e-5d4a-4c9b-8e7f-1a2b3c4d5e6f"
@@ -129,20 +137,61 @@ func TestPostGameRequiresAuth(t *testing.T) {
 	}
 }
 
-func TestListGamesValidatesSteamID(t *testing.T) {
-	for _, q := range []string{"", "steam_id=", "steam_id=abc", "steam_id=-1", "steam_id=1.5"} {
-		w := httptest.NewRecorder()
-		archiveHandler().listGames(w, httptest.NewRequest(http.MethodGet, "/api/v1/games?"+q, nil))
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("query %q: want 400, got %d", q, w.Code)
-		}
+// The archive is private: no credentials, no games. Not a 400, not an empty
+// list — a 401.
+func TestArchiveReadsRequireACaller(t *testing.T) {
+	w := httptest.NewRecorder()
+	archiveHandler().listGames(w, httptest.NewRequest(http.MethodGet, "/api/v1/games", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("listGames unauthed: want 401, got %d", w.Code)
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/games/"+validUUID, nil)
+	r.SetPathValue("id", validUUID)
+	w = httptest.NewRecorder()
+	archiveHandler().getGame(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("getGame unauthed: want 401, got %d", w.Code)
 	}
 }
 
+// A ?steam_id= in the query must not get you anyone else's archive. The param
+// doesn't exist; identity comes from the verified caller. Reaching the nil DB
+// (panic) proves we got past auth on OUR identity and ignored the param.
+func TestListGamesIgnoresSteamIdParam(t *testing.T) {
+	okVerifier(t)
+	defer func() {
+		if recover() == nil {
+			t.Error("expected to reach the DB with the caller's own id")
+		}
+	}()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/games?steam_id=76561197960287999", nil)
+	r.Header.Set(steamIDHeader, testSteamID)
+	r.Header.Set("Authorization", "Bearer good")
+	archiveHandler().listGames(httptest.NewRecorder(), r)
+}
+
+// A session cookie is accepted in place of an FP token — this is what keeps the
+// web viewer working without shipping it a Facepunch token.
+func TestArchiveAcceptsAWebSession(t *testing.T) {
+	h := archiveHandler()
+	defer func() {
+		if recover() == nil {
+			t.Error("a valid session should have reached the DB")
+		}
+	}()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/games", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: h.sessions.issue(76561197960287930)})
+	h.listGames(httptest.NewRecorder(), r)
+}
+
 func TestGetGameValidatesUUID(t *testing.T) {
+	okVerifier(t)
 	for _, id := range []string{"not-a-uuid", "123", ""} {
 		r := httptest.NewRequest(http.MethodGet, "/api/v1/games/"+id, nil)
 		r.SetPathValue("id", id)
+		r.Header.Set(steamIDHeader, testSteamID)
+		r.Header.Set("Authorization", "Bearer good")
 		w := httptest.NewRecorder()
 		archiveHandler().getGame(w, r)
 		if w.Code != http.StatusBadRequest {

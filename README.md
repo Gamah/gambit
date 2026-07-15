@@ -54,7 +54,18 @@ full posture.
 
 ### Auth
 
-Every FP-gated endpoint takes both headers:
+There are **two ways to prove the same SteamID64**, and every private route accepts either:
+
+| Where | How |
+|---|---|
+| in-game (s&box client) | a **Facepunch auth token**, verified at `public.facepunch.com/sbox/auth/token` |
+| on the web (archive viewer) | **Steam OpenID 2.0** at `steamcommunity.com/openid/login`, then a signed session cookie |
+
+Steam's browser login is **OpenID 2.0, not OAuth2** — there is no Steam OAuth2 endpoint,
+whatever it gets called. It is unrelated to the lichess OAuth relay; they only share an
+outcome.
+
+FP-gated requests carry both headers:
 
 ```
 Authorization: Bearer <facepunch-auth-token>   // Sandbox.Services.Auth.GetToken("gamchess")
@@ -62,8 +73,9 @@ X-Steam-Id: <steamid64>
 ```
 
 `X-Steam-Id` is an unverified **claim**. gamchess forwards both to Facepunch and trusts
-only the echoed SteamId; a mismatch or any error denies (fail closed). A SteamID from a
-body or query string never authorises anything.
+only the echoed SteamId; a mismatch or any error denies (fail closed). **A SteamID from a
+header, body, or query string never authorises anything** — which is why the archive has no
+`?steam_id=` parameter.
 
 **SteamIDs cross the wire as strings, always.** A SteamID64 (~7.6e16) exceeds JavaScript's
 2^53 safe-integer range, so a bare JSON number is silently corrupted by `JSON.parse`.
@@ -77,11 +89,19 @@ body or query string never authorises anything.
 | `POST /api/v1/auth/lichess/begin` | FP | `{state}` → `{redirect_uri}`. state = 32–128 chars `[A-Za-z0-9_-]`, client-generated, high-entropy, **never the SteamID** |
 | `GET /callback?code&state` | — | lichess lands the browser here; renders a neutral page and **never the code** |
 | `GET /api/v1/auth/lichess/code` | FP | `{code}` once, then 404. 404 = "not yet" — this is a poll |
+| `GET /auth/steam/login` | — | 302 to Steam's OpenID provider |
+| `GET /auth/steam/return` | — | Steam lands the browser here; verifies, burns the nonce, sets the session cookie |
+| `POST /auth/steam/logout` | session | clears the cookie (POST so a stray link can't sign you out) |
+| `GET /api/v1/me` | session | `{steam_id}`; 401 when signed out |
 | `POST /api/v1/games` | FP | `{client_game_id, pgn, white_steam_id, black_steam_id, result, lichess_game_id?}`. Idempotent on `client_game_id`; **403 unless you sat in the game** |
-| `GET /api/v1/games?steam_id=&limit=&offset=` | — | public; `{games:[…]}`, newest first, limit ≤ 200 |
-| `GET /api/v1/games/{id}` | — | public; one game |
+| `GET /api/v1/games?limit=&offset=` | session **or** FP | **your games only**; `{games:[…]}`, newest first, limit ≤ 200 |
+| `GET /api/v1/games/{id}` | session **or** FP | one of your games; **404 (not 403) if you didn't play in it**, so ids aren't probeable |
 | `PUT /api/v1/links/lichess` | FP | `{lichess_username}`; 409 if another player claims it |
 | `DELETE /api/v1/links/lichess` | FP | idempotent unlink |
+
+**The archive is private.** You only ever see games you sat in. There is deliberately no
+`?steam_id=` — taking the SteamID from the request would make every player's history
+enumerable by anyone who could sign in, which is the thing gating it was meant to stop.
 
 `result` is one of `1-0`, `0-1`, `1/2-1/2`, `*`.
 

@@ -62,7 +62,14 @@ func main() {
 	// UI; the API and the relay are unaffected.
 	frontendDir := strings.TrimSpace(os.Getenv("FRONTEND_DIR"))
 
-	mux := api.NewRouter(pool, log, version, baseURL, frontendDir)
+	// SESSION_SECRET signs the viewer's session cookies. Blank is safe — a random
+	// key is generated per process — it just means a restart signs everyone out.
+	sessionSecret := strings.TrimSpace(os.Getenv("SESSION_SECRET"))
+	if sessionSecret == "" {
+		log.Warn("SESSION_SECRET not set — web sessions will not survive a restart")
+	}
+
+	mux := api.NewRouter(pool, log, version, baseURL, frontendDir, sessionSecret)
 
 	port := os.Getenv("PORT")
 	if port == "" {

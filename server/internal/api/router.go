@@ -20,6 +20,10 @@ import (
 const (
 	stateTTL = 5 * time.Minute
 	codeTTL  = 2 * time.Minute
+
+	// How long a used Steam OpenID nonce is remembered. Only has to outlive the
+	// window in which Steam's signature on the same assertion stays valid.
+	openidNonceTTL = 30 * time.Minute
 )
 
 type handler struct {
@@ -34,15 +38,21 @@ type handler struct {
 	// relay is in-memory only, by design: it holds OAuth codes, which have no
 	// business being persisted.
 	relay *relay.Store
+
+	// Web sign-in (Steam OpenID) for the archive viewer.
+	sessions *sessions
+	nonces   *nonceStore
 }
 
-func NewRouter(db *pgxpool.Pool, log *zap.Logger, version, baseURL, frontendDir string) *http.ServeMux {
+func NewRouter(db *pgxpool.Pool, log *zap.Logger, version, baseURL, frontendDir, sessionSecret string) *http.ServeMux {
 	h := &handler{
-		db:      db,
-		log:     log,
-		version: version,
-		baseURL: baseURL,
-		relay:   relay.New(stateTTL, codeTTL),
+		db:       db,
+		log:      log,
+		version:  version,
+		baseURL:  baseURL,
+		relay:    relay.New(stateTTL, codeTTL),
+		sessions: newSessions(sessionSecret),
+		nonces:   newNonceStore(openidNonceTTL),
 	}
 
 	mux := http.NewServeMux()
@@ -56,8 +66,15 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, version, baseURL, frontendDir 
 	mux.HandleFunc("GET /api/v1/auth/lichess/code", h.lichessCode)
 	mux.HandleFunc("GET /callback", h.lichessCallback)
 
-	// Game archive. Reads are public — PGNs are public chess — but writes are
-	// FP-gated and you may only archive a game you sat in.
+	// Steam OpenID sign-in for the archive viewer. NOT OAuth2 — Steam has no
+	// OAuth2 endpoint. Unrelated to the lichess relay above.
+	mux.HandleFunc("GET /auth/steam/login", h.steamLogin)
+	mux.HandleFunc("GET /auth/steam/return", h.steamReturn)
+	mux.HandleFunc("POST /auth/steam/logout", h.steamLogout)
+	mux.HandleFunc("GET /api/v1/me", h.me)
+
+	// Game archive. Private: every route needs a caller (Steam OpenID session or
+	// an FP token), and you only ever see games you sat in.
 	mux.HandleFunc("POST /api/v1/games", h.postGame)
 	mux.HandleFunc("GET /api/v1/games", h.listGames)
 	mux.HandleFunc("GET /api/v1/games/{id}", h.getGame)

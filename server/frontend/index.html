@@ -11,13 +11,17 @@
 <header>
   <a class="brand" href="/">TERRY'S GAMBIT</a>
   <span class="sub">game archive</span>
+  <span class="spacer"></span>
+  <span id="who" class="who" hidden></span>
+  <button id="signout" class="linkish" hidden>Sign out</button>
 </header>
 
 <main>
-  <form id="lookup" autocomplete="off">
-    <input id="steamid" type="text" inputmode="numeric" placeholder="SteamID64 (e.g. 76561197960287930)" aria-label="SteamID64">
-    <button type="submit">Look up</button>
-  </form>
+  <section id="signin" hidden>
+    <h2>Your games are private</h2>
+    <p class="lede">Sign in with Steam to see the games you've played in Terry's Gambit. You'll only ever see your own.</p>
+    <a class="steam" href="/auth/steam/login">Sign in through Steam</a>
+  </section>
 
   <div id="status" class="status" hidden></div>
 
@@ -32,7 +36,7 @@
   </section>
 
   <section id="game" hidden>
-    <a class="back" href="#" id="back">← back to games</a>
+    <a class="back" href="/" id="back">← back to games</a>
     <h2 id="game-title"></h2>
     <div id="game-meta" class="meta"></div>
 
@@ -60,7 +64,7 @@
 </main>
 
 <footer>
-  <p>Games played in Terry's Gambit. PGNs are public.</p>
+  <p>Games played in Terry's Gambit. Only you can see yours.</p>
   <p>No engine analysis is offered here, by design.</p>
 </footer>
 

@@ -191,20 +191,19 @@ func seatMatches(steamID int64, seat *int64) bool {
 	return seat != nil && *seat != 0 && *seat == steamID
 }
 
-// GET /api/v1/games?steam_id=&limit=&offset= — public. PGNs are public chess.
+// GET /api/v1/games?limit=&offset= — YOUR games only.
+//
+// The archive is private: you see games you sat in, and nothing else. There is
+// deliberately no ?steam_id= — taking the SteamID from the request would make
+// every player's history enumerable by anyone who could sign in, which is exactly
+// what gating this was meant to stop. The identity comes from the session (Steam
+// OpenID) or the FP token, never from the query.
 func (h *handler) listGames(w http.ResponseWriter, r *http.Request) {
+	steamID, ok := h.callerSteamID(w, r)
+	if !ok {
+		return
+	}
 	q := r.URL.Query()
-	raw := q.Get("steam_id")
-	if !validSteamID(raw) {
-		writeError(w, http.StatusBadRequest, "steam_id must be a SteamID64")
-		return
-	}
-	steamID, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "steam_id out of range")
-		return
-	}
-
 	limit := clampInt(q.Get("limit"), defaultLimit, 1, maxLimit)
 	offset := clampInt(q.Get("offset"), 0, 0, 1<<30)
 
@@ -221,8 +220,12 @@ func (h *handler) listGames(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"games": out})
 }
 
-// GET /api/v1/games/{id} — public.
+// GET /api/v1/games/{id} — one of YOUR games.
 func (h *handler) getGame(w http.ResponseWriter, r *http.Request) {
+	steamID, ok := h.callerSteamID(w, r)
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
 	if _, err := uuid.Parse(id); err != nil {
 		writeError(w, http.StatusBadRequest, "id must be a UUID")
@@ -236,6 +239,13 @@ func (h *handler) getGame(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.log.Error("get game failed", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// 404, not 403: a game you didn't play in must be indistinguishable from one
+	// that doesn't exist, or the id space becomes probeable.
+	if !seatMatches(steamID, g.WhiteSteamID) && !seatMatches(steamID, g.BlackSteamID) {
+		writeError(w, http.StatusNotFound, "no such game")
 		return
 	}
 	writeJSON(w, http.StatusOK, toGameJSON(g))

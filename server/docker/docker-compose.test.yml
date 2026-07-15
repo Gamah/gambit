@@ -37,6 +37,7 @@ services:
       # disables the code relay on test.
       PUBLIC_BASE_URL: "${TEST_PUBLIC_BASE_URL}"
       FRONTEND_DIR: "/frontend"
+      SESSION_SECRET: "${SESSION_SECRET}"
     depends_on:
       postgres:
         condition: service_healthy

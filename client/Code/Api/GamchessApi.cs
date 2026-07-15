@@ -205,13 +205,17 @@ public static class GamchessApi
 			lichess_game_id = lichessGameId,
 		} ) );
 
-	/// <summary>A player's archived games, newest first. Public — no auth.</summary>
-	public static Task<Result> ListGames( ulong steamId, int limit = 50 ) =>
-		Send( $"/api/v1/games?steam_id={steamId}&limit={limit}", "GET", null, null, null );
+	/// <summary>YOUR archived games, newest first.
+	/// <para>The archive is private: there is no way to ask for someone else's, and
+	/// no SteamID parameter to pass. The server takes the identity from our FP token
+	/// (or a Steam OpenID session on the web) and returns only games we sat in.</para></summary>
+	public static Task<Result> ListGames( int limit = 50 ) =>
+		SendAuthed( $"/api/v1/games?limit={limit}", "GET", null );
 
-	/// <summary>One archived game. Public — no auth.</summary>
+	/// <summary>One of your archived games. 404 if you didn't play in it — the same
+	/// answer as "doesn't exist", so ids aren't probeable.</summary>
 	public static Task<Result> GetGame( string id ) =>
-		Send( $"/api/v1/games/{Uri.EscapeDataString( id )}", "GET", null, null, null );
+		SendAuthed( $"/api/v1/games/{Uri.EscapeDataString( id )}", "GET", null );
 
 	// ── Helpers ──
 

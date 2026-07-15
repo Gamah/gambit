@@ -79,32 +79,26 @@ public static class GamchessCommands
 		Log.Warning( $"[Gambit]   ✗ {res.Error} {LichessApi.Truncate( res.Body, 200 )}" );
 	}
 
-	/// <summary>List a player's archived games (defaults to you). Public endpoint —
-	/// no auth needed, which is why it takes a SteamID.</summary>
+	/// <summary>List YOUR archived games. The archive is private — there's no way to
+	/// ask for anyone else's, so this takes no SteamID.</summary>
 	[ConCmd( "gambit_gamchess_games" )]
-	public static void Games( string steamId = null ) => _ = DoGames( steamId );
+	public static void Games() => _ = DoGames();
 
-	static async Task DoGames( string steamId )
+	static async Task DoGames()
 	{
-		ulong id = GamchessAuth.LocalSteamId;
-		if ( !string.IsNullOrWhiteSpace( steamId ) && !ulong.TryParse( steamId.Trim(), out id ) )
+		if ( !GamchessAuth.Available )
 		{
-			Log.Warning( "[Gambit] that isn't a SteamID64." );
-			return;
-		}
-		if ( id == 0 )
-		{
-			Log.Warning( "[Gambit] no SteamID to look up." );
+			Log.Warning( "[Gambit] no Steam identity — the archive needs one." );
 			return;
 		}
 
-		var res = await GamchessApi.ListGames( id );
+		var res = await GamchessApi.ListGames();
 		if ( !res.Ok )
 		{
 			Log.Warning( $"[Gambit] archive lookup failed: {res.Error}" );
 			return;
 		}
-		Log.Info( $"[Gambit] archive for {id}: {LichessApi.Truncate( res.Body, 1000 )}" );
+		Log.Info( $"[Gambit] your archive: {LichessApi.Truncate( res.Body, 1000 )}" );
 	}
 
 	/// <summary>Unlink this Steam account from its lichess account on gamchess. The
