@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -22,10 +21,13 @@ import (
 // header, body, or query string as authorisation.
 const steamIDHeader = "X-Steam-Id"
 
-// steamIDRe matches a SteamID64 — a 1–20 digit number. Range-checking the shape
-// before we hand it to Facepunch (and before ParseInt) keeps garbage out of the
-// outbound call.
-var steamIDRe = regexp.MustCompile(`^[0-9]{1,20}$`)
+// steamIDRe matches a SteamID64 — a 1–20 digit number with no leading zero.
+// Shape-checking before we hand it to Facepunch (and before ParseInt) keeps
+// garbage out of the outbound call. Rejecting a leading zero also rules out "0"
+// (which the client uses to mean "empty seat", never a player) and stops the
+// same account arriving in two spellings, e.g. "76561197960287930" and
+// "076561197960287930".
+var steamIDRe = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
 func validSteamID(s string) bool { return steamIDRe.MatchString(s) }
 
@@ -72,15 +74,4 @@ func (h *handler) requireSteam(w http.ResponseWriter, r *http.Request) (int64, b
 		return 0, false
 	}
 	return steamID, true
-}
-
-// ensurePlayer upserts the players row for a verified SteamID and bumps
-// last_seen. Every authed path calls this, so the FK targets in lichess_links
-// and games always exist. Only ever called with an FP-verified ID.
-func (h *handler) ensurePlayer(ctx context.Context, steamID int64) error {
-	_, err := h.db.Exec(ctx, `
-		INSERT INTO players (steam_id) VALUES ($1)
-		ON CONFLICT (steam_id) DO UPDATE SET last_seen = NOW()
-	`, steamID)
-	return err
 }

@@ -128,7 +128,13 @@ func TestRequireSteam(t *testing.T) {
 
 func TestValidSteamID(t *testing.T) {
 	valid := []string{"76561197960287930", "1", "12345678901234567890"}
-	invalid := []string{"", " ", "abc", "-1", "1.0", "1e5", "123456789012345678901", "765611979 60287930"}
+	invalid := []string{
+		"", " ", "abc", "-1", "1.0", "1e5", "123456789012345678901", "765611979 60287930",
+		// 0 is the client's "empty seat" sentinel, never a player.
+		"0",
+		// A leading zero would let one account arrive in two spellings.
+		"076561197960287930", "00",
+	}
 
 	for _, s := range valid {
 		if !validSteamID(s) {

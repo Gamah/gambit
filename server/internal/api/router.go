@@ -55,6 +55,16 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, version, baseURL string) *http
 	mux.HandleFunc("GET /api/v1/auth/lichess/code", h.lichessCode)
 	mux.HandleFunc("GET /callback", h.lichessCallback)
 
+	// Game archive. Reads are public — PGNs are public chess — but writes are
+	// FP-gated and you may only archive a game you sat in.
+	mux.HandleFunc("POST /api/v1/games", h.postGame)
+	mux.HandleFunc("GET /api/v1/games", h.listGames)
+	mux.HandleFunc("GET /api/v1/games/{id}", h.getGame)
+
+	// lichess identity link.
+	mux.HandleFunc("PUT /api/v1/links/lichess", h.putLichessLink)
+	mux.HandleFunc("DELETE /api/v1/links/lichess", h.deleteLichessLink)
+
 	return mux
 }
 

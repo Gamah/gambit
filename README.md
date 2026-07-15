@@ -39,3 +39,56 @@ recorded in `Assets/ATTRIBUTION.md` as assets land.
 
 Open `client/gambit.sbproj` in the s&box editor (first time on a new machine: see
 "Project Setup" in `CLAUDE.md`). Startup scene is `scenes/lobby.scene`.
+
+## gamchess API contract
+
+`server/` (Go/Postgres, deployed at `chess.gamah.net`) and `client/Code/Api/` hand-mirror
+this contract — there is no shared directory and no codegen, so **this section is the one
+place it is written down**. A contract change should be one atomic commit across both
+halves. Additive fields only; annotate them here.
+
+**gamchess never holds a lichess token.** It relays OAuth *codes* (in memory, single-use,
+~2 min) and the client — which alone holds the PKCE verifier — does the exchange against
+lichess itself. There is no token column and no exchange path. See `CLAUDE.md` for the
+full posture.
+
+### Auth
+
+Every FP-gated endpoint takes both headers:
+
+```
+Authorization: Bearer <facepunch-auth-token>   // Sandbox.Services.Auth.GetToken("gamchess")
+X-Steam-Id: <steamid64>
+```
+
+`X-Steam-Id` is an unverified **claim**. gamchess forwards both to Facepunch and trusts
+only the echoed SteamId; a mismatch or any error denies (fail closed). A SteamID from a
+body or query string never authorises anything.
+
+**SteamIDs cross the wire as strings, always.** A SteamID64 (~7.6e16) exceeds JavaScript's
+2^53 safe-integer range, so a bare JSON number is silently corrupted by `JSON.parse`.
+`"0"` and `""` both mean *empty seat*.
+
+### Endpoints
+
+| Route | Auth | Notes |
+|---|---|---|
+| `GET /health` | — | `{status, version}` |
+| `POST /api/v1/auth/lichess/begin` | FP | `{state}` → `{redirect_uri}`. state = 32–128 chars `[A-Za-z0-9_-]`, client-generated, high-entropy, **never the SteamID** |
+| `GET /callback?code&state` | — | lichess lands the browser here; renders a neutral page and **never the code** |
+| `GET /api/v1/auth/lichess/code` | FP | `{code}` once, then 404. 404 = "not yet" — this is a poll |
+| `POST /api/v1/games` | FP | `{client_game_id, pgn, white_steam_id, black_steam_id, result, lichess_game_id?}`. Idempotent on `client_game_id`; **403 unless you sat in the game** |
+| `GET /api/v1/games?steam_id=&limit=&offset=` | — | public; `{games:[…]}`, newest first, limit ≤ 200 |
+| `GET /api/v1/games/{id}` | — | public; one game |
+| `PUT /api/v1/links/lichess` | FP | `{lichess_username}`; 409 if another player claims it |
+| `DELETE /api/v1/links/lichess` | FP | idempotent unlink |
+
+`result` is one of `1-0`, `0-1`, `1/2-1/2`, `*`.
+
+`client_game_id` is a UUID the host generates at game start and `[Sync]`s to both seats.
+Move history lives in each seated client's own `ChessGame`, not the host's, so the host may
+have no PGN to submit — **either seat may POST**, and the second is a no-op that returns the
+stored row rather than an overwrite.
+
+**gamchess is never required.** If it is unreachable, the client degrades to archive-off and
+token-paste sign-in; local play, puzzles and spectating never touch it.
