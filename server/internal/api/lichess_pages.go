@@ -66,6 +66,32 @@ var pageShell = template.Must(template.New("page").Parse(`<!doctype html>
     font-weight: bold;
   }
   .lichess-card .actions { margin-top: 1.5rem; }
+
+  /* The button that leaves for lichess.
+     It carries lichess's own logo and their own black-and-white, so it reads as
+     "this hands you to lichess" rather than as one more Gambit control — which is
+     the honest signal at the exact moment we send someone off to type their
+     lichess password. See ATTRIBUTION.md: the logo is non-free, used under the
+     one grant it carries ("Only use to refer to lichess.org"), which is precisely
+     what this button does. It is NOT a claim of endorsement, so it never appears
+     as a Gambit mark, only ever on a control that navigates to lichess. */
+  .to-lichess {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.7rem 1.2rem;
+    border-radius: 4px;
+    background: #161512;      /* lichess's own dark-theme background */
+    color: #fff;
+    border: 1px solid #3d3a34;
+    font-weight: bold;
+    text-decoration: none;
+    line-height: 1;
+  }
+  .to-lichess:hover { background: #262421; border-color: #6a655c; }
+  .to-lichess svg { width: 1.5em; height: 1.5em; flex: none; }
+  .to-lichess .go { opacity: 0.65; font-weight: normal; }
+  .cancel { margin-left: 1rem; }
 </style>
 </head>
 <body>
@@ -142,8 +168,31 @@ live there rather than in the game: playing a lichess game means holding a live
 connection open for the whole game, and the s&amp;box client can't do that — so
 our server plays on your behalf while you sit at the board.</p>
 
-<p class="actions"><a href="/lichess/start"><strong>Continue to lichess →</strong></a> ·
-<a href="/">Cancel</a></p>`))
+<p class="actions">
+  <a class="to-lichess" href="/lichess/start">{{.Logo}}<span>Continue to lichess</span><span class="go">→</span></a>
+  <a class="cancel" href="/">Cancel</a>
+</p>`))
+
+// lichessLogo is lichess's own knight mark, inlined.
+//
+// Inlined rather than shipped as a file for two reasons: the viewer has a
+// zero-image-assets rule (it is what keeps it trivially CC0-auditable), and a
+// 613-byte path costs less than the request would. currentColor makes it take the
+// button's text colour, so it needs no second copy for a light theme.
+//
+// LICENCE: this is the one non-CC0 thing in the tree. lila's own COPYING.md lists
+// public/logo under "Exceptions (non-free)" — author sadsnake1, terms "Only use to
+// refer to lichess.org". Using it on a button whose entire job is to send you to
+// lichess.org is exactly that grant and nothing more. Recorded in
+// client/Assets/ATTRIBUTION.md. Do not reuse it as decoration, and do not let it
+// appear anywhere it could read as endorsement — lichess has not endorsed Gambit.
+const lichessLogo = template.HTML(`<svg viewBox="0 0 50 50" aria-hidden="true" focusable="false">` +
+	`<path fill="currentColor" stroke="currentColor" stroke-linejoin="round" ` +
+	`d="M38.956.5c-3.53.418-6.452.902-9.286 2.984C5.534 1.786-.692 18.533.68 29.364 3.493 50.214 31.918 55.785 41.329 41.7` +
+	`c-7.444 7.696-19.276 8.752-28.323 3.084S-.506 27.392 4.683 17.567C9.873 7.742 18.996 4.535 29.03 6.405` +
+	`c2.43-1.418 5.225-3.22 7.655-3.187l-1.694 4.86 12.752 21.37c-.439 5.654-5.459 6.112-5.459 6.112` +
+	`-.574-1.47-1.634-2.942-4.842-6.036-3.207-3.094-17.465-10.177-15.788-16.207-2.001 6.967 10.311 14.152 14.04 17.663` +
+	`3.73 3.51 5.426 6.04 5.795 6.756 0 0 9.392-2.504 7.838-8.927L37.4 7.171z"/></svg>`)
 
 // linkedTmpl is the AFTER page: what you just granted, and how to take it back.
 var linkedTmpl = template.Must(template.New("linked").Parse(`
@@ -192,7 +241,10 @@ nothing is linked.</p>
 // renderLichessConsent is the pre-flight page shown before the OAuth bounce.
 func (h *handler) renderLichessConsent(w http.ResponseWriter) {
 	var buf htmlBuffer
-	if err := consentTmpl.Execute(&buf, map[string]string{"Scope": lichess.Scope}); err != nil {
+	if err := consentTmpl.Execute(&buf, map[string]any{
+		"Scope": lichess.Scope,
+		"Logo":  lichessLogo,
+	}); err != nil {
 		h.log.Error("could not render the lichess consent page", zap.Error(err))
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

@@ -237,6 +237,25 @@ writer, and how `LichessTable`'s challenge/seek floors were checked against ever
   first-wins with loser-side reconciliation (**D1**). Seat cameras orbit the board
   center (`SeatOrbitRadius`/`SeatPitch`/`SeatLookDownAngle`). You take the side you
   walk up to; leaving a live game is a two-stage resign (Escape/Leave twice).
+- **Wall boards go through `WallBoardGeometry` — all of them.** It owns the size
+  (`BoardScale`), the aspect (`Stretch`), and the shared floor anchor (`FloorAnchor`, which
+  every board calls per-frame from its own `OnUpdate`). Boards match each other because
+  they share a default `PanelSize` (hence one intrinsic pixel space, hence copyable px
+  font values), lay out `height:auto`, and anchor their content's BOTTOM edge — break any
+  one and the board stops matching. **Every board that has ever looked wrong here looked
+  wrong because it hand-rolled its own scale instead** (the M8 lichess board shipped with
+  an invented `(1, 1.3, 1.1)`), and a board that skips the seam cannot be fixed from it.
+  `InfoWall` used to carry a duplicate `BoardScale` knob; it doesn't now, on purpose.
+  Floor *clearance* is deliberately NOT in there — it really does differ per wall (east
+  runs 30, the others 60) — so it stays a per-board `[Property]` the wall passes in.
+  **Adding a board means adding its `YFrac` to `lobby.scene` too**: `InfoWall` is a
+  serialized component, so a new `[Property]` gets the code default while the ones
+  already in the scene get the scene's — which is how the lichess board came to sit on
+  top of the dev-notes board (see the rule below; it bites even when you know it).
+- **`+Y` is LEFT.** s&box is Source-handed (X forward, Y left, Z up). A player facing the
+  east wall looks along +X, so their RIGHT is -Y and a higher `YFrac` sits further LEFT.
+  A comment in `InfoWall` claimed the opposite for a long time and put a board on the
+  wrong side.
 - `FloorCheckerboard` bakes a `PopMap` (checker colour) plus a `GlyphMap` (R = glyph
   index 0–6, one texel per cell). `floor_checker.shader` looks the piece up in
   `Assets/textures/chess_glyphs.png` and blends it over the square in the **opposite**
@@ -366,11 +385,20 @@ contract change is one commit across both halves.
 
 ### Asset licensing
 
-All art must be **CC0**. Record provenance in `Assets/ATTRIBUTION.md` even for CC0.
+All art must be **CC0**, with **one documented exception** (below). Record provenance in
+`Assets/ATTRIBUTION.md` even for CC0.
 
-Nothing is licensed in today: pieces are runtime meshes from `ChessSetBuilder`, floor
+Nothing else is licensed in: pieces are runtime meshes from `ChessSetBuilder`, floor
 glyphs are our own DejaVu raster, sounds are synthesized by `scripts/gen_sounds.py`, and
 the web viewer uses Unicode glyphs (zero image assets).
+
+**The exception: the lichess logo**, inlined on the web button that leaves for lichess.
+It is explicitly non-free — lila's `COPYING.md` files `public/logo` under "Exceptions
+(non-free)" with the terms *"Only use to refer to lichess.org"*, and lichess publishes no
+brand guidelines beyond that line. That grant is exactly what the button does, and the
+limits it implies are hard rules: only on a control that navigates to lichess, never as
+decoration, never in the s&box client, and never anywhere it could read as endorsement —
+**lichess has not endorsed Gambit**. Full terms in `Assets/ATTRIBUTION.md`.
 
 CC0 sources on file for the D5 3D upgrade: Poly Haven "Chess Set" by Riley Queen
 (https://polyhaven.com/a/chess_set, glTF/FBX); portablejim 2D chess set on FreeSVG

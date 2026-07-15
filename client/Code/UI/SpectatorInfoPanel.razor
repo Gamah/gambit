@@ -117,10 +117,6 @@
 {
 	SpectatorController C => SpectatorController.Instance;
 
-	/// <summary>World half-height of the panel's intrinsic rect per unit of GO Z-scale (same
-	/// calibration as CenterInfoPanel — tune in-editor if the board floats or sinks).</summary>
-	[Property] public float HalfHeightPerScale { get; set; } = 18f;
-
 	/// <summary>World units to keep between the content's bottom edge and the floor.</summary>
 	[Property] public float FloorClearance { get; set; } = 30f;
 
@@ -176,17 +172,8 @@
 
 	protected override void OnUpdate()
 	{
-		// Floor-anchor exactly like CenterInfoPanel so this board matches the info board's size
-		// and anchor. .board is height:auto; measure its share of the intrinsic rect and lift
-		// the GO so the content bottom sits FloorClearance above z=0.
-		var board = Panel?.Children.FirstOrDefault();
-		if ( board is null || Panel.Box.Rect.Height <= 0f ) return;
-
-		float rootHalf = HalfHeightPerScale * WorldScale.z;
-		float contentHeight = 1.5f * rootHalf * ( board.Box.Rect.Height / Panel.Box.Rect.Height );
-
-		var pos = LocalPosition;
-		pos.z = FloorClearance + contentHeight - rootHalf;
-		LocalPosition = pos;
+		// Every wall board anchors the same way, from one place — see
+		// WallBoardGeometry. Do not re-derive this here.
+		Gambit.World.WallBoardGeometry.FloorAnchor( this, FloorClearance );
 	}
 }
