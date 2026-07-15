@@ -28,6 +28,17 @@ and opening the `.sbproj` directly will fail with `Unable to find package 'local
 The registry tracks projects **by path**, so the M7 `gambit/` → `client/` rename means
 re-running this flow once even on a machine that already had the project.
 
+**Migrating a machine that predates the rename** — do both, or you get a black screen:
+1. **Delete the orphan `gambit/` folder.** `git mv` only moves *tracked* files, so
+   checking out the rename leaves every gitignored artefact (`.sbox/`, `bin/`, `obj/`,
+   `.addon/`, `*_c`/`*_d`, generated `csproj`/`slnx`) behind in the old path. What
+   remains is a source-less husk holding a stale compiled assembly. Confirm
+   `git ls-files gambit/` and `git status --porcelain gambit/` are both empty first,
+   then `rm -rf gambit/`.
+2. **Unregister the old `gambit/` project** in the editor before adding `client/`.
+   Otherwise two registry entries both claim ident `gambit`, and the editor may open the
+   husk — which builds the world (you'll see `ChessSetBuilder` run) but renders nothing.
+
 ```
 scripts/               ← dev utilities (not s&box assets); gen_sounds.py needs numpy
 client/                ← the s&box project — open client/gambit.sbproj in the editor
