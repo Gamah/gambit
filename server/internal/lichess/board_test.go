@@ -30,7 +30,7 @@ func TestValidClockLimit(t *testing.T) {
 // The Board API refuses anything faster than blitz. This is the rule that
 // decides which Gambit tables can offer lichess play at all, so it is pinned
 // against the real presets from TimeControl.All.
-func TestBoardCompatibleMatchesGambitsPresets(t *testing.T) {
+func TestChallengeCompatibleMatchesGambitsPresets(t *testing.T) {
 	cases := []struct {
 		name           string
 		limit, inc     int
@@ -45,8 +45,8 @@ func TestBoardCompatibleMatchesGambitsPresets(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := BoardCompatible(c.limit, c.inc); got != c.wantCompatible {
-				t.Fatalf("BoardCompatible(%d,%d) = %v, want %v", c.limit, c.inc, got, c.wantCompatible)
+			if got := ChallengeCompatible(c.limit, c.inc); got != c.wantCompatible {
+				t.Fatalf("ChallengeCompatible(%d,%d) = %v, want %v", c.limit, c.inc, got, c.wantCompatible)
 			}
 		})
 	}
@@ -63,11 +63,11 @@ func TestEstimateTotalSeconds(t *testing.T) {
 }
 
 // The exact boundary: 180 is Blitz (in), 179 is Bullet (out).
-func TestBoardCompatibleBoundary(t *testing.T) {
-	if BoardCompatible(179, 0) {
+func TestChallengeCompatibleBoundary(t *testing.T) {
+	if ChallengeCompatible(179, 0) {
 		t.Fatal("an estimated total of 179 is Bullet — must be refused")
 	}
-	if !BoardCompatible(180, 0) {
+	if !ChallengeCompatible(180, 0) {
 		t.Fatal("an estimated total of 180 is Blitz — must be allowed")
 	}
 }
@@ -269,6 +269,139 @@ func TestMoveOfferingDraw(t *testing.T) {
 	if gotQuery != "offeringDraw=true" {
 		t.Fatalf("query: got %q want offeringDraw=true", gotQuery)
 	}
+}
+
+// THE trap this file exists to pin down: lila has TWO functions called
+// isBoardCompatible, with different thresholds, governing different endpoints.
+// A challenge accepts blitz; a seek does not. Collapsing them would silently
+// make every seek fail (or, worse, make us offer one that can't work).
+func TestChallengeAndSeekFloorsDiffer(t *testing.T) {
+	// Blitz 3+2 → estimate 260. Challengeable, NOT seekable.
+	if !ChallengeCompatible(180, 2) {
+		t.Error("blitz 3+2 must be challengeable")
+	}
+	if SeekCompatible(180, 2) {
+		t.Error("blitz 3+2 must NOT be seekable — a real-time seek needs rapid or slower")
+	}
+
+	// Rapid 10+0 → 600. Both.
+	if !ChallengeCompatible(600, 0) || !SeekCompatible(600, 0) {
+		t.Error("rapid 10+0 must be both challengeable and seekable")
+	}
+
+	// The exact Rapid boundary: 480 in, 479 out.
+	if SeekCompatible(479, 0) {
+		t.Error("an estimated total of 479 is Blitz — not seekable")
+	}
+	if !SeekCompatible(480, 0) {
+		t.Error("an estimated total of 480 is Rapid — seekable")
+	}
+
+	if ChallengeFloorSeconds != 180 || SeekFloorSeconds != 480 {
+		t.Fatalf("floors moved: challenge=%d seek=%d", ChallengeFloorSeconds, SeekFloorSeconds)
+	}
+}
+
+func TestSeekRealtime(t *testing.T) {
+	// The seek budget is process-wide (it mirrors a per-IP limit), so tests must
+	// not inherit each other's spend.
+	ResetGovernor()
+	t.Cleanup(ResetGovernor)
+
+	t.Run("posts minutes, not seconds", func(t *testing.T) {
+		ResetGovernor()
+		var got url.Values
+		var path string
+		stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+			path = r.URL.Path
+			body, _ := io.ReadAll(r.Body)
+			got, _ = url.ParseQuery(string(body))
+			// A real seek holds open; closing immediately stands for "matched".
+		})
+
+		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10}); err != nil {
+			t.Fatal(err)
+		}
+		if path != "/api/board/seek" {
+			t.Fatalf("path: got %q", path)
+		}
+		// MINUTES. ChallengeParams.LimitSeconds is seconds — mixing them up asks
+		// for a 10-second game while meaning ten minutes.
+		if got.Get("time") != "10" {
+			t.Fatalf("time: got %q, want 10 (minutes)", got.Get("time"))
+		}
+		if got.Get("increment") != "0" {
+			t.Fatalf("increment: got %q", got.Get("increment"))
+		}
+	})
+
+	t.Run("blitz is refused locally", func(t *testing.T) {
+		ResetGovernor()
+		stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("a blitz seek must not be sent — lichess refuses it")
+		})
+		// 3+2 = 260 estimated: challengeable, not seekable.
+		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 3, IncrementSeconds: 2}); err == nil {
+			t.Fatal("expected a blitz seek to be refused")
+		}
+	})
+
+	t.Run("out-of-range time", func(t *testing.T) {
+		ResetGovernor()
+		stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("must not send an out-of-range seek")
+		})
+		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 181}); err == nil {
+			t.Fatal("181 minutes is outside 0..180")
+		}
+		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10, IncrementSeconds: 181}); err == nil {
+			t.Fatal("181s increment is outside 0..180")
+		}
+	})
+
+	// The 5/min-per-IP cap is shared by every Gambit player, so a 429 must be
+	// legible rather than a generic failure.
+	t.Run("429 surfaces as a rate limit", func(t *testing.T) {
+		ResetGovernor()
+		stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusTooManyRequests)
+		})
+		err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10})
+		apiErr, ok := err.(*APIError)
+		if !ok || !apiErr.RateLimited() {
+			t.Fatalf("want a rate-limited APIError, got %#v", err)
+		}
+	})
+
+	// The connection IS the seek: we must hold it until told to stop.
+	t.Run("holds open until cancelled", func(t *testing.T) {
+		ResetGovernor()
+		stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- SeekRealtime(ctx, "tok", SeekParams{TimeMinutes: 10}) }()
+
+		select {
+		case err := <-done:
+			t.Fatalf("returned before cancellation (%v) — the seek would be dropped instantly", err)
+		case <-time.After(150 * time.Millisecond):
+		}
+
+		cancel()
+		select {
+		case err := <-done:
+			if err != context.Canceled {
+				t.Fatalf("want context.Canceled, got %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("seek did not stop on cancellation")
+		}
+	})
 }
 
 func TestSeekCorrespondenceRejectsBadDays(t *testing.T) {

@@ -146,6 +146,10 @@ type Token struct {
 // Fails closed: any transport error, non-200, undecodable body or empty token is
 // an error and no token, never a partial success.
 func Exchange(ctx context.Context, clientID, redirectURI, code, verifier string) (Token, error) {
+	if err := guard(ctx); err != nil {
+		return Token{}, err
+	}
+
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
@@ -188,6 +192,10 @@ func Exchange(ctx context.Context, clientID, redirectURI, code, verifier string)
 // the Facepunch rule: trust what the provider echoes back, never what the client
 // claimed.
 func Account(ctx context.Context, token string) (id, username string, err error) {
+	if err := guard(ctx); err != nil {
+		return "", "", err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, accountEndpoint, nil)
 	if err != nil {
 		return "", "", fmt.Errorf("lichess: build account request: %w", err)
@@ -264,6 +272,10 @@ type TokenStatus struct {
 //
 // The endpoint needs no auth: it tells you about tokens you already hold.
 func TokenTest(ctx context.Context, tokens []string) (map[string]TokenStatus, error) {
+	if err := guard(ctx); err != nil {
+		return nil, err
+	}
+
 	out := make(map[string]TokenStatus, len(tokens))
 	if len(tokens) == 0 {
 		return out, nil

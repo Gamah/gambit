@@ -129,7 +129,11 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/lichess", h.lichessStatus)
 	mux.HandleFunc("DELETE /api/v1/lichess", h.lichessUnlink)
 	mux.HandleFunc("POST /api/v1/lichess/play", h.lichessPlay)
+	// A lobby seek: one player, a random opponent. Rapid or slower only, and
+	// capped at ~5/min across the WHOLE playerbase (the limit is per IP).
+	mux.HandleFunc("POST /api/v1/lichess/seek", h.lichessSeek)
 	mux.HandleFunc("GET /api/v1/lichess/play/{id}", h.lichessPlayState)
+	mux.HandleFunc("DELETE /api/v1/lichess/play/{id}", h.lichessPlayCancel)
 	mux.HandleFunc("POST /api/v1/lichess/play/{id}/{action}", h.lichessPlayAct)
 
 	// The audit sweep: the only fast incident lever we own (lichess has no bulk

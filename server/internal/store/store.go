@@ -35,14 +35,14 @@ func EnsurePlayer(ctx context.Context, db *pgxpool.Pool, steamID int64, bumpLast
 }
 
 type Game struct {
-	ID            string    `json:"id"`
-	ClientGameID  string    `json:"client_game_id"`
-	Pgn           string    `json:"pgn"`
-	WhiteSteamID  *int64    `json:"white_steam_id"`
-	BlackSteamID  *int64    `json:"black_steam_id"`
-	Result        string    `json:"result"`
-	PlayedAt      time.Time `json:"played_at"`
-	SubmittedBy   int64     `json:"submitted_by"`
+	ID           string    `json:"id"`
+	ClientGameID string    `json:"client_game_id"`
+	Pgn          string    `json:"pgn"`
+	WhiteSteamID *int64    `json:"white_steam_id"`
+	BlackSteamID *int64    `json:"black_steam_id"`
+	Result       string    `json:"result"`
+	PlayedAt     time.Time `json:"played_at"`
+	SubmittedBy  int64     `json:"submitted_by"`
 }
 
 const gameCols = `id, client_game_id, pgn, white_steam_id, black_steam_id,

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -197,6 +198,10 @@ func StreamGame(ctx context.Context, token, gameID string, fn func(GameEvent)) e
 // callers differ only in URL and line shape, and a streaming bug is the kind
 // that only shows up mid-game.
 func stream(ctx context.Context, token, u string, onLine func([]byte) error) error {
+	if err := guard(ctx); err != nil {
+		return err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return fmt.Errorf("lichess: build stream request: %w", err)
@@ -376,8 +381,8 @@ func (p ChallengeParams) validate() error {
 	if p.IncrementSeconds < 0 || p.IncrementSeconds > 60 {
 		return fmt.Errorf("lichess: clock.increment %d is outside 0..60", p.IncrementSeconds)
 	}
-	if !BoardCompatible(p.LimitSeconds, p.IncrementSeconds) {
-		return fmt.Errorf("lichess: %d+%d is faster than blitz — the Board API refuses it",
+	if !ChallengeCompatible(p.LimitSeconds, p.IncrementSeconds) {
+		return fmt.Errorf("lichess: %d+%d is faster than blitz — the Board API refuses to challenge with it",
 			p.LimitSeconds, p.IncrementSeconds)
 	}
 	return nil
@@ -393,27 +398,168 @@ func ValidClockLimit(limit int) bool {
 	return limit > 0 && limit <= 10800 && limit%60 == 0
 }
 
-// BoardCompatible reports whether a clock is slow enough for the Board API.
+// The Board API has TWO different speed floors, and lila implements them in two
+// functions with the SAME NAME. This bit them into us and is worth spelling out:
 //
-// lila gates every board challenge on `isBoardCompatible: speed >= Speed.Blitz`
-// (modules/challenge/src/main/Challenge.scala), and speed comes from
-// scalachess's `Speed.byTime(limit + 40*increment)`, whose Blitz band starts at
-// 180. So the floor is an estimated total of 180 seconds.
+//	Challenge.isBoardCompatible          speed >= Speed.Blitz   (180s)
+//	  modules/challenge/src/main/Challenge.scala — gates a direct CHALLENGE
+//
+//	lila.core.game.isBoardCompatible     Speed(clock) >= Speed.Rapid  (480s)
+//	  modules/core/src/main/game/misc.scala — gates a board SEEK, via
+//	  SetupForm.boardApiHook's "Invalid time control" verification
+//
+// So a direct challenge accepts blitz and a lobby seek does not. Do not collapse
+// these two, and do not trust a memory of "the Board API floor" — there isn't
+// one floor.
+//
+// Both bands come from scalachess's Speed.byTime(limit + 40*increment):
+// Blitz is 180..479, Rapid is 480..1499.
+//
+// [SOURCE] read from lila/scalachess master on 2026-07-15, not from a documented
+// contract — it can change without notice. Re-check before trusting it.
+const (
+	// ChallengeFloorSeconds is the estimated total a direct challenge needs.
+	ChallengeFloorSeconds = 180
+	// SeekFloorSeconds is the estimated total a real-time lobby seek needs.
+	SeekFloorSeconds = 480
+)
+
+// ChallengeCompatible reports whether a clock is slow enough to be challenged
+// with (blitz or slower).
 //
 // BULLET CAN NEVER REACH LICHESS, from any path — Gambit's Bullet 1+0 estimates
 // at 60 and lands in the Bullet band. That is a lichess rule, not ours, and it
 // is why the play flow is never offered at a bullet table.
+func ChallengeCompatible(limitSeconds, incrementSeconds int) bool {
+	return EstimateTotalSeconds(limitSeconds, incrementSeconds) >= ChallengeFloorSeconds
+}
+
+// SeekCompatible reports whether a clock is slow enough for a REAL-TIME lobby
+// seek (rapid or slower).
 //
-// [SOURCE] read from lila/scalachess master on 2026-07-15, not from a documented
-// contract — it can change without notice. Re-check it before trusting it.
-func BoardCompatible(limitSeconds, incrementSeconds int) bool {
-	return EstimateTotalSeconds(limitSeconds, incrementSeconds) >= 180
+// Stricter than ChallengeCompatible, and that difference is the whole reason a
+// direct challenge is Gambit's primary path: the default table is Blitz 3+2,
+// which estimates at 260 — fine to challenge with, refused as a seek.
+func SeekCompatible(limitSeconds, incrementSeconds int) bool {
+	return EstimateTotalSeconds(limitSeconds, incrementSeconds) >= SeekFloorSeconds
 }
 
 // EstimateTotalSeconds is scalachess's clock-to-speed estimate: the initial bank
 // plus increment over an assumed 40-move game.
 func EstimateTotalSeconds(limitSeconds, incrementSeconds int) int {
 	return limitSeconds + 40*incrementSeconds
+}
+
+// SeekRealtime opens a public seek for a random opponent and HOLDS IT OPEN.
+//
+// The connection IS the seek: lichess cancels it the moment we hang up, which is
+// deliberate on their part (if the client dies, the user isn't paired into a game
+// they won't play). So this blocks until the context is cancelled or lichess
+// closes the stream, and the caller must keep it running for as long as the
+// player is waiting.
+//
+// The stream carries NO information — not even the game id. lichess's own
+// instruction is to have an event stream open first and learn about the game from
+// gameStart there. api.relay does exactly that, in that order.
+//
+// NOTE THE UNITS. limitMinutes is MINUTES (0..180, fractional allowed), while
+// ChallengeParams.LimitSeconds is SECONDS. That asymmetry is lichess's, not ours,
+// and it is an easy way to ask for a 10-second game while meaning ten minutes.
+//
+// Rate limit: 5 per minute PER IP (lila Limiters.setupPost), which for gamchess
+// means 5 per minute for every Gambit player combined. The caller is expected to
+// gate on that before spending one.
+// SeekParams is every control lichess offers on a real-time seek.
+//
+// Variant is deliberately absent, and that is a Gambit constraint rather than a
+// lichess one: our board plays standard chess and nothing else (the vendored
+// rules library is standard-only), so a Crazyhouse or Atomic game would arrive
+// as a stream of moves we could not render or validate. Offering a variant we
+// cannot draw would be worse than not offering it.
+type SeekParams struct {
+	// TimeMinutes is MINUTES (0..180, fractional allowed) — lichess's unit for a
+	// seek. ChallengeParams.LimitSeconds is SECONDS. The asymmetry is theirs.
+	TimeMinutes      float64
+	IncrementSeconds int // 0..180
+
+	// Rated puts the game on the player's real lichess rating. Their choice, and
+	// the reason the UI asks rather than assumes.
+	Rated bool
+
+	// RatingRange narrows the opponent pool, e.g. "1500-1800". lichess's own
+	// advice is "better left empty" — a narrow range on a small pool means a seek
+	// that never pairs, and Gambit's seeks are already scarce.
+	RatingRange string
+
+	// Color is "white", "black", or ""/"random". lichess's advice is again to
+	// leave it empty for an even split; asking for a colour halves the pool.
+	Color string
+}
+
+func SeekRealtime(ctx context.Context, token string, p SeekParams) error {
+	if p.TimeMinutes < 0 || p.TimeMinutes > 180 {
+		return fmt.Errorf("lichess: seek time %.1f is outside 0..180 minutes", p.TimeMinutes)
+	}
+	if p.IncrementSeconds < 0 || p.IncrementSeconds > 180 {
+		return fmt.Errorf("lichess: seek increment %d is outside 0..180 seconds", p.IncrementSeconds)
+	}
+	if !SeekCompatible(int(p.TimeMinutes*60), p.IncrementSeconds) {
+		return fmt.Errorf("lichess: a real-time seek needs rapid or slower — %.1f+%d is faster",
+			p.TimeMinutes, p.IncrementSeconds)
+	}
+	if err := guard(ctx); err != nil {
+		return err
+	}
+	// The lobby's 5-per-minute limit is per IP, which for us means per PLAYERBASE.
+	// Refuse locally with a real explanation rather than spending the shared
+	// budget to be told the same thing by a 429.
+	if err := TakeSeekSlot(); err != nil {
+		return err
+	}
+
+	form := url.Values{
+		"time":      {strconv.FormatFloat(p.TimeMinutes, 'f', -1, 64)},
+		"increment": {fmt.Sprint(p.IncrementSeconds)},
+		"rated":     {fmt.Sprint(p.Rated)},
+	}
+	if p.RatingRange != "" {
+		form.Set("ratingRange", p.RatingRange)
+	}
+	if p.Color != "" && p.Color != "random" {
+		form.Set("color", p.Color)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBase+"/api/board/seek",
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("lichess: build seek request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/x-ndjson")
+
+	// streamClient, not client: a client timeout would cancel the seek out from
+	// under a player still waiting for an opponent.
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("lichess: seek request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+		return &APIError{Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
+	}
+
+	// Drain until cancelled or closed. There is nothing to parse — holding the
+	// connection is the entire purpose.
+	_, err = io.Copy(io.Discard, resp.Body)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if err != nil {
+		return fmt.Errorf("lichess: seek stream: %w", err)
+	}
+	return nil // lichess closed it: matched, or expired
 }
 
 // SeekCorrespondence posts a correspondence seek. days ∈ {1,2,3,5,7,10,14}.
@@ -445,6 +591,12 @@ func post(ctx context.Context, token, path string, form url.Values) error {
 // say useful things ("This game cannot be aborted", "Not your turn") that are
 // worth having in a log line.
 func postBody(ctx context.Context, token, path string, form url.Values) ([]byte, error) {
+	// lichess asks us to wait a full minute after a 429 before resuming API usage.
+	// Honour it here rather than at each call site, so no path can skip it.
+	if err := guard(ctx); err != nil {
+		return nil, err
+	}
+
 	var body io.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())

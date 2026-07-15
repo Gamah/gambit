@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -530,7 +531,7 @@ func (h *handler) lichessPlay(w http.ResponseWriter, r *http.Request) {
 	// Bullet can never reach lichess from any path — the Board API refuses
 	// anything faster than blitz. Reject it here with a readable reason rather
 	// than spending a lichess request to be told the same thing.
-	if !in.Unlimited && !lichess.BoardCompatible(in.LimitSeconds, in.IncrementSec) {
+	if !in.Unlimited && !lichess.ChallengeCompatible(in.LimitSeconds, in.IncrementSec) {
 		writeError(w, http.StatusBadRequest,
 			"lichess's Board API won't play anything faster than blitz — bullet tables can't mirror")
 		return
@@ -549,8 +550,130 @@ func (h *handler) lichessPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeJSON(w, http.StatusOK, h.stamped(p, steamID))
+}
+
+// seekPost asks lichess's lobby to find a random opponent.
+type seekPost struct {
+	ClientGameID string `json:"client_game_id"`
+	// Minutes, matching lichess's own unit for a seek (their challenge endpoint
+	// uses seconds — the asymmetry is theirs).
+	TimeMinutes  float64 `json:"time_minutes"`
+	IncrementSec int     `json:"increment_seconds"`
+	Rated        bool    `json:"rated"`
+	RatingRange  string  `json:"rating_range"`
+	Color        string  `json:"color"`
+}
+
+// POST /api/v1/lichess/seek — play a random lichess opponent.
+//
+// Unlike /play, this needs ONE caller, not two: you are spending your own token
+// to play a stranger who opts in on lichess's side by their own choice. Nobody
+// is dragged into anything, so there is nobody to get consent from.
+//
+// The opponent is not in this lobby, so the table's other seat is irrelevant —
+// this works from a table you're sitting at alone.
+func (h *handler) lichessSeek(w http.ResponseWriter, r *http.Request) {
+	steamID, ok := h.requireSteam(w, r)
+	if !ok {
+		return
+	}
+	if !h.relay.Enabled() {
+		writeError(w, http.StatusNotImplemented, "lichess play is not configured on this server")
+		return
+	}
+
+	var in seekPost
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed body")
+		return
+	}
+	if _, err := uuid.Parse(in.ClientGameID); err != nil {
+		writeError(w, http.StatusBadRequest, "client_game_id must be a UUID")
+		return
+	}
+
+	limitSeconds := int(in.TimeMinutes * 60)
+
+	// A real-time seek needs RAPID or slower — a stricter floor than a challenge's
+	// blitz. Two different lila functions, both called isBoardCompatible; see the
+	// lichess package. Refuse here with a reason rather than spend one of the five
+	// seeks-per-minute the whole playerbase shares.
+	if !lichess.SeekCompatible(limitSeconds, in.IncrementSec) {
+		writeError(w, http.StatusBadRequest,
+			"lichess's lobby only takes rapid or slower seeks — blitz and faster can't be seeked (a direct challenge at a table can)")
+		return
+	}
+	if in.RatingRange != "" && !validRatingRange(in.RatingRange) {
+		writeError(w, http.StatusBadRequest, `rating_range must look like "1500-1800"`)
+		return
+	}
+	switch in.Color {
+	case "", "random", "white", "black":
+	default:
+		writeError(w, http.StatusBadRequest, `color must be white, black or random`)
+		return
+	}
+
+	p, err := h.relay.Join(r.Context(), steamID, PlayRequest{
+		ClientGameID:  in.ClientGameID,
+		Seek:          true,
+		SeekerSteamID: steamID,
+		LimitSeconds:  limitSeconds,
+		IncrementSec:  in.IncrementSec,
+		Rated:         in.Rated,
+		RatingRange:   in.RatingRange,
+		Color:         in.Color,
+	})
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, h.stamped(p, steamID))
+}
+
+// ratingRangeRe matches lichess's "1500-1800" form.
+var ratingRangeRe = regexp.MustCompile(`^[0-9]{3,4}-[0-9]{3,4}$`)
+
+func validRatingRange(s string) bool { return ratingRangeRe.MatchString(s) }
+
+// DELETE /api/v1/lichess/play/{id} — withdraw a seek, or drop a pending pairing.
+//
+// For a seek this is what actually removes it from lichess's lobby (the held
+// connection IS the seek), so it is not optional politeness: a player who walks
+// away must stop being pairable.
+func (h *handler) lichessPlayCancel(w http.ResponseWriter, r *http.Request) {
+	steamID, ok := h.requireSteam(w, r)
+	if !ok {
+		return
+	}
+	p, found := h.relay.Lookup(r.PathValue("id"))
+	if !found {
+		writeError(w, http.StatusNotFound, "no such game")
+		return
+	}
+	if _, seated := p.seatOf(steamID); !seated {
+		writeError(w, http.StatusNotFound, "no such game")
+		return
+	}
+	if err := h.relay.Cancel(p, steamID); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, h.stamped(p, steamID))
+}
+
+// stamped returns the play's state with YourColor filled in for this caller.
+//
+// The snapshot is shared by everyone watching, but "which side am I?" isn't —
+// and for a seek it is the ONLY way a client can know, because the opponent is a
+// stranger with no SteamID to match against.
+func (h *handler) stamped(p *play, steamID int64) PlayState {
 	state, _ := p.snapshot()
-	writeJSON(w, http.StatusOK, state)
+	if color, ok := p.seatOf(steamID); ok {
+		state.YourColor = color
+	}
+	return state
 }
 
 // GET /api/v1/lichess/play/{id}?since=N — the game-state transport.
@@ -581,7 +704,11 @@ func (h *handler) lichessPlayState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	since, _ := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
-	writeJSON(w, http.StatusOK, p.Wait(r.Context(), since))
+	state := p.Wait(r.Context(), since)
+	if color, seated := p.seatOf(steamID); seated {
+		state.YourColor = color
+	}
+	writeJSON(w, http.StatusOK, state)
 }
 
 // POST /api/v1/lichess/play/{id}/{action} — move / resign / draw / abort.
