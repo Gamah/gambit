@@ -26,7 +26,7 @@ deployed.
 2. **The M9 session format change signs out every web viewer session once.** The payload
    grew an audience field, so existing cookies fail their MAC. One click to sign back in;
    there is no migration and none is wanted.
-3. Walk to the west wall in an idle lobby: a real blitz game with names, titles, ratings
+3. Walk to the north wall in an idle lobby: a real blitz game with names, titles, ratings
    and clocks, updating move by move.
 4. "Next" cycles tables → TV → back. TV must be **last** and must not displace a table.
 5. **Everything TV is on the spectator board** (walk up, press E) — channel, follow, on/off.
@@ -37,14 +37,14 @@ deployed.
 7. As admin, pick a channel → **every follower's wall moves**; a player who picked their own
    doesn't. The admin sees no "follow the lobby" button, because their pick is the lobby's.
 8. **Crazyhouse and Three-check** should render the position and say what isn't shown
-   (pockets / check counts). Chess960 should render a scrambled back rank without complaint.
-7. **Kill gamchess → the wall falls back to mirroring tables and local chess is untouched.**
-   Non-negotiable.
-8. Two clients on the same channel should cost gamchess **one** upstream — check the log
-   (`lichess tv: opening upstream` once, `dropping idle upstream` ~45s after both leave).
-9. **Cycle away from TV → it stops polling**; gamchess logs the drop ~45s later. Cycle back →
-   it picks up the game that's on *now*, not the one you left.
-10. **Watch a game end** (UltraBullet is quickest): the wall should stop on the finished
+    (pockets / check counts). Chess960 should render a scrambled back rank without complaint.
+9. **Kill gamchess → the wall falls back to mirroring tables and local chess is untouched.**
+    Non-negotiable.
+10. Two clients on the same channel should cost gamchess **one** upstream — check the log
+    (`lichess tv: opening upstream` once, `dropping idle upstream` ~45s after both leave).
+11. **Cycle away from TV → it stops polling**; gamchess logs the drop ~45s later. Cycle back →
+    it picks up the game that's on *now*, not the one you left.
+12. **Watch a game end** (UltraBullet is quickest): the wall should stop on the finished
     position for 3s with "White wins — out of time" or similar, clocks not running, and only
     then move to the next game. This is the one thing lichess TV itself won't do.
     **If it says "Game over" with no reason, the server half isn't deployed** — the client

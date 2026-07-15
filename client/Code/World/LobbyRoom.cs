@@ -41,7 +41,7 @@ public sealed class LobbyRoom : Component, Component.ExecuteInEditor
 			GameObject.AddComponent<ChessRing>();
 	}
 
-	/// <summary>Self-provision the M5 spectator wall (west wall giant board + channel
+	/// <summary>Self-provision the M5 spectator wall (north wall giant board + channel
 	/// picker). Like the ring it lives on this GO (SpectatorWall reads RoomSize from
 	/// LobbyRoom), so add it if the scene doesn't carry one — no scene rewire needed.</summary>
 	void EnsureSpectatorWall()

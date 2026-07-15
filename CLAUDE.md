@@ -15,7 +15,7 @@ not for how things work.
 Gambit plays **real lichess games** from a table (M8): link your lichess account, and a game
 here is a game there, in your real history. Two ways in — play the person sitting opposite
 you (a direct challenge), or play a stranger (a lobby seek). It also puts **lichess TV** on
-the west wall (M9) — which needs no account, no link, and no token at all.
+the north wall (M9) — which needs no account, no link, and no token at all.
 
 The old pre-M7 lichess integration is **still not the starting point** for anything. It was
 ripped out on `m7-gamchess-identity` and M8 was a clean-slate rebuild against re-derived API
@@ -362,9 +362,33 @@ writer, and how `LichessTable`'s challenge/seek floors were checked against ever
 ## Architecture map (what exists and why)
 
 ### The world
+
+> **If you change how the world behaves, the info boards are part of the change.**
+> Two places describe the game to a player, and a change that doesn't update them
+> ships a lie:
+>
+> - **`CenterInfoPanel.razor`** — the east-wall board. The short version.
+> - **`InfoScreen.razor`**'s Welcome branch — walk up, press E. The long version.
+>
+> This is not housekeeping. Both drifted for entire milestones: the Welcome page
+> announced **"RIGHT NOW: 10+0 GAMES ONLY"** and listed on-board clocks and time
+> controls under **COMING SOON** long after both shipped, and the wall board's own
+> "COMING SOON" list was three features that already existed. The panels say what is
+> true when nobody re-reads them against the game, and nothing else fails — no test
+> breaks, nothing looks wrong in a diff, and the only person who finds out is a player
+> reading the front door.
+>
+> Ask it explicitly whenever you touch: seating or turn order, time controls, the
+> spectator wall's sources, lichess, the archive, or anything a newcomer is told.
+> **"COMING SOON" is the highest-risk copy in the repo** — it is a promise with an
+> expiry date and no alarm.
+
 - `LobbyRoom` self-provisions the world: it adds `ChessRing` to its GO if the scene
-  lacks one, and `EnsureSpectatorWall` builds the west-wall spectator board. Both
-  are self-healing, so **no scene rewire is needed** for these components.
+  lacks one, and `EnsureSpectatorWall` builds the **north-wall** spectator board (it
+  was the west wall until M5 moved it one wall clockwise — `SpectatorWall`'s own
+  comment is the truth, and the player-facing copy said "west wall" long after it
+  wasn't). Both are self-healing, so **no scene rewire is needed** for these
+  components.
 - `ChessRing` builds the ring of tables (`BuildChessTable`: table, board frame, 64
   cells, pieces at the start position, two camera anchors per station) and
   network-spawns the stations. It also owns the screen-rect UI math
@@ -454,7 +478,7 @@ the same reason.
 |---|---|---|
 | `LocalGameController` | host-folded `[Sync] BoardFen`/`Phase`/`ClientGameId` | the two-seat game at a table, and the archive upload (**D7**) |
 | `LichessGameController` | **no** — each client polls gamchess for itself | a real lichess game on this table (**M8**). Runs no clock and adjudicates nothing: lichess is the only authority, and the position is rebuilt from the UCI list it sends |
-| `SpectatorController` | reads the host-folded FEN; **polls gamchess for TV** | west wall: cycles live tables, then lichess TV (**M9**) |
+| `SpectatorController` | reads the host-folded FEN; **polls gamchess for TV** | north wall: cycles live tables, then lichess TV (**M9**) |
 
 **While a lichess game runs, the local controller is a shell** holding the seats and the
 `ClientGameId`. Its `ChessGame` never advances (moves go to the relay, not `NetChessMove`), so

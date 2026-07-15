@@ -5,7 +5,7 @@ using Sandbox;
 namespace Gambit.Game;
 
 /// <summary>
-/// Drives the west-wall spectator board: mirrors a live game at an sbox table, or
+/// Drives the north-wall spectator board: mirrors a live game at an sbox table, or
 /// shows lichess TV (M9).
 ///
 /// <para>Tables are read from synced/local state ONLY — the host-folded FEN each

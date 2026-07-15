@@ -11,7 +11,7 @@ namespace Gambit.Game;
 /// One lichess TV channel, polled from gamchess for this client (M9).
 ///
 /// <para><b>Per-client, and that is the existing pattern rather than a new one.</b> The
-/// west wall was already per-client — <c>SpectatorController._featuredIndex</c> is
+/// north wall was already per-client — <c>SpectatorController._featuredIndex</c> is
 /// local, so two players at that wall already see different tables. This just extends
 /// the cycle with a source that happens to come over HTTP.</para>
 ///

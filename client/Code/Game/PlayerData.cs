@@ -44,8 +44,8 @@ public sealed class PlayerData
 	/// (0.25–3×; higher = pops change faster).</summary>
 	public float FloorPopRate { get; set; } = 1f;
 
-	// ── Lichess TV on the west wall (M9) ──
-	/// <summary>Is lichess TV one of the sources the west wall cycles through?
+	// ── Lichess TV on the north wall (M9) ──
+	/// <summary>Is lichess TV one of the sources the north wall cycles through?
 	/// <para><b>Default on.</b> TV needs no lichess account and no linking — the feed
 	/// is anonymous — so there is nothing to opt into. Someone who doesn't want it
 	/// turns it off and it stays off; the wall keeps mirroring real tables either way,

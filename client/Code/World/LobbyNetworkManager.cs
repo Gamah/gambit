@@ -43,7 +43,7 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 	/// headless connection (not a player). Host-authoritative; rebuilt in OnActive/OnDisconnected.</summary>
 	[Sync( SyncFlags.FromHost )] public string AdminSteamIds { get; set; }
 
-	/// <summary>The lichess TV channel this lobby SUGGESTS for the west wall (M9).
+	/// <summary>The lichess TV channel this lobby SUGGESTS for the north wall (M9).
 	///
 	/// <para>A suggestion, not a setting: a client that has picked its own channel keeps
 	/// it, and a client with TV off ignores this entirely. Per-client choice is

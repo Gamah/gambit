@@ -304,7 +304,7 @@ the next game instantly. One request per game *end* per channel, through the sam
 No buffer accumulates: the relay keeps only the latest state, so the hold drops everything in
 between by construction.
 
-**TV is per-client and off-able.** It's one more entry in the west wall's existing cycle
+**TV is per-client and off-able.** It's one more entry in the north wall's existing cycle
 (which was already per-client), with no priority over real tables. Turn TV off, or kill
 gamchess, and the wall mirrors real tables exactly as it did before M9 — which was its
 original job.
