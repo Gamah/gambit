@@ -7,19 +7,22 @@ namespace Gambit.Game;
 
 public sealed class PlayerData
 {
-	/// <summary>Free-form local display name chosen while anonymous. Once signed in to
-	/// lichess (M3) the account name takes over for display — read <see cref="DisplayName"/>,
-	/// not this, on any human-facing surface. Kept as the fallback so signing out reverts
-	/// to it.</summary>
-	public string Username { get; set; } = "";
-
 	/// <summary>The name to show for this player everywhere (name tags, seat labels, PGN
-	/// headers): the lichess account name once signed in, otherwise the anonymous
-	/// <see cref="Username"/>. Single source of truth so signing in never leaves a stale
-	/// anon name on one surface while another shows the lichess name. A method, not a
-	/// get-only property, so System.Text.Json doesn't write it back into the saved JSON.</summary>
+	/// headers): the lichess account name once linked, otherwise the Steam persona name.
+	/// Single source of truth so signing in never leaves a stale name on one surface
+	/// while another shows the lichess name. A method, not a get-only property, so
+	/// System.Text.Json doesn't write it back into the saved JSON.
+	///
+	/// <para>There is no free-form username any more (M7). s&amp;box is Steam-gated, so
+	/// every player arrives with a name and an identity already — issue #7 §2: "no
+	/// anonymous/guest concept is needed". Gambit has no username of its own; names come
+	/// from Steam and from lichess. "Anonymous" in this codebase now means exactly one
+	/// thing: not lichess-linked.</para>
+	///
+	/// <para>An old save's <c>Username</c> key is simply ignored on load — System.Text.Json
+	/// drops unknown members — so this needs no migration.</para></summary>
 	public string DisplayName() =>
-		!string.IsNullOrEmpty( LichessUsername ) ? LichessUsername : Username;
+		!string.IsNullOrEmpty( LichessUsername ) ? LichessUsername : ( Connection.Local?.DisplayName ?? "" );
 
 	// ── Lichess identity (populated by LichessAuth in M3) ──
 	// The token is a SECRET credential (PLAN D3): never [Sync]/RPC it, never log
@@ -50,6 +53,13 @@ public sealed class PlayerData
 	/// panel. False until they dismiss it once; the lobby auto-pops it on load while
 	/// this is false. See <see cref="MarkInfoPanelSeen"/>.</summary>
 	public bool InfoPanelSeen { get; set; } = false;
+	/// <summary>Whether we've offered lichess sign-in at least once. Before M7 the
+	/// splash auto-opened because a brand-new player had no name and had to pick one;
+	/// now Steam already supplies the name, so the splash is purely an offer — shown
+	/// once, then never again. Nagging every launch would be noise: not being
+	/// lichess-linked is a perfectly good steady state (local play, puzzles,
+	/// spectating all work). See <see cref="MarkSignInPromptSeen"/>.</summary>
+	public bool SignInPromptSeen { get; set; } = false;
 	/// <summary>Show the decorative checkerboard floor (with its colour pops).</summary>
 	public bool CheckerboardFloor { get; set; } = true;
 	/// <summary>Pop re-pick frequency as a multiplier on the floor's base interval
@@ -73,6 +83,16 @@ public sealed class PlayerData
 		var data = Load() ?? new PlayerData();
 		if ( data.InfoPanelSeen ) return;
 		data.InfoPanelSeen = true;
+		data.Save();
+	}
+
+	/// <summary>Record that we've offered lichess sign-in, so the lobby stops
+	/// auto-popping the splash. Idempotent.</summary>
+	public static void MarkSignInPromptSeen()
+	{
+		var data = Load() ?? new PlayerData();
+		if ( data.SignInPromptSeen ) return;
+		data.SignInPromptSeen = true;
 		data.Save();
 	}
 

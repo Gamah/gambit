@@ -302,14 +302,20 @@ public sealed class LobbyPlayer : Component
 			return;
 		}
 
-		// Brand-new player (no name, never signed in): open the sign-in / name modal
-		// first. The welcome board waits until it's closed (TryAutoShowInfo guards on it).
+		// Offer lichess sign-in ONCE, ever. Pre-M7 this popped for any player with no
+		// name, because they had to pick one before they could play; Steam supplies the
+		// name now, so this is only an offer — and never being lichess-linked is a fine
+		// steady state, so it must not nag on every load. The welcome board waits until
+		// it's closed (TryAutoShowInfo guards on it).
 		if ( !_splashPopDone )
 		{
 			_splashPopDone = true;
 			var pd = Gambit.Game.PlayerData.Load();
-			if ( string.IsNullOrEmpty( pd?.LichessToken ) && string.IsNullOrEmpty( pd?.Username ) )
+			if ( string.IsNullOrEmpty( pd?.LichessToken ) && !( pd?.SignInPromptSeen ?? false ) )
+			{
+				Gambit.Game.PlayerData.MarkSignInPromptSeen();
 				Gambit.UI.Screens.SplashScreen.Open();
+			}
 		}
 
 		// First-ever load: pop the welcome/info board up automatically until the player

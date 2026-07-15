@@ -48,76 +48,54 @@
 				}
 				else
 				{
-					@if ( GamchessSignIn.Supported )
+					@* Every hint below is ONE LINE PER DIV with no inline markup. A panel
+					   div's auto height does not grow for wrapped text, and an inline
+					   <b>/<span> becomes its own flex item — either one silently draws
+					   the next block on top of this one (CLAUDE.md, UI Gotchas). *@
+					<div class="section">SIGN IN WITH LICHESS</div>
+					@if ( !GamchessSignIn.Supported )
 					{
-						<div class="section">SIGN IN WITH LICHESS</div>
-						@if ( !GamchessSignIn.Active )
+						<div class="hint">Steam isn't available on this build, so lichess sign-in is off.</div>
+						<div class="hint">You can still play locally at any board.</div>
+					}
+					else if ( !GamchessSignIn.Active )
+					{
+						<div class="hint">Play real lichess games as yourself.</div>
+						<div class="hint">We'll copy a link — open it and click Authorize.</div>
+						<div class="hint">The game picks it up on its own. Nothing to paste back.</div>
+						<div class="btn primary" onclick="@( () => BeginGamchess() )">Sign in with lichess</div>
+						@if ( GamchessSignIn.Phase == GamchessSignInPhase.Failed && !string.IsNullOrEmpty( GamchessSignIn.Error ) )
 						{
-							<div class="hint">Play real lichess games as yourself. We'll copy a link — open it, click <b>Authorize</b>, and the game picks it up on its own. Nothing to paste back.</div>
-							<div class="btn primary" onclick="@( () => BeginGamchess() )">Sign in with lichess</div>
-							@if ( GamchessSignIn.Phase == GamchessSignInPhase.Failed && !string.IsNullOrEmpty( GamchessSignIn.Error ) )
-							{
-								<div class="status err">@GamchessSignIn.Error</div>
-							}
+							<div class="status err">@GamchessSignIn.Error</div>
 						}
-						else if ( GamchessSignIn.Phase == GamchessSignInPhase.Starting )
-						{
-							<div class="hint">Starting…</div>
-						}
-						else if ( GamchessSignIn.Phase == GamchessSignInPhase.Exchanging )
-						{
-							<div class="hint">Finishing sign-in with lichess…</div>
-						}
-						else
-						{
-							<div class="hint">✓ Link copied. Authorize it in your browser and leave this open — the game is watching for it.</div>
-							<div class="minor-row">
-								<div class="minor" onclick="@( () => CopyGamchessLink() )">copy link again</div>
-								<div class="minor" onclick="@( () => CancelGamchess() )">cancel</div>
-							</div>
-						}
-						<div class="or"><span>or paste a token</span></div>
+					}
+					else if ( GamchessSignIn.Phase == GamchessSignInPhase.Starting )
+					{
+						<div class="hint">Starting…</div>
+					}
+					else if ( GamchessSignIn.Phase == GamchessSignInPhase.Exchanging )
+					{
+						<div class="hint">Finishing sign-in with lichess…</div>
 					}
 					else
 					{
-						<div class="section">SIGN IN WITH LICHESS</div>
-					}
-					<div class="hint">Copy the sign-in link, open it in your browser, click <b>Create</b> (scopes are pre-filled), then paste the <span class="mono">lip_…</span> token here.</div>
-					<div class="btn ghost" onclick="@( () => CopyTokenLink() )">@( _tokenLinkCopied < 2f ? "✓ Sign-in link copied" : "Copy sign-in link" )</div>
-					<div class="row">
-						<TextEntry @ref="_tokenEntry" class="entry" placeholder="Paste lip_… token" />
-						<div class="btn primary @(_busy ? "disabled" : "")" onclick="@( () => BeginSignIn() )">@( _busy ? "…" : "Sign in" )</div>
-					</div>
-					@if ( !string.IsNullOrEmpty( _status ) )
-					{
-						<div class="status @(_ok ? "ok" : "err")">@_status</div>
-					}
-
-					<div class="or"><span>or use OAuth</span></div>
-					@if ( !LichessOAuth.Pending )
-					{
-						<div class="btn ghost small" onclick="@( () => StartOAuth() )">Sign in with lichess (OAuth)</div>
-					}
-					else
-					{
-						<div class="hint">✓ Link copied. Authorize in your browser, then paste the page you land on (it won't load — the code is in the address bar):</div>
-						<div class="row">
-							<TextEntry @ref="_redirectEntry" class="entry" placeholder="Paste the address-bar URL" />
-							<div class="btn @(_busy ? "disabled" : "")" onclick="@( () => CompleteOAuth() )">@( _busy ? "…" : "Complete" )</div>
-						</div>
+						<div class="hint">✓ Link copied. Authorize it in your browser.</div>
+						<div class="hint">Leave this open — the game is watching for it.</div>
 						<div class="minor-row">
-							<div class="minor" onclick="@( () => CopyOAuthLink() )">copy link again</div>
-							<div class="minor" onclick="@( () => CancelOAuth() )">cancel</div>
+							<div class="minor" onclick="@( () => CopyGamchessLink() )">copy link again</div>
+							<div class="minor" onclick="@( () => CancelGamchess() )">cancel</div>
 						</div>
 					}
 
+					@* No display-name entry: s&box is Steam-gated, so you already have a
+					   name and an identity before you get here (issue #7 §2 — "no
+					   anonymous/guest concept is needed"). Gambit has no username of its
+					   own; names come from Steam, and from lichess once linked. *@
 					<div class="or"><span>or</span></div>
-					<div class="section">PLAY ANONYMOUSLY</div>
-					<div class="hint">Just pick a display name — play locally at a board and get a shareable lichess link afterward.</div>
-					<div class="row">
-						<TextEntry @ref="_nameEntry" class="entry" placeholder="Display name" maxlength="24" />
-						<div class="btn" onclick="@( () => PlayAnon() )">Play</div>
-					</div>
+					<div class="section">JUST PLAY</div>
+					<div class="hint">Play locally at any board as @SteamName.</div>
+					<div class="hint">Sign in later if you want rated lichess games.</div>
+					<div class="btn" onclick="@( () => Close() )">Play</div>
 				}
 			</div>
 		</div>
@@ -255,20 +233,13 @@
 	/// <summary>Open the sign-in modal (console command, 401 re-prompt, first run).</summary>
 	public static void Open() => IsOpen = true;
 
-	TextEntry _tokenEntry;
-	TextEntry _redirectEntry;
-	TextEntry _nameEntry;
-	bool _focused;
-	bool _busy;
-	bool _ok;
-	string _status;
-	string _oauthUrl;                          // the pending authorize URL, for re-copy
-	RealTimeSince _tokenLinkCopied = 999f;
+	// No text fields left: the only inputs are buttons now, so there's nothing to
+	// focus. (Removed with the paste flows and the display-name entry.)
 	bool _gamchessCopied;                      // copied this attempt's URL yet?
 
 	protected override void OnUpdate()
 	{
-		if ( !IsOpen ) { _focused = false; return; }
+		if ( !IsOpen ) return;
 
 		// Drive the gamchess /code poll. Safe to call unconditionally: it's a no-op
 		// unless an attempt is waiting, and it rate-limits itself.
@@ -288,30 +259,15 @@
 		{
 			Input.EscapePressed = false;
 			Close();
-			return;
-		}
-
-		// Focus the field the user is most likely to type/paste into next — the
-		// redirect box once OAuth is pending, otherwise the token box. _focused is
-		// reset by the OAuth start/cancel handlers so the target can change.
-		if ( !_focused && !LichessAuth.SignedIn )
-		{
-			var field = LichessOAuth.Pending ? _redirectEntry : _tokenEntry;
-			if ( field != null )
-			{
-				field.Focus();
-				_focused = true;
-			}
 		}
 	}
 
 	void Close()
 	{
 		IsOpen = false;
-		_focused = false;
-		_status = null;
-		LichessOAuth.Cancel();
-		GamchessSignIn.Reset();
+		// Cancels any in-flight OAuth attempt and puts RedirectUri back to the
+		// localhost default the console fallbacks expect.
+		GamchessSignIn.Cancel();
 		_gamchessCopied = false;
 		StateHasChanged();
 	}
@@ -320,7 +276,6 @@
 
 	void BeginGamchess()
 	{
-		_status = null;
 		_gamchessCopied = false;
 		GamchessSignIn.Begin();          // async; OnUpdate copies the URL when it lands
 		StateHasChanged();
@@ -336,105 +291,17 @@
 	{
 		GamchessSignIn.Cancel();
 		_gamchessCopied = false;
-		_focused = false;
 		StateHasChanged();
 	}
 
-	// ── OAuth code-paste (fallback — works with gamchess down) ──
+	// The token-paste and OAuth-code-paste UI is deliberately gone: gamchess is the
+	// only sign-in surface now. Both paths still EXIST for debugging — see
+	// gambit_signin / gambit_oauth + gambit_oauth_complete — they just aren't
+	// something a player is offered.
 
-	void StartOAuth()
-	{
-		// This flow must always use the localhost redirect, even if a gamchess
-		// attempt was mid-flight and left RedirectUri pointing at /callback — the
-		// exchange compares it byte-for-byte, so a stale value would 400 here and
-		// break the very fallback this exists to be.
-		GamchessSignIn.Cancel();
-		LichessOAuth.RedirectUri = LichessOAuth.LocalhostRedirectUri;
-		_gamchessCopied = false;
-
-		_oauthUrl = LichessOAuth.Start();
-		Clipboard.SetText( _oauthUrl );
-		_status = null;
-		_focused = false;                      // re-focus onto the redirect box
-		StateHasChanged();
-	}
-
-	void CopyOAuthLink()
-	{
-		if ( !string.IsNullOrEmpty( _oauthUrl ) ) Clipboard.SetText( _oauthUrl );
-	}
-
-	void CancelOAuth()
-	{
-		LichessOAuth.Cancel();
-		_status = null;
-		_focused = false;
-		StateHasChanged();
-	}
-
-	async void CompleteOAuth()
-	{
-		if ( _busy ) return;
-		var redirect = _redirectEntry?.Text?.Trim();
-		_busy = true;
-		_ok = false;
-		_status = "Finishing sign-in with lichess…";
-		StateHasChanged();
-
-		var (ok, error) = await LichessOAuth.Complete( redirect );
-
-		_busy = false;
-		_ok = ok;
-		_status = ok ? null : error;
-		if ( ok && _redirectEntry != null ) _redirectEntry.Text = "";
-		StateHasChanged();
-	}
-
-	// ── Personal-token paste (advanced) ──
-
-	void CopyTokenLink()
-	{
-		Clipboard.SetText( LichessAuth.TokenCreateUrl );
-		_tokenLinkCopied = 0f;
-		StateHasChanged();
-	}
-
-	async void BeginSignIn()
-	{
-		if ( _busy ) return;
-		var token = _tokenEntry?.Text?.Trim();
-		_busy = true;
-		_ok = false;
-		_status = "Checking with lichess…";
-		StateHasChanged();
-
-		var (ok, error) = await LichessAuth.SignInWithToken( token );
-
-		_busy = false;
-		_ok = ok;
-		if ( ok )
-		{
-			_status = null;
-			if ( _tokenEntry != null ) _tokenEntry.Text = "";
-			// Signed in — flip to the signed-in view (stays open so they can confirm).
-		}
-		else
-		{
-			_status = error;
-		}
-		StateHasChanged();
-	}
-
-	void PlayAnon()
-	{
-		var name = _nameEntry?.Text?.Trim();
-		if ( string.IsNullOrEmpty( name ) ) { _status = "Enter a display name first."; _ok = false; StateHasChanged(); return; }
-
-		var data = PlayerData.Load() ?? new PlayerData();
-		data.Username = name;
-		data.Save();
-		Close();
-	}
+	/// <summary>This machine's Steam persona name — what you're called until a
+	/// lichess account takes over.</summary>
+	static string SteamName => Connection.Local?.DisplayName ?? "you";
 
 	void SignOut()
 	{
@@ -447,6 +314,5 @@
 	// after sign-in actually succeeded.
 	protected override int BuildHash() =>
 		System.HashCode.Combine( IsOpen, LichessAuth.SignedIn, LichessAuth.Username,
-			System.HashCode.Combine( _busy, _ok, _status, LichessOAuth.Pending, _tokenLinkCopied < 2f ),
-			GamchessSignIn.Phase, GamchessSignIn.Error );
+			GamchessSignIn.Phase, GamchessSignIn.Error, GamchessSignIn.Supported );
 }
