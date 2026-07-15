@@ -87,8 +87,12 @@ public static class LichessTv
 	};
 
 	/// <summary>What a lobby suggests when nobody has chosen. Matches gamchess's
-	/// <c>ChannelDefault</c>.</summary>
-	public const string DefaultChannel = "blitz";
+	/// <c>ChannelDefault</c> — if they ever disagree the server wins.
+	///
+	/// <para><b>Top Rated, not Blitz.</b> It's the best game in progress on lichess at any
+	/// moment, whatever the speed, which is what a wall in a chess bar wants — something
+	/// worth looking up at. Blitz is a fine game but an arbitrary one.</para></summary>
+	public const string DefaultChannel = "best";
 
 	/// <summary>Channel keys, in display order. Built once — a property that quietly
 	/// minted a fresh array per call would read as free and not be.</summary>

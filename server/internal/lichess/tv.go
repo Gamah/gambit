@@ -86,7 +86,11 @@ const (
 )
 
 // ChannelDefault is what a lobby suggests when nobody has chosen.
-const ChannelDefault = ChannelBlitz
+//
+// Top Rated rather than Blitz: it is the best game in progress on lichess at any
+// moment, whatever the speed, which is what a wall in a chess bar wants. Blitz is a
+// fine game but an arbitrary one. Mirrored by the client's LichessTv.DefaultChannel.
+const ChannelDefault = ChannelBest
 
 // channels is the allowlist, and it is a SECURITY boundary, not a menu. The
 // channel key arrives from the wire and is concatenated into a lichess URL — an

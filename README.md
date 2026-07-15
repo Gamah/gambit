@@ -254,7 +254,8 @@ gives us, and one missed decrement leaks a stream to lichess forever.
    Gambit*, against the one IP whose limits every real player shares. Being identifiable and
    being an open relay is a bad combination.
 
-**Channels: all 16 of them**, default `blitz` — the six speeds (`best` = "Top Rated",
+**Channels: all 16 of them**, default `best` ("Top Rated" — the best game in progress on
+lichess at any moment, whatever the speed, which is what a wall wants). The six speeds (`best`,
 `bullet`, `blitz`, `rapid`, `classical`, `ultraBullet`), the eight variants (`chess960`,
 `crazyhouse`, `kingOfTheHill`, `threeCheck`, `antichess`, `atomic`, `horde`, `racingKings`)
 and `bot`/`computer`.

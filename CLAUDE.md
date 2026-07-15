@@ -177,8 +177,10 @@ and its replacement land in one state so the client can never show the new game 
 (one slot, overwritten), so "hold for 3s, then take whatever is current" abandons all but the
 latest by construction — no queue, no catch-up, no speed-up logic.
 
-**All 16 channels, variants included** (default `blitz`). This was **six** at first, excluded
-on the reasoning that the vendored rules are standard-only so a variant FEN can't be drawn —
+**All 16 channels, variants included** (default `best` — "Top Rated", the best game in
+progress whatever the speed; a wall wants something worth looking up at, and blitz is a fine
+game but an arbitrary one). This was **six** at first, excluded on the reasoning that the
+vendored rules are standard-only so a variant FEN can't be drawn —
 **that was wrong, and the mistake is instructive**: the standard-only rule governs *playing*
 (`ChessGame` parses the FEN and validates moves) and was carried over to the wall, which
 parses nothing. `SpectatorBoard3D` takes the placement field alone and walks its characters

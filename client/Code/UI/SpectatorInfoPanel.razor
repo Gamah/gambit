@@ -148,21 +148,30 @@
 		return move.Length == 0 ? tc : $"{tc} · {move}";
 	}
 
-	/// <summary>Liveness line. The wall's only source is the host-folded FEN from a
-	/// table, so it is always genuinely real-time — there are no DELAYED/BUFFERING
-	/// states to report.</summary>
+	/// <summary>Liveness line.
+	///
+	/// <para>A table game is the host-folded FEN, so it is genuinely real-time. lichess TV
+	/// is polled, and it is a different claim — saying "table game" over a game from
+	/// lichess was simply wrong, and it said it because this line predates TV.</para>
+	///
+	/// <para>A finished game is not live at all: the result takes the line, because
+	/// claiming LIVE over a board we are deliberately holding on a dead position is the
+	/// one thing this line must never do.</para></summary>
 	string LiveText()
 	{
 		var c = C;
 		if ( c == null ) return "";
 		if ( !c.HasPosition ) return string.IsNullOrEmpty( c.StatusText ) ? "" : c.StatusText;
-		return "LIVE · table game";
+		if ( !string.IsNullOrEmpty( c.FanfareText ) ) return c.FanfareText;
+		return c.IsTvSource ? "LIVE · lichess TV" : "LIVE · table game";
 	}
 
 	string LiveColor()
 	{
 		var c = C;
 		if ( c == null || !c.HasPosition ) return WallTheme.TextFaint;
+		// A finished game reads as ended, not as live.
+		if ( !string.IsNullOrEmpty( c.FanfareText ) ) return WallTheme.Text;
 		return WallTheme.AccentCss;
 	}
 

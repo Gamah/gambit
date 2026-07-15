@@ -54,6 +54,39 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// <summary>Keep a seat tag this far off the side wall when fitting it beside the board.</summary>
 	const float SeatWallMargin = 10f;
 
+	/// <summary>Intrinsic pixel size of the end-of-game banner (SpectatorFanfarePanel).
+	///
+	/// <para>Sized against its longest possible line the same way <see cref="SeatPxWidth"/>
+	/// is, because <c>white-space: nowrap</c> means getting it wrong CLIPS rather than
+	/// wraps. That line is <c>LichessTv.ResultLine</c>'s worst case, "Black wins —
+	/// insufficient material" — 34 chars at the banner's 64px bold:</para>
+	/// <code>
+	///   34 chars × 0.6em × 64px      = 1306   (0.6em/char is this file's own calibration)
+	///   + letter-spacing 2px × 34    =   68   → 1374 of text
+	///   + padding 54 × 2             =  108
+	///   + border 4 × 2               =    8   → ~1490
+	/// </code>
+	/// <para>1600 rounds that up with the same ~10% headroom SeatPxWidth took. A first
+	/// pass used 1400 and would have clipped the longest result on the board.</para>
+	///
+	/// <para>It renders at the seat tags' fit scale, so it grows and shrinks with them:
+	/// 1600 × 3.53 × 0.05 ≈ 282 world units against a 448-unit board — centred, well
+	/// inside it.</para></summary>
+	const float FanfarePxWidth = 1600f;
+	const float FanfarePxHeight = 220f;
+
+	/// <summary>How far the banner floats out of the board's FACE, in world units.
+	///
+	/// <para>The pieces stand UP out of that face, so this has to clear the tallest of
+	/// them or the banner renders inside a king. Worked from the real numbers rather than
+	/// eyeballed: <c>SpectatorBoard3D.PieceScale</c> is <c>BoardSize / 26</c> = (56×8)/26
+	/// = 17.2, and <c>ChessSetBuilder.PieceHeight(King)</c> is 6.4 base units — so a king
+	/// stands ~110 units proud of the board. 140 clears it with room to spare.</para>
+	///
+	/// <para>Tied to <see cref="BoardCellSize"/>, so a bigger board wants a bigger number:
+	/// clearance ≈ <c>BoardCellSize × 8 / 26 × 6.4 × 1.3</c>.</para></summary>
+	const float FanfareFaceClearance = 140f;
+
 	/// <summary>World units the board sits in front of the wall's inner face
 	/// (RoomSize / 2), toward the room.</summary>
 	[Property] public float WallInset { get; set; } = 4f;
@@ -201,6 +234,21 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 
 		AddSeatTag( "SpectatorWhiteTag", boardCentre + boardRot * WhiteOffset, inPlane, fitScale, white: true );
 		AddSeatTag( "SpectatorBlackTag", boardCentre + boardRot * BlackOffset, inPlane, fitScale, white: false );
+
+		// The end-of-game banner, floating just off the board's FACE and centred on it.
+		// Placed in the board's own frame and transformed through its rotation, so it
+		// tilts with the board exactly as the seat tags do — and offset along the board's
+		// local +Z (out of the face, toward the room) so it clears the standing pieces
+		// rather than intersecting them.
+		var fanfare = new GameObject( true, "SpectatorFanfare" );
+		fanfare.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
+		fanfare.Parent = _root;
+		fanfare.LocalPosition = boardCentre + boardRot * new Vector3( 0f, 0f, FanfareFaceClearance );
+		fanfare.LocalRotation = inPlane;
+		fanfare.LocalScale = new Vector3( 1f, 1f, 1f ) * fitScale;
+		var fanfarePanel = fanfare.AddComponent<WorldPanel>();
+		fanfarePanel.PanelSize = new Vector2( FanfarePxWidth, FanfarePxHeight );
+		fanfare.AddComponent<Gambit.UI.SpectatorFanfarePanel>();
 
 		// Walk-up control board at walk-up height, directly under the floating board: shows the
 		// current source, players, time control/move, and live status, and invites "Press E to

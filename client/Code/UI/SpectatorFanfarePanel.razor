@@ -1,0 +1,84 @@
+@using System
+@using Sandbox
+@using Sandbox.UI
+@using Gambit.Game
+@using Gambit.World
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	The end-of-game banner, floating in front of the giant spectator board.
+
+	lichess TV cuts to the next game the instant one ends — the result never appears, the
+	pieces just jump. So when the game on the wall finishes we hold the final position
+	(SpectatorController.FanfareText is non-null for exactly that window) and put the
+	result over the middle of it.
+
+	IN FRONT OF THE BOARD, not beside it, and that is the whole point of a separate panel.
+	The first attempt folded the result into SpectatorController.StatusText, which was
+	invisible in both places that render it: the engaged screen only draws while you're at
+	the station, and the info board's LiveText() only shows StatusText when there is NO
+	position — and a fanfare is precisely a held position. The result belongs where the
+	eye already is.
+
+	Display-only WorldPanel, no pointer input. Coplanar with the board and offset out of
+	its face, so it tilts with it (see SpectatorWall.AddFanfare). Empty markup when there
+	is nothing to announce — the panel is always present and simply draws nothing, which
+	is cheaper and less fragile than creating and destroying a GameObject every game.
+*@
+
+<root>
+	@if ( !string.IsNullOrEmpty( Text() ) )
+	{
+		<div class="banner">
+			<div class="result">@Text()</div>
+		</div>
+	}
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		align-items: center;
+		justify-content: center;
+	}
+
+	/* Dark and solid rather than tinted: it sits over a board of light squares and
+	   3D pieces, and a translucent panel against that is unreadable from across the
+	   room — which is the only place it's ever read from. */
+	.banner {
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 26px 54px;
+		background-color: rgba(8, 8, 12, 0.88);
+		border: 4px solid rgba(255, 255, 255, 0.85);
+		border-radius: 18px;
+	}
+
+	/* One line, one div: a div's auto height doesn't grow for wrapped text, and inline
+	   spans would become separate flex items. The longest line we produce is
+	   "Black wins — insufficient material". */
+	.result {
+		white-space: nowrap;
+		font-family: $wall-font;
+		font-size: 64px;
+		font-weight: bold;
+		letter-spacing: 2px;
+		color: #ffffff;
+	}
+</style>
+
+@code
+{
+	SpectatorController C => SpectatorController.Instance;
+
+	/// <summary>The result line, or null/empty when no game has just ended.</summary>
+	string Text() => C?.FanfareText;
+
+	protected override int BuildHash() => HashCode.Combine( Text() );
+}

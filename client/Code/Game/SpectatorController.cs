@@ -11,8 +11,9 @@ namespace Gambit.Game;
 /// <para>Tables are read from synced/local state ONLY — the host-folded FEN each
 /// <see cref="LocalGameController"/> already publishes — so that half works identically
 /// on every client, needs no network of its own, and is real-time rather than polled.
-/// <b>TV is the one source that isn't free</b>: it polls gamchess, so it only runs
-/// while someone is actually looking at it.</para>
+/// <b>TV is the one source that isn't free</b>: it polls gamchess, so it only runs while
+/// it is the FEATURED source on this client. Cycle to a table, or turn TV off, and the
+/// polling stops and gamchess drops its upstream.</para>
 ///
 /// <para><b>Per-client throughout, which is the existing pattern rather than a new
 /// one.</b> <see cref="CycleFeatured"/> and the index are local, so two players at this
@@ -61,8 +62,24 @@ public sealed class SpectatorController : Component
 	/// <summary>One-line label above the board ("FEATURED · Table 3").</summary>
 	public string ChannelLabel { get; private set; } = "SPECTATE";
 
+	/// <summary>Is what's on the wall right now a lichess TV game rather than a table?
+	/// The panels need it because the two aren't the same claim — a table game is the
+	/// host-folded FEN and genuinely real-time; TV is polled.</summary>
+	public bool IsTvSource { get; private set; }
+
 	/// <summary>Why there's nothing to show, or null.</summary>
 	public string StatusText { get; private set; }
+
+	/// <summary>"White wins — out of time", while the wall is holding on a game that
+	/// just finished. Null the rest of the time.
+	///
+	/// <para>Its OWN property rather than a flavour of <see cref="StatusText"/>, because
+	/// the two mean opposite things: StatusText is "there is nothing to show", and this
+	/// is "what you are looking at is the end of a game". Folding the fanfare into
+	/// StatusText is exactly how it came to be invisible — every renderer of StatusText
+	/// gates on <c>!HasPosition</c>, and the fanfare's whole point is that a position IS
+	/// up.</para></summary>
+	public string FanfareText { get; private set; }
 
 	public bool HasPosition => !string.IsNullOrEmpty( Fen );
 
@@ -201,6 +218,7 @@ public sealed class SpectatorController : Component
 		{
 			// TV off and no tables. Any source built before TV was switched off must stop
 			// too, or it keeps polling for a channel that is no longer in the cycle.
+			IsTvSource = false;
 			_tv?.StopWatching();
 			ClearPosition();
 			ChannelLabel = "FEATURED";
@@ -220,6 +238,7 @@ public sealed class SpectatorController : Component
 
 		// A table is featured, so TV isn't — same as walking away, and for the same
 		// reasons: stop polling (gamchess can drop the upstream) and drop the version.
+		IsTvSource = false;
 		_tv?.StopWatching();
 
 		var t = live[idx];
@@ -238,10 +257,15 @@ public sealed class SpectatorController : Component
 			? $"FEATURED · Table {t.Number} ({idx + 1}/{sources})"
 			: $"FEATURED · Table {t.Number}";
 		StatusText = null;
+		// Cycling away from a fanfare mid-hold must not leave a lichess result floating
+		// over somebody's table game. A table game's own end is the local controller's
+		// business, not this one's.
+		FanfareText = null;
 	}
 
 	void ShowTv( int sources )
 	{
+		IsTvSource = true;
 		_tv ??= new LichessTvSource();
 		_tv.SetChannel( DesiredChannel );
 
@@ -289,10 +313,12 @@ public sealed class SpectatorController : Component
 		// highlight while the dead game is still up.
 		if ( _tv.ShowingFinished )
 		{
-			StatusText = _tv.FanfareText;
+			FanfareText = _tv.FanfareText;
 			TickingSeat = null;
+			StatusText = null;
 			return;
 		}
+		FanfareText = null;
 		StatusText = null;
 	}
 
@@ -344,6 +370,9 @@ public sealed class SpectatorController : Component
 		BlackClock = null;
 		TickingSeat = null;
 		TimeControlLabel = null;
+		// No position means nothing to hold a result over. A stale fanfare would float
+		// a dead game's result across an empty board, or across a table game.
+		FanfareText = null;
 	}
 
 	static string TableNumber( ChessStation st )

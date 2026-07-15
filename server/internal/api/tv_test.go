@@ -142,8 +142,9 @@ func TestTvChannelAllowlistAcceptsEveryLichessChannel(t *testing.T) {
 			t.Errorf("%q is allowlisted but missing from ChannelOrder", c)
 		}
 	}
-	if lichess.ChannelDefault != lichess.ChannelBlitz {
-		t.Errorf("default channel is %q, want blitz", lichess.ChannelDefault)
+	// Top Rated: the best game in progress, whatever the speed — what a wall wants.
+	if lichess.ChannelDefault != lichess.ChannelBest {
+		t.Errorf("default channel is %q, want best", lichess.ChannelDefault)
 	}
 }
 
@@ -663,8 +664,8 @@ func TestTvChannelsRoute(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Default != "blitz" {
-		t.Errorf("default %q, want blitz", out.Default)
+	if out.Default != "best" {
+		t.Errorf("default %q, want best", out.Default)
 	}
 	if len(out.Channels) != 16 {
 		t.Fatalf("%d channels, want all 16 of lichess's", len(out.Channels))
