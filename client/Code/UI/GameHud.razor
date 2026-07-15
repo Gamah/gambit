@@ -4,6 +4,7 @@
 @using Sandbox.UI;
 @using Gambit.World;
 @using Gambit.Game;
+@using Gambit.Api;
 @namespace Gambit.UI
 @inherits PanelComponent
 
@@ -29,7 +30,34 @@
 				<div class="name @SeatClass( ctrl, ChessSeat.Black )">⬛ @SeatLine( ctrl, ChessSeat.Black )</div>
 			</div>
 
-			@if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
+			@* While a lichess game owns the board, LICHESS is the authority on what
+			   happened — the local controller's ChessGame never advances during one
+			   (moves go to the relay, not NetChessMove), so its result and clocks
+			   are stale by construction. Read lichess's verdict, not ours. *@
+			@if ( OnLichess() )
+			{
+				var lc = Lichess();
+
+				@if ( lc.State is { finished: true } )
+				{
+					<div class="status over">@lc.ResultString</div>
+					<div class="reason">@lc.OverReason (on lichess)</div>
+				}
+				else if ( LichessStatus() is string note )
+				{
+					<div class="status">@note</div>
+				}
+				else
+				{
+					<div class="status turn">@TurnText( Source() )</div>
+				}
+
+				@if ( lc.DrawOffered )
+				{
+					<div class="reason">Your opponent offers a draw.</div>
+				}
+			}
+			else if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
 			{
 				<div class="status">@WaitingText()</div>
 			}
@@ -40,7 +68,16 @@
 			}
 			else
 			{
-				<div class="status turn">@TurnText( ctrl )</div>
+				<div class="status turn">@TurnText( Source() )</div>
+			}
+
+			@* A lichess game that never started. Lives OUTSIDE the OnLichess() block
+			   above on purpose: the controller disengages when it fails, so this is
+			   the only place the reason can be seen. The table has fallen back to a
+			   normal local game. *@
+			@if ( !OnLichess() && Lichess()?.Error is string lerr )
+			{
+				<div class="reason lichess-err">♞ @lerr — playing here instead.</div>
 			}
 
 			@* Time control + ready. Shown whenever the table is not mid-game, so it
@@ -57,6 +94,58 @@
 					}
 				</div>
 
+				@* Lichess (M8). Two ways to put a real game on your lichess record:
+				   play the person opposite you, or play a stranger. Each is offered
+				   only where it could actually work — the two flows have DIFFERENT
+				   speed floors (blitz for a challenge, rapid for a seek), which is
+				   lichess's rule, not ours. *@
+				@* No "already engaged" branch needed: ShowSetup is false whenever
+				   lichess owns the board, so this block is only ever reached with no
+				   lichess game in flight. *@
+				@if ( !LichessLinkState.Linked )
+				{
+					<div class="setup-hint">Link a lichess account at the east wall to play real games from this table</div>
+				}
+				else
+				{
+					@* Play the person opposite you. Both seats must opt in — and
+					   gamchess independently requires both to ask, so this is the
+					   agreement, not the authorisation. *@
+					@if ( LichessTable.CanMirror( ctrl.Tc ) )
+					{
+						<div class="button lichess @( LocalLichess( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleLichess() )">@LichessText( ctrl )</div>
+						@if ( LichessOptInHint( ctrl ) is string hint )
+						{
+							<div class="setup-hint">@hint</div>
+						}
+					}
+					else
+					{
+						<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
+					}
+
+					@* Or play a stranger. Needs nobody's agreement but yours: you're
+					   spending your own grant on an opponent who opted in on lichess,
+					   in their own client, by their own choice. Works alone at a table. *@
+					@if ( LichessTable.CanSeek( ctrl.Tc ) )
+					{
+						<div class="setup-label">OR PLAY A RANDOM OPPONENT</div>
+						<div class="seek-row">
+							<div class="chip @( _seekRated ? "on" : "" )" onclick="@( () => ToggleSeekRated() )">@( _seekRated ? "Rated" : "Casual" )</div>
+							<div class="chip @( _seekColor != "random" ? "on" : "" )" onclick="@( () => CycleSeekColor() )">@SeekColorText()</div>
+						</div>
+						<div class="seek-row">
+							<div class="chip @( _seekNarrow ? "on" : "" )" onclick="@( () => ToggleSeekNarrow() )">@( _seekNarrow ? "Near my rating" : "Any rating" )</div>
+						</div>
+						<div class="button lichess" onclick="@( () => StartSeek() )">♞ Find a game on lichess</div>
+						<div class="setup-hint">@SeekHint()</div>
+					}
+					else
+					{
+						<div class="setup-hint">@LichessTable.WhySeekNot( ctrl.Tc )</div>
+					}
+				}
+
 				@if ( BothSeated() )
 				{
 					<div class="button ready @( LocalReady( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleReady() )">@ReadyText( ctrl )</div>
@@ -67,17 +156,31 @@
 				}
 			}
 
-			@if ( ctrl?.HasGame ?? false )
+			@if ( Source()?.Game != null )
 			{
 				<div class="moves">
-					@foreach ( var row in MoveRows( ctrl ) )
+					@foreach ( var row in MoveRows( Source() ) )
 					{
 						<div class="move-row">@row</div>
 					}
 				</div>
 			}
 
-			@if ( ctrl?.Playing ?? false )
+			@* Waiting for a stranger. Cancelling is what actually withdraws us from
+			   lichess's lobby — without it we stay pairable after walking away. *@
+			@if ( Lichess() is { Seeking: true } )
+			{
+				<div class="button" onclick="@( () => Lichess()?.CancelSeek() )">Cancel — stop looking</div>
+			}
+
+			@* Draw offers, lichess only: the local two-seat game has never had them
+			   (there's a table between the players — they can just say so). *@
+			@if ( OnLichess() && ( Lichess()?.Playing ?? false ) )
+			{
+				<div class="button draw" onclick="@( () => Lichess()?.OfferDraw() )">@DrawText()</div>
+			}
+
+			@if ( ( Source()?.Playing ?? false ) )
 			{
 				<div class="button resign" onclick="@( () => LobbyPlayer.Local?.RequestLeave() )">
 					@( ( LobbyPlayer.Local?.LeaveArmed ?? false ) ? "Sure? This resigns" : "Resign & stand up" )
@@ -172,11 +275,42 @@
 		font-weight: bold;
 	}
 
+	/* Lichess opt-in: lichess's own black/white, so it reads as "this leaves
+	   Gambit" rather than as another table control. */
+	.button.lichess { background-color: rgba(240, 240, 240, 0.14); }
+	.button.lichess:hover { background-color: rgba(240, 240, 240, 0.28); }
+	.button.lichess.on {
+		background-color: rgba(240, 240, 240, 0.8);
+		color: rgba(15, 15, 15, 0.95);
+		font-weight: bold;
+	}
+
+	/* Seek controls: small toggles, so the row reads as settings rather than
+	   actions. */
+	.seek-row { flex-direction: row; gap: 4px; }
+	.chip {
+		flex-grow: 1;
+		justify-content: center;
+		font-size: 12px;
+		padding: 4px 6px;
+		border-radius: 5px;
+		cursor: pointer;
+		pointer-events: all;
+		background-color: rgba(255, 255, 255, 0.06);
+		color: rgba(255, 255, 255, 0.7);
+	}
+	.chip:hover { background-color: rgba(255, 255, 255, 0.16); }
+	.chip.on { background-color: rgba(255, 255, 255, 0.2); color: white; }
+
+	.button.draw { background-color: rgba(255, 214, 10, 0.18); }
+	.button.draw:hover { background-color: rgba(255, 214, 10, 0.34); }
+
 	.status { font-size: 16px; font-weight: bold; }
 	.status.wait { color: #ffd60a; font-weight: normal; font-size: 14px; }
 	.status.turn { color: #7fd47f; }
 	.status.over { color: #ffd60a; font-size: 20px; }
 	.reason { font-size: 13px; color: rgba(255, 255, 255, 0.6); }
+	.reason.lichess-err { color: rgba(255, 180, 40, 0.95); }
 
 	.moves {
 		flex-direction: column;
@@ -271,11 +405,134 @@
 	// ── Time control + ready ──
 
 	/// <summary>The setup block (time control + ready) shows whenever the table isn't
-	/// mid-game — a fresh table, or one showing a result and open to a rematch.</summary>
-	static bool ShowSetup( LocalGameController ctrl ) => ctrl != null && !ctrl.Playing;
+	/// mid-game — a fresh table, or one showing a result and open to a rematch.
+	///
+	/// <para>Also hidden while a lichess game is IN FLIGHT. A SEEK starts no local
+	/// game, so <c>ctrl.Playing</c> stays false for its whole duration — without
+	/// this, Ready would sit there clickable under a live lichess game and start a
+	/// second, local one behind it.</para>
+	///
+	/// <para>"In flight", not "on screen": the lichess controller deliberately stays
+	/// engaged while the result is displayed, so gating on OnLichess() alone would
+	/// leave a finished lichess game with no time control and no Ready — the pair
+	/// would have to stand up and re-sit to play again.</para></summary>
+	static bool ShowSetup( LocalGameController ctrl ) =>
+		ctrl != null && !ctrl.Playing && !LichessInFlight();
+
+	/// <summary>A lichess game is running (or being started) at this board — as
+	/// opposed to one whose result is merely still on display.</summary>
+	static bool LichessInFlight() =>
+		OnLichess() && !( Lichess()?.State?.finished ?? false );
 
 	static bool LocalReady( LocalGameController ctrl ) =>
 		ctrl?.LocalSeat is { } seat && ctrl.ReadyFor( seat );
+
+	// ── Lichess (M8) ──
+
+	/// <summary>The lichess controller beside the table we're seated at.</summary>
+	static LichessGameController Lichess() => LichessGameController.For( ChessStation.Active );
+
+	/// <summary>Whichever controller owns this board — the same resolution
+	/// ChessBoardView.Source does, and for the same reason: everything that reads
+	/// the position should be unable to tell a lichess game from a local one.</summary>
+	static IBoardGame Source()
+	{
+		var lc = Lichess();
+		return lc is { Engaged: true } ? lc : Controller();
+	}
+
+	/// <summary>A real lichess game owns this board right now — the HUD reads
+	/// lichess's state instead of the local table's.</summary>
+	static bool OnLichess() => Lichess() is { Engaged: true };
+
+	static bool LocalLichess( LocalGameController ctrl ) =>
+		ctrl?.LocalSeat is { } seat && ctrl.LichessFor( seat );
+
+	// ── Seek controls ──
+	//
+	// Instance state, not static: these are this player's preferences for their
+	// next seek, and they don't outlive the HUD.
+
+	bool _seekRated;
+	string _seekColor = "random";
+	bool _seekNarrow;
+
+	void ToggleSeekRated() { _seekRated = !_seekRated; StateHasChanged(); }
+	void ToggleSeekNarrow() { _seekNarrow = !_seekNarrow; StateHasChanged(); }
+
+	void CycleSeekColor()
+	{
+		_seekColor = _seekColor switch { "random" => "white", "white" => "black", _ => "random" };
+		StateHasChanged();
+	}
+
+	string SeekColorText() => _seekColor switch
+	{
+		"white" => "Play White",
+		"black" => "Play Black",
+		_ => "Either colour",
+	};
+
+	/// <summary>lichess's own advice is to leave the rating range empty — a narrow
+	/// range on a small pool is a seek that never pairs, and ours are scarce
+	/// already. So "near my rating" is a deliberate opt-in, not the default.
+	/// <para>gamchess doesn't know the player's lichess rating (we never asked for
+	/// a scope that could read it), so the range can't be centred on them — this
+	/// asks for a broad middle band instead. Honest about what it can do.</para></summary>
+	string SeekRatingRange() => _seekNarrow ? "1400-1800" : null;
+
+	string SeekHint()
+	{
+		if ( _seekRated ) return "Rated: this will move your real lichess rating.";
+		return "Casual: it won't touch your lichess rating.";
+	}
+
+	void StartSeek()
+	{
+		Lichess()?.RequestSeek( _seekRated, SeekRatingRange(), _seekColor );
+		StateHasChanged();
+	}
+
+	static string LichessText( LocalGameController ctrl ) =>
+		LocalLichess( ctrl )
+			? $"♞ Playing on lichess as {LichessLinkState.Username} ✓ (click to cancel)"
+			: "♞ Play this game on lichess";
+
+	/// <summary>What the opt-in is waiting on, or null when there's nothing to say.
+	/// Deliberately honest about the one thing a player can't see: whether the
+	/// person opposite has a lichess account at all.</summary>
+	static string LichessOptInHint( LocalGameController ctrl )
+	{
+		if ( ctrl == null || !LocalLichess( ctrl ) ) return null;
+		if ( ctrl.BothWantLichess ) return "Both in — this game will be played on lichess for real.";
+		return "Waiting for your opponent to opt in too. They need a linked lichess account.";
+	}
+
+	/// <summary>The draw button doubles as accept, because lichess's draw/yes does:
+	/// offering when one is pending IS accepting it.</summary>
+	static string DrawText() =>
+		( Lichess()?.DrawOffered ?? false ) ? "Accept draw" : "Offer draw";
+
+	/// <summary>Status line while a lichess game is being set up or run, or null
+	/// when there is nothing to say and the turn indicator should show.</summary>
+	static string LichessStatus()
+	{
+		var lc = Lichess();
+		if ( lc == null || !lc.Engaged ) return null;
+		if ( lc.Error is string e ) return e;
+
+		if ( lc.Seeking ) return "Looking for an opponent on lichess…";
+
+		return lc.State?.status switch
+		{
+			// A seek needs nobody else's client; only the paired flow waits.
+			"waiting" => lc.IsSeek ? "Looking for an opponent on lichess…"
+				: "Waiting for your opponent's client…",
+			"challenging" => lc.IsSeek ? "Looking for an opponent on lichess…"
+				: "Starting the game on lichess…",
+			_ => null,
+		};
+	}
 
 	static string ReadyText( LocalGameController ctrl )
 	{
@@ -287,16 +544,69 @@
 	/// One div per line and no inline markup — CLAUDE.md UI Gotchas.</summary>
 	static string SeatLine( LocalGameController ctrl, ChessSeat seat )
 	{
-		string name = Station()?.SeatName( seat ) ?? "—";
-		if ( string.IsNullOrEmpty( name ) ) name = "—";
+		string name = SeatName( seat );
+
+		// LICHESS FIRST — before any question about the local table.
+		//
+		// A lichess game runs on lichess's clock, not the host's: the host stops
+		// ticking its copy entirely (LocalGameController.HostTickClocks), so its
+		// value is frozen and meaningless. And a SEEK starts no local game at all,
+		// so ctrl.Playing is false for its whole duration — checking the local
+		// table first would fall into the idle branch below and never show a seek's
+		// clock or its opponent's name.
+		if ( OnLichess() )
+			return LichessClock( seat ) is float left ? $"{name}  {TimeControl.Format( left )}" : name;
 
 		if ( ctrl == null || ctrl.Tc.IsUnlimited ) return name;
 
-		// Idle table: advertise the bank rather than a running clock.
+		// Idle table: advertise the bank rather than a running clock, and say who
+		// has agreed to what.
 		if ( !ctrl.Playing && !ctrl.GameOver )
-			return ctrl.ReadyFor( seat ) ? $"{name}  ready" : name;
+		{
+			if ( ctrl.ReadyFor( seat ) ) return $"{name}  ready";
+			return ctrl.LichessFor( seat ) ? $"{name}  ♞" : name;
+		}
 
 		return $"{name}  {TimeControl.Format( ctrl.ClockFor( seat ) )}";
+	}
+
+	/// <summary>Who is on a side.
+	///
+	/// <para>During a lichess game the LICHESS names win, because they're who is
+	/// actually playing. That matters most for a seek, where the opponent is a
+	/// stranger who isn't in this lobby at all and the station has no name for
+	/// them — but it's also the honest label for a paired game, where the lichess
+	/// account is what the result lands on.</para></summary>
+	static string SeatName( ChessSeat seat )
+	{
+		if ( OnLichess() && Lichess()?.State is { } st )
+		{
+			string lichessName = seat == ChessSeat.White ? st.white_name : st.black_name;
+			if ( !string.IsNullOrEmpty( lichessName ) ) return lichessName;
+			if ( Lichess().Seeking || st.seek ) return "…";  // nobody yet
+		}
+
+		string name = Station()?.SeatName( seat );
+		return string.IsNullOrEmpty( name ) ? "—" : name;
+	}
+
+	/// <summary>Seconds left on a seat's clock per lichess, or null when no lichess
+	/// game owns this board.</summary>
+	static float? LichessClock( ChessSeat seat )
+	{
+		if ( !OnLichess() ) return null;
+		if ( Lichess().State is not { } st ) return null;
+
+		// An unlimited game has no clock to show, and lichess sends 0 for it — which
+		// would render as a flagged 0:00.0. Seeks always have a clock (lichess's
+		// lobby refuses a clockless real-time seek), so only the table's control can
+		// make this happen.
+		if ( !st.seek && ( Controller()?.Tc.IsUnlimited ?? false ) ) return null;
+
+		// lichess sends milliseconds; TimeControl.Format takes seconds. Note 0 is
+		// NOT filtered here: a genuine flag must read 0:00.0.
+		long ms = seat == ChessSeat.White ? st.white_time_ms : st.black_time_ms;
+		return ms / 1000f;
 	}
 
 	/// <summary>Where the ticking clock turns red. Its own threshold, deliberately not
@@ -308,6 +618,19 @@
 	/// <summary>Accent the side whose clock is running, and redden it near the flag.</summary>
 	static string SeatClass( LocalGameController ctrl, ChessSeat seat )
 	{
+		// During a lichess game the local controller's clock is FROZEN (the host
+		// stops ticking it — lichess owns the clock) and its ChessGame never
+		// advances, so ctrl.TickingSeat would be stuck on White for the whole game.
+		// Read the live source instead.
+		if ( OnLichess() )
+		{
+			var lc = Lichess();
+			if ( !lc.Playing || lc.Game == null ) return "";
+			var ticking = lc.Game.WhiteToMove ? ChessSeat.White : ChessSeat.Black;
+			if ( ticking != seat ) return "";
+			return LichessClock( seat ) is float left && left < PanicSeconds ? "ticking low" : "ticking";
+		}
+
 		if ( ctrl == null || ctrl.TickingSeat != seat ) return "";
 		return ctrl.ClockFor( seat ) < PanicSeconds ? "ticking low" : "ticking";
 	}
@@ -318,19 +641,25 @@
 	static bool BothSeated() =>
 		Station() is { } s && s.WhiteSteamId != 0 && s.BlackSteamId != 0;
 
-	static string TurnText( LocalGameController ctrl )
+	/// <summary>Whose move it is, read from whichever controller owns the board.
+	/// <para>Takes IBoardGame rather than LocalGameController for the same reason
+	/// ChessBoardView does: during a lichess game the local controller's ChessGame
+	/// never advances (moves go to the relay, not NetChessMove), so asking it whose
+	/// turn it is would answer "White" forever.</para></summary>
+	static string TurnText( IBoardGame src )
 	{
-		if ( ctrl.IsMyTurn )
-			return ctrl.Game.IsCheck ? "Your move — check!" : "Your move";
-		return ctrl.Game.WhiteToMove ? "White is thinking…" : "Black is thinking…";
+		if ( src?.Game == null ) return "";
+		if ( src.IsMyTurn )
+			return src.Game.IsCheck ? "Your move — check!" : "Your move";
+		return src.Game.WhiteToMove ? "White is thinking…" : "Black is thinking…";
 	}
 
 	/// <summary>Last few full-move rows, "12. Nf3 Nc6" style. The list column is
 	/// fixed-height with overflow hidden (drag-scroll fights clicks — CLAUDE.md),
 	/// so we render only the tail.</summary>
-	static IEnumerable<string> MoveRows( LocalGameController ctrl )
+	static IEnumerable<string> MoveRows( IBoardGame src )
 	{
-		var san = ctrl.Game?.SanMoves;
+		var san = src?.Game?.SanMoves;
 		if ( san == null || san.Count == 0 ) yield break;
 
 		const int maxRows = 12;
@@ -351,13 +680,25 @@
 	protected override int BuildHash()
 	{
 		var ctrl = Controller();
+		var src = Source();
 		return System.HashCode.Combine(
-			Visible(), ctrl?.GameId, ctrl?.Game?.MoveCount, ctrl?.GameOver,
-			ctrl?.IsMyTurn, View()?.PendingPromotion != null,
+			Visible(), ctrl?.GameId, src?.Game?.MoveCount, ctrl?.GameOver,
+			src?.IsMyTurn, View()?.PendingPromotion != null,
 			LobbyPlayer.Local?.LeaveArmed,
 			System.HashCode.Combine(
-				BothSeated(), ctrl?.TimeControlIndex, ctrl?.WhiteReady, ctrl?.BlackReady,
-				ctrl?.TickingSeat,
-				SeatLine( ctrl, ChessSeat.White ), SeatLine( ctrl, ChessSeat.Black ) ) );
+				System.HashCode.Combine(
+					BothSeated(), ctrl?.TimeControlIndex, ctrl?.WhiteReady, ctrl?.BlackReady,
+					ctrl?.TickingSeat,
+					SeatLine( ctrl, ChessSeat.White ), SeatLine( ctrl, ChessSeat.Black ) ),
+				// Lichess: the seat lines already cover its clocks and names (they
+				// hash as rendered text), so this is the rest — status, result, draw
+				// offers, whether it owns the board, and the seek controls.
+				System.HashCode.Combine(
+					System.HashCode.Combine(
+						OnLichess(), Lichess()?.State?.status, Lichess()?.State?.finished,
+						Lichess()?.DrawOffered, Lichess()?.Error, Lichess()?.Seeking,
+						ctrl?.WhiteLichess, ctrl?.BlackLichess ),
+					System.HashCode.Combine(
+						LichessLinkState.Linked, _seekRated, _seekColor, _seekNarrow ) ) ) );
 	}
 }

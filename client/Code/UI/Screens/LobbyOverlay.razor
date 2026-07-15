@@ -125,8 +125,13 @@
 		_ => "to change world settings",
 	};
 
-	static string InfoPrompt( Gambit.World.InfoStation s ) =>
-		s.Kind == Gambit.World.InfoStation.StationKind.DevNotes ? "to read the dev notes" : "to view info";
+	static string InfoPrompt( Gambit.World.InfoStation s ) => s.Kind switch
+	{
+		Gambit.World.InfoStation.StationKind.DevNotes => "to read the dev notes",
+		Gambit.World.InfoStation.StationKind.Lichess =>
+			Gambit.Api.LichessLinkState.Linked ? "for lichess" : "to link lichess",
+		_ => "to view info",
+	};
 
 	protected override int BuildHash() =>
 		System.HashCode.Combine( LobbyPlayer.Local?.Engaged, LobbyPlayer.Local?.NearbyStation != null,

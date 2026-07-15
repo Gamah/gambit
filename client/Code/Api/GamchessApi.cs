@@ -127,8 +127,13 @@ public static class GamchessApi
 	}
 
 	/// <summary>An authed request: mints a Facepunch token, and on 401 re-mints
-	/// once and retries (rotaliate's rule — FP tokens really do expire).</summary>
-	static async Task<Result> SendAuthed( string path, string method, HttpContent content )
+	/// once and retries (rotaliate's rule — FP tokens really do expire).
+	///
+	/// <para>Public so <see cref="LichessApi"/> can build on it rather than
+	/// reimplement the token dance, the timeout and the breaker. Every gamchess
+	/// call in the codebase goes through this method — that is the point of the
+	/// seam.</para></summary>
+	public static async Task<Result> SendAuthed( string path, string method, HttpContent content )
 	{
 		var (steamId, token) = await GamchessAuth.Credentials();
 		if ( string.IsNullOrEmpty( token ) )
@@ -145,7 +150,9 @@ public static class GamchessApi
 		return await Send( path, method, content, steamId, token );
 	}
 
-	static HttpContent Json( object o ) =>
+	/// <summary>A JSON body. Public for <see cref="LichessApi"/>, same reasoning as
+	/// <see cref="SendAuthed"/>.</summary>
+	public static HttpContent Json( object o ) =>
 		new StringContent( JsonSerializer.Serialize( o ), Encoding.UTF8, "application/json" );
 
 	// ── Endpoints ──

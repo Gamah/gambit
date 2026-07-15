@@ -32,6 +32,11 @@ public sealed class InfoWall : Component, Component.ExecuteInEditor
 	/// <summary>Dev-notes board center along the wall, as a fraction of wall width.</summary>
 	[Property] public float NotesYFrac { get; set; } = -0.1f;
 
+	/// <summary>Lichess board center along the wall, as a fraction of wall width.
+	/// Sits the same distance the other side of the info board as the dev notes,
+	/// so the three read as an evenly-spaced row.</summary>
+	[Property] public float LichessYFrac { get; set; } = 0.3f;
+
 	/// <summary>World units between each board's content bottom edge and the floor
 	/// (passed to the panels' floor anchor).</summary>
 	[Property] public float FloorClearance { get; set; } = 30f;
@@ -94,10 +99,23 @@ public sealed class InfoWall : Component, Component.ExecuteInEditor
 		notes.AddComponent<WorldPanel>();
 		notes.AddComponent<Gambit.UI.DevNotesPanel>().FloorClearance = FloorClearance;
 
+		// The lichess board (M8). A title card that shows link state and invites a
+		// press of E — everything that matters (the copyable URL, the disclosure,
+		// unlink) lives in the engaged InfoScreen, because none of it is readable
+		// from across the room anyway. Same floor-anchor contract as the others.
+		var lichess = new GameObject( true, "LichessPanel" );
+		lichess.Parent = _root;
+		lichess.LocalPosition = new Vector3( wallX - 0.5f, LichessYFrac * WallWidth, 100f );
+		lichess.LocalRotation = facing;
+		lichess.LocalScale = new Vector3( 1f, 1.3f, 1.1f ) * BoardScale;
+		lichess.AddComponent<WorldPanel>();
+		lichess.AddComponent<Gambit.UI.LichessBoardPanel>().FloorClearance = FloorClearance;
+
 		// Engage stations at each board's foot: "Press E to view" opens InfoScreen
-		// (camera stays put; cursor freed for the click-to-copy Discord link).
+		// (camera stays put; cursor freed for the click-to-copy links).
 		AddStation( "InfoStation", InfoYFrac, facing, InfoStation.StationKind.Info );
 		AddStation( "DevNotesStation", NotesYFrac, facing, InfoStation.StationKind.DevNotes );
+		AddStation( "LichessStation", LichessYFrac, facing, InfoStation.StationKind.Lichess );
 	}
 
 	void AddStation( string name, float yFrac, Rotation facing, InfoStation.StationKind kind )

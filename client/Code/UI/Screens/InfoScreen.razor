@@ -2,6 +2,7 @@
 @using System.Collections.Generic;
 @using Sandbox;
 @using Sandbox.UI;
+@using Gambit.Api;
 @using Gambit.World;
 @using Gambit.UI;
 @namespace Gambit.UI.Screens
@@ -23,7 +24,59 @@
 	<div class="info-fit" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
 		<div class="close" onclick="@Close">✕</div>
 
-		@if ( station.Kind == InfoStation.StationKind.DevNotes )
+		@if ( station.Kind == InfoStation.StationKind.Lichess )
+		{
+			<div class="title" style="color:@WallTheme.Text;">LICHESS</div>
+			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+			@if ( !Gambit.Api.GamchessAuth.Available )
+			{
+				<div class="body" style="color:@WallTheme.TextFaint;">Linking needs Steam. This build isn't signed in to one, so lichess is off — local chess is unaffected.</div>
+			}
+			else if ( LichessLinkState.Linked )
+			{
+				<div class="linked-row">✓  linked as @LichessLinkState.Username</div>
+				<div class="body" style="color:@WallTheme.TextDim;">Sit at a table with another linked player. When you both choose "play on lichess", a real game runs on lichess between your accounts and shows up in your lichess history.</div>
+				<div class="body" style="color:@WallTheme.TextDim;">Bullet tables can't do this — lichess won't play anything faster than blitz.</div>
+
+				<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+				<div class="section-header warn">TURNING THIS OFF</div>
+				<div class="body warn-body">Changing your lichess password will NOT unlink Gambit — it only ends browser sessions and leaves this token working.</div>
+				<div class="body warn-body">Unlink below, or revoke it on lichess's own Security page. (Their /account/oauth/token page won't show this grant — it lists personal tokens only.)</div>
+
+				<div class="lichess-btn" onclick="@Unlink">@UnlinkLabel()</div>
+				<div class="lichess-btn subtle" onclick="@CopySecurity">@SecurityLabel()</div>
+			}
+			else
+			{
+				<div class="body" style="color:@WallTheme.TextDim;">Link your lichess account and you can play real, rated-history lichess games from a table here — against whoever sits opposite you.</div>
+
+				<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+				<div class="section-header" style="color:@WallTheme.AccentCss;">WHAT LINKING DOES</div>
+				<div class="body" style="color:@WallTheme.TextDim;">Steam asks for your Steam password on steamcommunity.com. Lichess asks for your lichess password on lichess.org.</div>
+				<div class="body" style="color:@WallTheme.TextDim;">Terry's Gambit never sees either one.</div>
+
+				<div class="section-header" style="color:@WallTheme.AccentCss;">WHAT WE ASK FOR</div>
+				<div class="body" style="color:@WallTheme.TextDim;">One permission: board:play. It lets us start your game, play your moves, resign and offer draws.</div>
+				<div class="body" style="color:@WallTheme.TextDim;">It cannot read your email, read or send messages, see who you follow, or change your account. Lichess has nothing smaller — it's all-or-nothing.</div>
+
+				<div class="section-header" style="color:@WallTheme.AccentCss;">WHERE THE KEY LIVES</div>
+				<div class="body" style="color:@WallTheme.TextDim;">On our server, encrypted. It has to: playing a lichess game means holding a live connection open for the whole game, which this client can't do — so our server plays on your behalf while you sit here.</div>
+
+				<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+				<div class="body" style="color:@WallTheme.TextFaint;">Copy this link and open it in a browser. It's the same link for everyone and holds no secret — it signs you in with Steam first, so it only ever links your own accounts.</div>
+				<div class="lichess-btn" onclick="@CopyLichess">@LichessLabel()</div>
+
+				@if ( LichessLinkState.Offline )
+				{
+					<div class="body" style="color:@WallTheme.TextFaint;">(Can't reach the Gambit server right now, so we can't tell if you're linked. Chess still works.)</div>
+				}
+			}
+		}
+		else if ( station.Kind == InfoStation.StationKind.DevNotes )
 		{
 			<div class="title amber">DEV NOTES</div>
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
@@ -174,6 +227,45 @@
 		background-color: rgba(88, 101, 242, 0.4);
 	}
 
+	/* Lichess: the site's own black-on-white, so the button reads as "this goes to
+	   lichess" rather than as another Gambit control. */
+	.lichess-btn {
+		justify-content: center;
+		margin-top: 8px;
+		padding: 12px 22px;
+		background-color: rgba(240, 240, 240, 0.2);
+		border: 2px solid rgba(240, 240, 240, 0.55);
+		border-radius: $wall-radius;
+		font-size: 20px;
+		color: rgba(255, 255, 255, 0.92);
+		font-weight: bold;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.lichess-btn:hover {
+		background-color: rgba(240, 240, 240, 0.35);
+	}
+
+	/* The Security-page copy is the honest escape hatch, not the main action. */
+	.lichess-btn.subtle {
+		background-color: rgba(240, 240, 240, 0.06);
+		border-color: rgba(240, 240, 240, 0.25);
+		font-size: 17px;
+		font-weight: normal;
+	}
+
+	.linked-row {
+		justify-content: center;
+		padding: 10px;
+		border-radius: $wall-radius;
+		background-color: rgba(130, 220, 130, 0.12);
+		border: 2px solid rgba(130, 220, 130, 0.45);
+		color: rgba(150, 235, 150, 0.95);
+		font-size: 21px;
+		font-weight: bold;
+	}
+
 	/* Close affordances (the panel auto-opens on first load — make dismissing obvious). */
 	.close {
 		position: absolute;
@@ -224,11 +316,66 @@
 		StateHasChanged();
 	}
 
+	// ── Lichess (M8) ──
+
+	string LichessLabel() =>
+		LichessButton.SinceCopied < 2f
+			? "✓  link copied — paste it in a browser"
+			: $"{Gambit.Api.LichessApi.LinkUrl}  ·  click to copy";
+
+	string SecurityLabel() =>
+		LichessButton.SinceSecurityCopied < 2f
+			? "✓  copied"
+			: "Revoke on lichess yourself: lichess.org/account/security  ·  click to copy";
+
+	string UnlinkLabel() => _unlinking ? "unlinking…" : "[ unlink ]";
+
+	bool _unlinking;
+
+	void CopyLichess()
+	{
+		LichessButton.Copy();
+		StateHasChanged();
+	}
+
+	void CopySecurity()
+	{
+		LichessButton.CopySecurity();
+		StateHasChanged();
+	}
+
+	// Claim before awaiting — a click that fires while the first is in flight would
+	// otherwise send a second DELETE.
+	async void Unlink()
+	{
+		if ( _unlinking ) return;
+		_unlinking = true;
+		StateHasChanged();
+
+		await LichessLinkState.Unlink();
+
+		_unlinking = false;
+		StateHasChanged();
+	}
+
 	/// <summary>Dismiss the welcome/info panel (X, or the "close" hint). Disengaging the info
 	/// station marks it seen so it won't auto-pop again — same as pressing E/Esc.</summary>
 	void Close() => LobbyPlayer.Local?.Disengage();
 
+	/// <summary>Poll the link status ONLY while the lichess board is engaged, never
+	/// in the background. LichessLinkState rate-limits and single-flights, so
+	/// calling it per-frame here is the intended use — the gate that matters is
+	/// that we don't call it at all otherwise.</summary>
+	protected override void OnUpdate()
+	{
+		if ( InfoStation.Active?.Kind == InfoStation.StationKind.Lichess )
+			LichessLinkState.Poll();
+	}
+
 	protected override int BuildHash() =>
 		HashCode.Combine( InfoStation.Active != null, InfoStation.Active?.Kind,
-			DevNotesPanel.Notes.Count, DiscordButton.SinceCopied < 2f, SettingsModel.SettingsVersion );
+			DevNotesPanel.Notes.Count, DiscordButton.SinceCopied < 2f, SettingsModel.SettingsVersion,
+			HashCode.Combine( LichessLinkState.Linked, LichessLinkState.Username,
+				LichessLinkState.Offline, LichessButton.SinceCopied < 2f,
+				LichessButton.SinceSecurityCopied < 2f, _unlinking ) );
 }

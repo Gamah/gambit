@@ -34,10 +34,20 @@ public sealed class ChessBoardView : Component
 	/// <summary>Set by ChessRing at build.</summary>
 	[Property] public LocalGameController Controller { get; set; }
 
-	/// <summary>Which controller owns the board. The abstraction is kept even though
-	/// there is only one source today: the view has never branched on the source, and
-	/// another source slots in here rather than rewrite the renderer.</summary>
-	IBoardGame Source => Controller;
+	/// <summary>Set by ChessRing at build. Drives the board while a real lichess
+	/// game is running at this table (M8).</summary>
+	[Property] public LichessGameController Lichess { get; set; }
+
+	/// <summary>Which controller owns the board.
+	///
+	/// <para>This is the one line that ever branches on the source, and it is why
+	/// M8 needed no renderer change: everything below reads <see cref="IBoardGame"/>
+	/// and cannot tell a lichess game from a local one. The seam was built for
+	/// exactly this.</para>
+	///
+	/// <para>The lichess controller only claims the board once the local player has
+	/// opted in at this table; otherwise the local game owns it, unchanged.</para></summary>
+	IBoardGame Source => Lichess is { Engaged: true } ? Lichess : Controller;
 
 	/// <summary>Seconds a piece takes to slide to its new square.</summary>
 	[Property] public float MoveSeconds { get; set; } = 0.22f;

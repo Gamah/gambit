@@ -97,4 +97,64 @@ public static class GamchessCommands
 		}
 		Log.Info( $"[Gambit] your archive: {GamchessApi.Truncate( res.Body, 1000 )}" );
 	}
+
+	/// <summary>Am I linked to lichess? Prints the link, and the URL to fix it if
+	/// not. The archive rule applies here too: this can only ever answer about YOU
+	/// — there is no SteamID to pass.</summary>
+	[ConCmd( "gambit_lichess" )]
+	public static void Lichess() => _ = DoLichess();
+
+	static async Task DoLichess()
+	{
+		if ( !GamchessAuth.Available )
+		{
+			Log.Warning( "[Gambit] no Steam identity — lichess linking needs one." );
+			return;
+		}
+
+		var res = await LichessApi.Status();
+		if ( !res.Ok )
+		{
+			Log.Warning( $"[Gambit] lichess status failed: {res.Error}" );
+			return;
+		}
+
+		var link = GamchessApi.Deserialize<LichessLink>( res.Body );
+		if ( link == null )
+		{
+			Log.Warning( $"[Gambit] unreadable reply: {GamchessApi.Truncate( res.Body, 200 )}" );
+			return;
+		}
+
+		if ( link.linked )
+		{
+			Log.Info( $"[Gambit] lichess: linked as {link.username} ({link.lichess_id})" );
+			Log.Info( $"[Gambit]   unlink in-game at the east wall board, or revoke at {LichessApi.SecurityUrl}" );
+			Log.Info( "[Gambit]   NOTE: changing your lichess password does NOT unlink — only a revoke does." );
+			return;
+		}
+
+		Log.Info( "[Gambit] lichess: not linked." );
+		Log.Info( $"[Gambit]   link at: {LichessApi.LinkUrl}" );
+	}
+
+	/// <summary>Unlink from lichess: gamchess revokes the token, then forgets it.
+	/// Best-effort revoke — the row goes either way, so if lichess was down when
+	/// you did this, revoke it yourself at lichess.org/account/security.</summary>
+	[ConCmd( "gambit_lichess_unlink" )]
+	public static void LichessUnlink() => _ = DoLichessUnlink();
+
+	static async Task DoLichessUnlink()
+	{
+		if ( !GamchessAuth.Available )
+		{
+			Log.Warning( "[Gambit] no Steam identity — nothing to unlink." );
+			return;
+		}
+
+		await LichessLinkState.Unlink();
+		Log.Info( LichessLinkState.Linked
+			? "[Gambit] unlink failed — still linked. Is gamchess up?"
+			: "[Gambit] lichess: unlinked." );
+	}
 }
