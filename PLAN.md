@@ -29,35 +29,45 @@ deployed.
 3. Walk to the west wall in an idle lobby: a real blitz game with names, titles, ratings
    and clocks, updating move by move.
 4. "Next" cycles tables → TV → back. TV must be **last** and must not displace a table.
-5. Settings: LICHESS TV off → TV leaves the cycle, the wall mirrors tables, and it survives
-   a restart. Channel picker: LOBBY follows the admin's suggestion; picking one sticks
-   through an admin change.
-6. As admin, change SUGGESTED TV CHANNEL → every follower's wall moves; a player who picked
-   their own doesn't.
+5. **Everything TV is on the spectator board** (walk up, press E) — channel, follow, on/off.
+   Nothing TV-shaped may appear on the settings board. Turn TV off → it leaves the cycle,
+   the wall mirrors tables, and it survives a restart.
+6. Pick a channel (all 16 are there, grouped): the wall moves and it sticks. Then "Follow
+   the lobby" → back to the lobby's channel.
+7. As admin, pick a channel → **every follower's wall moves**; a player who picked their own
+   doesn't. The admin sees no "follow the lobby" button, because their pick is the lobby's.
+8. **Crazyhouse and Three-check** should render the position and say what isn't shown
+   (pockets / check counts). Chess960 should render a scrambled back rank without complaint.
 7. **Kill gamchess → the wall falls back to mirroring tables and local chess is untouched.**
    Non-negotiable.
 8. Two clients on the same channel should cost gamchess **one** upstream — check the log
    (`lichess tv: opening upstream` once, `dropping idle upstream` ~45s after both leave).
-9. **Walk away from the wall → TV stops.** It should go blank with "walk up to watch"
-   rather than freezing on the last position, and gamchess should log the drop ~45s
-   later. Walk back → it picks up the game that's on *now*, not the one you left.
+9. **Cycle away from TV → it stops polling**; gamchess logs the drop ~45s later. Cycle back →
+   it picks up the game that's on *now*, not the one you left.
+10. **Watch a game end** (UltraBullet is quickest): the wall should stop on the finished
+    position for 3s with "White wins — out of time" or similar, clocks not running, and only
+    then move to the next game. This is the one thing lichess TV itself won't do.
 
-### The proximity gate is the part most likely to be wrong
+### There is no proximity gate, and there shouldn't be
 
-`SpectatorController.TvWatchRange` (500) is what makes TV lazy, and it is **tuned against
-geometry that was read, not measured in the room**: the scene's `RoomSize` is 800, the board
-sits at roughly (0, 396, 180), and the room centre is ~413 from it — so 500 means "the near
-half of the room streams". A first draft used 1200, which is larger than the room can
-produce (~950 max) and therefore gated nothing at all while looking like it did.
+TV briefly only streamed while a viewer was within range of the board. **That is gone**:
+TV is on or off, and the client's setting decides. It is recorded here because the idea is
+tempting and it cost three attempts, each of which looked fine in a diff:
 
-It is a `[Property]` on a component built at runtime, so the code default is what applies —
-there is no scene entry to edit. If it feels wrong in the editor, that number is the knob:
+- a range of 1200 in an 800-unit room, which nowhere in the lobby could exceed — it gated
+  nothing while looking exactly like a gate;
+- measuring from the controller's own GO, which sits on the **LobbyRoom** object at the room
+  centre, not at the wall;
+- measuring in 3D against a board that floats ~390 up, so a third of the distance was
+  vertical before the player moved.
 
-- **too tight** → the board is blank when you'd expect to be able to read it from your table
-- **too loose** → TV streams while nobody is looking at the wall, which is the whole cost
-  this exists to avoid
+And what it bought was a wall that went blank when you stepped back from it.
 
-Worth checking specifically from a seat at the ring, which is where players actually stand.
+The cost it was guarding is still bounded, by better things: TV polls only while it is the
+**featured source on that client** (cycle to a table and it stops), and gamchess holds **one
+upstream per channel** however many watch, dropping it once nobody polls. An idle lobby with
+TV on costs lichess one stream per channel — which is what "N clients cost lichess nothing"
+always meant.
 
 ### Open questions
 
@@ -72,12 +82,19 @@ Worth checking specifically from a seat at the ring, which is where players actu
   currently it isn't and probably shouldn't be. Noting it so it isn't re-litigated.
 - **Crazyhouse and Three-check are legible but incomplete.** The board draws 64 squares, so
   the pockets and the check counts aren't there; `LichessTv.HidesState` puts a line on the
-  settings board saying so. If either channel actually gets watched, showing the pockets
+  spectator board saying so. If either channel actually gets watched, showing the pockets
   needs somewhere to put them — the seat plaques are the obvious candidate.
 - **Is the local TV clock close enough?** It counts the side-to-move down from the last
   frame and resnaps on every move, so it drifts LOW by roughly the network latency and
   self-corrects constantly. Should be invisible; worth a glance on an UltraBullet game,
   which is where a fraction of a second is most likely to show.
+- **Is 3 seconds the right fanfare?** `LichessTv.FanfareSeconds`. Long enough to read one
+  line, short enough not to feel like a hang — guessed, not watched. On UltraBullet, where a
+  game ends every ~30s, 3s of every 30 is spent on results; that may be too much or exactly
+  right, and it's a one-line change.
+- **The fanfare says how, not how it looked.** No sound, no highlight of the mating move, no
+  crown. If it wants more, the mating move is already in `last_move_uci` on the frozen
+  position.
 
 ---
 

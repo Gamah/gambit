@@ -151,6 +151,32 @@ house rule that **a live clock must never read HIGHER than the time actually lef
 rule that makes `TimeControl.Format` truncate where the PGN writer rounds). lichess stays the
 only authority, and local drift cannot outlive one move.
 
+> The snap is gated on the **version advancing**, and that guard is the feature. A long poll
+> that reaches its hold answers with the current state at the *same* version, every ~5s
+> through any think — re-snapping on that restarts the countdown from an already-stale value,
+> so the clock ticks down 5s and jumps back UP, forever. That sawtooth is worse than the
+> frozen clock it replaced, because it reads HIGH.
+
+**The feed NEVER says a game ended.** Ninety-five seconds of `ultraBullet` is 5 `featured` and
+203 `fen` and nothing else: a game ending is just a swap to a new `featured`. There is no
+gameOver frame — don't go looking for one. So the wall's end-of-game fanfare works like this:
+gamchess notices the swap, fetches the OLD game's result from **`GET /game/export/{id}`**
+(anonymous, like the feed; `status` + `winner`, where a **missing winner means a draw**), and
+publishes it as `last_game_id/last_status/last_winner` *atomically with* the new game. The
+client matches `last_game_id` against the game on its own board — "a game ended" isn't news,
+"**my** game ended" is — and holds the finished position for `LichessTv.FanfareSeconds` (3s)
+with a result line, because lichess TV cuts to the next game instantly and on a wall that
+reads as a glitch.
+
+That fetch is **one request per game END per channel**, not per move, and it goes through the
+same governor as everything else. It is synchronous inside the stream reader on purpose: it
+happens once per game, the frames behind it just wait in the socket, and it means the ending
+and its replacement land in one state so the client can never show the new game first.
+
+**There is no buffer, and nothing to bound.** gamchess keeps only the LATEST state per channel
+(one slot, overwritten), so "hold for 3s, then take whatever is current" abandons all but the
+latest by construction — no queue, no catch-up, no speed-up logic.
+
 **All 16 channels, variants included** (default `blitz`). This was **six** at first, excluded
 on the reasoning that the vendored rules are standard-only so a variant FEN can't be drawn —
 **that was wrong, and the mistake is instructive**: the standard-only rule governs *playing*
@@ -163,8 +189,18 @@ real starting FEN in the dotnet harness. **Before excluding something for "the b
 draw it", check what actually reads the FEN.**
 
 Two channels hide state the 64 squares can't hold — Crazyhouse's pockets and Three-check's
-counts (`LichessTv.HidesState`) — and the settings board says so, because a viewer who can't
+counts (`LichessTv.HidesState`) — and the spectator board says so, because a viewer who can't
 see the pockets should know they exist rather than conclude the board is broken.
+
+**Every TV control lives on the SPECTATOR board (`SpectatorScreen`) and nowhere else** — the
+channel, follow-the-lobby, and the on/off. They were briefly split onto the south-wall
+settings board, which meant picking a channel on one wall for a board on another, with the
+lobby's suggestion as a third control in a third place. One board: the one you're standing at
+when you care what's on. **The admin uses the same picker** — theirs moves the lobby's
+suggestion instead of setting a personal override, which is why `FollowingLobbyTv` is
+unconditionally true for an admin (it's all they can be doing) and the toggle is hidden for
+them rather than shown dead. `RequestSetSuggestedTvChannel` still re-checks host-side;
+`LocalIsAdmin` is a UI hint, never authority.
 
 **The channel allowlist (`lichess.ValidChannel`) is a security boundary, not a menu**: the key
 comes off the wire and becomes a lichess URL, so nothing may build one from a key that didn't

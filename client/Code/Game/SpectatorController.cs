@@ -87,80 +87,100 @@ public sealed class SpectatorController : Component
 	/// one, and one that is never ticked never polls.</summary>
 	LichessTvSource _tv;
 
-	/// <summary>How close the viewer must be for TV to actually stream.
-	///
-	/// <para><b>This is what makes TV lazy, and lazy is the whole premise.</b> Polling is
-	/// the watch signal gamchess ref-counts on, so without a gate every client in a lobby
-	/// long-polls forever and gamchess holds a lichess stream open for a wall nobody is
-	/// looking at — exactly the cost this design exists to avoid. Mirroring tables is
-	/// free and stays ungated; only TV pays.</para>
-	///
-	/// <para><b>It must be smaller than the room or it gates nothing.</b> The scene's
-	/// <c>RoomSize</c> is 800 (the code default of 240 is overridden — check the scene,
-	/// never the default), so the interior spans ±400 and no player can be more than
-	/// ~870 from the wall. A first draft used 1200 and was therefore unconditionally
-	/// true everywhere in the lobby: it looked like a gate and gated nothing.</para>
-	///
-	/// <para>500 is measured HORIZONTALLY (see <see cref="ViewerPresent"/>) against a
-	/// wall at y≈369, so it fires from the room centre (369) to about y=-131 — the near
-	/// half of the room. That matches the intent ("walk up to the wall and there's a
-	/// live game on it") without needing to stand underneath it.</para></summary>
-	[Property] public float TvWatchRange { get; set; } = 500f;
+	// TV used to stream only while a viewer was within range of the board, on the
+	// reasoning that an unwatched wall shouldn't cost lichess a held stream. That gate
+	// is GONE, deliberately: TV is on or off, and the client's setting decides. It was
+	// three attempts at a number that never once behaved as its own doc claimed (1200
+	// in an 800-unit room gated nothing; measuring from this component measured the room
+	// centre because SpectatorWall lives on the LobbyRoom GO; measuring in 3D against a
+	// board floating ~390 up made a third of the distance vertical) — and it bought a
+	// wall that went blank when you stepped back from it.
+	//
+	// The cost it was guarding is still bounded, and by better things: TV polls only
+	// while it is the FEATURED source on this client (cycle to a table and it stops), and
+	// gamchess holds ONE upstream per channel however many watch it, dropping it once
+	// nobody polls. An idle lobby with TV on costs lichess one stream per channel — which
+	// is what "N clients cost lichess nothing" was always about.
 
-	/// <summary>World position TV proximity is measured against — set by
-	/// <see cref="SpectatorWall"/> to the floating board's centre.
-	///
-	/// <para><b>Not this component's own position.</b> SpectatorWall lives on the
-	/// LobbyRoom GO (that's where it reads RoomSize from), so this component sits at the
-	/// ROOM CENTRE, nowhere near the wall — measuring against it would gate on "is the
-	/// player in the room", which is not the question.</para></summary>
-	public Vector3 WatchAnchor { get; set; }
-
-	/// <summary>Is anyone here to see it?
-	///
-	/// <para>Measured from the CAMERA rather than the pawn: the camera is literally what's
-	/// looking, and it's also what's true while engaged at a station, where the pawn stays
-	/// put.</para>
-	///
-	/// <para><b>HORIZONTALLY</b>, which is the same thing <c>LobbyPlayer</c>'s walk-up
-	/// ranges do and is not a detail. This board deliberately floats high above the wall —
-	/// with the tilt, its centre is ~390 up, so a straight 3D distance from a camera at
-	/// eye height (~64) starts at 326 before the player has moved at all. That vertical
-	/// term would dominate the range, make the number mean something other than what it
-	/// reads as, and shift every time anyone tuned <c>BoardCellSize</c>,
-	/// <c>ClearAboveWall</c> or <c>TiltDegrees</c>. "How far away is the viewer" is a
-	/// floor-plan question; answer it on the floor plan.</para></summary>
-	bool ViewerPresent
-	{
-		get
-		{
-			// Engaged at the wall always counts, however far the camera ends up sitting.
-			if ( SpectatorStation.Active != null ) return true;
-			var cam = Scene?.Camera;
-			if ( cam == null ) return false;
-			var delta = cam.WorldPosition - WatchAnchor;
-			return new Vector2( delta.x, delta.y ).Length <= TvWatchRange;
-		}
-	}
+	// ── The TV controls ──
+	//
+	// These live on the SPECTATOR BOARD (SpectatorScreen), not the settings board, and
+	// that is the whole of the UI story: one board for TV, the one you're looking at.
+	// The admin uses the same picker as everyone else — theirs just also moves the
+	// lobby's suggestion.
 
 	/// <summary>Does TV appear in the cycle at all? A local setting, default on, so
 	/// only someone who turns it OFF has anything saved.</summary>
 	public static bool TvEnabled => PlayerData.Current.LichessTvEnabled;
 
-	/// <summary>Which channel this client watches: the host's suggestion by default,
-	/// or an explicit local pick.
+	/// <summary>The channel the lobby suggests. Blitz until an admin says otherwise.</summary>
+	public static string SuggestedChannel =>
+		LichessTv.Coerce( LobbyNetworkManager.Instance?.SuggestedTvChannel );
+
+	/// <summary>Is this client taking the lobby's channel rather than its own pick?
 	///
-	/// <para>The host SUGGESTS, it doesn't dictate — a player who has chosen a channel
+	/// <para><b>Always true for an admin</b>, and not as a special case: an admin's pick
+	/// IS the lobby's channel, so "follow the lobby" is the only thing they can be doing.
+	/// The screen hides the toggle for them rather than offer a control that means
+	/// nothing.</para></summary>
+	public static bool FollowingLobbyTv =>
+		LobbyNetworkManager.LocalIsAdmin || PlayerData.Current.LichessTvFollowHost;
+
+	/// <summary>Which channel this client watches: the lobby's, or an explicit local
+	/// pick.
+	///
+	/// <para>The admin SUGGESTS, it doesn't dictate — a player who has chosen a channel
 	/// keeps it when the admin changes theirs.</para></summary>
 	public static string DesiredChannel
 	{
 		get
 		{
 			var d = PlayerData.Current;
-			if ( !d.LichessTvFollowHost && LichessTv.IsValid( d.LichessTvChannel ) )
+			if ( !FollowingLobbyTv && LichessTv.IsValid( d.LichessTvChannel ) )
 				return d.LichessTvChannel;
-			return LichessTv.Coerce( LobbyNetworkManager.Instance?.SuggestedTvChannel );
+			return SuggestedChannel;
 		}
+	}
+
+	/// <summary>Turn TV on or off for this client. Off drops it from the wall's cycle;
+	/// the wall keeps mirroring tables, which was its job before TV existed.</summary>
+	public static void SetTvEnabled( bool on ) => MutateData( d => d.LichessTvEnabled = on );
+
+	/// <summary>Take the lobby's channel from now on. Not offered to an admin — they set
+	/// it.</summary>
+	public static void FollowLobbyTv() => MutateData( d => d.LichessTvFollowHost = true );
+
+	/// <summary>Watch a channel.
+	///
+	/// <para><b>An admin's pick moves the whole lobby's suggestion</b> instead of setting
+	/// a personal override — which is what makes one picker serve both jobs. Routed
+	/// through the host and re-checked there: the admin may not be the network host on a
+	/// dedi, and <c>LocalIsAdmin</c> is a UI hint, never authority. If it's refused, this
+	/// client simply keeps watching the lobby's channel.</para></summary>
+	public static void PickTvChannel( string channel )
+	{
+		channel = LichessTv.Coerce( channel );
+
+		if ( LobbyNetworkManager.LocalIsAdmin )
+		{
+			LobbyNetworkManager.Instance?.RequestSetSuggestedTvChannel( channel );
+			return;
+		}
+
+		MutateData( d =>
+		{
+			d.LichessTvFollowHost = false;
+			d.LichessTvChannel = channel;
+		} );
+	}
+
+	// PlayerData.Current may be the shared defaults object, which doesn't persist — so
+	// mutate the same way the settings board does: load-or-new, change, save.
+	static void MutateData( System.Action<PlayerData> change )
+	{
+		var d = PlayerData.Load() ?? new PlayerData();
+		change( d );
+		d.Save();
 	}
 
 	protected override void OnEnabled() => Instance = this;
@@ -230,22 +250,9 @@ public sealed class SpectatorController : Component
 			? $"LICHESS TV · {label} ({sources}/{sources})"
 			: $"LICHESS TV · {label}";
 
-		// Ticking is what tells gamchess someone is watching — stop and it drops the
-		// upstream after its idle TTL. So gate it on someone actually being here:
-		// otherwise every client in a lobby holds a lichess stream open forever for a
-		// wall nobody is looking at.
-		if ( !ViewerPresent )
-		{
-			// Show NOTHING rather than the last position we happened to have: the feed is
-			// stopped, so it's frozen, and a frozen game on a board this size reads as a
-			// live one from across the room. StopWatching also resets the poll version, so
-			// coming back asks for "whatever is on now".
-			_tv.StopWatching();
-			ClearPosition();
-			StatusText = $"Walk up to watch lichess TV ({label}).";
-			return;
-		}
-
+		// Polling IS the watch signal gamchess ref-counts on. TV being the featured source
+		// is the whole gate now — cycle to a table, or turn TV off, and this stops being
+		// called, the polls stop, and gamchess drops its upstream after its idle TTL.
 		_tv.Tick();
 
 		if ( !_tv.HasPosition )
@@ -271,6 +278,16 @@ public sealed class SpectatorController : Component
 		BlackClock = TimeControl.Format( _tv.BlackClock );
 		TickingSeat = _tv.TickingSeat;
 		TimeControlLabel = label;
+
+		// Holding on a game that just finished: say how it ended, and stop showing a
+		// clock as running. lichess TV would already be showing the next game by now —
+		// stopping on the result for a beat is the whole point.
+		if ( _tv.InFanfare )
+		{
+			StatusText = _tv.FanfareText;
+			TickingSeat = null;
+			return;
+		}
 		StatusText = null;
 	}
 

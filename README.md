@@ -268,7 +268,7 @@ guard. So Chess960's X-FEN castling (`HDhd`) is never read, Crazyhouse's pockets
 the rest are plain standard placement. Verified against every variant's real starting FEN.
 
 Two channels keep state the 64 squares can't hold — Crazyhouse's pockets, Three-check's
-counts — and the settings board says so rather than let a viewer think the board is broken.
+counts — and the spectator board says so rather than let a viewer think the board is broken.
 
 The **channel allowlist is a security boundary, not a menu**: the key arrives off the wire and
 becomes a lichess URL, so nothing may build one from a key that didn't come out of
@@ -289,12 +289,27 @@ siblings, and **`wc`/`bc` are SECONDS** — where the Board API sends the same i
 milliseconds. Two endpoints, two units.
 
 **A clock only arrives on a move**, so the client counts the side-to-move's down locally from
-the last frame and snaps both to the next one. It only ever spends time, never invents it,
-which keeps a live clock from reading higher than what's actually left. lichess remains the
-only authority.
+the last frame and snaps both to the next one — gated on the version advancing, since a
+timed-out long poll re-delivers the same state every ~5s and re-snapping on that makes the
+clock sawtooth *upward*. It only ever spends time, never invents it, which keeps a live clock
+from reading higher than what's actually left. lichess remains the only authority.
+
+**The feed never says a game ended** — it just swaps to a new `featured`. So on a swap
+gamchess fetches the old game's result from `GET /game/export/{id}` (anonymous; `status` +
+`winner`, a missing winner meaning a draw) and publishes it atomically with the new game as
+`last_game_id/last_status/last_winner`. The client matches that id against the game on its own
+board and holds the finished position for 3s with a result line, because lichess TV cuts to
+the next game instantly. One request per game *end* per channel, through the same governor.
+No buffer accumulates: the relay keeps only the latest state, so the hold drops everything in
+between by construction.
 
 **TV is per-client and off-able.** It's one more entry in the west wall's existing cycle
-(which was already per-client), with no priority over real tables. A local setting, default
-on, removes it. The lobby admin **suggests** a channel; a client that has picked its own
-keeps it. Turn TV off, or kill gamchess, and the wall mirrors real tables exactly as it did
-before M9 — which was its original job.
+(which was already per-client), with no priority over real tables. Turn TV off, or kill
+gamchess, and the wall mirrors real tables exactly as it did before M9 — which was its
+original job.
+
+**Every TV control is on the spectator board itself** (walk up, press E) — channel,
+follow-the-lobby, on/off. Not the settings board: picking a channel on one wall for a board
+on another is what the first attempt did, and it was wrong. The lobby admin **suggests** a
+channel using that same picker, so a client that has picked its own keeps it, and the admin's
+own follow-the-lobby is meaningless (their pick *is* the lobby's) and isn't shown.

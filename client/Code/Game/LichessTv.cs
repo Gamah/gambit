@@ -153,6 +153,60 @@ public static class LichessTv
 		_ => null,
 	};
 
+	/// <summary>How long the wall holds on a finished game before moving on.
+	///
+	/// <para>lichess TV cuts to the next game the instant one ends, which is unreadable
+	/// on a wall you're walking past — the result flashes and it's gone. We stop on it.
+	/// Long enough to read one line, short enough not to feel like a hang.</para></summary>
+	public const float FanfareSeconds = 3f;
+
+	/// <summary>"White wins — out of time". Turns lichess's status vocabulary into a line
+	/// a human reads, given the winner ("white"/"black", or null/empty for a DRAW).
+	///
+	/// <para>The mapping lives here, on the Sandbox-free side, so the harness can prove
+	/// every status lichess documents produces a sentence — including the ones that are
+	/// awkward, like a draw that arrives as <c>outoftime</c> (a flag with no mating
+	/// material) or <c>timeout</c> (someone walked away).</para>
+	///
+	/// <para><paramref name="status"/> empty means we couldn't find out: the caller still
+	/// wants to say the game ended, so this returns a bare "Game over".</para></summary>
+	public static string ResultLine( string status, string winner )
+	{
+		bool draw = string.IsNullOrEmpty( winner );
+		string who = winner == "white" ? "White" : winner == "black" ? "Black" : null;
+
+		// The reason, in lichess's vocabulary. Anything unrecognised falls through to a
+		// plain result line rather than printing a raw key at a player.
+		string why = status switch
+		{
+			"mate" => "checkmate",
+			"resign" => "resignation",
+			"outoftime" => "out of time",
+			"timeout" => "abandoned",
+			"stalemate" => "stalemate",
+			"draw" => "agreement",
+			"cheat" => "cheat detected",
+			"aborted" => "aborted",
+			"noStart" => "never started",
+			"variantEnd" => "variant end",
+			"unknownFinish" => null,
+			_ => null,
+		};
+
+		// Aborted and never-started have no winner and aren't really draws — saying
+		// "Draw by aborted" would be nonsense.
+		if ( status is "aborted" or "noStart" )
+			return status == "aborted" ? "Game aborted" : "Game never started";
+
+		if ( draw )
+			return why == null ? "Draw" : $"Draw — {why}";
+
+		if ( who == null )
+			return "Game over";
+
+		return why == null ? $"{who} wins" : $"{who} wins — {why}";
+	}
+
 	/// <summary>The next channel in the cycle, wrapping.</summary>
 	public static string Next( string channel )
 	{

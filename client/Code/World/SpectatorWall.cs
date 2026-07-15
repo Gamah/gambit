@@ -138,8 +138,7 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 
 		// The one controller that feeds the board — lives on the wall root so both the
 		// display panel and the engaged screen find it via SpectatorController.Instance.
-		// Its WatchAnchor is set below, once the board's placement is known.
-		var ctrl = _root.AddComponent<Gambit.Game.SpectatorController>();
+		_root.AddComponent<Gambit.Game.SpectatorController>();
 
 		// Floating display board: a real 3D chess set (SpectatorBoard3D), centred on the wall
 		// width and hovering above the wall top so the whole lobby can watch one game from across
@@ -171,12 +170,6 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		var board3d = board.AddComponent<Gambit.World.SpectatorBoard3D>( false );
 		board3d.CellSize = BoardCellSize;
 		board3d.Enabled = true;
-
-		// Tell the controller where the thing being watched actually IS. It can't use its
-		// own position: this component lives on the LobbyRoom GO (that's where RoomSize
-		// comes from), so the controller sits at the room centre rather than at this wall.
-		// TV only streams while a viewer is near this anchor — see TvWatchRange.
-		ctrl.WatchAnchor = board.WorldPosition;
 
 		// Two player tags (replacing the single overhead scoreboard that tried to show both sides
 		// at once and read poorly). Each lies coplanar with the board and sits just OUTSIDE its

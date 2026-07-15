@@ -80,81 +80,12 @@ public static class SettingsModel
 		rows.Add( ToggleRow( "OTHER BOARD SOUNDS", data.RemoteCabinetSounds,
 			v => Mutate( d => d.RemoteCabinetSounds = v ) ) );
 
-		// Lichess TV on the west wall (M9). LOCAL rows, not host rows: the wall is
-		// per-client already, and TV needs no lichess account — the feed is anonymous —
-		// so there is nothing here that another player's choice should decide.
-		rows.Add( ToggleRow( "LICHESS TV", data.LichessTvEnabled,
-			v => Mutate( d => d.LichessTvEnabled = v ) ) );
-		if ( data.LichessTvEnabled )
-			AddTvChannelRows( rows, data );
-
+		// NOTE: lichess TV (M9) is deliberately NOT here — not the on/off, not the
+		// channel, not the lobby's suggestion. It all lives on the spectator board,
+		// which is the thing it controls and the thing you are looking at when you
+		// care. Splitting it across two walls was the first attempt and it was wrong:
+		// you picked a channel on the south wall for a board on the north one.
 		return rows;
-	}
-
-	/// <summary>The channel picker: a "follow the lobby" row, then one row per group.
-	///
-	/// <para><b>Grouped because there are sixteen.</b> They were six until the variants
-	/// turned out to render fine on the wall (it reads the FEN's placement field and
-	/// knows none of the rules), and sixteen cells in one row is a strip of unreadable
-	/// slivers. Speeds first — they're what most people want — then variants, then bots.</para>
-	///
-	/// <para>Following is a real choice rather than an absence of one, so it gets its own
-	/// cell: picking a channel means "this one, whatever the admin says", and the two are
-	/// not the same state.</para></summary>
-	static void AddTvChannelRows( List<SettingRow> rows, PlayerData data )
-	{
-		string suggested = LichessTv.Coerce( LobbyNetworkManager.Instance?.SuggestedTvChannel );
-		string current = LichessTv.Coerce( data.LichessTvChannel );
-
-		var follow = new SettingRow
-		{
-			Label = data.LichessTvFollowHost
-				? $"TV CHANNEL — following the lobby ({LichessTv.Label( suggested )})"
-				: $"TV CHANNEL — {LichessTv.Label( current )}",
-		};
-		follow.Cells.Add( new SettingCell
-		{
-			Label = "FOLLOW THE LOBBY",
-			Css = "num",
-			Selected = data.LichessTvFollowHost,
-			Activate = () => Mutate( d => d.LichessTvFollowHost = true ),
-		} );
-		rows.Add( follow );
-
-		AddTvGroupRow( rows, data, LichessTv.Group.Speed, "SPEEDS", current );
-		AddTvGroupRow( rows, data, LichessTv.Group.Variant, "VARIANTS", current );
-		AddTvGroupRow( rows, data, LichessTv.Group.Other, "BOTS", current );
-
-		// Say what the board can't show, rather than let someone conclude it's broken.
-		// The position is always right; two variants keep state off the 64 squares.
-		string watching = data.LichessTvFollowHost ? suggested : current;
-		if ( LichessTv.HidesState( watching ) )
-			rows.Add( new SettingRow { Label = LichessTv.HiddenStateNote( watching ) } );
-	}
-
-	static void AddTvGroupRow( List<SettingRow> rows, PlayerData data, LichessTv.Group group,
-		string label, string current )
-	{
-		var row = new SettingRow { Label = label };
-		foreach ( var info in LichessTv.InGroup( group ) )
-		{
-			string c = info.Key;
-			row.Cells.Add( new SettingCell
-			{
-				Label = info.Label,
-				Css = "num",
-				// A pick only reads as selected when we're not following: while following,
-				// the lobby's channel is what's on, and highlighting a stale personal pick
-				// would claim otherwise.
-				Selected = !data.LichessTvFollowHost && current == c,
-				Activate = () => Mutate( d =>
-				{
-					d.LichessTvFollowHost = false;
-					d.LichessTvChannel = c;
-				} ),
-			} );
-		}
-		rows.Add( row );
 	}
 
 
@@ -201,44 +132,11 @@ public static class SettingsModel
 		else if ( ring?.Rebuilding ?? false )
 			rows.Add( new SettingRow { Label = "Rebuilding the ring…" } );
 
-		// The lobby's SUGGESTED TV channel (M9). A suggestion, not a setting: it moves
-		// the wall only for players who haven't picked a channel of their own, and does
-		// nothing at all for players with TV off. That's why it's safe to leave to the
-		// admin — nobody's wall is taken over.
-		//
-		// Grouped over three rows for the same reason the local picker is: sixteen cells
-		// in one row is a strip of slivers.
-		string suggested = LichessTv.Coerce( LobbyNetworkManager.Instance?.SuggestedTvChannel );
-		rows.Add( new SettingRow { Label = $"SUGGESTED TV CHANNEL — {LichessTv.Label( suggested )}" } );
-		AddSuggestedTvRow( rows, LichessTv.Group.Speed, "SPEEDS", suggested );
-		AddSuggestedTvRow( rows, LichessTv.Group.Variant, "VARIANTS", suggested );
-		AddSuggestedTvRow( rows, LichessTv.Group.Other, "BOTS", suggested );
-
+		// NOTE: the lobby's TV channel is NOT here either. The admin sets it on the
+		// spectator board, using the same picker everyone else uses — see
+		// SpectatorScreen. A host row here would have been a second place to set one
+		// thing, on a wall away from the board it changes.
 		return rows;
-	}
-
-	static void AddSuggestedTvRow( List<SettingRow> rows, LichessTv.Group group, string label,
-		string suggested )
-	{
-		var row = new SettingRow { Label = label };
-		foreach ( var info in LichessTv.InGroup( group ) )
-		{
-			string c = info.Key;
-			row.Cells.Add( new SettingCell
-			{
-				Label = info.Label,
-				Css = "num",
-				Selected = c == suggested,
-				Activate = () =>
-				{
-					// Routed through the host, and re-checked there: the admin may not be
-					// the network host on a dedi, and LocalIsAdmin is UI only.
-					LobbyNetworkManager.Instance?.RequestSetSuggestedTvChannel( c );
-					SettingsVersion++;
-				},
-			} );
-		}
-		rows.Add( row );
 	}
 
 	static SettingRow SwatchRow( string label, string current, Action<string> set )

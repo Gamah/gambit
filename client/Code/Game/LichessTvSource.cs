@@ -63,6 +63,44 @@ public sealed class LichessTvSource
 	public int WhiteRating { get; private set; }
 	public int BlackRating { get; private set; }
 
+	/// <summary>The game currently on the board. Tracked so we can tell when gamchess
+	/// says the game we're SHOWING has ended, rather than some other one.</summary>
+	string _gameId;
+
+	// ── The fanfare ──
+	//
+	// lichess TV cuts to the next game the instant one ends. On a wall that reads as a
+	// glitch: the result never appears, the pieces just jump to a new position. So when
+	// the game we're showing ends, we stop on it for FanfareSeconds with a line saying
+	// how it went, and only then move on.
+	//
+	// We KEEP POLLING throughout — polling is what tells gamchess someone is watching,
+	// so pausing it would let the upstream drop just because a game ended. The updates
+	// simply aren't applied.
+	//
+	// And there is no buffer to grow. gamchess keeps only the LATEST state per channel
+	// (one slot, overwritten), so "hold for 3s then take whatever's current" costs
+	// nothing and skips whatever happened in between by construction. Nothing to bound,
+	// nothing to speed up, nothing to drain — the relay already abandons all but the
+	// latest, which is the behaviour we'd otherwise have had to build.
+
+	RealTimeUntil _fanfareUntil;
+
+	/// <summary>The game we've already shown the fanfare for.
+	///
+	/// <para>Needed because gamchess reports the last ending until the NEXT one, so
+	/// <c>last_game_id</c> keeps matching our frozen <see cref="_gameId"/> after the hold
+	/// expires — and the fanfare would re-arm on the very next poll, forever, and the
+	/// wall would never advance past the finished game.</para></summary>
+	string _fanfareShownFor;
+
+	/// <summary>The result line to hold on the board, or null. While this is set the
+	/// position is frozen on the finished game on purpose.</summary>
+	public string FanfareText { get; private set; }
+
+	/// <summary>Are we holding on a finished game?</summary>
+	public bool InFanfare => FanfareText != null && (float)_fanfareUntil > 0f;
+
 	// The last clocks lichess told us, in SECONDS (the TV feed's unit; the Board API
 	// sends the same idea in ms), and when they landed.
 	int _whiteBank, _blackBank;
@@ -88,6 +126,9 @@ public sealed class LichessTvSource
 	float ClockFor( ChessSeat seat )
 	{
 		float bank = seat == ChessSeat.White ? _whiteBank : _blackBank;
+		// A finished game's clock does not run. Without this the loser's time would keep
+		// draining through the whole fanfare, on a board showing a result.
+		if ( InFanfare ) return bank;
 		// Only the side to move is spending time. Nothing to run down before the first
 		// frame either — TickingSeat is null until then.
 		if ( TickingSeat != seat ) return bank;
@@ -235,6 +276,37 @@ public sealed class LichessTvSource
 			return;
 		}
 
+		// Did the game WE are showing just end?
+		//
+		// Match on the id: gamchess reports the last ending until the next one, so "a
+		// game ended" is not news — "the game on MY board ended" is. And once per game:
+		// last_game_id goes on matching after the hold expires, so without
+		// _fanfareShownFor the fanfare would re-arm on the next poll and the wall would
+		// never move on.
+		if ( !string.IsNullOrEmpty( st.last_game_id )
+			&& st.last_game_id == _gameId
+			&& st.last_game_id != _fanfareShownFor )
+		{
+			_fanfareShownFor = st.last_game_id;
+			FanfareText = LichessTv.ResultLine( st.last_status, st.last_winner );
+			_fanfareUntil = LichessTv.FanfareSeconds;
+			StatusText = null;
+		}
+
+		// Hold the finished position. We keep POLLING (that's what tells gamchess someone
+		// is here) but apply nothing — and because gamchess keeps only the latest state,
+		// there is no queue piling up behind this. When the hold ends we take whatever is
+		// current, having skipped the moves in between by construction.
+		if ( InFanfare ) return;
+
+		// The hold is over (or never started): the fanfare is history.
+		FanfareText = null;
+
+		// Read BEFORE _gameId is overwritten below — comparing it afterwards would compare
+		// the id to itself and be false forever. See the clock snap.
+		bool newGame = st.game_id != _gameId;
+
+		_gameId = st.game_id;
 		Fen = st.fen;
 		LastMoveUci = st.last_move_uci;
 		WhiteName = string.IsNullOrEmpty( st.white_name ) ? "White" : st.white_name;
@@ -251,7 +323,13 @@ public sealed class LichessTvSource
 		// where it started, and do it again forever. That sawtooth is worse than the
 		// frozen clock this replaced: it makes the clock read HIGHER than the time
 		// actually left, which is the one direction a live clock must never go.
-		if ( advanced )
+		//
+		// `newGame` (read above, before _gameId moved) is not belt-and-braces. Through a
+		// fanfare we keep polling and keep consuming versions while applying nothing, so
+		// by the time the hold ends `advanced` may well be false — and the new game would
+		// inherit the finished game's clocks and hold them until its first move. A
+		// different game is always news, whatever the version says.
+		if ( advanced || newGame )
 		{
 			_whiteBank = st.white_clock;
 			_blackBank = st.black_clock;
@@ -282,5 +360,13 @@ public sealed class LichessTvSource
 		// TickingSeat null stops ClockFor counting down against a bank of 0 anyway, but
 		// clearing it is what makes "no position" mean no clock rather than 0:00.
 		TickingSeat = null;
+
+		// There's no position, so there's nothing to hold on. Dropping _gameId matters
+		// most: it's what the next poll's last_game_id is matched against, and a stale
+		// one would announce the ending of a game we are no longer showing.
+		_gameId = null;
+		FanfareText = null;
+		_fanfareUntil = 0f;
+		_fanfareShownFor = null;
 	}
 }

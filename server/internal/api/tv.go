@@ -58,6 +58,12 @@ const (
 	// A TV stream that drops while people are still watching is retried this
 	// often. Mirrors streamRetryDelay for the game relay.
 	tvRetryDelay = 2 * time.Second
+
+	// How long to wait for "how did the last game end" before publishing the new
+	// featured game without it. Short: this blocks the channel's stream reader, and a
+	// fanfare missing its reason is a much smaller problem than a wall that stops
+	// updating because lichess is slow to answer a side question.
+	tvResultTimeout = 3 * time.Second
 )
 
 // TvState is the client-facing snapshot of a channel's featured game.
@@ -100,6 +106,32 @@ type TvState struct {
 	// TickingSeat is "white"/"black" — whose clock is running, derived from the
 	// FEN's side-to-move. lichess doesn't send it; the FEN already says it.
 	TickingSeat string `json:"ticking_seat,omitempty"`
+
+	// How the PREVIOUS featured game ended, so the wall can hold on it for a beat
+	// instead of cutting straight to the next one.
+	//
+	// The TV feed says NOTHING about a game ending — it just swaps to a new featured
+	// game. So these are fetched from the (anonymous) game export when we notice the
+	// swap, and they describe the game the client was probably still watching, not the
+	// one now in Fen.
+	//
+	// LastGameID is what the client matches against: "the game I am showing just
+	// ended, and here is how". It stays set until the next swap. Empty until the first
+	// one, and LastStatus stays empty if the fetch failed — the fanfare then says a
+	// game ended without saying how, which is worse than the detail but better than
+	// waiting on lichess to tell the wall anything at all.
+	LastGameID string `json:"last_game_id,omitempty"`
+	// LastStatus is lichess's own vocabulary: mate, resign, outoftime, stalemate,
+	// draw, timeout, aborted, variantEnd… The CLIENT turns it into English, because
+	// that is the half a human ever reads.
+	LastStatus string `json:"last_status,omitempty"`
+	// LastWinner is "white", "black", or "" for a draw — lichess omits the field
+	// rather than sending a third value, so empty is an answer.
+	LastWinner string `json:"last_winner,omitempty"`
+	// The names as they were, so the fanfare can say who won without the client
+	// having to have kept them.
+	LastWhiteName string `json:"last_white_name,omitempty"`
+	LastBlackName string `json:"last_black_name,omitempty"`
 }
 
 // tvChannel is one channel's fanned-out upstream.
@@ -136,6 +168,15 @@ func (c *tvChannel) update(fn func(*TvState)) {
 	c.mu.Unlock()
 }
 
+// currentGame returns the featured game id and both names as they stand — read
+// under the lock, before a featured swap overwrites them, so we know which game
+// just ended and who was playing it.
+func (c *tvChannel) currentGame() (id, white, black string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.state.GameID, c.state.WhiteName, c.state.BlackName
+}
+
 func (c *tvChannel) touch() {
 	c.mu.Lock()
 	c.lastPoll = time.Now()
@@ -158,20 +199,22 @@ type tv struct {
 	// sweeping guards the lazily-started sweeper goroutine.
 	sweeping bool
 
-	// idleTTL and streamTv are fields, not constants, for the same reason
+	// idleTTL, streamTv and gameResult are fields, not constants, for the same reason
 	// api.validateToken is a package var: they are the seams that let the
-	// ref-counting and the frame state machine be tested without lichess and
-	// without a 45-second wait. Production uses the real values.
-	idleTTL  time.Duration
-	streamTv func(context.Context, lichess.Channel, func(lichess.TvEvent)) error
+	// ref-counting, the frame state machine and the end-of-game fanfare be tested
+	// without lichess and without a 45-second wait. Production uses the real values.
+	idleTTL    time.Duration
+	streamTv   func(context.Context, lichess.Channel, func(lichess.TvEvent)) error
+	gameResult func(context.Context, string) (lichess.TvResult, error)
 }
 
 func newTv(log *zap.Logger) *tv {
 	return &tv{
-		log:      log,
-		channels: map[lichess.Channel]*tvChannel{},
-		idleTTL:  tvIdleTTL,
-		streamTv: lichess.StreamTv,
+		log:        log,
+		channels:   map[lichess.Channel]*tvChannel{},
+		idleTTL:    tvIdleTTL,
+		streamTv:   lichess.StreamTv,
+		gameResult: lichess.GameResult,
 	}
 }
 
@@ -216,8 +259,37 @@ func (t *tv) run(ctx context.Context, c lichess.Channel, ch *tvChannel) {
 			case ev.Featured != nil:
 				f := ev.Featured
 				w, b := f.White(), f.Black()
+
+				// A NEW featured game means the old one just ended — that swap is the only
+				// notice the feed ever gives. Go and ask how it went before publishing the
+				// new game, so the client gets the ending and its replacement in one
+				// atomic state and can never show the new game first.
+				//
+				// Synchronous on purpose. It blocks this stream's reader for one request,
+				// once per game, and the frames behind it just wait in the socket — cheap,
+				// and far simpler than a concurrent write-back racing the next fen. Never
+				// fatal: a failure leaves LastStatus empty and the fanfare loses its detail.
+				prev, prevW, prevB := ch.currentGame()
+				var result lichess.TvResult
+				if prev != "" && prev != f.ID {
+					rctx, cancel := context.WithTimeout(ctx, tvResultTimeout)
+					var err error
+					result, err = t.gameResult(rctx, prev)
+					cancel()
+					if err != nil {
+						t.log.Warn("lichess tv: couldn't read how the last game ended",
+							zap.String("channel", string(c)), zap.String("game", prev), zap.Error(err))
+					}
+				}
+
 				ch.update(func(s *TvState) {
 					s.Error = ""
+					if prev != "" && prev != f.ID {
+						s.LastGameID = prev
+						s.LastStatus = result.Status
+						s.LastWinner = result.Winner
+						s.LastWhiteName, s.LastBlackName = prevW, prevB
+					}
 					s.GameID = f.ID
 					s.URL = "https://lichess.org/" + f.ID
 					s.Fen = f.Fen

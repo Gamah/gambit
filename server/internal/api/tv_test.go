@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,7 +34,26 @@ func tvHandler(t *testing.T) *handler {
 		<-ctx.Done()
 		return ctx.Err()
 	}
+	h.tv.gameResult = func(context.Context, string) (lichess.TvResult, error) {
+		return lichess.TvResult{}, errors.New("no lichess in tests")
+	}
 	return h
+}
+
+// framePump wires a channel of frames into the tv relay and returns the send side.
+func framePump(h *handler) chan lichess.TvEvent {
+	frames := make(chan lichess.TvEvent)
+	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
+		for {
+			select {
+			case ev := <-frames:
+				fn(ev)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+	return frames
 }
 
 // authed stamps a valid game session on a request.
@@ -706,4 +726,157 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("condition not met within 2s")
+}
+
+// ── The end-of-game fanfare ──
+
+// The TV feed NEVER says a game ended — 95s of the ultraBullet channel produces only
+// `featured` and `fen`, and a game ending is just a swap to a new `featured`. So the
+// relay has to notice the swap and go ask how the old game went; these tests pin that,
+// because the alternative (waiting for a gameOver frame) would wait forever.
+
+func TestTvFetchesTheResultOfTheGameThatJustEnded(t *testing.T) {
+	h := tvHandler(t)
+	frames := framePump(h)
+
+	var asked []string
+	var mu sync.Mutex
+	h.tv.gameResult = func(_ context.Context, id string) (lichess.TvResult, error) {
+		mu.Lock()
+		asked = append(asked, id)
+		mu.Unlock()
+		return lichess.TvResult{Status: "outoftime", Winner: "white"}, nil
+	}
+
+	ch := h.tv.watch(lichess.ChannelBlitz)
+
+	// First featured: nothing has ended yet, so nothing may be asked.
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	st := waitForVersion(t, ch, 1)
+	if st.LastGameID != "" || st.LastStatus != "" {
+		t.Errorf("claimed a previous game on the FIRST featured: %q/%q", st.LastGameID, st.LastStatus)
+	}
+	mu.Lock()
+	n := len(asked)
+	mu.Unlock()
+	if n != 0 {
+		t.Fatalf("asked lichess %d times before any game had ended — must be 0", n)
+	}
+
+	// A second featured: the first game just ended.
+	next := `{"t":"featured","d":{"id":"NEWGAME1","orientation":"white","players":[` +
+		`{"color":"white","user":{"name":"alice"},"rating":2100,"seconds":180},` +
+		`{"color":"black","user":{"name":"bob"},"rating":2050,"seconds":180}],` +
+		`"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}}`
+	frames <- decodeTvFrame(t, next)
+	st = waitForVersion(t, ch, st.Version)
+
+	mu.Lock()
+	got := append([]string(nil), asked...)
+	mu.Unlock()
+	if len(got) != 1 || got[0] != "BQ7M0K1i" {
+		t.Fatalf("asked for %v, want exactly [BQ7M0K1i] — the game that ended, not the new one", got)
+	}
+
+	// The ending and its replacement must arrive TOGETHER, or the client would show the
+	// new game before it ever learned the old one finished.
+	if st.LastGameID != "BQ7M0K1i" {
+		t.Errorf("last_game_id %q, want BQ7M0K1i", st.LastGameID)
+	}
+	if st.LastStatus != "outoftime" || st.LastWinner != "white" {
+		t.Errorf("last result = %q/%q, want outoftime/white", st.LastStatus, st.LastWinner)
+	}
+	// The names as they were — the client shouldn't have to have kept them.
+	if st.LastWhiteName != "DiazVelandia" || st.LastBlackName != "Yoozhik" {
+		t.Errorf("last names = %q/%q, want the OLD game's players", st.LastWhiteName, st.LastBlackName)
+	}
+	if st.GameID != "NEWGAME1" || st.WhiteName != "alice" {
+		t.Errorf("the new game didn't land: %q/%q", st.GameID, st.WhiteName)
+	}
+}
+
+// A draw has no winner — lichess omits the field rather than sending a third value,
+// so an empty winner is an answer and must not read as "we don't know".
+func TestTvFanfareHandlesADraw(t *testing.T) {
+	h := tvHandler(t)
+	frames := framePump(h)
+	h.tv.gameResult = func(context.Context, string) (lichess.TvResult, error) {
+		return lichess.TvResult{Status: "stalemate", Winner: ""}, nil
+	}
+
+	ch := h.tv.watch(lichess.ChannelBlitz)
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	st := waitForVersion(t, ch, 1)
+
+	frames <- decodeTvFrame(t, `{"t":"featured","d":{"id":"G2","orientation":"white","players":[`+
+		`{"color":"white","user":{"name":"a"}},{"color":"black","user":{"name":"b"}}],`+
+		`"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}}`)
+	st = waitForVersion(t, ch, st.Version)
+
+	if st.LastStatus != "stalemate" {
+		t.Errorf("last_status %q, want stalemate", st.LastStatus)
+	}
+	if st.LastWinner != "" {
+		t.Errorf("last_winner %q, want empty for a draw", st.LastWinner)
+	}
+	if st.LastGameID == "" {
+		t.Error("a draw is still an ending — last_game_id must be set")
+	}
+}
+
+// lichess being unable or unwilling to say how a game ended must cost the fanfare its
+// detail and NOTHING else. The wall must still move on.
+func TestTvFanfareSurvivesAFailedResultFetch(t *testing.T) {
+	h := tvHandler(t)
+	frames := framePump(h)
+	h.tv.gameResult = func(context.Context, string) (lichess.TvResult, error) {
+		return lichess.TvResult{}, errors.New("lichess said no")
+	}
+
+	ch := h.tv.watch(lichess.ChannelBlitz)
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	st := waitForVersion(t, ch, 1)
+
+	frames <- decodeTvFrame(t, `{"t":"featured","d":{"id":"G2","orientation":"white","players":[`+
+		`{"color":"white","user":{"name":"a"}},{"color":"black","user":{"name":"b"}}],`+
+		`"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}}`)
+	st = waitForVersion(t, ch, st.Version)
+
+	// The ending is still announced — the client needs to know the game it was watching
+	// finished, even without a reason.
+	if st.LastGameID != "BQ7M0K1i" {
+		t.Errorf("last_game_id %q — a failed fetch must not lose the ending itself", st.LastGameID)
+	}
+	if st.LastStatus != "" {
+		t.Errorf("last_status %q, want empty when the fetch failed", st.LastStatus)
+	}
+	// And the new game must be live regardless.
+	if st.GameID != "G2" || st.Fen == "" {
+		t.Errorf("the wall stopped moving after a failed result fetch: %q", st.GameID)
+	}
+}
+
+// A `fen` frame is not a game ending, and must never trigger a fetch.
+func TestTvFenFramesNeverFetchAResult(t *testing.T) {
+	h := tvHandler(t)
+	frames := framePump(h)
+
+	var calls int32
+	h.tv.gameResult = func(context.Context, string) (lichess.TvResult, error) {
+		atomic.AddInt32(&calls, 1)
+		return lichess.TvResult{}, nil
+	}
+
+	ch := h.tv.watch(lichess.ChannelBlitz)
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	st := waitForVersion(t, ch, 1)
+	for i := 0; i < 5; i++ {
+		frames <- decodeTvFrame(t, tvFenFrame)
+		st, _ = ch.snapshot()
+	}
+	_ = st
+
+	if n := atomic.LoadInt32(&calls); n != 0 {
+		t.Fatalf("%d result fetches for plain moves — that is one lichess request per MOVE", n)
+	}
 }

@@ -163,6 +163,30 @@ public sealed class TvState
 	/// <summary>"white" | "black" | null — whose clock is running, derived by gamchess
 	/// from the FEN's side-to-move.</summary>
 	public string ticking_seat { get; set; }
+
+	// How the PREVIOUS featured game ended.
+	//
+	// <para>The TV feed says nothing about a game ending — it just swaps to the next
+	// one — so gamchess fetches these from the game export when it notices the swap.
+	// They describe the game you were probably still watching, NOT the one in
+	// <see cref="fen"/>.</para>
+
+	/// <summary>The game that just ended. The client matches this against the game it
+	/// is currently showing: if they're the same, that's "your game finished, here's
+	/// how", and it's the cue for the fanfare.</summary>
+	public string last_game_id { get; set; }
+
+	/// <summary>lichess's own status: mate, resign, outoftime, stalemate, draw,
+	/// timeout, aborted, variantEnd… Empty when the fetch failed, which costs the
+	/// fanfare its reason and nothing else.</summary>
+	public string last_status { get; set; }
+
+	/// <summary>"white" | "black" | null. <b>Null means a DRAW</b> — lichess omits the
+	/// field rather than sending a third value, so it's an answer, not a gap.</summary>
+	public string last_winner { get; set; }
+
+	public string last_white_name { get; set; }
+	public string last_black_name { get; set; }
 }
 
 /// <summary>What <c>GET /api/v1/tv/channels</c> returns.</summary>

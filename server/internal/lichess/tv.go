@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
 )
 
 // ErrBadChannel means a channel key was not on the allowlist. It never reached
@@ -247,6 +250,72 @@ func StreamTv(ctx context.Context, c Channel, fn func(TvEvent)) error {
 		// carries the whole position anyway, so there is nothing to recover.
 		return nil
 	})
+}
+
+// TvResult is how a TV game ended. Display only — nobody in it is a Gambit player.
+type TvResult struct {
+	// Status is lichess's own: mate, resign, outoftime, stalemate, draw, timeout,
+	// aborted, variantEnd, cheat, noStart, unknownFinish. The client maps it to
+	// English; we don't, because this is lichess's vocabulary and translating it here
+	// would put the mapping in the half that can't be run in the editor.
+	Status string `json:"status"`
+	// Winner is "white", "black", or EMPTY FOR A DRAW — lichess omits the field
+	// entirely rather than sending a third value, so "" is a real answer and not a
+	// missing one.
+	Winner string `json:"winner"`
+}
+
+// GameResult asks how a finished game ended.
+//
+// # Why this exists at all
+//
+// The TV feed does not say. Ninety-five seconds of the ultraBullet channel produces
+// exactly two kinds of message — `featured` and `fen` — and nothing else: when a game
+// ends, the feed simply swaps to the next one. There is no result, no winner, no
+// reason. Verified against the live feed on 2026-07-15; do not go looking for a
+// gameOver frame, there isn't one.
+//
+// So the only way to say "White wins — out of time" on the wall is to ask afterwards.
+// GET /game/export/{id} is ANONYMOUS (like the feed itself — no token, no scope) and
+// carries `status` and `winner`.
+//
+// # The cost, which is the thing to watch
+//
+// One request per game END per channel — not per move. That is roughly once a minute
+// for ultraBullet and far less for the slow channels, against a budget shared by every
+// Gambit player (lichess limits per IP, and we are one IP). It goes through the same
+// governor as everything else, so a 429 anywhere stops it too, and it asks for
+// `moves=false&opening=false` to keep the response small: we want two fields, not a
+// movetext.
+//
+// Never fatal. An error here costs the fanfare its detail, nothing more — the caller
+// shows the game ended without saying how.
+func GameResult(ctx context.Context, gameID string) (TvResult, error) {
+	var out TvResult
+	if err := guard(ctx); err != nil {
+		return out, err
+	}
+
+	u := apiBase + "/game/export/" + url.PathEscape(gameID) + "?moves=false&opening=false&clocks=false&evals=false&literate=false"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return out, fmt.Errorf("lichess: build game-result request: %w", err)
+	}
+	// Without this the export hands back PGN, not JSON.
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return out, fmt.Errorf("lichess: game-result request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("lichess: game-result status %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, fmt.Errorf("lichess: decode game result: %w", err)
+	}
+	return out, nil
 }
 
 // DecodeTvFrame decodes one ndjson line from the TV feed. ok=false means the line
