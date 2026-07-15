@@ -213,6 +213,14 @@ public sealed class LichessTvSource
 		var st = GamchessApi.Deserialize<TvState>( res.Body );
 		if ( st == null ) return;
 
+		// Did anything actually happen, or did the poll just time out?
+		//
+		// A long poll that reaches its hold answers with the CURRENT state at the SAME
+		// version — a real answer, not an error, and one that arrives every ~5s through
+		// any think. gamchess only bumps the version when the state really changes, so
+		// this is exactly the "is this news" test. `!=` rather than `>`: a channel that
+		// was dropped and reopened restarts its version at 1, and that is news too.
+		bool advanced = st.version != _version;
 		_version = st.version;
 
 		if ( !string.IsNullOrEmpty( st.error ) )
@@ -236,12 +244,19 @@ public sealed class LichessTvSource
 		WhiteRating = st.white_rating;
 		BlackRating = st.black_rating;
 
-		// Better data has arrived: snap both clocks to it and restart the local
-		// countdown from now. Every frame does this, so local drift can never accumulate
-		// past one move.
-		_whiteBank = st.white_clock;
-		_blackBank = st.black_clock;
-		_sinceBank = 0f;
+		// Snap the clocks ONLY on real news, and this guard is the whole feature.
+		//
+		// Re-snapping on a timed-out poll would reset the countdown to a value that is
+		// already 5 seconds stale — so the clock would tick down for 5s, jump back UP to
+		// where it started, and do it again forever. That sawtooth is worse than the
+		// frozen clock this replaced: it makes the clock read HIGHER than the time
+		// actually left, which is the one direction a live clock must never go.
+		if ( advanced )
+		{
+			_whiteBank = st.white_clock;
+			_blackBank = st.black_clock;
+			_sinceBank = 0f;
+		}
 
 		TickingSeat = st.ticking_seat switch
 		{

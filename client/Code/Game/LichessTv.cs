@@ -90,15 +90,15 @@ public static class LichessTv
 	/// <c>ChannelDefault</c>.</summary>
 	public const string DefaultChannel = "blitz";
 
-	/// <summary>Channel keys, in display order.</summary>
-	public static string[] Channels
+	/// <summary>Channel keys, in display order. Built once — a property that quietly
+	/// minted a fresh array per call would read as free and not be.</summary>
+	public static readonly string[] Channels = BuildKeys();
+
+	static string[] BuildKeys()
 	{
-		get
-		{
-			var keys = new string[All.Length];
-			for ( int i = 0; i < All.Length; i++ ) keys[i] = All[i].Key;
-			return keys;
-		}
+		var keys = new string[All.Length];
+		for ( int i = 0; i < All.Length; i++ ) keys[i] = All[i].Key;
+		return keys;
 	}
 
 	/// <summary>The channels in one group, in display order.</summary>
