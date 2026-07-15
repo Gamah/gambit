@@ -88,8 +88,6 @@ public sealed class LobbyPlayer : Component
 	Vector3 _seatReturnPos;
 	Rotation _seatReturnRot;
 
-
-
 	protected override void OnDestroy()
 	{
 		_dressCts?.Cancel();
@@ -233,13 +231,6 @@ public sealed class LobbyPlayer : Component
 		{
 			_controller.Enabled = true;
 			_controller.EyeAngles = _eyeFrom;
-		}
-
-
-		// specific side. If we were seated elsewhere we've since Disengaged; now the
-		// leave blend is done and we're roaming, so take the assigned seat and let
-		// Engage swoop the camera to it.
-
 		}
 
 		// First-ever load: pop the welcome/info board up automatically until the player

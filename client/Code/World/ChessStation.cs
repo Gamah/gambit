@@ -134,14 +134,14 @@ public sealed class ChessStation : Component
 	{
 		var seat = (ChessSeat)seatIndex;
 		if ( SeatSteamId( seat ) != Rpc.Caller.SteamId ) return;
-		SetSeat( seat, 0, null, null );
+		SetSeat( seat, 0, null );
 	}
 
 	/// <summary>Host-side: free any seat the disconnecting player occupied.</summary>
 	internal void HostHandleDisconnect( ulong steamId )
 	{
-		if ( WhiteSteamId == steamId ) SetSeat( ChessSeat.White, 0, null, null );
-		if ( BlackSteamId == steamId ) SetSeat( ChessSeat.Black, 0, null, null );
+		if ( WhiteSteamId == steamId ) SetSeat( ChessSeat.White, 0, null );
+		if ( BlackSteamId == steamId ) SetSeat( ChessSeat.Black, 0, null );
 	}
 
 	void SetSeat( ChessSeat seat, ulong steamId, string name )
