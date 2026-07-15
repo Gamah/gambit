@@ -214,9 +214,16 @@ public static class LichessTv
 			_ => null,
 		};
 
+		// No winner AND no reason we recognise: that is silence, not a draw.
+		//
+		// The `unknown` test above only catches the unknowns we can NAME. A status
+		// lichess adds later falls past it with why == null, and reporting that as a
+		// draw would be the same claim-from-silence one layer up — a draw is a RESULT.
+		// Every real draw has a recognised reason, so this costs none of them.
 		if ( who == null )
-			return why == null ? "Draw" : $"Draw — {why}";
+			return why == null ? "Game over" : $"Draw — {why}";
 
+		// A winner with an unrecognised reason is still a winner: we know who, not how.
 		return why == null ? $"{who} wins" : $"{who} wins — {why}";
 	}
 
