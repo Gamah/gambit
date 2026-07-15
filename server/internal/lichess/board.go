@@ -194,9 +194,15 @@ func StreamGame(ctx context.Context, token, gameID string, fn func(GameEvent)) e
 	})
 }
 
-// stream is the shared ndjson reader. Deliberately tiny and shared: the two
-// callers differ only in URL and line shape, and a streaming bug is the kind
-// that only shows up mid-game.
+// stream is the shared ndjson reader. Deliberately tiny and shared: the callers
+// differ only in URL and line shape, and a streaming bug is the kind that only
+// shows up mid-game.
+//
+// A BLANK token means an anonymous stream and sends no Authorization header at
+// all. That is not a convenience: /api/tv/{channel}/feed is `security: []`
+// upstream, and attaching a player's board:play token to a request that does not
+// need it would hand their credential to an endpoint that never asked for it, on
+// a stream we hold open for hours. TV must stay anonymous.
 func stream(ctx context.Context, token, u string, onLine func([]byte) error) error {
 	if err := guard(ctx); err != nil {
 		return err
@@ -206,7 +212,9 @@ func stream(ctx context.Context, token, u string, onLine func([]byte) error) err
 	if err != nil {
 		return fmt.Errorf("lichess: build stream request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Header.Set("Accept", "application/x-ndjson")
 
 	resp, err := streamClient.Do(req)

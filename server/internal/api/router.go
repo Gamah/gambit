@@ -41,6 +41,12 @@ type handler struct {
 	tokens  *lichess.Cipher
 	pending *pendingLinks
 	relay   *relay
+
+	// TV (M9) is deliberately NOT gated on tokens: /api/tv/{channel}/feed is
+	// anonymous upstream, so TV must keep working for a player who has never
+	// linked a lichess account, and on a deployment with no LICHESS_TOKEN_KEY at
+	// all.
+	tv *tv
 	// auditKey gates the token-audit sweep. Blank hides the route entirely.
 	auditKey string
 }
@@ -93,6 +99,7 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 		}
 	}
 	h.relay = newRelay(log, db, h.tokens)
+	h.tv = newTv(log)
 
 	mux := http.NewServeMux()
 
@@ -105,6 +112,12 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 	mux.HandleFunc("GET /auth/steam/return", h.steamReturn)
 	mux.HandleFunc("POST /auth/steam/logout", h.steamLogout)
 	mux.HandleFunc("GET /api/v1/me", h.me)
+
+	// A game session for the s&box client: one Facepunch round-trip here, then a
+	// local HMAC on every later request instead of one Facepunch call per request.
+	// FP-gated ONLY — a session may not mint a session, or the 1-hour TTL that
+	// justifies it renews itself forever.
+	mux.HandleFunc("POST /api/v1/session", h.postSession)
 
 	// Game archive. Private: every route needs a caller (Steam OpenID session or
 	// an FP token), and you only ever see games you sat in.
@@ -135,6 +148,15 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/lichess/play/{id}", h.lichessPlayState)
 	mux.HandleFunc("DELETE /api/v1/lichess/play/{id}", h.lichessPlayCancel)
 	mux.HandleFunc("POST /api/v1/lichess/play/{id}/{action}", h.lichessPlayAct)
+
+	// lichess TV (M9), for the spectator wall. Session-gated like everything else —
+	// anonymous upstream is exactly why an open relay here would be attractive to
+	// abuse, and lichess would see our IP and our User-Agent on all of it.
+	//
+	// One upstream stream per CHANNEL regardless of how many clients poll: that
+	// invariant is the whole reason this is proxied rather than hit directly.
+	mux.HandleFunc("GET /api/v1/tv/channels", h.tvChannels)
+	mux.HandleFunc("GET /api/v1/tv/{channel}", h.tvState)
 
 	// The audit sweep: the only fast incident lever we own (lichess has no bulk
 	// revoke). Operator-gated by LICHESS_AUDIT_KEY; 404s when that is unset.
