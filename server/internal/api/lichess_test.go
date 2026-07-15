@@ -25,16 +25,15 @@ func lichessHandler(t *testing.T) *handler {
 		t.Fatal(err)
 	}
 	h := &handler{
-		log:             zap.NewNop(),
-		version:         "test",
-		baseURL:         "https://testchess.gamah.net",
-		sessions:        newSessions("test-secret"),
-		nonces:          newNonceStore(time.Minute),
-		lichessClientID: "net.gamah.gambit",
-		tokens:          c,
-		pending:         newPendingLinks(pendingTTL),
+		log:      zap.NewNop(),
+		version:  "test",
+		baseURL:  "https://testchess.gamah.net",
+		sessions: newSessions("test-secret"),
+		nonces:   newNonceStore(time.Minute),
+		tokens:   c,
+		pending:  newPendingLinks(pendingTTL),
 	}
-	h.relay = newRelay(h.log, nil, c, h.lichessClientID)
+	h.relay = newRelay(h.log, nil, c)
 	return h
 }
 
@@ -463,7 +462,7 @@ func TestLichessPlayActRejectsNonSeat(t *testing.T) {
 // relay: without it, any linked player could drag any other linked player into a
 // lichess game at will, because gamchess holds both their tokens.
 func TestRelayNeedsBothSeatsToAgree(t *testing.T) {
-	r := newRelay(zap.NewNop(), nil, nil, "net.gamah.gambit")
+	r := newRelay(zap.NewNop(), nil, nil)
 	req := PlayRequest{
 		ClientGameID: validUUID,
 		WhiteSteamID: 1001,
@@ -492,7 +491,7 @@ func TestRelayNeedsBothSeatsToAgree(t *testing.T) {
 }
 
 func TestRelayRejectsAStranger(t *testing.T) {
-	r := newRelay(zap.NewNop(), nil, nil, "c")
+	r := newRelay(zap.NewNop(), nil, nil)
 	req := PlayRequest{ClientGameID: validUUID, WhiteSteamID: 1001, BlackSteamID: 1002}
 
 	if _, err := r.Join(context.Background(), 1001, req); err != nil {
@@ -507,7 +506,7 @@ func TestRelayRejectsAStranger(t *testing.T) {
 // Both seats must describe the SAME game, or one client's terms would silently
 // win over the other's.
 func TestRelayRejectsMismatchedTerms(t *testing.T) {
-	r := newRelay(zap.NewNop(), nil, nil, "c")
+	r := newRelay(zap.NewNop(), nil, nil)
 	base := PlayRequest{ClientGameID: validUUID, WhiteSteamID: 1001, BlackSteamID: 1002,
 		LimitSeconds: 180, IncrementSec: 2}
 
@@ -643,13 +642,13 @@ func TestApplyStateMarksFinished(t *testing.T) {
 // No key ⇒ no tokens ⇒ no lichess. Feature-off must be a real gate, not a
 // warning that leaves the routes half-working.
 func TestRelayDisabledWithoutACipher(t *testing.T) {
-	if newRelay(zap.NewNop(), nil, nil, "c").Enabled() {
+	if newRelay(zap.NewNop(), nil, nil).Enabled() {
 		t.Fatal("a relay with no cipher must not report enabled")
 	}
 }
 
 func TestSweepDropsAbandonedIntents(t *testing.T) {
-	r := newRelay(zap.NewNop(), nil, nil, "c")
+	r := newRelay(zap.NewNop(), nil, nil)
 	p := newPlay(PlayRequest{ClientGameID: "old", WhiteSteamID: 1, BlackSteamID: 2})
 	// One seat asked, the other never came.
 	p.created = time.Now().Add(-2 * playIntentTTL)
@@ -662,7 +661,7 @@ func TestSweepDropsAbandonedIntents(t *testing.T) {
 }
 
 func TestSweepKeepsRecentPlays(t *testing.T) {
-	r := newRelay(zap.NewNop(), nil, nil, "c")
+	r := newRelay(zap.NewNop(), nil, nil)
 	r.plays["fresh"] = newPlay(PlayRequest{ClientGameID: "fresh", WhiteSteamID: 1, BlackSteamID: 2})
 
 	r.sweep()

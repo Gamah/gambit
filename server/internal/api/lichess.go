@@ -180,7 +180,7 @@ func (h *handler) lichessStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, lichess.AuthorizeURL(h.lichessClientID, h.lichessRedirectURL(), state, challenge),
+	http.Redirect(w, r, lichess.AuthorizeURL(lichess.ClientID, h.lichessRedirectURL(), state, challenge),
 		http.StatusFound)
 }
 
@@ -235,7 +235,7 @@ func (h *handler) lichessCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// redirect_uri must be byte-identical to the one we authorized with.
-	tok, err := lichess.Exchange(ctx, h.lichessClientID, h.lichessRedirectURL(), code, pend.verifier)
+	tok, err := lichess.Exchange(ctx, lichess.ClientID, h.lichessRedirectURL(), code, pend.verifier)
 	if err != nil {
 		h.log.Warn("lichess token exchange failed", zap.Error(err))
 		h.renderLichessPage(w, http.StatusBadGateway, lichessPage{

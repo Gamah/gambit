@@ -32,7 +32,6 @@ services:
       SESSION_SECRET: "${SESSION_SECRET}"
       # Lichess (M8). A blank LICHESS_TOKEN_KEY switches linking and play off and
       # the server starts anyway — it never falls back to plaintext tokens.
-      LICHESS_CLIENT_ID: "${LICHESS_CLIENT_ID:-net.gamah.gambit}"
       LICHESS_TOKEN_KEY: "${LICHESS_TOKEN_KEY}"
       LICHESS_AUDIT_KEY: "${LICHESS_AUDIT_KEY}"
     depends_on:

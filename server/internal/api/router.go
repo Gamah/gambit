@@ -36,10 +36,11 @@ type handler struct {
 
 	// Lichess (M8). tokens is nil when LICHESS_TOKEN_KEY is unset, which switches
 	// the whole feature off — we never fall back to storing a plaintext token.
-	lichessClientID string
-	tokens          *lichess.Cipher
-	pending         *pendingLinks
-	relay           *relay
+	// There is no client-id field: lichess.ClientID is a constant, because
+	// lichess records the redirect ORIGIN on a token and never the client_id.
+	tokens  *lichess.Cipher
+	pending *pendingLinks
+	relay   *relay
 	// auditKey gates the token-audit sweep. Blank hides the route entirely.
 	auditKey string
 }
@@ -54,9 +55,6 @@ type Config struct {
 	FrontendDir   string
 	SessionSecret string
 
-	// LichessClientID is unregistered by design — lichess has no client
-	// registration and their own error text says "client_id required (choose any)".
-	LichessClientID string
 	// LichessTokenKey is 32 bytes (base64 or hex). Blank ⇒ lichess is off.
 	LichessTokenKey string
 	// LichessAuditKey gates POST /api/v1/lichess/audit. Blank ⇒ no such route.
@@ -65,15 +63,14 @@ type Config struct {
 
 func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 	h := &handler{
-		db:              db,
-		log:             log,
-		version:         cfg.Version,
-		baseURL:         strings.TrimSuffix(cfg.BaseURL, "/"),
-		sessions:        newSessions(cfg.SessionSecret),
-		nonces:          newNonceStore(openidNonceTTL),
-		lichessClientID: cfg.LichessClientID,
-		pending:         newPendingLinks(pendingTTL),
-		auditKey:        cfg.LichessAuditKey,
+		db:       db,
+		log:      log,
+		version:  cfg.Version,
+		baseURL:  strings.TrimSuffix(cfg.BaseURL, "/"),
+		sessions: newSessions(cfg.SessionSecret),
+		nonces:   newNonceStore(openidNonceTTL),
+		pending:  newPendingLinks(pendingTTL),
+		auditKey: cfg.LichessAuditKey,
 	}
 
 	// The token cipher is the on/off switch for everything lichess. Absent key ⇒
@@ -91,11 +88,11 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 			log.Warn("PUBLIC_BASE_URL not set — lichess linking is disabled (no redirect URI)")
 		} else {
 			log.Info("lichess linking enabled",
-				zap.String("client_id", cfg.LichessClientID),
+				zap.String("client_id", lichess.ClientID),
 				zap.String("redirect_uri", h.lichessRedirectURL()))
 		}
 	}
-	h.relay = newRelay(log, db, h.tokens, cfg.LichessClientID)
+	h.relay = newRelay(log, db, h.tokens)
 
 	mux := http.NewServeMux()
 

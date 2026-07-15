@@ -236,23 +236,16 @@ func (p *play) done(now time.Time) bool {
 
 // relay owns every live relayed game. One per process.
 type relay struct {
-	log      *zap.Logger
-	db       *pgxpool.Pool
-	cipher   *lichess.Cipher
-	clientID string
+	log    *zap.Logger
+	db     *pgxpool.Pool
+	cipher *lichess.Cipher
 
 	mu    sync.Mutex
 	plays map[string]*play
 }
 
-func newRelay(log *zap.Logger, db *pgxpool.Pool, c *lichess.Cipher, clientID string) *relay {
-	return &relay{
-		log:      log,
-		db:       db,
-		cipher:   c,
-		clientID: clientID,
-		plays:    map[string]*play{},
-	}
+func newRelay(log *zap.Logger, db *pgxpool.Pool, c *lichess.Cipher) *relay {
+	return &relay{log: log, db: db, cipher: c, plays: map[string]*play{}}
 }
 
 // Enabled reports whether lichess is CONFIGURED. No key ⇒ no tokens can be

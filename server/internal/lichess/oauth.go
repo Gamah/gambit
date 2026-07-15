@@ -53,6 +53,33 @@ var (
 // before widening it.
 const Scope = "board:play"
 
+// ClientID identifies Gambit to lichess. A CONSTANT, not config, and not a
+// credential — this is worth being precise about, because it looks like both.
+//
+// lichess has no client registration and no way to reserve a name; their own
+// error text is literally "client_id required (choose any)", and lila's only
+// check is that it is non-empty (AuthorizationRequest.scala → ClientIdRequired).
+//
+// It carries no operational force. lichess does NOT record it on the token: an
+// AccessToken stores clientOrigin — the scheme://host of our redirect_uri — and
+// has no client_id field (AccessToken.scala). Everything that matters keys on
+// that origin instead: the player's "revoke this app" button on
+// /account/security (POST /oauth/revoke-client → revokeByClientOrigin, filtered
+// to their own userId), and any lichess-side "kill every Gambit token" request.
+// So changing this string invalidates nothing and revokes nothing.
+//
+// It is therefore NOT an env var. A knob that can differ between prod and test
+// while nothing breaks is not configuration, it's noise — and an operator would
+// reasonably assume it was a security setting. The thing that genuinely differs
+// per instance is the redirect URI, which derives from PUBLIC_BASE_URL.
+//
+// It is also public and IMPERSONABLE BY DESIGN: every player who links sees it
+// in their URL bar, and because lichess cannot bind a redirect_uri to an
+// unregistered client_id, anyone may run an OAuth flow claiming this string and
+// pointing at their own callback. It authenticates nothing. PKCE is what secures
+// our exchange; the redirect URI is what decides who receives a code.
+const ClientID = "net.gamah.gambit"
+
 // client bounds every non-streaming call. The streams in board.go deliberately
 // do NOT use it — a client timeout would kill a long-lived stream mid-game.
 var client = &http.Client{Timeout: 10 * time.Second}

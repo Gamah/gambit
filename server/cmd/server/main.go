@@ -64,14 +64,6 @@ func main() {
 		log.Warn("SESSION_SECRET not set — web sessions will not survive a restart")
 	}
 
-	// LICHESS_CLIENT_ID identifies us to lichess. There is no client registration
-	// at lichess and no way to reserve one — their own error text is literally
-	// "client_id required (choose any)" — so this is convention, not credential.
-	lichessClientID := strings.TrimSpace(os.Getenv("LICHESS_CLIENT_ID"))
-	if lichessClientID == "" {
-		lichessClientID = "net.gamah.gambit"
-	}
-
 	// LICHESS_TOKEN_KEY encrypts the stored board:play tokens at rest (32 bytes,
 	// base64 or hex). Blank switches lichess off entirely — the router warns and
 	// starts. It is never a fallback to plaintext: gamchess holding a plaintext
@@ -88,7 +80,6 @@ func main() {
 		BaseURL:         baseURL,
 		FrontendDir:     frontendDir,
 		SessionSecret:   sessionSecret,
-		LichessClientID: lichessClientID,
 		LichessTokenKey: lichessTokenKey,
 		LichessAuditKey: lichessAuditKey,
 	})
