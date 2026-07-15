@@ -27,7 +27,7 @@ namespace Gambit.World;
 /// the mount rotation carries them.</para>
 ///
 /// <para>Cosmetic and client-local (NotSaved/NotNetworked): each client reads its own
-/// <see cref="SpectatorController"/> (the M4 relay or its own lichess poll), so nothing here
+/// <see cref="SpectatorController"/> (the host-folded FEN of a live table), so nothing here
 /// is networked.</para>
 /// </summary>
 public sealed class SpectatorBoard3D : Component, Component.ExecuteInEditor

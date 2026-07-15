@@ -7,11 +7,15 @@
 @inherits PanelComponent
 
 @*
-	Channel picker for the spectator wall (PLAN.md M5). A screen-space ScreenPanel, shown
-	only while engaged at the SpectatorStation (walk up + press E) — the camera stays put;
+	Controls for the spectator wall. A screen-space ScreenPanel, shown only while
+	engaged at the SpectatorStation (walk up + press E) — the camera stays put;
 	LobbyPlayer frees the cursor. Self-attached to the scene ScreenPanel at runtime by
 	LobbyPlayer.EnsureSpectatorScreen (no scene rewire). The board itself renders on the
-	wall (SpectatorBoard3D); this just switches what it shows.
+	wall (SpectatorBoard3D); this just picks which table it shows.
+
+	The lichess TV and watch-by-id channels lived here too, until lichess was ripped
+	out. The wall now has exactly one source — a live sbox table — so this is a
+	"next table" button and little else.
 *@
 
 <root>
@@ -23,29 +27,17 @@
 				<div class="title">SPECTATE</div>
 				<div class="now">@( c?.ChannelLabel ?? "—" )</div>
 
-				<div class="section">FEATURED — sbox tables</div>
+				<div class="section">LIVE TABLES</div>
 				<div class="row">
-					<div class="button" onclick="@( () => c?.ShowFeatured() )">Show a live table</div>
-					<div class="button ghost" onclick="@( () => c?.CycleFeatured() )">Next table</div>
+					<div class="button" onclick="@( () => c?.CycleFeatured() )">Next table</div>
 				</div>
-
-				<div class="section">LICHESS TV</div>
-				<div class="row wrap">
-					@foreach ( var ch in SpectatorController.TvChannels )
-					{
-						<div class="button ghost" onclick="@( () => c?.ShowLichessTv( ch ) )">@Cap( ch )</div>
-					}
-				</div>
-
-				<div class="section">WATCH A GAME</div>
-				<TextEntry @ref="_idEntry" class="input" placeholder="lichess game id or URL" />
-				<div class="button" onclick="@Watch">Watch</div>
 
 				@if ( !string.IsNullOrEmpty( c?.StatusText ) )
 				{
 					<div class="status">@c.StatusText</div>
 				}
-				<div class="note">Ongoing lichess games are shown a few seconds behind (fair-play delay). Press Escape to leave.</div>
+				<div class="note">The wall mirrors a live game from the tables.</div>
+				<div class="note">Press Escape to leave.</div>
 			</div>
 		</div>
 	}
@@ -111,12 +103,6 @@
 
 @code
 {
-	TextEntry _idEntry;
-
-	void Watch() => SpectatorController.Instance?.WatchGame( _idEntry?.Text?.Trim() );
-
-	static string Cap( string s ) => string.IsNullOrEmpty( s ) ? s : char.ToUpperInvariant( s[0] ) + s[1..];
-
 	protected override int BuildHash()
 	{
 		var c = SpectatorController.Instance;

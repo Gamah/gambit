@@ -66,12 +66,11 @@
 		!string.IsNullOrWhiteSpace( Player?.GambitName ) &&
 		!string.Equals( Player.GambitName, SteamName(), StringComparison.OrdinalIgnoreCase );
 
-	// Append the lichess rating when signed in, e.g. "MagnusFan  (1834)".
+	// Just the display name. The "(1834)" rating suffix was the lichess rating and
+	// went with it; a Gambit rating would slot back in here.
 	string GambitLine() =>
-		string.IsNullOrEmpty( Player?.GambitRating )
-			? Player?.GambitName
-			: $"{Player.GambitName}  ({Player.GambitRating})";
+		Player?.GambitName ?? "";
 
 	protected override int BuildHash() =>
-		HashCode.Combine( SteamName(), Player?.GambitName, Player?.GambitRating );
+		HashCode.Combine( SteamName(), Player?.GambitName );
 }

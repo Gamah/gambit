@@ -11,7 +11,7 @@ namespace Gambit.World;
 /// channel picker. The big board is a display-only 3D chess set (SpectatorBoard3D) driven
 /// by a single
 /// <see cref="Gambit.Game.SpectatorController"/> living on this wall — it mirrors a live
-/// sbox game, streams lichess TV (polled), or watches a game by id.
+/// sbox game happening at one of the tables.
 ///
 /// The board <b>floats above the wall top</b>, centred on the wall's width and facing
 /// back into the room, sized to read from across the lobby — not flat against the wall.
@@ -22,12 +22,12 @@ namespace Gambit.World;
 /// Same editor-preview + wall-dimension-watch pattern as InfoWall/SettingsWall:
 /// OnEnabled/OnValidate rebuild NotSaved GOs; OnUpdate rebuilds on a room resize.
 /// Client-side only — nothing is networked (each client reads its own synced copy of
-/// the relayed FEN, or polls lichess itself).
+/// the host-folded FEN from a live table).
 /// </summary>
 public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 {
 	/// <summary>Intrinsic pixel size of a SpectatorSeatPanel's &lt;root&gt; (name over
-	/// rating | clock). FIXED, sized to hold the longest name lichess allows — a title plus a
+	/// name). FIXED, sized to hold a long Steam persona name — a title plus a
 	/// 20-char username (~24 monospace chars at the name font) — plus the chip and a padding buffer,
 	/// so a max-length name never clips or presses the edge. The uniform scale is then chosen to fit
 	/// this fixed-width tag into the space beside the board (so the world size adapts to the room).</summary>
@@ -40,16 +40,6 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 
 	/// <summary>Keep a seat tag this far off the side wall when fitting it beside the board.</summary>
 	const float SeatWallMargin = 10f;
-
-	/// <summary>Intrinsic pixel size of the end-of-game fanfare banner (SpectatorResultPanel) —
-	/// FIXED, wide enough that the longest headline ("&lt;title&gt; &lt;20-char name&gt; wins", ~29
-	/// monospace chars at the banner font) fits with a buffer (the panel clips content past this).
-	/// The banner's scale is then fit to the room width so it can't poke the side walls.</summary>
-	const float ResultPxWidth = 2400f;
-	const float ResultPxHeight = 700f;
-
-	/// <summary>Keep the fanfare banner this far off each side wall when fitting its scale.</summary>
-	const float ResultWallMargin = 20f;
 
 	/// <summary>World units the board sits in front of the wall's inner face
 	/// (RoomSize / 2), toward the room.</summary>
@@ -81,14 +71,6 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	/// that player's own edge — 0 = at the edge, 0.5 = centred. Default 1/3 biases each tag toward
 	/// its own half.</summary>
 	[Property] public float SeatEdgeBias { get; set; } = 1f / 3f;
-
-	/// <summary>Uniform scale of the end-of-game fanfare banner centred over the board (world
-	/// width ≈ ResultPxWidth × this × 0.05).</summary>
-	[Property] public float ResultBoardScale { get; set; } = 5f;
-
-	/// <summary>How far the fanfare banner pops out in front of the board face so it reads clearly
-	/// over the pieces.</summary>
-	[Property] public float ResultPop { get; set; } = 40f;
 
 	/// <summary>Gap between the wall top and the bottom edge of the floating board. The
 	/// board's clearance tracks the scale automatically (centre = wall-top + this +
@@ -183,7 +165,7 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		// player's half (SeatEdgeBias up the board from that player's edge), not centred. Placed in
 		// the board's local frame (files X, ranks Y, out-of-face +Z) and transformed through the
 		// board's own position/rotation, so they track the tilt automatically. Each tag is a
-		// FIXED-width panel (SeatPxWidth, sized for a max-length lichess name); we pick the uniform
+		// FIXED-width panel (SeatPxWidth, sized for a long name); we pick the uniform
 		// scale that fits it into the gap between the board edge and the side wall — so the content
 		// always fits and the world size just adapts to the room. Offset from the edge by half a
 		// square (SeatEdgeCells). Both tags share the tighter side's fit so they match.
@@ -206,23 +188,6 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 
 		AddSeatTag( "SpectatorWhiteTag", boardCentre + boardRot * WhiteOffset, inPlane, fitScale, white: true );
 		AddSeatTag( "SpectatorBlackTag", boardCentre + boardRot * BlackOffset, inPlane, fitScale, white: false );
-
-		// End-of-game fanfare banner, centred over the board and popped toward the room so it reads
-		// over the pieces. The fixed-width panel holds the longest headline; its scale is fit to the
-		// room width (capped at ResultBoardScale) so a max-length "<name> wins" can't poke the side
-		// walls. Display-only; SpectatorResultPanel renders it only while the controller holds a result.
-		float bannerRoomW = 2f * ( WallWidth * 0.5f - MathF.Abs( centreX ) - WallInset - ResultWallMargin );
-		float bannerScale = MathF.Max( MathF.Min( ResultBoardScale, bannerRoomW / ( ResultPxWidth * PxToWorld ) ), 0.1f );
-
-		var banner = new GameObject( true, "SpectatorResultBanner" );
-		banner.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
-		banner.Parent = _root;
-		banner.LocalPosition = boardCentre + boardRot * new Vector3( 0f, 0f, ResultPop );
-		banner.LocalRotation = inPlane;
-		banner.LocalScale = new Vector3( 1f, 1f, 1f ) * bannerScale;
-		var bannerPanel = banner.AddComponent<WorldPanel>();
-		bannerPanel.PanelSize = new Vector2( ResultPxWidth, ResultPxHeight );
-		banner.AddComponent<Gambit.UI.SpectatorResultPanel>();
 
 		// Walk-up control board at walk-up height, directly under the floating board: shows the
 		// current source, players, time control/move, and live status, and invites "Press E to

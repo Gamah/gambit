@@ -124,64 +124,50 @@
 	/// <summary>World units to keep between the content's bottom edge and the floor.</summary>
 	[Property] public float FloorClearance { get; set; } = 30f;
 
-	/// <summary>Headline — what the board is watching right now.</summary>
+	/// <summary>Headline — which table the board is mirroring.</summary>
 	string Channel()
 	{
 		var c = C;
-		if ( c == null ) return "LIVE TABLES · LICHESS TV";
-		return c.Current switch
-		{
-			SpectatorController.Channel.LichessTv => c.ChannelLabel,
-			SpectatorController.Channel.WatchId => c.ChannelLabel,
-			_ => "FEATURED · LIVE TABLES",
-		};
+		return c == null ? "LIVE TABLES" : c.ChannelLabel;
 	}
 
 	/// <summary>The two players when a game is up, else a short invite.</summary>
 	string Players()
 	{
 		var c = C;
-		if ( c == null || !c.HasPosition ) return "Live tables · lichess TV";
+		if ( c == null || !c.HasPosition ) return "Live tables";
 		return $"{c.WhiteName}  vs  {c.BlackName}";
 	}
 
-	/// <summary>Time control + move number (whichever is known).</summary>
+	/// <summary>Move number, when a game is up.</summary>
 	string Meta()
 	{
 		var c = C;
-		if ( c == null || !c.HasPosition ) return "Walk up and pick a game to watch";
-		var parts = new List<string>();
-		if ( !string.IsNullOrEmpty( c.TimeControl ) ) parts.Add( c.TimeControl );
-		if ( c.MoveNumber > 0 ) parts.Add( $"move {c.MoveNumber}" );
-		return parts.Count > 0 ? string.Join( " · ", parts ) : "";
+		if ( c == null || !c.HasPosition ) return "Sit at a table to start a game";
+		return c.MoveNumber > 0 ? $"move {c.MoveNumber}" : "";
 	}
 
-	/// <summary>True only for the real-time sbox-table source; lichess TV / watch are polled.</summary>
-	bool Realtime => C?.Current == SpectatorController.Channel.Featured;
-
-	/// <summary>Liveness line — clear about what the viewer is seeing (live vs delayed vs
-	/// buffering), so nobody mistakes the polled/averaged TV feed for real-time play.</summary>
+	/// <summary>Liveness line. The wall's only source is the host-folded FEN from a
+	/// table, so it is always genuinely real-time — the DELAYED/BUFFERING states went
+	/// with the polled lichess feeds.</summary>
 	string LiveText()
 	{
 		var c = C;
 		if ( c == null ) return "";
-		if ( c.Buffering ) return "BUFFERING — building a smooth feed…";
 		if ( !c.HasPosition ) return string.IsNullOrEmpty( c.StatusText ) ? "" : c.StatusText;
-		return Realtime ? "LIVE · table game" : "DELAYED · a few moves behind — not live";
+		return "LIVE · table game";
 	}
 
-	/// <summary>Amber for the polled/buffering states, green for the truly-live table source.</summary>
 	string LiveColor()
 	{
 		var c = C;
-		if ( c == null || ( !c.HasPosition && !c.Buffering ) ) return WallTheme.TextFaint;
-		return Realtime && !c.Buffering ? WallTheme.AccentCss : "#d9a441";
+		if ( c == null || !c.HasPosition ) return WallTheme.TextFaint;
+		return WallTheme.AccentCss;
 	}
 
 	protected override int BuildHash() => HashCode.Combine(
-		C?.Current, C?.ChannelLabel, C?.WhiteName, C?.BlackName, C?.HasPosition,
-		HashCode.Combine( C?.TimeControl, C?.MoveNumber, C?.StatusText, C?.Buffering ),
-		SettingsModel.SettingsVersion );
+		C?.ChannelLabel, C?.WhiteName, C?.BlackName, C?.HasPosition,
+		C?.MoveNumber, C?.StatusText, SettingsModel.SettingsVersion );
 
 	protected override void OnUpdate()
 	{

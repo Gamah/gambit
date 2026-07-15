@@ -7,14 +7,17 @@
 @inherits PanelComponent
 
 @*
-	One player's tag for the spectator board (PLAN.md M5) — a small board that hugs a corner of
-	the giant 3D spectator board: White at the bottom-right, Black at the top-left, mirroring the
-	board below. Two lines: the username, then "rating | clock". Replaces the single overhead
-	scoreboard (which tried to show both sides at once and read poorly from across the room).
+	One player's tag for the spectator board — a small board that hugs a corner of the giant 3D
+	spectator board: White at the bottom-right, Black at the top-left, mirroring the board below.
+	Replaces the single overhead scoreboard (which tried to show both sides at once and read
+	poorly from across the room).
 
 	Display-only WorldPanel (no pointer input); colours track the world light via WallTheme. The
-	colour chip and border key off which side this is. Ratings/clocks come from the export PGN
-	(lichess TV / watch-by-id); the sbox-table featured source has names only, so those hide.
+	colour chip and border key off which side this is.
+
+	This used to carry a second line of "rating | clock" — all of it lichess metadata from the
+	export PGN. The wall's only source is an sbox table, which carries names and a position and
+	nothing else, so the tag is just the name now.
 *@
 
 <root>
@@ -22,9 +25,6 @@
 		<div class="name-row">
 			<div class="chip @( White ? "w" : "b" )"></div>
 			<div class="name" style="color:@WallTheme.Text;">@Name()</div>
-		</div>
-		<div class="sub">
-			<span class="rating" style="color:@WallTheme.TextDim;">@Rating()</span><span class="sep" style="color:@WallTheme.TextFaint;">@Sep()</span><span class="clock" style="color:@ClockColor();">@Clock()</span>
 		</div>
 	</div>
 </root>
@@ -99,52 +99,10 @@
 
 	string Name()
 	{
-		var c = C;
-		string name = White ? c?.WhiteName : c?.BlackName;
-		string title = White ? c?.WhiteTitle : c?.BlackTitle;
-		name = string.IsNullOrEmpty( name ) ? ( White ? "White" : "Black" ) : name;
-		return string.IsNullOrEmpty( title ) ? name : $"{title} {name}";
+		var name = White ? C?.WhiteName : C?.BlackName;
+		return string.IsNullOrEmpty( name ) ? ( White ? "White" : "Black" ) : name;
 	}
 
-	string Rating()
-	{
-		int r = White ? ( C?.WhiteRating ?? 0 ) : ( C?.BlackRating ?? 0 );
-		return r > 0 ? r.ToString() : "";
-	}
-
-	string Clock() => ClockText( White ? ( C?.WhiteClock ?? -1 ) : ( C?.BlackClock ?? -1 ) );
-
-	/// <summary>Only show the separator when both a rating and a clock are present.</summary>
-	string Sep() => Rating().Length > 0 && Clock().Length > 0 ? "|" : "";
-
-	/// <summary>Is this side's clock the one currently ticking?</summary>
-	bool Ticking()
-	{
-		var c = C;
-		return c != null && c.HasClocks && c.WhiteToMoveNow == White;
-	}
-
-	/// <summary>Accent the ticking side's clock; the idle side stays dim.</summary>
-	string ClockColor() => Ticking() ? WallTheme.AccentCss : WallTheme.TextDim;
-
-	/// <summary>Seconds → "m:ss" (or "h:mm:ss" past an hour); empty when unknown (&lt; 0).</summary>
-	static string ClockText( double seconds )
-	{
-		if ( seconds < 0 ) return "";
-		int s = (int)Math.Floor( seconds );
-		int h = s / 3600, m = ( s % 3600 ) / 60, ss = s % 60;
-		return h > 0 ? $"{h}:{m:D2}:{ss:D2}" : $"{m}:{ss:D2}";
-	}
-
-	protected override int BuildHash()
-	{
-		var c = C;
-		// The whole-second clock is in the hash so the tag repaints ~once a second while ticking.
-		return HashCode.Combine(
-			White,
-			HashCode.Combine( c?.WhiteName, c?.BlackName, c?.WhiteTitle, c?.BlackTitle ),
-			HashCode.Combine( c?.WhiteRating, c?.BlackRating, c?.HasClocks, c?.WhiteToMoveNow ),
-			(int)( c?.WhiteClock ?? -1 ), (int)( c?.BlackClock ?? -1 ),
-			SettingsModel.SettingsVersion );
-	}
+	protected override int BuildHash() =>
+		HashCode.Combine( White, C?.WhiteName, C?.BlackName, SettingsModel.SettingsVersion );
 }

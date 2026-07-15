@@ -463,7 +463,6 @@ public sealed class LobbyPlayer : Component
 		_leaveArm = 999f;
 		if ( localForfeits )
 			controller.ResignLocal();
-		Gambit.Game.PuzzleController.For( station )?.LeaveSeat();
 		Disengage();
 	}
 

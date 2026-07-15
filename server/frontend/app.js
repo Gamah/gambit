@@ -129,7 +129,7 @@ const fmtDate = (iso) => {
 };
 
 // PGN headers carry the display names; the archive itself only keys on SteamID64
-// (gamchess has no username of its own — names come from Steam and lichess).
+// (gamchess has no username of its own — names come from Steam).
 function namesFrom(pgn) {
   const w = pgn.match(/^\s*\[White\s+"([^"]*)"\]/m);
   const b = pgn.match(/^\s*\[Black\s+"([^"]*)"\]/m);
@@ -176,8 +176,7 @@ async function loadGame(id) {
 
     const { white, black } = namesFrom(g.pgn);
     $('game-title').textContent = `${white} vs ${black} — ${g.result}`;
-    $('game-meta').textContent = fmtDate(g.played_at)
-      + (g.lichess_game_id ? ` · imported to lichess as ${g.lichess_game_id}` : '');
+    $('game-meta').textContent = fmtDate(g.played_at);
     $('pgn').textContent = g.pgn;
 
     const replay = replayPgn(g.pgn);

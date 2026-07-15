@@ -80,9 +80,8 @@ public sealed class ChessStation : Component
 		Active = this;
 		ActiveSeat = seat;
 		// Fully qualified — "Game" alone can resolve to Sandbox.Game under `using Sandbox`
-		// DisplayName is the lichess account name once signed in, else the anon name — so
-		// the seat label never shows a stale test name after auth.
-		RequestEnter( (int)seat, Gambit.Game.PlayerData.Load()?.DisplayName(), Gambit.Api.LichessAuth.Username );
+		// DisplayName is the Steam persona name, so the seat label matches the name tag.
+		RequestEnter( (int)seat, Gambit.Game.PlayerData.Load()?.DisplayName() );
 	}
 
 	public void Leave()

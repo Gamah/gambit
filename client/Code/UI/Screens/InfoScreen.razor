@@ -42,18 +42,15 @@
 		else
 		{
 			<div class="title" style="color:@WallTheme.Text;">Welcome to TERRY'S GAMBIT</div>
-			<div class="tagline" style="color:@WallTheme.TextFaint;">Chess in the lobby · Powered by lichess</div>
+			<div class="tagline" style="color:@WallTheme.TextFaint;">Chess in the lobby</div>
 
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 			<div class="section-header" style="color:@WallTheme.AccentCss;">HOW TO PLAY</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Walk up to either side of a chess table and press E to take a seat — a friend can take the other side, or you can face a real opponent on lichess. Escape stands you up. You can also solve puzzles at any board and watch live games on the wall.</div>
+			<div class="body" style="color:@WallTheme.TextDim;">Walk up to either side of a chess table and press E to take a seat — a friend takes the other side. Escape stands you up. Live games from the tables show on the west wall.</div>
 
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
-			<div class="section-header" style="color:@WallTheme.AccentCss;">PLAY REAL GAMES — SIGN IN WITH LICHESS</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Real games run through your own free lichess.org account — make one there first if you don't have it. Then sign in here: we open lichess's own secure sign-in (OAuth), or you paste a personal token. Either way the token stays on your machine — it's never shared or sent to anyone but lichess — and we only use it to relay your moves through lichess's Board API. No engine or eval help, ever.</div>
-			<div class="signin-btn" onclick="@SignIn">Sign in with lichess</div>
 
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
@@ -200,20 +197,6 @@
 	.section-header.warn { color: rgba(255, 180, 40, 0.95); }
 	.body.warn-body { color: rgba(255, 210, 130, 0.9); }
 
-	.signin-btn {
-		justify-content: center;
-		margin-top: 8px;
-		padding: 14px 22px;
-		background-color: rgba(90, 140, 255, 0.28);
-		border: 2px solid rgba(90, 140, 255, 0.6);
-		border-radius: $wall-radius;
-		font-size: 22px;
-		color: rgba(255, 255, 255, 0.92);
-		font-weight: bold;
-		cursor: pointer;
-		pointer-events: all;
-	}
-	.signin-btn:hover { background-color: rgba(90, 140, 255, 0.45); }
 
 	.prizes-notice {
 		justify-content: center;
@@ -244,14 +227,6 @@
 	/// <summary>Dismiss the welcome/info panel (X, or the "close" hint). Disengaging the info
 	/// station marks it seen so it won't auto-pop again — same as pressing E/Esc.</summary>
 	void Close() => LobbyPlayer.Local?.Disengage();
-
-	/// <summary>Close this panel and open the lichess sign-in modal (SplashScreen owns the actual
-	/// OAuth / token-paste / anonymous-name flow).</summary>
-	void SignIn()
-	{
-		LobbyPlayer.Local?.Disengage();
-		SplashScreen.Open();
-	}
 
 	protected override int BuildHash() =>
 		HashCode.Combine( InfoStation.Active != null, InfoStation.Active?.Kind,

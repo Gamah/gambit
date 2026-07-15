@@ -14,7 +14,7 @@ public enum GameResult { Ongoing, WhiteWon, BlackWon, Draw }
 /// the compact hand-written move-gen fallback if the whitelist ever bites.
 ///
 /// Moves in and out are UCI ("e2e4", "e7e8q" — castling as king move "e1g1"),
-/// matching both lichess's Board API and the wire format of NetChessMove.
+/// matching the wire format of NetChessMove.
 /// </summary>
 public sealed class ChessGame
 {
@@ -43,7 +43,7 @@ public sealed class ChessGame
 
 	/// <summary>
 	/// Reconstruct the position <paramref name="ply"/> half-moves into a game given
-	/// its PGN/movetext (M5 — lichess puzzles hand us <c>game.pgn</c> + an
+	/// its PGN/movetext (used by the archive viewer's replay — it hands us a PGN + an
 	/// <c>initialPly</c>; TV snapshots hand us an export PGN). The vendor parses the
 	/// movetext, we navigate to the requested ply, snapshot its FEN, then rebuild a
 	/// <b>clean</b> game from that FEN so the caller gets full move-gen with no
