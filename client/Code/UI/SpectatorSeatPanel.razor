@@ -15,21 +15,44 @@
 	Display-only WorldPanel (no pointer input); colours track the world light via WallTheme. The
 	colour chip and border key off which side this is.
 
-	The tag carries the name, plus the clock when the featured table is playing a timed game
-	(the wall's source is an sbox table, so the clock is our own host-run one). Untimed games
-	show the name alone. There is no rating line — Gambit has no rating.
+	Two lines, and the split is deliberate:
+
+	  line 1   chip · TITLE · name        — identity, and the widest thing here
+	  line 2   rating · clock             — the numbers
+
+	The name gets a line to itself because it is the one field we don't control the length
+	of: a Steam persona name is up to 32 chars and a lichess name up to 20 plus a title
+	(see SpectatorWall.SeatPxWidth, which is sized for the worst of those). Putting the
+	rating beside it would have made the long case clip.
+
+	Line 2 varies by source, which is why both halves are conditional:
+	  - an sbox table has no rating (Gambit has no rating) — clock only
+	  - lichess TV always has both
+	  - an untimed table has no clock — and if there's also no rating, line 2 is dropped
+	    entirely rather than left as an empty gap.
 *@
 
 <root>
 	<div class="tag" style="background-color:@WallTheme.Bg; border:3px solid @( White ? "#f5f5f7" : "#101014" );">
 		<div class="name-row">
 			<div class="chip @( White ? "w" : "b" )"></div>
+			@if ( !string.IsNullOrEmpty( Title() ) )
+			{
+				<div class="title-badge">@Title()</div>
+			}
 			<div class="name" style="color:@WallTheme.Text;">@Name()</div>
 		</div>
-		@if ( !string.IsNullOrEmpty( Clock() ) )
+		@if ( HasSubLine() )
 		{
 			<div class="sub">
-				<div class="clock" style="color:@( Ticking() ? "#7fd47f" : WallTheme.Text );">@Clock()</div>
+				@if ( Rating() > 0 )
+				{
+					<div class="rating" style="color:@WallTheme.Text;">@Rating()</div>
+				}
+				@if ( !string.IsNullOrEmpty( Clock() ) )
+				{
+					<div class="clock" style="color:@( Ticking() ? "#7fd47f" : WallTheme.Text );">@Clock()</div>
+				}
 			</div>
 		}
 	</div>
@@ -84,11 +107,33 @@
 		letter-spacing: 1px;
 	}
 
+	/* A lichess title, worn like lichess wears it: small, bold, and coloured rather
+	   than boxed. BOT/anonymous never reach this — they have no title. */
+	.title-badge {
+		white-space: nowrap;
+		font-size: 24px;
+		font-weight: bold;
+		letter-spacing: 1px;
+		color: #d0a44c;
+		margin-right: 10px;
+		flex-shrink: 0;
+	}
+
 	.sub {
 		flex-direction: row;
 		align-items: center;
 		justify-content: center;
 		white-space: nowrap;
+		/* Gap, not margins: either child can be absent (a table has no rating, an
+		   untimed game has no clock) and a margin would leave the survivor off-centre. */
+		gap: 18px;
+	}
+
+	.rating {
+		font-size: 26px;
+		font-weight: bold;
+		letter-spacing: 1px;
+		opacity: 0.75;
 	}
 
 	.clock { font-size: 28px; font-weight: bold; letter-spacing: 1px; }
@@ -107,13 +152,24 @@
 		return string.IsNullOrEmpty( name ) ? ( White ? "White" : "Black" ) : name;
 	}
 
+	/// <summary>lichess title ("GM", "WFM"), or null. Always null for an sbox table.</summary>
+	string Title() => White ? C?.WhiteTitle : C?.BlackTitle;
+
+	/// <summary>lichess rating, or 0 when there isn't one (always 0 for an sbox table —
+	/// Gambit has no rating).</summary>
+	int Rating() => ( White ? C?.WhiteRating : C?.BlackRating ) ?? 0;
+
 	/// <summary>Pre-formatted clock face, or null when the featured game is untimed.</summary>
 	string Clock() => White ? C?.WhiteClock : C?.BlackClock;
+
+	/// <summary>Is there anything on line 2? An untimed sbox table has neither a rating
+	/// nor a clock, and an empty row would just be a gap under the name.</summary>
+	bool HasSubLine() => Rating() > 0 || !string.IsNullOrEmpty( Clock() );
 
 	/// <summary>This seat's clock is the one running.</summary>
 	bool Ticking() => C?.TickingSeat == ( White ? ChessSeat.White : ChessSeat.Black );
 
 	protected override int BuildHash() =>
-		HashCode.Combine( White, C?.WhiteName, C?.BlackName, Clock(), Ticking(),
-			SettingsModel.SettingsVersion );
+		HashCode.Combine( White, C?.WhiteName, C?.BlackName, Title(), Rating(), Clock(),
+			Ticking(), SettingsModel.SettingsVersion );
 }

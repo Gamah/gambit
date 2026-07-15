@@ -13,8 +13,10 @@
 	LobbyPlayer.EnsureSpectatorScreen (no scene rewire). The board itself renders on the
 	wall (SpectatorBoard3D); this just picks which table it shows.
 
-	The wall has exactly one source — a live sbox table — so this is a "next table"
-	button and little else. More sources would add channel-picking controls here.
+	The wall cycles live sbox tables and then lichess TV (M9), so "Next" steps through all
+	of them — TV is one more source, not a mode. Which TV channel you watch is a LOCAL
+	setting (the south-wall settings board), not a control here: it persists, and the
+	lobby admin only ever suggests a default. This screen stays a "next" button.
 *@
 
 <root>
@@ -26,16 +28,24 @@
 				<div class="title">SPECTATE</div>
 				<div class="now">@( c?.ChannelLabel ?? "—" )</div>
 
-				<div class="section">LIVE TABLES</div>
+				<div class="section">CHANNELS</div>
 				<div class="row">
-					<div class="button" onclick="@( () => c?.CycleFeatured() )">Next table</div>
+					<div class="button" onclick="@( () => c?.CycleFeatured() )">Next</div>
 				</div>
 
 				@if ( !string.IsNullOrEmpty( c?.StatusText ) )
 				{
 					<div class="status">@c.StatusText</div>
 				}
-				<div class="note">The wall mirrors a live game from the tables.</div>
+				@if ( SpectatorController.TvEnabled )
+				{
+					<div class="note">Live tables, then lichess TV.</div>
+				}
+				else
+				{
+					<div class="note">The wall mirrors a live game from the tables.</div>
+					<div class="note">Turn on LICHESS TV in settings for more.</div>
+				}
 				<div class="note">Press Escape to leave.</div>
 			</div>
 		</div>

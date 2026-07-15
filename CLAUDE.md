@@ -14,7 +14,8 @@ not for how things work.
 
 Gambit plays **real lichess games** from a table (M8): link your lichess account, and a game
 here is a game there, in your real history. Two ways in — play the person sitting opposite
-you (a direct challenge), or play a stranger (a lobby seek).
+you (a direct challenge), or play a stranger (a lobby seek). It also puts **lichess TV** on
+the west wall (M9) — which needs no account, no link, and no token at all.
 
 The old pre-M7 lichess integration is **still not the starting point** for anything. It was
 ripped out on `m7-gamchess-identity` and M8 was a clean-slate rebuild against re-derived API
@@ -106,6 +107,74 @@ token and must be signed by *that* token. So:
 - **Imported games are unrated and attributed to NOBODY** — `[White]`/`[Black]` are display
   strings, never account links. `POST /api/import` makes a game *viewable*, not *counted*. It
   is a strictly weaker outcome than playing live, and the copy must not imply otherwise.
+
+#### TV is the exception: no token, no custody, no security surface (M9)
+
+**`GET /api/tv/{channel}/feed` is `security: []` — anonymous.** No token, no scope, nothing
+to encrypt, revoke, or audit. **None of the custody story above applies to TV, and none of it
+may creep in**: TV must keep working for a player who has never linked and never will. The
+shared ndjson reader takes a BLANK token for exactly this, and a test asserts no
+`Authorization` header goes out — attaching a player's `board:play` token to an endpoint that
+never asked for it, on a stream held open for hours, would be a real leak.
+
+**The invariant that pays for the proxy: one upstream stream per CHANNEL.** 100 players on
+blitz cost lichess one stream. That is why TV goes through gamchess rather than each client
+hitting lichess (lichess advocates precisely this), and why per-client channel choice is
+affordable — the cost is bounded by the channel count (6), not the player count. Ref-counted
+by **pollers via a last-polled timestamp, not a counter**: a counter needs a decrement on
+every exit path including the ones a dropped HTTP connection never gives us, and one missed
+decrement leaks a stream forever. A timestamp cannot leak.
+
+**It is still session-gated, and not for cost reasons.** An open `/api/v1/tv/{channel}` is a
+free CDN for someone else's content, and lichess sees our IP and our User-Agent — we made
+that traffic attributable on purpose, so anything done through an open relay is done *as
+Gambit*, against the one IP whose limits every player shares. Being identifiable and being an
+open relay is a bad combination.
+
+**The wire shape is NOT the Board API's** (read off the live feed 2026-07-15; every part of
+this was wrong when recalled from memory first):
+
+- The envelope is **`{"t":…,"d":{…}}`** — not the `{"type":…}`-with-fields-inline that
+  `/api/board/game/stream` uses. Two lichess streams, two envelopes.
+- `players[]` **nests name/title under `user`** (absent for anon/AI — hence `Name()`
+  returning "Anonymous" rather than dereferencing), with `rating`/`seconds` as siblings.
+  `seconds` is the STARTING clock, and it's what stops the wall reading 0:00 until the first
+  move.
+- **`wc`/`bc` are SECONDS.** The Board API sends the same idea in **milliseconds**. Seconds
+  happens to be what `TimeControl.Format` takes, so nothing converts — don't generalise it.
+
+**Standard speed channels only** (`best`, `bullet`, `blitz`, `rapid`, `classical`,
+`ultraBullet`; default `blitz`) — a rendering constraint, not taste: the vendored rules are
+standard-only, so a Crazyhouse FEN (pockets, `…/RNBQKBNR[] w …`) or Chess960 X-FEN castling
+(`HAha`) arrives undrawable, and a channel showing an empty board is worse than one that
+isn't there. **The channel allowlist (`lichess.ValidChannel`) is a security boundary, not a
+menu**: the key comes off the wire and becomes a lichess URL, so nothing may build one from a
+key that didn't come out of it. `LichessTv` mirrors the list client-side for the UI only —
+if they disagree, the server wins.
+
+#### The game session: one Facepunch call an hour, not one per request (M9)
+
+**gamchess verified the FP token against Facepunch on EVERY authed request** — a live HTTP
+call per request. That was already wrong for M8's relay poll and TV would have multiplied it
+by everyone at a wall. `POST /api/v1/session` (**FP-gated only**) trades an FP token for a
+`gcs_` bearer verified with a local HMAC and **zero** network.
+
+- **Nothing about it is user-visible, and it adds no dependency.** It is minted from the
+  Facepunch token the client already holds — no web sign-in, no lichess link. Those are
+  unrelated things. A mint failure falls back to the FP path, which works identically and
+  just costs a round-trip: **it degrades performance, never function.**
+- **A session may not mint a session** (`requireFacepunch`, separate from `requireSteam`), or
+  a client renews itself forever and the TTL is a fiction.
+- **The audience is inside the MAC** (`aud|steamID|expiry|MAC`). Sign `steamID|expiry` alone
+  and a 30-day web cookie and a 1h game bearer are the same bytes under the same key — a
+  leaked cookie replayed as `gcs_<value>` would authorise the game API for a month. This is
+  the reason the payload format changed, and why the M9 deploy signs every web session out
+  once.
+- **One hour, and it's the real tradeoff**: a session authorises everything that SteamID can
+  do, including playing lichess games as them, and sessions are stateless — **there is no
+  revoking one** short of rotating `SESSION_SECRET`, which signs everyone out.
+- **Memory only, never `FileSystem.Data`** — same rule as the FP token, same reason (the
+  rogue-lobby-host spike is still open).
 
 #### Being a good API citizen (`internal/lichess/etiquette.go`)
 
@@ -314,7 +383,7 @@ the same reason.
 |---|---|---|
 | `LocalGameController` | host-folded `[Sync] BoardFen`/`Phase`/`ClientGameId` | the two-seat game at a table, and the archive upload (**D7**) |
 | `LichessGameController` | **no** — each client polls gamchess for itself | a real lichess game on this table (**M8**). Runs no clock and adjudicates nothing: lichess is the only authority, and the position is rebuilt from the UCI list it sends |
-| `SpectatorController` | reads the host-folded FEN | west wall: mirrors a live table (116 lines; it was 740 before TV went) |
+| `SpectatorController` | reads the host-folded FEN; **polls gamchess for TV** | west wall: cycles live tables, then lichess TV (**M9**) |
 
 **While a lichess game runs, the local controller is a shell** holding the seats and the
 `ClientGameId`. Its `ChessGame` never advances (moves go to the relay, not `NetChessMove`), so

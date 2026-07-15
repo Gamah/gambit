@@ -79,7 +79,59 @@ public static class SettingsModel
 			v => Mutate( d => d.MyCabinetSounds = v ) ) );
 		rows.Add( ToggleRow( "OTHER BOARD SOUNDS", data.RemoteCabinetSounds,
 			v => Mutate( d => d.RemoteCabinetSounds = v ) ) );
+
+		// Lichess TV on the west wall (M9). LOCAL rows, not host rows: the wall is
+		// per-client already, and TV needs no lichess account — the feed is anonymous —
+		// so there is nothing here that another player's choice should decide.
+		rows.Add( ToggleRow( "LICHESS TV", data.LichessTvEnabled,
+			v => Mutate( d => d.LichessTvEnabled = v ) ) );
+		if ( data.LichessTvEnabled )
+			rows.Add( TvChannelRow( data ) );
+
 		return rows;
+	}
+
+	/// <summary>Channel picker: "follow the lobby" plus one cell per channel.
+	///
+	/// <para>Following is a real choice rather than an absence of one, so it gets its own
+	/// cell — picking a channel means "this one, whatever the admin says", and the two
+	/// are not the same state.</para></summary>
+	static SettingRow TvChannelRow( PlayerData data )
+	{
+		string suggested = LichessTv.Coerce( LobbyNetworkManager.Instance?.SuggestedTvChannel );
+		string following = LichessTv.Label( suggested );
+
+		var row = new SettingRow
+		{
+			Label = data.LichessTvFollowHost
+				? $"TV CHANNEL — following the lobby ({following})"
+				: "TV CHANNEL",
+		};
+
+		row.Cells.Add( new SettingCell
+		{
+			Label = "LOBBY",
+			Css = "num",
+			Selected = data.LichessTvFollowHost,
+			Activate = () => Mutate( d => d.LichessTvFollowHost = true ),
+		} );
+
+		foreach ( var key in LichessTv.Channels )
+		{
+			string c = key;
+			row.Cells.Add( new SettingCell
+			{
+				Label = LichessTv.Label( c ),
+				Css = "num",
+				Selected = !data.LichessTvFollowHost && LichessTv.Coerce( data.LichessTvChannel ) == c,
+				Activate = () => Mutate( d =>
+				{
+					d.LichessTvFollowHost = false;
+					d.LichessTvChannel = c;
+				} ),
+			} );
+		}
+		return row;
 	}
 
 
@@ -125,6 +177,31 @@ public static class SettingsModel
 			rows.Add( new SettingRow { Label = "Applies when you close this panel" } );
 		else if ( ring?.Rebuilding ?? false )
 			rows.Add( new SettingRow { Label = "Rebuilding the ring…" } );
+
+		// The lobby's SUGGESTED TV channel (M9). A suggestion, not a setting: it moves
+		// the wall only for players who haven't picked a channel of their own, and does
+		// nothing at all for players with TV off. That's why it's safe to leave to the
+		// admin — nobody's wall is taken over.
+		string suggested = LichessTv.Coerce( LobbyNetworkManager.Instance?.SuggestedTvChannel );
+		var tv = new SettingRow { Label = $"SUGGESTED TV CHANNEL — {LichessTv.Label( suggested )}" };
+		foreach ( var key in LichessTv.Channels )
+		{
+			string c = key;
+			tv.Cells.Add( new SettingCell
+			{
+				Label = LichessTv.Label( c ),
+				Css = "num",
+				Selected = c == suggested,
+				Activate = () =>
+				{
+					// Routed through the host, and re-checked there: the admin may not be
+					// the network host on a dedi, and LocalIsAdmin is UI only.
+					LobbyNetworkManager.Instance?.RequestSetSuggestedTvChannel( c );
+					SettingsVersion++;
+				},
+			} );
+		}
+		rows.Add( tv );
 
 		return rows;
 	}

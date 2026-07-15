@@ -26,12 +26,25 @@ namespace Gambit.World;
 /// </summary>
 public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 {
-	/// <summary>Intrinsic pixel size of a SpectatorSeatPanel's &lt;root&gt; (name over
-	/// name). FIXED, sized to hold a long Steam persona name — a title plus a
-	/// 20-char username (~24 monospace chars at the name font) — plus the chip and a padding buffer,
-	/// so a max-length name never clips or presses the edge. The uniform scale is then chosen to fit
-	/// this fixed-width tag into the space beside the board (so the world size adapts to the room).</summary>
-	const float SeatPxWidth = 640f;
+	/// <summary>Intrinsic pixel size of a SpectatorSeatPanel's &lt;root&gt; — name on line 1,
+	/// rating+clock on line 2.
+	///
+	/// <para>FIXED, and sized against the WORST name either source can produce, because
+	/// the name is the one field whose length we don't control and
+	/// <c>white-space: nowrap</c> means an over-long one clips rather than wraps:</para>
+	/// <list type="bullet">
+	/// <item><b>Steam</b> — a persona name is up to <b>32 chars</b>, with no title. This is
+	/// the binding case.</item>
+	/// <item><b>lichess</b> — a username is up to 20 chars, plus a title of up to 3
+	/// ("WGM"/"WCM"/"BOT") and its gap: ~24 equivalent.</item>
+	/// </list>
+	/// <para>32 chars of 30px bold ≈ 18px/char ≈ 576px, plus the 22px chip and its 14px
+	/// gap, plus 40px padding each side = ~692. Rounded up to 760 for headroom — the old
+	/// 640 was sized for the lichess case only and would have clipped a long Steam name.
+	/// The uniform scale is then chosen to fit this fixed-width tag into the space beside
+	/// the board, so a wider tag means a slightly smaller one in a tight room (text stays
+	/// proportional and readable) rather than a clipped one.</para></summary>
+	const float SeatPxWidth = 760f;
 	const float SeatPxHeight = 200f;
 
 	/// <summary>WorldPanel px→world-unit factor (Sandbox ScreenToWorldScale) — a panel of P px
@@ -125,7 +138,8 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 
 		// The one controller that feeds the board — lives on the wall root so both the
 		// display panel and the engaged screen find it via SpectatorController.Instance.
-		_root.AddComponent<Gambit.Game.SpectatorController>();
+		// Its WatchAnchor is set below, once the board's placement is known.
+		var ctrl = _root.AddComponent<Gambit.Game.SpectatorController>();
 
 		// Floating display board: a real 3D chess set (SpectatorBoard3D), centred on the wall
 		// width and hovering above the wall top so the whole lobby can watch one game from across
@@ -157,6 +171,12 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		var board3d = board.AddComponent<Gambit.World.SpectatorBoard3D>( false );
 		board3d.CellSize = BoardCellSize;
 		board3d.Enabled = true;
+
+		// Tell the controller where the thing being watched actually IS. It can't use its
+		// own position: this component lives on the LobbyRoom GO (that's where RoomSize
+		// comes from), so the controller sits at the room centre rather than at this wall.
+		// TV only streams while a viewer is near this anchor — see TvWatchRange.
+		ctrl.WatchAnchor = board.WorldPosition;
 
 		// Two player tags (replacing the single overhead scoreboard that tried to show both sides
 		// at once and read poorly). Each lies coplanar with the board and sits just OUTSIDE its

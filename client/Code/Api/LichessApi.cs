@@ -165,3 +165,42 @@ public static class LichessApi
 			$"/api/v1/lichess/play/{Uri.EscapeDataString( clientGameId )}/{action}", "POST",
 			body == null ? null : GamchessApi.Json( body ) );
 }
+
+/// <summary>
+/// Lichess TV, as far as the client is concerned (M9).
+///
+/// <para>Like <see cref="LichessApi"/>, every call goes to gamchess and none to
+/// lichess — but for a different reason. The Board API needs custody of a token;
+/// TV needs none at all (<c>/api/tv/{channel}/feed</c> is anonymous upstream). What
+/// routes TV through gamchess is the fan-out: gamchess holds ONE stream per channel
+/// and serves every watcher from it, so a hundred players on blitz cost lichess one
+/// stream. That invariant is the deal, and clients hitting lichess directly would
+/// break it.</para>
+///
+/// <para>gamchess's TV routes are session-gated like everything else. That is not
+/// about cost — a session costs one local HMAC — it is so we don't become a free
+/// unauthed relay for lichess's content, on the one IP whose limits every real
+/// player shares and whose User-Agent names us.</para>
+///
+/// <para><b>Never required.</b> TV going down means the wall mirrors real tables,
+/// exactly as it did before M9.</para>
+/// </summary>
+public static class LichessTvApi
+{
+	/// <summary>Long-poll a channel's featured game. Same transport and the same 5s
+	/// hold as <see cref="LichessApi.PollState"/>, for the same reasons.
+	///
+	/// <para>The channel is escaped even though <see cref="Gambit.Game.LichessTv"/>
+	/// only ever hands us a key off its own list: gamchess re-checks against its own
+	/// allowlist and 404s anything else, and belt-and-braces on a value that becomes
+	/// a URL costs nothing.</para></summary>
+	public static Task<GamchessApi.Result> PollChannel( string channel, ulong since ) =>
+		GamchessApi.SendAuthed(
+			$"/api/v1/tv/{Uri.EscapeDataString( channel )}?since={since}", "GET", null );
+
+	/// <summary>What channels gamchess will actually serve. The client keeps its own
+	/// list (<see cref="Gambit.Game.LichessTv"/>) so the settings board works offline;
+	/// this exists to check the two agree.</summary>
+	public static Task<GamchessApi.Result> Channels() =>
+		GamchessApi.SendAuthed( "/api/v1/tv/channels", "GET", null );
+}

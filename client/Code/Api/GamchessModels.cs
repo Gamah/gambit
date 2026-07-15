@@ -104,3 +104,76 @@ public sealed class LichessPlayState
 	public bool white_draw { get; set; }      // that side is offering a draw
 	public bool black_draw { get; set; }
 }
+
+/// <summary>The game session bearer, from <c>POST /api/v1/session</c> (M9).
+/// <para>Traded for a Facepunch token once, then presented on every later request:
+/// gamchess verifies it with a local HMAC and no I/O, where an FP token costs a live
+/// Facepunch round-trip <i>per request</i>. Held in memory only — see
+/// <see cref="GamchessApi.ForgetSession"/>.</para></summary>
+public sealed class SessionResponse
+{
+	/// <summary>Prefixed <c>gcs_</c> so gamchess can tell it from an FP token
+	/// without a second header.</summary>
+	public string token { get; set; }
+
+	/// <summary>Unix seconds. Advisory — the client re-mints on a 401 rather than
+	/// watching the clock, because the two clocks may disagree.</summary>
+	public long expires_at { get; set; }
+}
+
+/// <summary>The featured game on a lichess TV channel, from
+/// <c>GET /api/v1/tv/{channel}?since=N</c> (M9).
+///
+/// <para><b>Clocks are SECONDS here</b>, not the milliseconds
+/// <see cref="LichessPlayState"/> uses for the same idea: two lichess endpoints, two
+/// units. Seconds is what <c>TimeControl.Format</c> takes, so nothing converts.</para>
+///
+/// <para>Nobody in a TV game is a Gambit player. There are no SteamIDs and no seats —
+/// this is a spectate-only feed and none of it may ever be treated as a caller.</para></summary>
+public sealed class TvState
+{
+	public ulong version { get; set; }
+	public string channel { get; set; }
+
+	/// <summary>Human channel name ("Blitz"), so the client needn't keep its own copy
+	/// in sync with the server's.</summary>
+	public string label { get; set; }
+
+	/// <summary>Why the channel has nothing right now (lichess backing off, stream
+	/// dropped). Never fatal — the wall keeps mirroring real tables regardless.</summary>
+	public string error { get; set; }
+
+	public string game_id { get; set; }
+	public string url { get; set; }
+
+	public string fen { get; set; }
+	public string last_move_uci { get; set; }
+
+	public string white_name { get; set; }
+	public string black_name { get; set; }
+	public string white_title { get; set; }
+	public string black_title { get; set; }
+	public int white_rating { get; set; }
+	public int black_rating { get; set; }
+
+	/// <summary>Seconds. See the class remarks.</summary>
+	public int white_clock { get; set; }
+	public int black_clock { get; set; }
+
+	/// <summary>"white" | "black" | null — whose clock is running, derived by gamchess
+	/// from the FEN's side-to-move.</summary>
+	public string ticking_seat { get; set; }
+}
+
+/// <summary>What <c>GET /api/v1/tv/channels</c> returns.</summary>
+public sealed class TvChannelsResponse
+{
+	public string @default { get; set; }
+	public TvChannelInfo[] channels { get; set; }
+}
+
+public sealed class TvChannelInfo
+{
+	public string key { get; set; }
+	public string label { get; set; }
+}

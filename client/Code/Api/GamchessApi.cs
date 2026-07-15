@@ -72,15 +72,25 @@ public static class GamchessApi
 	/// <summary>Seconds until we'll try gamchess again; 0 when ready.</summary>
 	public static float BreakerRemaining => Math.Max( 0f, (float)_breaker );
 
-	/// <summary>Clear the breaker — for an explicit user retry / console ping.</summary>
-	public static void ResetBreaker() => _breaker = 0f;
+	/// <summary>Clear the breaker — for an explicit user retry / console ping. Also
+	/// re-enables session minting: this is the "try everything again" lever, and a user
+	/// who asked for a retry means all of it.</summary>
+	public static void ResetBreaker()
+	{
+		_breaker = 0f;
+		_sessionMintBlocked = 0f;
+	}
 
 	/// <summary>
-	/// One request. Never throws. <paramref name="steamId"/>/<paramref name="fpToken"/>
-	/// are null for the public endpoints.
+	/// One request. Never throws. <paramref name="bearer"/> is null for the public
+	/// endpoints.
+	///
+	/// <para><paramref name="steamId"/> accompanies a FACEPUNCH token only — it is the
+	/// unverified claim gamchess checks the token against. A session bearer carries its
+	/// SteamID inside its MAC, so it needs no header and is sent without one.</para>
 	/// </summary>
 	static async Task<Result> Send( string path, string method, HttpContent content,
-		string steamId, string fpToken, bool bypassBreaker = false )
+		string steamId, string bearer, bool bypassBreaker = false )
 	{
 		if ( !bypassBreaker && Unreachable )
 			return new Result { Error = $"gamchess is offline — retrying in {BreakerRemaining:0}s." };
@@ -88,10 +98,11 @@ public static class GamchessApi
 		try
 		{
 			var headers = new Dictionary<string, string> { ["Accept"] = "application/json" };
-			if ( !string.IsNullOrEmpty( fpToken ) )
+			if ( !string.IsNullOrEmpty( bearer ) )
 			{
-				headers["Authorization"] = "Bearer " + fpToken;
-				headers[SteamIdHeader] = steamId ?? "";
+				headers["Authorization"] = "Bearer " + bearer;
+				if ( !string.IsNullOrEmpty( steamId ) )
+					headers[SteamIdHeader] = steamId;
 			}
 
 			using var cts = new CancellationTokenSource();
@@ -126,8 +137,113 @@ public static class GamchessApi
 		}
 	}
 
-	/// <summary>An authed request: mints a Facepunch token, and on 401 re-mints
-	/// once and retries (rotaliate's rule — FP tokens really do expire).
+	// ── The game session (M9) ──
+
+	/// <summary>The gamchess session bearer, or null. MEMORY ONLY — never
+	/// <c>FileSystem.Data</c>.
+	///
+	/// <para>This is not tidiness. A session authorises everything this SteamID can
+	/// do, including playing lichess games as them, and gamchess's sessions are
+	/// stateless: there is no way to revoke one. "Can a rogue lobby host read another
+	/// client's FileSystem.Data?" is still an open spike — do not hand it a
+	/// credential to find. <see cref="GamchessAuth"/> holds the FP token the same
+	/// way, for the same reason.</para></summary>
+	static string _session;
+	static RealTimeUntil _sessionExpires;
+
+	/// <summary>Set when a mint FAILS, and this is load-bearing rather than tidy.
+	///
+	/// <para>The breaker only opens on 5xx/transport errors — a 4xx is a real answer and
+	/// leaves it closed. So against a server that simply has no <c>/api/v1/session</c> (a
+	/// pre-M9 deploy), an unremembered failure means EVERY request pays a doomed POST
+	/// before falling back to the FP path — doubling the request count of a polling
+	/// client, permanently. Remember the failure and just use the FP path meanwhile.</para></summary>
+	static RealTimeUntil _sessionMintBlocked;
+
+	/// <summary>How long to stop trying to mint after a failure. Long enough that a
+	/// server without the route costs ~nothing; short enough that a deploy is picked up
+	/// without a restart.</summary>
+	const float SessionMintRetrySeconds = 120f;
+
+	/// <summary>Re-mint this long before the server would expire us. The 401 retry is
+	/// the real safety net; this just keeps the common case off it.</summary>
+	const float SessionMarginSeconds = 60f;
+
+	/// <summary>Drop the cached session (sign-out, unlink, an explicit retry).</summary>
+	public static void ForgetSession()
+	{
+		_session = null;
+		_sessionExpires = 0f;
+		// Deliberately does NOT clear _sessionMintBlocked: forgetting a session is not
+		// evidence that minting works again. ResetBreaker is the explicit "try
+		// everything again" lever.
+	}
+
+	/// <summary>
+	/// Current session bearer, minting one from a Facepunch token if needed. Null when
+	/// Steam isn't available or the mint failed — callers fall back to the FP path,
+	/// which still works and just costs a Facepunch round-trip per request.
+	///
+	/// <para>One Facepunch call per hour instead of one per request. gamchess verifies
+	/// an FP token against Facepunch on EVERY authed request, so a polling client (a
+	/// relayed game, the TV wall) would otherwise spend a round-trip per player per
+	/// ~5s, forever.</para>
+	/// </summary>
+	static async Task<string> Session( bool forceRefresh = false )
+	{
+		if ( !forceRefresh && !string.IsNullOrEmpty( _session ) && (float)_sessionExpires > 0f )
+			return _session;
+
+		// A recent mint failed. Don't pay for another one on every request — see
+		// _sessionMintBlocked.
+		if ( (float)_sessionMintBlocked > 0f ) return null;
+
+		// A session is minted from an FP token and nothing else — gamchess refuses to
+		// mint one from a session, or a client could renew itself forever and the
+		// short TTL would mean nothing.
+		var (steamId, fpToken) = await GamchessAuth.Credentials( forceRefresh );
+		if ( string.IsNullOrEmpty( fpToken ) ) return null;
+
+		var res = await Send( "/api/v1/session", "POST", null, steamId, fpToken );
+		if ( !res.Ok )
+		{
+			// Never fatal: the caller falls back to the FP token, which authenticates
+			// exactly the same identity — just more expensively.
+			ForgetSession();
+			_sessionMintBlocked = SessionMintRetrySeconds;
+			return null;
+		}
+
+		var body = Deserialize<SessionResponse>( res.Body );
+		if ( body == null || string.IsNullOrEmpty( body.token ) )
+		{
+			ForgetSession();
+			_sessionMintBlocked = SessionMintRetrySeconds;
+			return null;
+		}
+
+		_session = body.token;
+		// Trust our own clock rather than the server's expires_at: the two may disagree,
+		// and a client clock skewed forward would make us re-mint constantly while one
+		// skewed back would make us hold a dead token. A fixed local window can do
+		// neither.
+		_sessionExpires = SessionTtlSeconds - SessionMarginSeconds;
+		return _session;
+	}
+
+	/// <summary>Mirrors gamchess's <c>sessionGameTTL</c>. If the two ever disagree the
+	/// SERVER wins — a 401 re-mints, so being wrong here costs one extra request, not
+	/// a broken client.</summary>
+	const float SessionTtlSeconds = 3600f;
+
+	/// <summary>An authed request. Uses a gamchess session bearer when it can, and on
+	/// a 401 re-mints once and retries.
+	///
+	/// <para>The session is what keeps the hot path off Facepunch: every request
+	/// authed this way costs gamchess one local HMAC and no network at all. Without a
+	/// session we fall back to the FP token, which works identically and just costs
+	/// gamchess a Facepunch round-trip — so a mint failure degrades performance,
+	/// never function.</para>
 	///
 	/// <para>Public so <see cref="LichessApi"/> can build on it rather than
 	/// reimplement the token dance, the timeout and the breaker. Every gamchess
@@ -135,6 +251,32 @@ public static class GamchessApi
 	/// seam.</para></summary>
 	public static async Task<Result> SendAuthed( string path, string method, HttpContent content )
 	{
+		var session = await Session();
+		if ( !string.IsNullOrEmpty( session ) )
+		{
+			// No SteamID header: the MAC carries it.
+			var sres = await Send( path, method, content, null, session );
+			if ( !sres.Unauthorized ) return sres;
+
+			// 401: the session expired mid-flight (or gamchess restarted with a random
+			// SESSION_SECRET). Drop it before doing anything else.
+			//
+			// Belt and braces rather than a fix for a live bug: every path that blocks
+			// minting also forgets the session first, so a blocked re-mint below cannot
+			// currently leave a dead session cached for later requests to keep failing on.
+			// But that invariant lives in another method, and "we just got a 401, so this
+			// session is dead" is true right here without knowing it.
+			ForgetSession();
+
+			// Then mint a fresh one and try once more — exactly once, because a retry loop
+			// against an auth failure is how you get banned.
+			session = await Session( forceRefresh: true );
+			if ( !string.IsNullOrEmpty( session ) )
+				return await Send( path, method, content, null, session );
+
+			// Couldn't re-mint; fall through to the FP path rather than fail.
+		}
+
 		var (steamId, token) = await GamchessAuth.Credentials();
 		if ( string.IsNullOrEmpty( token ) )
 			return new Result { Error = "No Steam auth token — gamchess features need Steam." };
@@ -142,8 +284,6 @@ public static class GamchessApi
 		var res = await Send( path, method, content, steamId, token );
 		if ( !res.Unauthorized ) return res;
 
-		// 401: the token expired mid-flight. Mint a fresh one and try once more.
-		// Exactly once — a retry loop against an auth failure is how you get banned.
 		(steamId, token) = await GamchessAuth.Credentials( forceRefresh: true );
 		if ( string.IsNullOrEmpty( token ) ) return res;
 
