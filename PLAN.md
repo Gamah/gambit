@@ -85,20 +85,50 @@ someone asks.
 
 **Default: `blitz`.**
 
-### Do this first, or TV makes it much worse
+### Do this first: gamchess sessions for the game client
 
-**gamchess verifies the FP token against Facepunch on EVERY authed request** — there is no
-validation cache (`api/auth.go` → `steam.ValidateToken`, a live HTTP call per request).
-That is already wrong for M8's relay poll (one Facepunch round-trip per player per ~5s of
-a live game), and TV multiplies it by everyone standing at a wall: 8 idle spectators is
-~1.6 Facepunch calls/second, forever, for a public feed.
+**gamchess verifies the FP token against Facepunch on EVERY authed request** — a live HTTP
+call per request (`api/auth.go` → `steam.ValidateToken`). That is already wrong for M8's
+relay poll (one Facepunch round-trip per player per ~5s of a live game), and TV multiplies
+it by everyone standing at a wall: 8 idle spectators is ~1.6 Facepunch calls/second,
+forever, for a public feed.
 
-Two ways out, and they aren't exclusive:
-- **Cache the verification** (steamID+token → verified, short TTL — the client already
-  caches its token 120s, so match that). This fixes the M8 relay too, and is the real fix.
-- **Don't gate TV at all.** It is public, anonymous, unauthenticated data upstream; a
-  proxy of it doesn't obviously need a Steam identity. Cheaper and simpler — but then it's
-  an open endpoint on our box and wants its own rate limit.
+**Fix it by issuing the client a gamchess session token**, and note that *the code already
+exists* — `internal/api/session.go` mints exactly this today for the web viewer's cookie:
+a stateless HMAC-signed `steamID|expiry|MAC`, verified with no I/O at all. The game client
+should carry the same thing as a bearer.
+
+```
+POST /api/v1/session   FP-gated  →  { "token": "gcs_…", "expires_at": … }
+```
+
+One Facepunch call per session; every later request is a local HMAC check — **zero**
+network on the hot path. Better than caching verifications, which still pays Facepunch
+once per TTL per player and needs server-side state to do it.
+
+- **Distinguish it from an FP token by prefix** (`gcs_`), not a new header. `callerSteamID`
+  already tries session-then-FP; it grows one branch — read the bearer, and if it's ours,
+  verify the MAC.
+- **Keep the FP path.** It stays the only way to *get* a session, and the console commands
+  and any one-shot call can keep using it directly.
+- **Short TTL — an hour, not the web's 30 days**, and this is the one real tradeoff to
+  understand. A gamchess session authorises everything that SteamID can do, including
+  *playing lichess games as them*. An FP token is short-lived by nature; a 30-day bearer
+  for the same authority is a much bigger thing to leak, and sessions are stateless so
+  **there is no way to revoke one** (short of rotating `SESSION_SECRET`, which signs
+  everyone out). An hour still cuts Facepunch calls by ~700× on a polling client, which is
+  the entire point — there is no reason to reach for a longer window.
+- **Memory only, never `FileSystem.Data`.** `GamchessAuth` already holds the FP token in
+  memory and nothing else; the session must live the same way. "Can a rogue lobby host read
+  another client's FileSystem.Data?" is still an open spike below — do not hand it a
+  long-lived credential to find.
+- Re-mint on 401 exactly as `SendAuthed` already re-mints the FP token once. That path is
+  built; point it at the session instead.
+
+**The alternative for TV specifically: don't gate it at all.** It is public, anonymous data
+upstream, so proxying it doesn't obviously need a Steam identity — cheaper still, but it
+puts an open endpoint on our box that wants its own rate limit. The session is worth having
+regardless, because the relay poll needs it too.
 
 Decide before building the poll loop, not after.
 
@@ -182,11 +212,12 @@ from their side. Outcome is discretionary; there is no registration or blessing 
 
 ### Known gaps in what shipped
 
-- **Every authed request re-verifies the FP token against Facepunch.** There is no
-  validation cache — `api/auth.go` → `steam.ValidateToken` is a live HTTP call on *each*
-  request, so a live relayed game costs one Facepunch round-trip per player per poll
-  (~5s). Nothing has run yet, so nobody has felt it. **M9 makes it materially worse** (idle
-  spectators polling a public feed) and describes the fix; do it there, or here first.
+- **Every authed request re-verifies the FP token against Facepunch.** A live HTTP call on
+  *each* request (`api/auth.go` → `steam.ValidateToken`), so a relayed game costs one
+  Facepunch round-trip per player per poll (~5s). Nothing has run yet, so nobody has felt
+  it. The fix is a gamchess session token for the game client — the minter already exists
+  (`session.go`, the web cookie) — spelled out under M9, which makes the problem materially
+  worse. Do it there, or here first.
 - **A relayed lichess game is never archived to gamchess.** It lives on lichess and nowhere
   else. The PGN + `%clk` writer already exists — wiring the relay's final state into
   `POST /api/v1/games` would put it in the web viewer too.
