@@ -3,7 +3,8 @@
 **How the game is built and the s&box lore live in `CLAUDE.md`. The gamchess API
 contract lives in `README.md`.** This file is only upcoming work and open issues.
 
-Branch: **`m7-gamchess-identity`**.
+M7 (gamchess + the lichess rip-out) is merged to `master`. The recovery point for
+everything lichess is the **`lichess-final`** tag.
 
 ---
 
@@ -14,8 +15,8 @@ lichess surface — API client, OAuth, puzzles, TV, tokens, the splash screen, t
 display name — was ripped out. Puzzles and TV come back **much later**, not now.
 
 **If you find a lichess reference anywhere — code, comment, scene, asset, doc — it is
-residue and should be gutted.** `master` still has the full implementation if any of it is
-ever wanted back.
+residue and should be gutted.** The **`lichess-final`** tag is the last commit that had the
+full implementation — that's the recovery point, not `master`.
 
 **Nothing on this branch has ever been compiled or run.** This host has no s&box toolchain,
 no Go, and no Docker. ~2,000 lines came out of the client and ~1,700 lines of Go went in
@@ -144,8 +145,8 @@ Play a game to mate. Expect:
 
 ## Deferred / not scheduled
 
-- **Puzzles and TV** — both were lichess features. "Much later" per the user. Any rebuild
-  should come from gamchess, not lichess.
+- **Puzzles and TV** — both were lichess features. "Much later" per the user. The old
+  implementation is at the `lichess-final` tag; any rebuild should come from gamchess.
 - **gamchess-backed online play** (browser play, cross-lobby sbox play). `IBoardGame` and
   `ChessBoardView.Source` were deliberately kept as a seam for exactly this — a new
   controller slots in without touching the renderer.

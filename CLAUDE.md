@@ -19,8 +19,10 @@ reason about lichess constraints** (Board API rules, rate limits, the `Http` str
 problem) — none of them apply any more.
 
 If you find a lichess reference anywhere — code, comment, scene, asset, doc — **it is
-residue and should be gutted**. `master` still has the full lichess implementation if
-any of it is ever wanted back; puzzles and TV are explicitly "much later" features.
+residue and should be gutted**. The **`lichess-final`** tag is the last commit that had
+the full implementation — that's where it lives if any of it is ever wanted back (puzzles
+and TV are explicitly "much later" features), along with the lichess API facts cut from
+this file.
 
 Status: gamchess client + server built, **never compiled or deployed**. See PLAN.md.
 

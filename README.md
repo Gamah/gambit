@@ -49,8 +49,8 @@ halves. Additive fields only; annotate them here.
 
 **There is no lichess here.** Gambit was built against the lichess API through M3–M5 and
 all of it was ripped out — no API client, no OAuth, no puzzles, no TV, no token. Any
-lichess reference left anywhere is residue and should be gutted. `master` has the old
-implementation if it's ever wanted back.
+lichess reference left anywhere is residue and should be gutted. The `lichess-final` tag is
+the last commit that had it.
 
 ### Auth
 
