@@ -167,7 +167,7 @@ SLIDE_VARIANTS = {
 }
 
 
-out = "gambit/Assets/sounds/sfx"
+out = "client/Assets/sounds/sfx"
 print("Generating sound effects…")
 write_wav(f"{out}/tick.wav", gen_tick())
 write_wav(f"{out}/tock.wav", gen_tock())

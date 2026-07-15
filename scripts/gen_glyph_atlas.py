@@ -33,7 +33,7 @@ FONT_CANDIDATES = [
 
 OUT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "gambit", "Assets", "textures", "chess_glyphs.png",
+    "client", "Assets", "textures", "chess_glyphs.png",
 )
 
 

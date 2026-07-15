@@ -37,5 +37,5 @@ recorded in `Assets/ATTRIBUTION.md` as assets land.
 
 ## Development
 
-Open `gambit/gambit.sbproj` in the s&box editor (first time on a new machine: see
+Open `client/gambit.sbproj` in the s&box editor (first time on a new machine: see
 "Project Setup" in `CLAUDE.md`). Startup scene is `scenes/lobby.scene`.

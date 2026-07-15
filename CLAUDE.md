@@ -20,13 +20,17 @@ s&box's package manager tracks local projects in its own registry — cloning th
 and opening the `.sbproj` directly will fail with `Unable to find package 'local.gambit#local'`.
 
 **Correct flow:**
-1. Open the s&box editor → **New Project** → Game (Empty), pointed at the cloned repo folder
+1. Open the s&box editor → **New Project** → Game (Empty), pointed at the repo's
+   **`client/`** folder (not the repo root — `client/` is the s&box project root)
 2. The editor writes its own `.sbproj` and registers the project; use that file, not the one in the repo
 3. The editor hotloads C# automatically — check the error list for compile errors
 
+The registry tracks projects **by path**, so the M7 `gambit/` → `client/` rename means
+re-running this flow once even on a machine that already had the project.
+
 ```
 scripts/               ← dev utilities (not s&box assets); gen_sounds.py needs numpy
-gambit/                ← open gambit/gambit.sbproj in the editor
+client/                ← the s&box project — open client/gambit.sbproj in the editor
   gambit.sbproj        ← reference template; editor generates the real one locally
   Code/                ← all game C# and Razor files (capital C)
   Editor/              ← editor assembly (HotloadRebuild.cs)
@@ -34,7 +38,12 @@ gambit/                ← open gambit/gambit.sbproj in the editor
   Assets/sounds/       ← .sound events referencing compiled .vsnd in sfx/
   ProjectSettings/     ← Input.config, Collision.config, Platform.config
   Libraries/gamah.skafinity/  ← procedural music library (source-committed)
+server/                ← the gamchess Go/Postgres backend (M7, issue #7)
 ```
+
+Each half ignores its own build output (`client/.gitignore`, `server/.gitignore`); the
+root `.gitignore` holds only repo-wide junk. Unanchored `bin/`/`obj/`/`*_c` entries must
+never go back in the root file — they match at any depth and would swallow `server/bin/`.
 
 **Paths in csproj/slnx** assume Steam at `D:\Steam\`; the editor regenerates them.
 
@@ -395,7 +404,7 @@ local games, lichess games, and puzzles — 2D on your own board, positional whe
 spectating a relayed table.
 
 Music is the `gamah.skafinity` library — source-committed under
-`gambit/Libraries/gamah.skafinity/` (s&box pattern: libraries are source and
+`client/Libraries/gamah.skafinity/` (s&box pattern: libraries are source and
 auto-referenced by living there; do NOT add a `PackageReferences` entry — that
 double-registers the compiler). The scene carries a `SkafinityPlayer` +
 `SkafinityMusicPanel`; the panel is enabled only while engaged at the music wall board.

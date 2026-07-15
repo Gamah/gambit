@@ -1,0 +1,22 @@
+# s&box half. Scoped to client/ by living here — see the root .gitignore.
+
+# Build output
+.addon/
+bin/
+obj/
+
+# Editor state
+.sbox/
+
+# Compiled assets (the source .scene / .sound / .shader stay tracked)
+*_c
+*_d
+
+# Launch settings contain machine-specific absolute paths
+**/Properties/launchSettings.json
+
+# The editor regenerates Code/gambit.csproj on open; it is not tracked.
+# gambit.sbproj, gambit.slnx, Editor/gambit.editor.csproj and ProjectSettings/
+# ARE tracked deliberately (see .gitattributes for the CRLF handling).
+Code/gambit.csproj
+Code/Properties/

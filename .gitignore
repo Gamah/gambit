@@ -1,23 +1,8 @@
-# s&box build output
-.addon/
-bin/
-obj/
-
-# s&box editor state + compiled assets
-.sbox/
-*_c
-*_d
-
-# s&box editor state (machine-specific)
-.sbox/
-gambit/.sbox/
-
-# s&box compiled assets
-Assets/scenes/*_c
-gambit/Assets/scenes/*_c
-
-# Launch settings contain machine-specific absolute paths
-**/Properties/launchSettings.json
+# Root keeps only genuinely repo-wide entries. The two halves ignore their own
+# build output: client/.gitignore (s&box) and server/.gitignore (Go).
+#
+# Nothing here may be unanchored build-output junk (bin/, obj/, *_c): those match
+# at any depth and would silently swallow the server's build output.
 
 # IDE
 .vs/
