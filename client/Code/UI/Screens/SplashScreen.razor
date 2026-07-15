@@ -14,9 +14,21 @@
 	LobbyPlayer disables the PlayerController so the cursor is free to click and
 	WASD doesn't walk the avatar (exactly like ChatPanel). Escape closes.
 
-	Sign-in is token-paste only (D3): we can't open a browser or bind a loopback
-	listener from the sandbox, so the player copies the pre-scoped token-create
-	link, makes a lip_ token on lichess.org, and pastes it back here.
+	Three sign-in paths, all converging on LichessAuth.SignInWithToken:
+
+	  1. gamchess (M7, primary) — copy the authorize link, approve in the browser,
+	     and GamchessSignIn polls the code back over an FP-authed channel. No
+	     RETURN paste. Needs Steam + a reachable gamchess.
+	  2. OAuth code-paste (fallback) — same PKCE flow, but lichess redirects to a
+	     localhost URL that won't load and the player pastes the address bar back.
+	  3. Personal token paste (fallback) — a pre-scoped lip_ token.
+
+	2 and 3 must keep working with gamchess dead — that is non-negotiable, and it's
+	why StartOAuth resets RedirectUri to localhost rather than trusting it.
+
+	The FIRST paste never goes away: s&box has no API to open a browser or bind a
+	loopback listener (CLAUDE.md), so the player always copies the link. M7 removes
+	the return paste, not the outbound one.
 *@
 
 <root>
@@ -36,8 +48,41 @@
 				}
 				else
 				{
-					<div class="section">SIGN IN WITH LICHESS</div>
-					<div class="hint">Play real lichess games as yourself. Copy the sign-in link, open it in your browser, click <b>Create</b> (scopes are pre-filled), then paste the <span class="mono">lip_…</span> token here.</div>
+					@if ( GamchessSignIn.Supported )
+					{
+						<div class="section">SIGN IN WITH LICHESS</div>
+						@if ( !GamchessSignIn.Active )
+						{
+							<div class="hint">Play real lichess games as yourself. We'll copy a link — open it, click <b>Authorize</b>, and the game picks it up on its own. Nothing to paste back.</div>
+							<div class="btn primary" onclick="@( () => BeginGamchess() )">Sign in with lichess</div>
+							@if ( GamchessSignIn.Phase == GamchessSignInPhase.Failed && !string.IsNullOrEmpty( GamchessSignIn.Error ) )
+							{
+								<div class="status err">@GamchessSignIn.Error</div>
+							}
+						}
+						else if ( GamchessSignIn.Phase == GamchessSignInPhase.Starting )
+						{
+							<div class="hint">Starting…</div>
+						}
+						else if ( GamchessSignIn.Phase == GamchessSignInPhase.Exchanging )
+						{
+							<div class="hint">Finishing sign-in with lichess…</div>
+						}
+						else
+						{
+							<div class="hint">✓ Link copied. Authorize it in your browser and leave this open — the game is watching for it.</div>
+							<div class="minor-row">
+								<div class="minor" onclick="@( () => CopyGamchessLink() )">copy link again</div>
+								<div class="minor" onclick="@( () => CancelGamchess() )">cancel</div>
+							</div>
+						}
+						<div class="or"><span>or paste a token</span></div>
+					}
+					else
+					{
+						<div class="section">SIGN IN WITH LICHESS</div>
+					}
+					<div class="hint">Copy the sign-in link, open it in your browser, click <b>Create</b> (scopes are pre-filled), then paste the <span class="mono">lip_…</span> token here.</div>
 					<div class="btn ghost" onclick="@( () => CopyTokenLink() )">@( _tokenLinkCopied < 2f ? "✓ Sign-in link copied" : "Copy sign-in link" )</div>
 					<div class="row">
 						<TextEntry @ref="_tokenEntry" class="entry" placeholder="Paste lip_… token" />
@@ -219,10 +264,25 @@
 	string _status;
 	string _oauthUrl;                          // the pending authorize URL, for re-copy
 	RealTimeSince _tokenLinkCopied = 999f;
+	bool _gamchessCopied;                      // copied this attempt's URL yet?
 
 	protected override void OnUpdate()
 	{
 		if ( !IsOpen ) { _focused = false; return; }
+
+		// Drive the gamchess /code poll. Safe to call unconditionally: it's a no-op
+		// unless an attempt is waiting, and it rate-limits itself.
+		GamchessSignIn.Tick();
+
+		// The authorize URL only exists once /begin has replied, so the copy can't
+		// happen in the click handler — do it the frame it appears. No API exists to
+		// open a browser (CLAUDE.md), so copying is the whole affordance.
+		if ( !_gamchessCopied && GamchessSignIn.Phase == GamchessSignInPhase.WaitingForBrowser
+			&& !string.IsNullOrEmpty( GamchessSignIn.AuthorizeUrl ) )
+		{
+			Clipboard.SetText( GamchessSignIn.AuthorizeUrl );
+			_gamchessCopied = true;
+		}
 
 		if ( Input.EscapePressed )
 		{
@@ -251,13 +311,47 @@
 		_focused = false;
 		_status = null;
 		LichessOAuth.Cancel();
+		GamchessSignIn.Reset();
+		_gamchessCopied = false;
 		StateHasChanged();
 	}
 
-	// ── OAuth (primary) ──
+	// ── gamchess sign-in (primary — no return paste) ──
+
+	void BeginGamchess()
+	{
+		_status = null;
+		_gamchessCopied = false;
+		GamchessSignIn.Begin();          // async; OnUpdate copies the URL when it lands
+		StateHasChanged();
+	}
+
+	void CopyGamchessLink()
+	{
+		if ( !string.IsNullOrEmpty( GamchessSignIn.AuthorizeUrl ) )
+			Clipboard.SetText( GamchessSignIn.AuthorizeUrl );
+	}
+
+	void CancelGamchess()
+	{
+		GamchessSignIn.Cancel();
+		_gamchessCopied = false;
+		_focused = false;
+		StateHasChanged();
+	}
+
+	// ── OAuth code-paste (fallback — works with gamchess down) ──
 
 	void StartOAuth()
 	{
+		// This flow must always use the localhost redirect, even if a gamchess
+		// attempt was mid-flight and left RedirectUri pointing at /callback — the
+		// exchange compares it byte-for-byte, so a stale value would 400 here and
+		// break the very fallback this exists to be.
+		GamchessSignIn.Cancel();
+		LichessOAuth.RedirectUri = LichessOAuth.LocalhostRedirectUri;
+		_gamchessCopied = false;
+
 		_oauthUrl = LichessOAuth.Start();
 		Clipboard.SetText( _oauthUrl );
 		_status = null;
@@ -348,7 +442,11 @@
 		StateHasChanged();
 	}
 
+	// GamchessSignIn.Phase/Error are in here because the gamchess flow advances from
+	// a background poll, not a click — without them the panel would sit on "waiting"
+	// after sign-in actually succeeded.
 	protected override int BuildHash() =>
 		System.HashCode.Combine( IsOpen, LichessAuth.SignedIn, LichessAuth.Username,
-			System.HashCode.Combine( _busy, _ok, _status, LichessOAuth.Pending, _tokenLinkCopied < 2f ) );
+			System.HashCode.Combine( _busy, _ok, _status, LichessOAuth.Pending, _tokenLinkCopied < 2f ),
+			GamchessSignIn.Phase, GamchessSignIn.Error );
 }

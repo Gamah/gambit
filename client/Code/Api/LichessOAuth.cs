@@ -35,7 +35,21 @@ public static class LichessOAuth
 
 	// A localhost redirect the browser will try (and fail) to load; the code is in
 	// the address bar regardless. localhost is a valid redirect for public clients.
-	public const string RedirectUri = "http://localhost/gambit-oauth";
+	// This is the FALLBACK path and must keep working: it is what sign-in falls back
+	// to when gamchess is unreachable.
+	public const string LocalhostRedirectUri = "http://localhost/gambit-oauth";
+
+	/// <summary>Where lichess sends the browser after consent. Defaults to the
+	/// localhost paste flow; <see cref="Gambit.Api.GamchessSignIn"/> points it at
+	/// gamchess's /callback so no paste is needed (M7).</summary>
+	public static string RedirectUri { get; set; } = LocalhostRedirectUri;
+
+	// The redirect actually used by the attempt in flight. Pinned at Start() rather
+	// than read from RedirectUri at exchange time: lichess requires the redirect_uri
+	// to be BYTE-IDENTICAL at authorize and at exchange, so if RedirectUri changed
+	// mid-flow (gamchess went down and we fell back, say) the exchange would 400
+	// with nothing obviously wrong.
+	static string _redirectUsed;
 
 	const string Scopes = "board:play challenge:read challenge:write puzzle:read";
 
@@ -56,19 +70,30 @@ public static class LichessOAuth
 	public static bool Pending => _verifier != null;
 
 	/// <summary>Begin a login: returns the authorize URL to open in a browser
-	/// (also worth copying to the clipboard for the user).</summary>
-	public static string Start()
+	/// (also worth copying to the clipboard for the user).
+	///
+	/// <para><paramref name="state"/> lets the caller supply the state it has
+	/// already registered with gamchess — the value in this URL is what lichess
+	/// echoes to /callback, so it MUST be the one gamchess is holding, or the
+	/// callback resolves to nobody and the code is silently dropped. Null generates
+	/// one (the localhost paste flow, where state is only a sanity check).</para>
+	///
+	/// <para>The PKCE <c>code_challenge</c> goes straight to lichess and never to
+	/// gamchess. The verifier behind it never leaves this machine — that is exactly
+	/// what makes a relayed code low-value.</para></summary>
+	public static string Start( string state = null )
 	{
 		_verifier = RandomUrlToken( 64 );
 		// base64url and 32 chars, not TokenChars/16 — gamchess rejects anything
 		// shorter or outside [A-Za-z0-9_-]. See RandomState.
-		_state = RandomState();
+		_state = state ?? RandomState();
+		_redirectUsed = RedirectUri;
 		var challenge = Base64Url( Sha256( Encoding.UTF8.GetBytes( _verifier ) ) );
 
 		return "https://lichess.org/oauth"
 			+ "?response_type=code"
 			+ "&client_id=" + Uri.EscapeDataString( ClientId )
-			+ "&redirect_uri=" + Uri.EscapeDataString( RedirectUri )
+			+ "&redirect_uri=" + Uri.EscapeDataString( _redirectUsed )
 			+ "&scope=" + Uri.EscapeDataString( Scopes )
 			+ "&code_challenge_method=S256"
 			+ "&code_challenge=" + challenge
@@ -80,6 +105,7 @@ public static class LichessOAuth
 	{
 		_verifier = null;
 		_state = null;
+		_redirectUsed = null;
 	}
 
 	/// <summary>Finish a login from the pasted redirect URL (or bare code).
@@ -94,12 +120,32 @@ public static class LichessOAuth
 		if ( state != null && state != _state )
 			return (false, "That code is from a different sign-in attempt — start again.");
 
-		// Exchange the authorization code for an access token.
+		return await CompleteWithCode( code );
+	}
+
+	/// <summary>Finish a login from a bare authorization code, skipping redirect
+	/// parsing. This is the gamchess path (M7): the code came back over an
+	/// authenticated channel keyed to our SteamID, so there is no redirect URL to
+	/// parse and no state to re-check — gamchess already resolved state → SteamID
+	/// before it would hand us anything.
+	///
+	/// <para>The exchange happens HERE, on the player's machine, using the verifier
+	/// that never left it. gamchess cannot perform this call and has no token to
+	/// show for it — that is the structural guarantee, not a policy.</para></summary>
+	public static async Task<(bool ok, string error)> CompleteWithCode( string code )
+	{
+		if ( _verifier == null )
+			return (false, "Start the sign-in first.");
+		if ( string.IsNullOrWhiteSpace( code ) )
+			return (false, "No authorization code — start again.");
+
+		// Exchange the authorization code for an access token. redirect_uri must be
+		// byte-identical to the one in the authorize URL, hence _redirectUsed.
 		var body =
 			"grant_type=authorization_code"
 			+ "&code=" + Uri.EscapeDataString( code )
 			+ "&code_verifier=" + Uri.EscapeDataString( _verifier )
-			+ "&redirect_uri=" + Uri.EscapeDataString( RedirectUri )
+			+ "&redirect_uri=" + Uri.EscapeDataString( _redirectUsed ?? RedirectUri )
 			+ "&client_id=" + Uri.EscapeDataString( ClientId );
 
 		var res = await LichessApi.PostForm( "/api/token", body );

@@ -27,8 +27,15 @@ public static class GamchessCommands
 			return;
 		}
 		Log.Warning( $"[Gambit]   ✗ {res.Error}" );
-		Log.Info( "[Gambit]   a 0 status usually means the HttpAllowList is missing " +
-			$"\"{GamchessApi.Base}/\" in gambit.sbproj (D8); anything else means the host is down." );
+		// Reading the failure (verified in-editor 2026-07-15):
+		//   "SSL connection could not be established" → the request LEFT the sandbox
+		//      and reached a TLS handshake, so the allowlist is fine. Caddy has no
+		//      cert for this host — the vhost isn't configured or isn't up yet.
+		//   a refusal before any connection → the HttpAllowList in gambit.sbproj is
+		//      missing "https://chess.gamah.net/" (D8).
+		//   any HTTP status at all → we reached gamchess; read the status.
+		Log.Info( "[Gambit]   TLS/SSL error = allowlist OK, but no cert for that host (Caddy vhost down). " +
+			$"Blocked before connecting = HttpAllowList is missing \"{GamchessApi.Base}/\" in gambit.sbproj (D8)." );
 	}
 
 	/// <summary>Prove the Facepunch → gamchess auth round-trip end to end: mints a
