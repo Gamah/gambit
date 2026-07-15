@@ -279,10 +279,15 @@ public sealed class SpectatorController : Component
 		TickingSeat = _tv.TickingSeat;
 		TimeControlLabel = label;
 
-		// Holding on a game that just finished: say how it ended, and stop showing a
-		// clock as running. lichess TV would already be showing the next game by now —
-		// stopping on the result for a beat is the whole point.
-		if ( _tv.InFanfare )
+		// The game on the board has finished: say how it ended, and stop showing a clock
+		// as running. lichess TV would already be showing the next game by now — stopping
+		// on the result for a beat is the whole point.
+		//
+		// ShowingFinished, not InFanfare: the hold expires before the poll that replaces
+		// the position lands, and for that gap the board is still showing the finished
+		// game. Keying on the hold would drop the result line and restart the ticking
+		// highlight while the dead game is still up.
+		if ( _tv.ShowingFinished )
 		{
 			StatusText = _tv.FanfareText;
 			TickingSeat = null;

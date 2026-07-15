@@ -172,8 +172,31 @@ public static class LichessTv
 	/// wants to say the game ended, so this returns a bare "Game over".</para></summary>
 	public static string ResultLine( string status, string winner )
 	{
-		bool draw = string.IsNullOrEmpty( winner );
 		string who = winner == "white" ? "White" : winner == "black" ? "Black" : null;
+
+		// DO NOT reorder this above the unknown check below.
+		//
+		// A missing winner means a draw ONLY when we actually know how the game ended.
+		// When the fetch failed, status AND winner are both empty — and testing the
+		// winner first turns "we couldn't find out" into a confident "Draw" on a game
+		// somebody won. That is not hypothetical: GameResult goes through the etiquette
+		// governor, so one 429 anywhere makes every ending on the wall read "Draw" for
+		// a full minute.
+		//
+		// created/started mean the export caught the game before lichess had finished
+		// writing the result — the feed has moved on, so it IS over, we just don't know
+		// how. unknownFinish is lichess saying the same thing outright.
+		bool unknown = string.IsNullOrEmpty( status )
+			|| status is "created" or "started" or "unknownFinish";
+
+		// Neither a win nor a draw, so they can't share the shape below.
+		if ( status == "aborted" ) return "Game aborted";
+		if ( status == "noStart" )
+			// lila renders this as a forfeit when it knows who was left standing.
+			return who == null ? "Game never started" : $"{who} wins — forfeit";
+
+		if ( unknown )
+			return who == null ? "Game over" : $"{who} wins";
 
 		// The reason, in lichess's vocabulary. Anything unrecognised falls through to a
 		// plain result line rather than printing a raw key at a player.
@@ -185,24 +208,14 @@ public static class LichessTv
 			"timeout" => "abandoned",
 			"stalemate" => "stalemate",
 			"draw" => "agreement",
+			"insufficientMaterialClaim" => "insufficient material",
 			"cheat" => "cheat detected",
-			"aborted" => "aborted",
-			"noStart" => "never started",
 			"variantEnd" => "variant end",
-			"unknownFinish" => null,
 			_ => null,
 		};
 
-		// Aborted and never-started have no winner and aren't really draws — saying
-		// "Draw by aborted" would be nonsense.
-		if ( status is "aborted" or "noStart" )
-			return status == "aborted" ? "Game aborted" : "Game never started";
-
-		if ( draw )
-			return why == null ? "Draw" : $"Draw — {why}";
-
 		if ( who == null )
-			return "Game over";
+			return why == null ? "Draw" : $"Draw — {why}";
 
 		return why == null ? $"{who} wins" : $"{who} wins — {why}";
 	}

@@ -94,11 +94,26 @@ public sealed class LichessTvSource
 	/// wall would never advance past the finished game.</para></summary>
 	string _fanfareShownFor;
 
-	/// <summary>The result line to hold on the board, or null. While this is set the
-	/// position is frozen on the finished game on purpose.</summary>
+	/// <summary>The result line for the game on the board, or null.
+	///
+	/// <para><b>This — not <see cref="InFanfare"/> — is what "the game being shown has
+	/// finished" means</b>, and the two are not the same window. It is cleared in Poll at
+	/// the moment the new state is applied, so it is true for exactly as long as a
+	/// finished position is on the board.</para></summary>
 	public string FanfareText { get; private set; }
 
-	/// <summary>Are we holding on a finished game?</summary>
+	/// <summary>Is the finished game on the board right now? Anything that must not treat
+	/// a dead game as live — a running clock, a ticking highlight — asks this.</summary>
+	public bool ShowingFinished => FanfareText != null;
+
+	/// <summary>Are we still holding, i.e. must we refuse to apply new state?
+	///
+	/// <para><b>Narrower than <see cref="ShowingFinished"/>, deliberately.</b> The hold
+	/// expiring does not put the new game on the board — only a poll landing does, and
+	/// that is up to <c>pollHold</c> (5s) away. Using this to decide "is the game over"
+	/// leaves a gap where the board still shows the finished position while the clock
+	/// resumes draining and the result line vanishes: the exact thing the fanfare exists
+	/// to prevent, moved a few seconds later.</para></summary>
 	public bool InFanfare => FanfareText != null && (float)_fanfareUntil > 0f;
 
 	// The last clocks lichess told us, in SECONDS (the TV feed's unit; the Board API
@@ -126,9 +141,10 @@ public sealed class LichessTvSource
 	float ClockFor( ChessSeat seat )
 	{
 		float bank = seat == ChessSeat.White ? _whiteBank : _blackBank;
-		// A finished game's clock does not run. Without this the loser's time would keep
-		// draining through the whole fanfare, on a board showing a result.
-		if ( InFanfare ) return bank;
+		// A finished game's clock does not run. ShowingFinished, not InFanfare: the hold
+		// can expire seconds before a poll actually replaces the position, and the clock
+		// must not spring back to life on a dead game in the meantime.
+		if ( ShowingFinished ) return bank;
 		// Only the side to move is spending time. Nothing to run down before the first
 		// frame either — TickingSeat is null until then.
 		if ( TickingSeat != seat ) return bank;
