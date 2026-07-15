@@ -11,43 +11,32 @@ namespace Gambit.Api;
 
 /// <summary>
 /// Single seam for every gamchess call (issue #7 / M7). gamchess is Gambit's own
-/// backend at chess.gamah.net: server-side identity, the lichess OAuth <b>code</b>
-/// relay, and the durable game archive.
+/// backend at chess.gamah.net: server-side Steam identity and the durable game
+/// archive.
 ///
 /// <para><b>gamchess is never required.</b> If it is down, unreachable, or simply
-/// not configured, every feature that predates M7 must behave exactly as it did
-/// before: local play, puzzles, spectating and token-paste sign-in all work with
-/// gamchess dead. Nothing here may block scene load, <c>OnStart</c>, or a game
-/// ending — every call is awaited off the critical path, bounded by
-/// <see cref="Timeout"/>, and failure degrades to "archive off" plus a log line.
-/// That is why <see cref="Send"/> never throws and returns a plain
+/// not configured, the game plays exactly as it does otherwise: walking the lobby
+/// and playing at a board never touch it. Nothing here may block scene load,
+/// <c>OnStart</c>, or a game ending — every call is awaited off the critical path,
+/// bounded by <see cref="Timeout"/>, and failure degrades to "archive off" plus a
+/// log line. That is why <see cref="Send"/> never throws and returns a plain
 /// <see cref="Result"/>.</para>
 ///
-/// <para><b>This has its own gate, deliberately separate from
-/// <see cref="LichessApi"/>'s.</b> Different host, different limits: gamchess
-/// calls must never contend with lichess's single-flight gate or be stalled by
-/// its 60-second 429 back-off, and must never trip that back-off either. The two
-/// share no state.</para>
+/// <para>There is deliberately no single-flight rule: serialising calls would let
+/// one request swallow a game-end archive POST, and losing an archived game is a
+/// worse failure than two concurrent requests to our own server. The gate is a
+/// circuit breaker instead — after a failure we stop trying for
+/// <see cref="BreakerSeconds"/>, so a dead gamah.net costs one timeout, not one
+/// per call.</para>
 ///
-/// <para>Unlike lichess there is no single-flight rule here — serialising calls
-/// would let an in-progress sign-in poll swallow a game-end archive POST, and
-/// losing an archived game to a UI poll is a worse failure than two concurrent
-/// requests to our own server. The gate is a circuit breaker instead: after a
-/// failure we stop trying for <see cref="BreakerSeconds"/>, so a dead gamah.net
-/// costs one timeout, not one per call.</para>
-///
-/// <para><b>No lichess token ever goes to gamchess.</b> Not in a header, not in a
-/// body, not ever — gamchess has no column for one and no exchange path. What
-/// crosses this seam is the Facepunch auth token (proves Steam identity, minted
-/// per call by <see cref="GamchessAuth"/>) and OAuth <i>codes</i>, which are
-/// single-use, ~1 minute, and useless without the PKCE verifier that never leaves
-/// this machine.</para>
+/// <para>The only credential that crosses this seam is the Facepunch auth token,
+/// which proves Steam identity and is minted per call by
+/// <see cref="GamchessAuth"/>.</para>
 /// </summary>
 public static class GamchessApi
 {
 	/// <summary>Public root. Must also be in <c>gambit.sbproj</c>'s HttpAllowList
-	/// (D8) or every request fails — gamchess is the first non-lichess host Gambit
-	/// has ever talked to.</summary>
+	/// (D8) or every request fails — the allowlist is the only entry there now.</summary>
 	public const string Base = "https://chess.gamah.net";
 
 	/// <summary>Per-request ceiling. Short on purpose: a hung backend must not be
@@ -73,7 +62,7 @@ public static class GamchessApi
 		public bool NotFound => Status == 404;
 	}
 
-	// gamchess's OWN gate — no shared state with LichessApi.
+	// Circuit breaker: the whole gate.
 	static RealTimeUntil _breaker; // default 0 → elapsed → ready
 
 	/// <summary>True while the circuit breaker is open (a recent call failed, so
@@ -166,35 +155,13 @@ public static class GamchessApi
 	public static Task<Result> Health() =>
 		Send( "/health", "GET", null, null, null, bypassBreaker: true );
 
-	/// <summary>Register an OAuth <c>state</c> against our verified SteamID.
-	/// Returns <c>{redirect_uri}</c> — the exact value to hand lichess, which must
-	/// match byte-for-byte at authorize and at exchange.</summary>
-	public static Task<Result> LichessBegin( string state ) =>
-		SendAuthed( "/api/v1/auth/lichess/begin", "POST", Json( new { state } ) );
-
-	/// <summary>Claim this SteamID's pending OAuth code, once. 404 is the normal
-	/// "not yet" — this endpoint is polled.</summary>
-	public static Task<Result> LichessCode() =>
-		SendAuthed( "/api/v1/auth/lichess/code", "GET", null );
-
-	/// <summary>Record the SteamID → lichess-username link. The username comes from
-	/// lichess's own /api/account: gamchess can't look it up itself because it never
-	/// holds a token.</summary>
-	public static Task<Result> PutLichessLink( string lichessUsername ) =>
-		SendAuthed( "/api/v1/links/lichess", "PUT", Json( new { lichess_username = lichessUsername } ) );
-
-	/// <summary>Unlink. The delete path the security posture requires — a persisted
-	/// SteamID↔lichess link is durable identity data, so it must stay removable.</summary>
-	public static Task<Result> DeleteLichessLink() =>
-		SendAuthed( "/api/v1/links/lichess", "DELETE", null );
-
 	/// <summary>Archive a finished game. Idempotent on <paramref name="clientGameId"/>
 	/// (the host generates it at game start and [Sync]s it), so both seats may post
 	/// the same game and the second is a no-op. SteamIDs go as STRINGS — a SteamID64
-	/// exceeds JavaScript's 2^53, so a bare number would be corrupted by any web
-	/// client reading the archive.</summary>
+	/// exceeds JavaScript's 2^53, so a bare number would be corrupted by the web
+	/// viewer reading the archive.</summary>
 	public static Task<Result> PostGame( string clientGameId, string pgn, ulong whiteSteamId,
-		ulong blackSteamId, string result, string lichessGameId = null ) =>
+		ulong blackSteamId, string result ) =>
 		SendAuthed( "/api/v1/games", "POST", Json( new
 		{
 			client_game_id = clientGameId,
@@ -202,7 +169,6 @@ public static class GamchessApi
 			white_steam_id = whiteSteamId.ToString(),
 			black_steam_id = blackSteamId.ToString(),
 			result,
-			lichess_game_id = lichessGameId,
 		} ) );
 
 	/// <summary>YOUR archived games, newest first.
@@ -224,8 +190,7 @@ public static class GamchessApi
 	/// <para>Hand-rolled from <c>Random.Shared</c> rather than <c>Guid.NewGuid()</c>:
 	/// Guid appears nowhere else in this codebase, and NewGuid reaches into platform
 	/// crypto interop — precisely the shape the s&amp;box whitelist rejects with
-	/// SB1000. Same reasoning that left SHA-256 and base64url hand-rolled in
-	/// <see cref="LichessOAuth"/>. Random.Shared is already proven here.</para>
+	/// SB1000. Random.Shared is already proven here (FloorCheckerboard).</para>
 	///
 	/// <para>This is an idempotency key, not a secret — it is [Sync]ed to both seats
 	/// on purpose so either can submit the same game — so a non-cryptographic source
@@ -252,4 +217,16 @@ public static class GamchessApi
 		try { return JsonSerializer.Deserialize<T>( json ); }
 		catch { return null; }
 	}
+
+	/// <summary>Mask a credential for logs — never print one whole. An FP auth
+	/// token is short-lived but it is still a credential.</summary>
+	public static string Redact( string token )
+	{
+		if ( string.IsNullOrEmpty( token ) ) return "(none)";
+		return token.Length <= 8 ? "****" : token[..4] + "…" + token[^2..];
+	}
+
+	/// <summary>Trim a body for a log line.</summary>
+	public static string Truncate( string s, int max ) =>
+		s == null ? "" : s.Length <= max ? s : s[..max] + "…";
 }

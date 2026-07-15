@@ -23,7 +23,7 @@ public static class GamchessCommands
 		var res = await GamchessApi.Health();
 		if ( res.Ok )
 		{
-			Log.Info( $"[Gambit]   ✓ {LichessApi.Truncate( res.Body, 200 )}" );
+			Log.Info( $"[Gambit]   ✓ {GamchessApi.Truncate( res.Body, 200 )}" );
 			return;
 		}
 		Log.Warning( $"[Gambit]   ✗ {res.Error}" );
@@ -39,8 +39,8 @@ public static class GamchessCommands
 	}
 
 	/// <summary>Prove the Facepunch → gamchess auth round-trip end to end: mints a
-	/// token and registers a throwaway OAuth state under our verified SteamID. A 401
-	/// here means Facepunch rejected us or echoed a different SteamId.</summary>
+	/// token and asks gamchess who we are. A 401 means Facepunch rejected us or
+	/// echoed a different SteamId.</summary>
 	[ConCmd( "gambit_gamchess_signin" )]
 	public static void SignIn() => _ = DoSignIn();
 
@@ -59,16 +59,13 @@ public static class GamchessCommands
 			return;
 		}
 		// Redact: an FP token is a credential, short-lived or not.
-		Log.Info( $"[Gambit] steam {steamId}, fp token {LichessApi.Redact( token )}" );
+		Log.Info( $"[Gambit] steam {steamId}, fp token {GamchessApi.Redact( token )}" );
 
-		// A throwaway state — this only proves the auth path, it starts no real
-		// sign-in. 32+ chars of [A-Za-z0-9_-] or the server rejects it (the entropy
-		// floor is a security control, not validation politeness).
-		var state = LichessOAuth.RandomState();
-		var res = await GamchessApi.LichessBegin( state );
+		// Any authed endpoint proves the round-trip; the archive is the cheapest.
+		var res = await GamchessApi.ListGames( 1 );
 		if ( res.Ok )
 		{
-			Log.Info( $"[Gambit]   ✓ auth accepted — {LichessApi.Truncate( res.Body, 200 )}" );
+			Log.Info( $"[Gambit]   ✓ auth accepted — {GamchessApi.Truncate( res.Body, 200 )}" );
 			return;
 		}
 		if ( res.Unauthorized )
@@ -76,7 +73,7 @@ public static class GamchessCommands
 			Log.Warning( "[Gambit]   ✗ 401 — Facepunch rejected the token, or echoed a different SteamId." );
 			return;
 		}
-		Log.Warning( $"[Gambit]   ✗ {res.Error} {LichessApi.Truncate( res.Body, 200 )}" );
+		Log.Warning( $"[Gambit]   ✗ {res.Error} {GamchessApi.Truncate( res.Body, 200 )}" );
 	}
 
 	/// <summary>List YOUR archived games. The archive is private — there's no way to
@@ -98,18 +95,6 @@ public static class GamchessCommands
 			Log.Warning( $"[Gambit] archive lookup failed: {res.Error}" );
 			return;
 		}
-		Log.Info( $"[Gambit] your archive: {LichessApi.Truncate( res.Body, 1000 )}" );
-	}
-
-	/// <summary>Unlink this Steam account from its lichess account on gamchess. The
-	/// local token is untouched — use <c>gambit_signout</c> for that.</summary>
-	[ConCmd( "gambit_gamchess_unlink" )]
-	public static void Unlink() => _ = DoUnlink();
-
-	static async Task DoUnlink()
-	{
-		var res = await GamchessApi.DeleteLichessLink();
-		if ( res.Ok ) Log.Info( $"[Gambit] unlinked: {LichessApi.Truncate( res.Body, 200 )}" );
-		else Log.Warning( $"[Gambit] unlink failed: {res.Error}" );
+		Log.Info( $"[Gambit] your archive: {GamchessApi.Truncate( res.Body, 1000 )}" );
 	}
 }

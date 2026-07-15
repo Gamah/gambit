@@ -7,10 +7,9 @@ namespace Gambit.Game;
 /// The slice of a game controller that <see cref="Gambit.World.ChessBoardView"/>
 /// needs to render a position and turn cursor clicks into moves. Abstracting it
 /// lets one board view drive either the local two-seat game
-/// (<see cref="LocalGameController"/>) or an in-sbox lichess game
-/// (<see cref="LichessPlayController"/>) with no per-source branching in the view.
+/// (<see cref="LocalGameController"/>) with no per-source branching in the view.
 ///
-/// When no lichess game is live the view resolves this to the local controller,
+/// The view resolves this to the local controller,
 /// so M2 behaviour is byte-for-byte unchanged.
 /// </summary>
 public interface IBoardGame

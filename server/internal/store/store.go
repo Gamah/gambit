@@ -1,11 +1,5 @@
 // Package store is gamchess's data layer: every SQL statement lives here, and
 // nothing here knows about HTTP.
-//
-// Note what is absent and must stay absent: there is no lichess token anywhere
-// in this package, because there is no column for one. gamchess relays OAuth
-// codes (in memory, see internal/relay) and the client does the token exchange
-// itself. If a function here ever grows a `token` parameter, something has gone
-// badly wrong.
 package store
 
 import (
@@ -15,20 +9,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var (
-	// ErrNotFound is returned instead of pgx.ErrNoRows so callers don't import pgx.
-	ErrNotFound = errors.New("not found")
-	// ErrUsernameTaken means a different SteamID already claims this lichess
-	// username (the lower(lichess_username) unique index).
-	ErrUsernameTaken = errors.New("lichess username already linked to another account")
-)
+// ErrNotFound is returned instead of pgx.ErrNoRows so callers don't import pgx.
+var ErrNotFound = errors.New("not found")
 
-// EnsurePlayer creates the players row for steamID, which the games and
-// lichess_links foreign keys require.
+// EnsurePlayer creates the players row for steamID, which the games foreign keys
+// require.
 //
 // bumpLastSeen must be true ONLY for an FP-verified caller. For a claimed
 // SteamID — an opponent named in someone else's submission — pass false: we
@@ -54,17 +42,16 @@ type Game struct {
 	BlackSteamID  *int64    `json:"black_steam_id"`
 	Result        string    `json:"result"`
 	PlayedAt      time.Time `json:"played_at"`
-	LichessGameID *string   `json:"lichess_game_id"`
 	SubmittedBy   int64     `json:"submitted_by"`
 }
 
 const gameCols = `id, client_game_id, pgn, white_steam_id, black_steam_id,
-                  result, played_at, lichess_game_id, submitted_by`
+                  result, played_at, submitted_by`
 
 func scanGame(row pgx.Row) (Game, error) {
 	var g Game
 	err := row.Scan(&g.ID, &g.ClientGameID, &g.Pgn, &g.WhiteSteamID, &g.BlackSteamID,
-		&g.Result, &g.PlayedAt, &g.LichessGameID, &g.SubmittedBy)
+		&g.Result, &g.PlayedAt, &g.SubmittedBy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Game{}, ErrNotFound
 	}
@@ -84,12 +71,12 @@ func scanGame(row pgx.Row) (Game, error) {
 func UpsertGame(ctx context.Context, db *pgxpool.Pool, g Game) (Game, error) {
 	out, err := scanGame(db.QueryRow(ctx, `
 		INSERT INTO games (client_game_id, pgn, white_steam_id, black_steam_id,
-		                   result, lichess_game_id, submitted_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		                   result, submitted_by)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (client_game_id) DO NOTHING
 		RETURNING `+gameCols,
 		g.ClientGameID, g.Pgn, g.WhiteSteamID, g.BlackSteamID,
-		g.Result, g.LichessGameID, g.SubmittedBy))
+		g.Result, g.SubmittedBy))
 
 	if err == nil {
 		return out, nil
@@ -133,37 +120,4 @@ func GamesBySteamID(ctx context.Context, db *pgxpool.Pool, steamID int64, limit,
 		out = append(out, g)
 	}
 	return out, rows.Err()
-}
-
-// UpsertLichessLink records the SteamID -> lichess username link.
-//
-// The username is public (it comes from lichess's own /api/account), but the
-// PAIRING is durable identity data Gambit has never held before: never log it,
-// and keep DeleteLichessLink reachable.
-func UpsertLichessLink(ctx context.Context, db *pgxpool.Pool, steamID int64, username string) error {
-	_, err := db.Exec(ctx, `
-		INSERT INTO lichess_links (steam_id, lichess_username) VALUES ($1, $2)
-		ON CONFLICT (steam_id) DO UPDATE
-		  SET lichess_username = EXCLUDED.lichess_username, linked_at = NOW()`,
-		steamID, username)
-
-	var pgErr *pgconn.PgError
-	// 23505 here can only be lichess_links_username_uniq: the steam_id conflict is
-	// handled above. Match the structured SQLSTATE, not the driver's message text.
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return ErrUsernameTaken
-	}
-	if err != nil {
-		return fmt.Errorf("upsert lichess link: %w", err)
-	}
-	return nil
-}
-
-// DeleteLichessLink unlinks. Reports whether a link existed.
-func DeleteLichessLink(ctx context.Context, db *pgxpool.Pool, steamID int64) (bool, error) {
-	tag, err := db.Exec(ctx, `DELETE FROM lichess_links WHERE steam_id = $1`, steamID)
-	if err != nil {
-		return false, fmt.Errorf("delete lichess link: %w", err)
-	}
-	return tag.RowsAffected() > 0, nil
 }

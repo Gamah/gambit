@@ -40,7 +40,6 @@ type gamePost struct {
 	WhiteSteamID  string  `json:"white_steam_id"` // "" or "0" = empty seat
 	BlackSteamID  string  `json:"black_steam_id"`
 	Result        string  `json:"result"`
-	LichessGameID *string `json:"lichess_game_id"`
 }
 
 // gameJSON is the response shape — store.Game with SteamIDs stringified.
@@ -52,7 +51,6 @@ type gameJSON struct {
 	BlackSteamID  *string `json:"black_steam_id"`
 	Result        string  `json:"result"`
 	PlayedAt      string  `json:"played_at"`
-	LichessGameID *string `json:"lichess_game_id"`
 	SubmittedBy   string  `json:"submitted_by"`
 }
 
@@ -65,7 +63,6 @@ func toGameJSON(g store.Game) gameJSON {
 		BlackSteamID:  seatString(g.BlackSteamID),
 		Result:        g.Result,
 		PlayedAt:      g.PlayedAt.UTC().Format(time.RFC3339),
-		LichessGameID: g.LichessGameID,
 		SubmittedBy:   strconv.FormatInt(g.SubmittedBy, 10),
 	}
 }
@@ -167,7 +164,6 @@ func (h *handler) postGame(w http.ResponseWriter, r *http.Request) {
 		WhiteSteamID:  white,
 		BlackSteamID:  black,
 		Result:        in.Result,
-		LichessGameID: in.LichessGameID,
 		SubmittedBy:   steamID,
 	})
 	if err != nil {

@@ -1,37 +1,32 @@
 namespace Gambit.Api;
 
 // gamchess JSON DTOs. Property names match the wire format exactly (snake_case),
-// so System.Text.Json binds them without attributes or case-insensitive options —
-// same trick as LichessModels.
+// so System.Text.Json binds them without attributes or case-insensitive options.
 //
 // The contract these mirror is documented in the repo README ("gamchess API
 // contract"). It is hand-mirrored with no codegen, so a change here is a change
 // there — and both halves live in this repo, so it should be one commit.
-//
-// Note what has no DTO and never will: a lichess token. gamchess has no column
-// for one and no endpoint that returns one.
 
-/// <summary>Reply from <c>POST /api/v1/auth/lichess/begin</c>.</summary>
-public sealed class GamchessBeginResponse
+/// <summary>One archived game, from <c>GET /api/v1/games</c> or
+/// <c>GET /api/v1/games/{id}</c>.
+/// <para>SteamIDs are STRINGS on the wire: a SteamID64 (~7.6e16) is past
+/// JavaScript's 2^53, so a bare number would be corrupted by the web viewer.</para></summary>
+public sealed class GamchessGame
 {
-	/// <summary>The exact redirect_uri to hand lichess. Must be used byte-identically
-	/// at authorize and at exchange, so we never rebuild it ourselves.</summary>
-	public string redirect_uri { get; set; }
+	public string id { get; set; }
+	public string client_game_id { get; set; }
+	public string pgn { get; set; }
+	public string white_steam_id { get; set; }
+	public string black_steam_id { get; set; }
+	public string result { get; set; }
+	public string played_at { get; set; }
+	public string submitted_by { get; set; }
 }
 
-/// <summary>Reply from <c>GET /api/v1/auth/lichess/code</c>. 404 until the browser
-/// has come back — that is the normal "not yet", not an error.</summary>
-public sealed class GamchessCodeResponse
+/// <summary>Reply from <c>GET /api/v1/games</c>.</summary>
+public sealed class GamchessGameList
 {
-	/// <summary>The OAuth authorization code. Single-use, ~1 minute, and useless
-	/// without the PKCE verifier that never left this machine.</summary>
-	public string code { get; set; }
-}
-
-/// <summary>Reply from <c>PUT /api/v1/links/lichess</c>.</summary>
-public sealed class GamchessLinkResponse
-{
-	public string lichess_username { get; set; }
+	public GamchessGame[] games { get; set; }
 }
 
 /// <summary>An error body from any gamchess endpoint.</summary>

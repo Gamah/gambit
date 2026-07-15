@@ -34,23 +34,11 @@ public sealed class ChessBoardView : Component
 	/// <summary>Set by ChessRing at build.</summary>
 	[Property] public LocalGameController Controller { get; set; }
 
-	/// <summary>Set by ChessRing at build — the in-sbox lichess game for this table.</summary>
-	[Property] public LichessPlayController LichessPlay { get; set; }
-
-	/// <summary>Set by ChessRing at build — the puzzle solver for this table (M5).</summary>
-	[Property] public PuzzleController Puzzle { get; set; }
-
-	/// <summary>Which controller currently owns the board: a puzzle the seated player is
-	/// solving (M5, client-local — takes precedence over everything, it's a solo
-	/// activity), else the lichess game whenever one is shown here — either we're
-	/// playing it (through the game-over screen, so the final position stays) or we're
-	/// spectating the host-relayed game (D7) — otherwise the local two-seat game. With
-	/// nothing lichess/puzzle live this is exactly <see cref="Controller"/>, so M2
-	/// render/input is unchanged.</summary>
-	IBoardGame Source =>
-		( Puzzle?.Active ?? false ) ? Puzzle
-		: ( LichessPlay?.ShowsBoard ?? false ) ? LichessPlay
-		: Controller;
+	/// <summary>Which controller owns the board. The abstraction is kept even though
+	/// there is only one source now (puzzles and lichess play were the others): the
+	/// view has never branched on the source, and gamchess-backed play would slot in
+	/// here rather than rewrite the renderer.</summary>
+	IBoardGame Source => Controller;
 
 	/// <summary>Seconds a piece takes to slide to its new square.</summary>
 	[Property] public float MoveSeconds { get; set; } = 0.22f;

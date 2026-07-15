@@ -22,10 +22,10 @@ namespace Gambit.Game;
 /// independently on every client by the deterministic rules; only resignation
 /// and seat abandonment need their own RPCs.
 ///
-/// Move history (SAN, for the HUD list and the PGN import) lives in each
+/// Move history (SAN, for the HUD list and the archived PGN) lives in each
 /// client's own ChessGame — players seated from move 1 have all of it; a FEN
 /// resync or late join keeps the position but loses the history, which only
-/// costs a shorter move list (spectators can't import anyway).
+/// costs a shorter move list (and means that client won't archive the game).
 /// </summary>
 public sealed class LocalGameController : Component, IBoardGame
 {
@@ -84,7 +84,7 @@ public sealed class LocalGameController : Component, IBoardGame
 	public ChessGame Game { get; private set; }
 
 	int _localGameId;      // GameId our Game instance was built for
-	string _pgnWhiteName;  // seat names captured at game start (seats may empty before import)
+	string _pgnWhiteName;  // seat names captured at game start (seats may empty before the game ends)
 	string _pgnBlackName;
 	ulong _pgnWhiteSteamId; // and their SteamIds, for the gamchess archive (M7)
 	ulong _pgnBlackSteamId;
@@ -130,8 +130,6 @@ public sealed class LocalGameController : Component, IBoardGame
 			{
 				Game = null;
 				_localGameId = 0;
-				LichessUrl = null;
-				_importError = null;
 			}
 			return;
 		}
@@ -153,7 +151,7 @@ public sealed class LocalGameController : Component, IBoardGame
 
 		// A late joiner can also arrive after resign/abandon — those don't live
 		// in the FEN. The exact result doesn't matter locally (only players who
-		// saw the game can import), so just close the local game to match.
+		// saw the game has the history), so just close the local game to match.
 		if ( GameOver && !Game.IsGameOver )
 			Game.Resign( whiteResigned: OverResult == "0-1" );
 
@@ -166,9 +164,6 @@ public sealed class LocalGameController : Component, IBoardGame
 		_pgnWhiteSteamId = Station?.WhiteSteamId ?? 0;
 		_pgnBlackSteamId = Station?.BlackSteamId ?? 0;
 
-		// New game voids any previous import result for this table
-		LichessUrl = null;
-		_importError = null;
 	}
 
 	// ── gamchess archive (M7) ──
@@ -221,22 +216,6 @@ public sealed class LocalGameController : Component, IBoardGame
 
 	// ── Host game lifecycle ──
 
-	/// <summary>True when this board is hosting a lichess game (M4) — the local
-	/// two-seat match steps aside. Covers both the open-link flow (the two sides are
-	/// colour URLs) and in-sbox polling play / a relayed spectator game (the board is
-	/// showing someone's real lichess game, not a fresh local match).</summary>
-	bool LichessBusy =>
-		( LichessGameController.For( Station )?.HasOpenGame ?? false )
-		|| ( LichessPlayController.For( Station )?.BlocksLocalGame ?? false );
-
-	/// <summary>Don't auto-start the anonymous local match when it shouldn't own the
-	/// board: a lichess game is already here (<see cref="LichessBusy"/>), or both seats
-	/// hold signed-in lichess players (M4 #3) — that pair gets the "PLAY IN SBOX" panel
-	/// (quick match / head-to-head / AI) instead of a forced local game.</summary>
-	bool SuppressLocalStart =>
-		LichessBusy || ( Station?.BothSeatsLichess ?? false )
-		|| ( PuzzleController.For( Station )?.Active ?? false );
-
 	void HostUpdate()
 	{
 		if ( Station == null ) return;
@@ -249,9 +228,7 @@ public sealed class LocalGameController : Component, IBoardGame
 		{
 			case PhaseIdle:
 				// A game starts the moment both seats fill — unless the board is spoken
-				// for by lichess: an open-link game, an in-sbox/relayed game, or a pair
-				// of signed-in lichess players who play head-to-head instead (M4).
-				if ( whiteSeated && blackSeated && !SuppressLocalStart )
+				if ( whiteSeated && blackSeated )
 					HostStartFresh();
 				break;
 
@@ -273,7 +250,7 @@ public sealed class LocalGameController : Component, IBoardGame
 				// starts straight away, a vacated table resets.
 				if ( !whiteSeated && !blackSeated )
 					HostSetIdle();
-				else if ( whiteSeated && blackSeated && pair != _endedPair && !SuppressLocalStart )
+				else if ( whiteSeated && blackSeated && pair != _endedPair )
 					HostStartFresh();
 				break;
 		}
@@ -332,7 +309,7 @@ public sealed class LocalGameController : Component, IBoardGame
 	/// is refused without touching the network.
 	/// </summary>
 	/// <summary><see cref="IBoardGame"/> entry point — the board view calls this
-	/// without caring whether the game is local or lichess.</summary>
+	/// without caring which controller owns the board.</summary>
 	public bool TryMakeMove( string uci ) => TryMakeLocalMove( uci );
 
 	public bool TryMakeLocalMove( string uci )
@@ -472,73 +449,6 @@ public sealed class LocalGameController : Component, IBoardGame
 		if ( Rpc.Caller.SteamId != Station.WhiteSteamId && Rpc.Caller.SteamId != Station.BlackSteamId ) return;
 
 		HostStartFresh();
-	}
-
-	// ── Lichess PGN import (first live lichess call — PLAN.md M2 step,
-	//    validates the sbproj HttpAllowList) ──
-
-	/// <summary>Shareable lichess URL for the finished game, once imported.</summary>
-	public string LichessUrl { get; private set; }
-
-	/// <summary>True while the POST is in flight (HUD shows a spinner-ish state).</summary>
-	public bool Importing { get; private set; }
-
-	/// <summary>Last import failure, for the HUD. Null when none.</summary>
-	public string ImportError => _importError;
-	string _importError;
-
-	/// <summary>Time since the import URL was copied — HUD shows brief feedback
-	/// (same pattern as DiscordButton).</summary>
-	public RealTimeSince SinceUrlCopied { get; private set; } = 999f;
-
-	/// <summary>POST the finished game's PGN to lichess (unauthenticated import,
-	/// 100 games/hour/IP) and keep the returned URL for click-to-copy. Routed
-	/// through <see cref="LichessApi"/>, which owns the single-flight + 60s-429
-	/// rate discipline and — the actual M2 fix — sends <c>Accept: application/json</c>
-	/// so lichess returns {id,url} instead of the game's HTML page (PLAN.md M2
-	/// carry-in; confirmed in-editor: the old call got HTTP 200 + HTML).</summary>
-	public async void ImportToLichess()
-	{
-		if ( Game == null || !Game.IsGameOver || Importing || LichessUrl != null ) return;
-		if ( Game.MoveCount == 0 ) { _importError = "No move history on this client to import"; return; }
-
-		var pgn = BuildPgn();
-		Importing = true;
-		_importError = null;
-		try
-		{
-			var res = await LichessApi.ImportPgn( pgn );
-			if ( !res.Ok )
-			{
-				_importError = res.Error ?? "lichess import failed";
-				Log.Warning( $"[Gambit] import failed ({res.Status}): {LichessApi.Truncate( res.Body, 200 )}" );
-				return;
-			}
-
-			var url = LichessApi.Deserialize<LichessImport>( res.Body )?.url;
-			if ( string.IsNullOrEmpty( url ) )
-			{
-				_importError = "lichess sent an unexpected reply";
-				Log.Warning( $"[Gambit] import reply had no url: {LichessApi.Truncate( res.Body, 200 )}" );
-				return;
-			}
-
-			LichessUrl = url;
-			Log.Info( $"[Gambit] game imported: {url}" );
-		}
-		finally
-		{
-			Importing = false;
-		}
-	}
-
-	/// <summary>Copy the imported game URL — no API exists to open a browser
-	/// in-game (CLAUDE.md), so click-to-copy like the Discord invite.</summary>
-	public void CopyLichessUrl()
-	{
-		if ( string.IsNullOrEmpty( LichessUrl ) ) return;
-		Clipboard.SetText( LichessUrl );
-		SinceUrlCopied = 0f;
 	}
 
 	string BuildPgn()

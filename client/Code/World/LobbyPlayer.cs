@@ -33,10 +33,6 @@ public sealed class LobbyPlayer : Component
 	/// local FileSystem.Data.</summary>
 	[Sync] public string GambitName { get; set; }
 
-	/// <summary>Lichess rating for the name tag as a string ("" when not signed in
-	/// or unrated). A rating is public info, so unlike the token it's fine to sync.</summary>
-	[Sync] public string GambitRating { get; set; }
-
 	/// <summary>Name tag height above the player origin (the avatar is ~72 tall).</summary>
 	[Property] public float NameTagHeight { get; set; } = 82f;
 
@@ -92,11 +88,7 @@ public sealed class LobbyPlayer : Component
 	Vector3 _seatReturnPos;
 	Rotation _seatReturnRot;
 
-	// Deferred "join by link" (M4): when a pasted lichess URL assigns a side we
-	// aren't currently on, we Disengage first and take the seat once the leave
-	// blend finishes (processed in OnUpdate's roaming section).
-	ChessStation _pendingJoinStation;
-	ChessSeat? _pendingJoinSeat;
+
 
 	protected override void OnDestroy()
 	{
@@ -126,12 +118,8 @@ public sealed class LobbyPlayer : Component
 		Local = this;
 		_spawnPos = WorldPosition;
 		EnsureGameHud();
-		EnsureSplash();
 		EnsureSpectatorScreen();
 
-		// Re-validate any stored lichess token; a 401 clears it and re-prompts
-		// (PLAN.md M3 gate: "401 → re-prompt"). No-op when signed out.
-		Gambit.Api.LichessAuth.ValidateStoredToken();
 	}
 
 	/// <summary>Attach the seated-game HUD to the scene's ScreenPanel at runtime
@@ -143,19 +131,6 @@ public sealed class LobbyPlayer : Component
 		{
 			if ( screen.Components.Get<Gambit.UI.GameHud>() == null )
 				screen.GameObject.AddComponent<Gambit.UI.GameHud>();
-			return; // first ScreenPanel is the scene UI root
-		}
-	}
-
-	/// <summary>Attach the lichess sign-in modal to the scene ScreenPanel at
-	/// runtime (local player only) — same self-heal as EnsureGameHud, so M3 needs
-	/// no scene rewire.</summary>
-	void EnsureSplash()
-	{
-		foreach ( var screen in Scene.GetAllComponents<ScreenPanel>() )
-		{
-			if ( screen.Components.Get<Gambit.UI.Screens.SplashScreen>() == null )
-				screen.GameObject.AddComponent<Gambit.UI.Screens.SplashScreen>();
 			return; // first ScreenPanel is the scene UI root
 		}
 	}
@@ -208,16 +183,12 @@ public sealed class LobbyPlayer : Component
 		if ( !Engaged && !_leaving && WorldPosition.z < FallKillZ )
 			Respawn();
 
-		// Publish the display name for everyone's name tags; it can appear or change
-		// at any time. Load() is cached. DisplayName is the single source of truth — the
-		// signed-in lichess account name, else the free-form anonymous name (PLAN.md M3).
+		// Publish the display name for everyone's name tags. Load() is cached.
+		// DisplayName is the single source of truth — the Steam persona name.
 		var data = Gambit.Game.PlayerData.Load();
 		var uname = data?.DisplayName() ?? "";
 		if ( GambitName != uname ) GambitName = uname;
 
-		var rating = ( !string.IsNullOrEmpty( data?.LichessUsername ) && data.LichessRating > 0 )
-			? data.LichessRating.ToString() : "";
-		if ( GambitRating != rating ) GambitRating = rating;
 
 		if ( _leaving )
 		{
@@ -245,30 +216,6 @@ public sealed class LobbyPlayer : Component
 			return;
 		}
 
-		// Sign-in modal: free the mouse for clicking and lock movement, without
-		// touching the camera — a screen-space overlay, same idea as the wall boards
-		// (UseLookControls=false), plus UseInputControls=false so WASD can't walk the
-		// avatar out from under the modal. Restored when it closes.
-		if ( Gambit.UI.Screens.SplashScreen.IsOpen )
-		{
-			if ( _controller != null && !_splashLock )
-			{
-				_splashLock = true;
-				_controller.UseLookControls = false;
-				_controller.UseInputControls = false;
-			}
-			return;
-		}
-		if ( _splashLock )
-		{
-			_splashLock = false;
-			if ( _controller != null )
-			{
-				_controller.UseLookControls = true;
-				_controller.UseInputControls = true;
-			}
-		}
-
 		// Chat typing: keep the controller off so WASD keystrokes don't walk the
 		// avatar, and skip interaction handling until the box closes.
 		if ( Gambit.UI.Screens.ChatPanel.IsOpen )
@@ -288,34 +235,11 @@ public sealed class LobbyPlayer : Component
 			_controller.EyeAngles = _eyeFrom;
 		}
 
-		// Deferred join-by-link (M4): a pasted lichess URL asked us to take a
+
 		// specific side. If we were seated elsewhere we've since Disengaged; now the
 		// leave blend is done and we're roaming, so take the assigned seat and let
 		// Engage swoop the camera to it.
-		if ( _pendingJoinSeat is { } pendingSeat )
-		{
-			var station = _pendingJoinStation;
-			_pendingJoinStation = null;
-			_pendingJoinSeat = null;
-			if ( station != null && !station.SeatTaken( pendingSeat ) )
-				Engage( station, pendingSeat );
-			return;
-		}
 
-		// Offer lichess sign-in ONCE, ever. Pre-M7 this popped for any player with no
-		// name, because they had to pick one before they could play; Steam supplies the
-		// name now, so this is only an offer — and never being lichess-linked is a fine
-		// steady state, so it must not nag on every load. The welcome board waits until
-		// it's closed (TryAutoShowInfo guards on it).
-		if ( !_splashPopDone )
-		{
-			_splashPopDone = true;
-			var pd = Gambit.Game.PlayerData.Load();
-			if ( string.IsNullOrEmpty( pd?.LichessToken ) && !( pd?.SignInPromptSeen ?? false ) )
-			{
-				Gambit.Game.PlayerData.MarkSignInPromptSeen();
-				Gambit.UI.Screens.SplashScreen.Open();
-			}
 		}
 
 		// First-ever load: pop the welcome/info board up automatically until the player
@@ -404,8 +328,6 @@ public sealed class LobbyPlayer : Component
 	}
 
 	bool _infoPopDone;
-	bool _splashPopDone;
-	bool _splashLock; // controller look/input suppressed while the sign-in modal is up
 
 	/// <summary>Auto-open the welcome/info board the first time a player ever loads the
 	/// lobby (until they dismiss it once — PlayerData.InfoPanelSeen). Retries each frame
@@ -413,7 +335,6 @@ public sealed class LobbyPlayer : Component
 	void TryAutoShowInfo()
 	{
 		// Let the sign-in modal go first on a brand-new profile; it retries next frame.
-		if ( Gambit.UI.Screens.SplashScreen.IsOpen ) return;
 
 		if ( Gambit.Game.PlayerData.Load()?.InfoPanelSeen == true )
 		{
@@ -481,7 +402,7 @@ public sealed class LobbyPlayer : Component
 
 	/// <summary>Nearest free seat within InteractRange: each table offers two seat
 	/// spots (ChessStation.SeatWorldPosition), and the closest free one wins. You
-	/// take the side you actually walk up to — the lichess open game (M4) colours
+	/// take the side you actually walk up to — the
 	/// you by that side, so we no longer override the first sitter to White (the old
 	/// PLAN D1 convention). White still moves first regardless of who sat first.</summary>
 	void FindNearbySeat()
@@ -525,15 +446,13 @@ public sealed class LobbyPlayer : Component
 	{
 		var station = ChessStation.Active;
 		var controller = Gambit.Game.LocalGameController.For( station );
-		var lichess = Gambit.Game.LichessPlayController.For( station );
 
 		// Standing up mid-game forfeits it — true for both the local two-seat game and
-		// a live in-sbox lichess game, so both arm the two-stage confirm.
+		// a live game arms the two-stage confirm.
 		bool localForfeits = controller is { Playing: true }
 			&& controller.LocalSeat != null
 			&& ( controller.Game?.MoveCount ?? 0 ) > 0;
-		bool lichessForfeits = lichess is { Playing: true };
-		bool forfeits = localForfeits || lichessForfeits;
+		bool forfeits = localForfeits;
 
 		if ( forfeits && !LeaveArmed )
 		{
@@ -544,10 +463,6 @@ public sealed class LobbyPlayer : Component
 		_leaveArm = 999f;
 		if ( localForfeits )
 			controller.ResignLocal();
-		// Reset the lichess controller in every non-idle phase, not just Playing:
-		// resign a live game, cancel a pending challenge/seek/open link, or clear the
-		// game-over screen — so the board returns to "not playing" for the next sitter.
-		lichess?.LeaveSeat();
 		Gambit.Game.PuzzleController.For( station )?.LeaveSeat();
 		Disengage();
 	}
@@ -557,30 +472,6 @@ public sealed class LobbyPlayer : Component
 		station.Enter( seat );
 		if ( ChessStation.Active != station ) return; // someone else has it
 		BeginEngage();
-	}
-
-	/// <summary>Take a specific side and swoop the camera there — the "join by link"
-	/// path (M4), where lichess (not proximity) picks the colour. Uses the board the
-	/// player is at / nearest to. If already seated on the other side of that board,
-	/// leaves first and takes the assigned seat once the blend finishes
-	/// (<see cref="_pendingJoinSeat"/>, handled in OnUpdate).</summary>
-	public void JoinLichessSide( ChessSeat seat )
-	{
-		var station = ChessStation.Active ?? NearestStation();
-		if ( station == null ) return;
-
-		if ( ChessStation.Active == station && ChessStation.ActiveSeat == seat )
-			return; // already on the assigned side
-
-		if ( ChessStation.Active != null )
-		{
-			_pendingJoinStation = station;
-			_pendingJoinSeat = seat;
-			Disengage();
-			return;
-		}
-
-		Engage( station, seat );
 	}
 
 	/// <summary>Nearest chess table by planar distance, ignoring seat occupancy —

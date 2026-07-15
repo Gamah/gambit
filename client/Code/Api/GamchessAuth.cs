@@ -17,10 +17,8 @@ namespace Gambit.Api;
 /// <para>The service-name argument to GetToken is <b>cosmetic</b>: Facepunch
 /// validates <c>{steamid, token}</c> without it. It's passed for clarity only.</para>
 ///
-/// <para><b>Nothing here is a lichess credential.</b> The lichess bearer never
-/// touches gamchess, and this token has nothing to do with it — this proves
-/// <i>Steam</i> identity, so gamchess can key an archive and route an OAuth code
-/// back to the right player.</para>
+/// <para>This proves <i>Steam</i> identity, which is how gamchess keys an
+/// archive to a player.</para>
 ///
 /// <para><b>Never fatal.</b> GetToken returns null rather than throwing on a
 /// non-Steam build, and every failure here degrades to "no gamchess", never to a

@@ -21,7 +21,7 @@
     "PerMapRanking": false,
     "LeaderboardType": "None",
     "CsProjName": "",
-    "HttpAllowList": [ "https://lichess.org/", "https://chess.gamah.net/" ],
+    "HttpAllowList": [ "https://chess.gamah.net/" ],
     "StartupScene": "scenes/lobby.scene"
   }
 }

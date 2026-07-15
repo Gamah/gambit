@@ -9,35 +9,22 @@ import (
 	"path"
 	"time"
 
-	"github.com/gamah/gambit/server/internal/relay"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
-// OAuth timings. The state outlives the code because it has to cover a human
-// reading a lichess consent screen; the code only has to survive the client's
-// next poll. Both are far shorter than lichess's own ~1min code TTL matters for.
-const (
-	stateTTL = 5 * time.Minute
-	codeTTL  = 2 * time.Minute
-
-	// How long a used Steam OpenID nonce is remembered. Only has to outlive the
-	// window in which Steam's signature on the same assertion stays valid.
-	openidNonceTTL = 30 * time.Minute
-)
+// How long a used Steam OpenID nonce is remembered. Only has to outlive the
+// window in which Steam's signature on the same assertion stays valid.
+const openidNonceTTL = 30 * time.Minute
 
 type handler struct {
 	db      *pgxpool.Pool
 	log     *zap.Logger
 	version string
 
-	// baseURL is the public root gamchess is served at — the root of the OAuth
-	// redirect_uri. Blank disables the lichess code relay.
+	// baseURL is the public root gamchess is served at — the Steam OpenID realm
+	// and return root. Blank disables web sign-in.
 	baseURL string
-
-	// relay is in-memory only, by design: it holds OAuth codes, which have no
-	// business being persisted.
-	relay *relay.Store
 
 	// Web sign-in (Steam OpenID) for the archive viewer.
 	sessions *sessions
@@ -50,7 +37,6 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, version, baseURL, frontendDir,
 		log:      log,
 		version:  version,
 		baseURL:  baseURL,
-		relay:    relay.New(stateTTL, codeTTL),
 		sessions: newSessions(sessionSecret),
 		nonces:   newNonceStore(openidNonceTTL),
 	}
@@ -60,14 +46,8 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, version, baseURL, frontendDir,
 	// Liveness. Deliberately unwrapped: no auth, no rate limit.
 	mux.HandleFunc("GET /health", h.health)
 
-	// lichess OAuth code relay. /callback is the browser's landing spot and takes
-	// no auth; the other two are FP-token-gated.
-	mux.HandleFunc("POST /api/v1/auth/lichess/begin", h.lichessBegin)
-	mux.HandleFunc("GET /api/v1/auth/lichess/code", h.lichessCode)
-	mux.HandleFunc("GET /callback", h.lichessCallback)
-
 	// Steam OpenID sign-in for the archive viewer. NOT OAuth2 — Steam has no
-	// OAuth2 endpoint. Unrelated to the lichess relay above.
+	// OAuth2 endpoint.
 	mux.HandleFunc("GET /auth/steam/login", h.steamLogin)
 	mux.HandleFunc("GET /auth/steam/return", h.steamReturn)
 	mux.HandleFunc("POST /auth/steam/logout", h.steamLogout)
@@ -79,13 +59,9 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, version, baseURL, frontendDir,
 	mux.HandleFunc("GET /api/v1/games", h.listGames)
 	mux.HandleFunc("GET /api/v1/games/{id}", h.getGame)
 
-	// lichess identity link.
-	mux.HandleFunc("PUT /api/v1/links/lichess", h.putLichessLink)
-	mux.HandleFunc("DELETE /api/v1/links/lichess", h.deleteLichessLink)
-
 	// The archive viewer. Registered last and rooted at "/", which in Go 1.22's
-	// mux is the least-specific pattern — every route above still wins, including
-	// /callback. Blank FRONTEND_DIR serves no web UI and changes nothing else.
+	// mux is the least-specific pattern — every route above still wins. Blank
+	// FRONTEND_DIR serves no web UI and changes nothing else.
 	if frontendDir != "" {
 		fs := http.FileServer(http.Dir(frontendDir))
 		mux.Handle("GET /", noStoreIndex(fs))

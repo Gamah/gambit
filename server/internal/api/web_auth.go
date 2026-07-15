@@ -15,9 +15,7 @@ import (
 // Steam sign-in for the archive viewer.
 //
 // NOTE the protocol: Steam's browser login is **OpenID 2.0**, not OAuth2 — there
-// is no Steam OAuth2 endpoint to use, however often it gets called that. This is
-// unrelated to the lichess OAuth relay in lichess.go; the only thing they share is
-// that both end with us knowing a SteamID64.
+// is no Steam OAuth2 endpoint to use, however often it gets called that.
 //
 // Two independent ways to prove the same SteamID:
 //   - in-game: a Facepunch auth token (requireSteam)

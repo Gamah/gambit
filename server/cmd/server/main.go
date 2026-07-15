@@ -1,11 +1,6 @@
 // Command server is gamchess: Terry's Gambit's backend. It carries server-side
-// identity (Steam, via Facepunch auth tokens), a lichess OAuth *code* relay, and
-// a durable game archive.
-//
-// It deliberately does NOT carry lichess bearer tokens. See migrations/00001_schema.sql
-// and internal/api/ for the reasoning; the short version is that gamchess relays
-// single-use OAuth codes and the client — which alone holds the PKCE verifier —
-// does the token exchange itself.
+// identity (Steam — a Facepunch auth token in-game, OpenID on the web), a durable
+// game archive, and the web viewer for it.
 package main
 
 import (
@@ -51,11 +46,11 @@ func main() {
 		log.Fatal("migration failed", zap.Error(err))
 	}
 
-	// PUBLIC_BASE_URL is the public root gamchess is served at — the root of the
-	// lichess OAuth redirect_uri. Blank disables the code relay.
+	// PUBLIC_BASE_URL is the public root gamchess is served at — the Steam OpenID
+	// realm and return root. Blank disables web sign-in, which gates the viewer.
 	baseURL := strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL"))
 	if baseURL == "" {
-		log.Warn("PUBLIC_BASE_URL not set — lichess OAuth code relay disabled")
+		log.Warn("PUBLIC_BASE_URL not set — Steam web sign-in disabled")
 	}
 
 	// FRONTEND_DIR holds the archive viewer's static files. Blank disables the web
