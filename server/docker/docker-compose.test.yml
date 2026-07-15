@@ -1,0 +1,72 @@
+# Parallel "test instance" stack — a second full copy of the server + DB that
+# runs alongside production so a feature branch can be smoke-tested in isolation.
+#
+# Driven by `make testinst BRANCH=<branch>` (see the Makefile). That target checks
+# the branch out into a git worktree and points TEST_BUILD_CONTEXT at it, so the
+# *source* comes from the branch while this orchestration file comes from
+# whatever branch you ran make from (usually master). All knobs read from the
+# TEST_* keys in the SAME .env file production uses — see .env.example.
+#
+# The `name:` below sets the Compose project, which namespaces containers,
+# networks and volumes (gamchess-test_*), so nothing collides with prod.
+name: gamchess-test
+
+services:
+
+  # ── Application ────────────────────────────────────────────────────────────
+  app:
+    build:
+      # Absolute path to the branch worktree, injected by `make testinst`.
+      # Falls back to the repo root for a plain `docker compose` invocation.
+      context: ${TEST_BUILD_CONTEXT:-..}
+      dockerfile: docker/Dockerfile
+      args:
+        # The worktree's .git is outside the build context, so the in-container
+        # git fallback can't see it; `make testinst` passes the hash here.
+        GIT_HASH: ${GIT_HASH:-}
+    restart: unless-stopped
+    ports:
+      # Loopback only, same as prod — see the comment in docker-compose.yml.
+      # Reach it via an SSH tunnel or local curl.
+      - "127.0.0.1:${TEST_PORT:-6465}:6464"
+    environment:
+      DATABASE_URL: "postgres://gamchess@postgres:5432/gamchess?sslmode=disable"
+      PORT: "6464"
+      # The test instance's OWN public URL, so the lichess OAuth redirect returns
+      # here and not to prod. Must be distinct from PUBLIC_BASE_URL. Blank
+      # disables the code relay on test.
+      PUBLIC_BASE_URL: "${TEST_PUBLIC_BASE_URL}"
+      FRONTEND_DIR: "/frontend"
+      SESSION_SECRET: "${SESSION_SECRET}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:   gamchess
+      POSTGRES_USER: gamchess
+      # No password — see docker-compose.yml. Loopback + internal-net only; each
+      # testinst run gets a fresh empty volume, so trust always applies cleanly.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Loopback only — host-side tooling can reach the test DB on its own port.
+      - "127.0.0.1:${TEST_PG_PORT:-5436}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gamchess"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+networks:
+  internal:
+
+volumes:
+  postgres_data:

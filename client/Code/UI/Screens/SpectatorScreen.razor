@@ -1,0 +1,111 @@
+@using System
+@using Sandbox
+@using Sandbox.UI
+@using Gambit.World
+@using Gambit.Game
+@namespace Gambit.UI.Screens
+@inherits PanelComponent
+
+@*
+	Controls for the spectator wall. A screen-space ScreenPanel, shown only while
+	engaged at the SpectatorStation (walk up + press E) — the camera stays put;
+	LobbyPlayer frees the cursor. Self-attached to the scene ScreenPanel at runtime by
+	LobbyPlayer.EnsureSpectatorScreen (no scene rewire). The board itself renders on the
+	wall (SpectatorBoard3D); this just picks which table it shows.
+
+	The lichess TV and watch-by-id channels lived here too, until lichess was ripped
+	out. The wall now has exactly one source — a live sbox table — so this is a
+	"next table" button and little else.
+*@
+
+<root>
+	@if ( SpectatorStation.Active != null )
+	{
+		var c = SpectatorController.Instance;
+		<div class="screen-fit">
+			<div class="spectate">
+				<div class="title">SPECTATE</div>
+				<div class="now">@( c?.ChannelLabel ?? "—" )</div>
+
+				<div class="section">LIVE TABLES</div>
+				<div class="row">
+					<div class="button" onclick="@( () => c?.CycleFeatured() )">Next table</div>
+				</div>
+
+				@if ( !string.IsNullOrEmpty( c?.StatusText ) )
+				{
+					<div class="status">@c.StatusText</div>
+				}
+				<div class="note">The wall mirrors a live game from the tables.</div>
+				<div class="note">Press Escape to leave.</div>
+			</div>
+		</div>
+	}
+</root>
+
+<style>
+	root { width: 100%; height: 100%; pointer-events: none; }
+
+	.screen-fit {
+		position: absolute;
+		left: 0; top: 0;
+		width: 100%; height: 100%;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.spectate {
+		flex-direction: column;
+		width: 420px;
+		gap: 8px;
+		padding: 22px;
+		background-color: rgba(10, 10, 14, 0.92);
+		border-radius: 14px;
+		color: rgba(255, 255, 255, 0.9);
+		pointer-events: all;
+	}
+
+	.title { font-size: 22px; letter-spacing: 4px; font-weight: bold; }
+	.now { font-size: 14px; color: #7fd47f; }
+	.section {
+		font-size: 12px;
+		letter-spacing: 2px;
+		color: rgba(255, 255, 255, 0.45);
+		margin-top: 10px;
+	}
+	.row { flex-direction: row; gap: 8px; }
+	.row.wrap { flex-wrap: wrap; }
+
+	.button {
+		padding: 8px 12px;
+		background-color: rgba(90, 140, 255, 0.25);
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 14px;
+		justify-content: center;
+	}
+	.button:hover { background-color: rgba(90, 140, 255, 0.45); }
+	.button.ghost { background-color: rgba(255, 255, 255, 0.08); }
+	.button.ghost:hover { background-color: rgba(255, 255, 255, 0.18); }
+
+	.input {
+		background-color: rgba(255, 255, 255, 0.08);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 6px;
+		padding: 7px 9px;
+		font-size: 13px;
+		color: white;
+	}
+
+	.status { font-size: 13px; color: rgba(255, 255, 255, 0.6); margin-top: 6px; }
+	.note { font-size: 11px; color: rgba(255, 255, 255, 0.4); margin-top: 6px; }
+</style>
+
+@code
+{
+	protected override int BuildHash()
+	{
+		var c = SpectatorController.Instance;
+		return System.HashCode.Combine( SpectatorStation.Active != null, c?.ChannelLabel, c?.StatusText );
+	}
+}

@@ -19,7 +19,7 @@ import os
 import sys
 import wave
 
-SFX = "gambit/Assets/sounds/sfx"
+SFX = "client/Assets/sounds/sfx"
 DEFAULTS = [
     f"{SFX}/slide_servo_classic.wav",
     f"{SFX}/slide_servo_heavy.wav",

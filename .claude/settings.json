@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(//home/ai/gambit/**)",
+      "Write(//home/ai/gambit/**)",
+      "Read(//home/ai/rotaliate/**)",
+      "Read(//home/ai/splitclicker/**)",
+      "Read(//home/ai/sbox-docs/**)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git checkout *)",
+      "Bash(git mv *)",
+      "Bash(git rm *)",
+      "Bash(git fetch *)",
+      "Bash(git push *)",
+      "Bash(git worktree *)",
+      "Bash(go build *)",
+      "Bash(go vet *)",
+      "Bash(go test *)",
+      "Bash(gofmt *)"
+    ]
+  }
+}

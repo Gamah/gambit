@@ -1,0 +1,8 @@
+# Go half. /bin/ is anchored to server/bin/ (the Makefile's build output) — an
+# unanchored bin/ is what the old root .gitignore got wrong.
+/bin/
+*.test
+.env
+
+# make testinst checks out an immutable SHA here
+/.worktrees/
