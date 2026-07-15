@@ -1,0 +1,68 @@
+# The `name:` below pins the Compose project, which namespaces containers,
+# networks and volumes (gamchess_*). Without it the project defaults to the
+# parent dir name ("docker"), colliding with any other repo whose compose file
+# also lives under docker/ (they'd share container `docker-app-1`, the network
+# and the postgres volume). rotaliate learned this the hard way. Keep in
+# lockstep with docker-compose.test.yml.
+name: gamchess
+
+services:
+
+  # ── Application ────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        # Host-computed short hash → the /health version stamp. See the Makefile
+        # up/rebuild targets and the Dockerfile fallback chain.
+        GIT_HASH: ${GIT_HASH:-}
+    restart: unless-stopped
+    ports:
+      # Loopback ONLY — never 0.0.0.0. Docker writes its own iptables chains and
+      # they are evaluated BEFORE ufw, so a 0.0.0.0 publish is reachable from the
+      # internet even with ufw denying the port. Loopback binding + Caddy
+      # fronting is the entire mechanism. No `ufw allow` is ever issued for this.
+      - "127.0.0.1:6464:6464"
+    environment:
+      DATABASE_URL: "postgres://gamchess@postgres:5432/gamchess?sslmode=disable"
+      PORT: "6464"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:   gamchess
+      POSTGRES_USER: gamchess
+      # No password: the port is loopback + internal-network only (never exposed
+      # publicly), and host-side access goes through `docker exec` (make psql),
+      # so we skip password management entirely. `trust` only applies on FIRST
+      # init of an empty data volume — an existing volume keeps whatever pg_hba
+      # it was created with, so reset the volume if switching an old DB over.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Loopback only — the app reaches postgres over the internal network; this
+      # mapping exists just for host-side tooling (make psql, local dev).
+      # 5432/5433 are rotaliate prod/test and 5434 is splitclicker, so gamchess
+      # continues the org's increment convention at 5435 (test takes 5436).
+      - "127.0.0.1:5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gamchess"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+networks:
+  internal:
+
+volumes:
+  postgres_data:
