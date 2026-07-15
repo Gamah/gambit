@@ -20,11 +20,16 @@ lobby's own tables; and if you don't want it, you turn it off and it stays off.
 
 ### Why this one is easy, and why that's worth saying
 
-**TV is the one lichess feature with no security surface at all.** `GET /api/tv/feed`,
+**TV is the one lichess feature with no security surface UPSTREAM.** `GET /api/tv/feed`,
 `/api/tv/{channel}/feed`, `/api/tv/channels` are `security: []` — **anonymous**. No token,
 no scope, no custody question, nothing to encrypt, nothing to revoke, nothing to audit.
-None of M8's hard part applies. Do not let it drift into the token machinery; it must keep
+None of M8's hard part applies. Do not let it drift into the token machinery: it must keep
 working for a player who has never linked and never will.
+
+**That is a fact about lichess's side, not ours.** Our proxy of it is still session-gated —
+see "Do this first" below. Anonymous upstream is exactly why an open endpoint here would be
+attractive to abuse, and every byte of that abuse would be attributed to our IP and our
+User-Agent.
 
 It also lands almost exactly on the shape `SpectatorController` already has. A `fen`
 message is `{fen, lm, wc, bc}` — position, last move, and both clocks **in seconds**,
@@ -125,10 +130,22 @@ once per TTL per player and needs server-side state to do it.
 - Re-mint on 401 exactly as `SendAuthed` already re-mints the FP token once. That path is
   built; point it at the session instead.
 
-**The alternative for TV specifically: don't gate it at all.** It is public, anonymous data
-upstream, so proxying it doesn't obviously need a Steam identity — cheaper still, but it
-puts an open endpoint on our box that wants its own rate limit. The session is worth having
-regardless, because the relay poll needs it too.
+**TV goes behind the session too — it is NOT a public endpoint.** The tempting shortcut is
+that TV is anonymous upstream, so a proxy of it needs no identity; the only thing that ever
+argued for gating it was the Facepunch cost, and the session removes that. Two reasons it
+stays gated anyway:
+
+1. **We must not become a free unauthed lichess TV relay.** An open `/api/v1/tv/{channel}`
+   is a public CDN for someone else's content, pointable by any script, costing us
+   bandwidth to serve lichess's feed to people who have never touched Gambit.
+2. **The abuse would be attributed to us.** Our IP and our User-Agent are what lichess sees
+   — we went out of our way to make that traffic identifiable (`etiquette.go`) precisely so
+   they can attribute it. An open relay means anything done through it is done *as Gambit*,
+   against the one IP whose limits every real player shares, and it's our standing that
+   pays. Being identifiable and being an open relay are a bad combination.
+
+So: session-gated like everything else. A Steam identity to watch TV is a trivial ask for a
+Steam-gated game, and it costs one local HMAC.
 
 Decide before building the poll loop, not after.
 
