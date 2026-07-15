@@ -1,4 +1,4 @@
-.PHONY: dev build test fmt lint migrate-up migrate-down migrate-status \
+.PHONY: dev build test tidy fmt lint migrate-up migrate-down migrate-status \
         up rebuild down logs ps psql \
         testinst testinst-down testinst-logs testinst-ps
 
@@ -11,6 +11,13 @@ build:
 
 test:
 	go test ./... -v -race
+
+# Run this FIRST on a fresh checkout. go.sum was seeded from rotaliate (whose
+# module graph is a superset of ours) because the machine that wrote this server
+# has no Go toolchain — tidy prunes it to what gamchess actually imports and
+# fills in anything missing.
+tidy:
+	go mod tidy
 
 fmt:
 	gofmt -w .

@@ -28,6 +28,7 @@ services:
       DATABASE_URL: "postgres://gamchess@postgres:5432/gamchess?sslmode=disable"
       PORT: "6464"
       PUBLIC_BASE_URL: "${PUBLIC_BASE_URL}"
+      FRONTEND_DIR: "/frontend"
     depends_on:
       postgres:
         condition: service_healthy

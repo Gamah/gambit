@@ -58,7 +58,11 @@ func main() {
 		log.Warn("PUBLIC_BASE_URL not set — lichess OAuth code relay disabled")
 	}
 
-	mux := api.NewRouter(pool, log, version, baseURL)
+	// FRONTEND_DIR holds the archive viewer's static files. Blank disables the web
+	// UI; the API and the relay are unaffected.
+	frontendDir := strings.TrimSpace(os.Getenv("FRONTEND_DIR"))
+
+	mux := api.NewRouter(pool, log, version, baseURL, frontendDir)
 
 	port := os.Getenv("PORT")
 	if port == "" {

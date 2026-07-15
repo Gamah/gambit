@@ -1,0 +1,183 @@
+/* Self-contained: no CDN, no webfonts, no external anything. Pieces are Unicode
+   glyphs, so the whole viewer ships zero image assets — which also sidesteps the
+   CC0 asset rule entirely (there are no assets to license). */
+
+:root {
+  color-scheme: light dark;
+  --bg: #14151a;
+  --panel: #1c1e26;
+  --line: #2c2f3a;
+  --text: #e8e8ee;
+  --dim: #9a9db0;
+  --accent: #c9a227;
+  --light-sq: #b9b3a6;
+  --dark-sq: #6d6a63;
+  --hl: #c9a22766;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.brand {
+  font-weight: 700;
+  letter-spacing: .12em;
+  color: var(--accent);
+  text-decoration: none;
+}
+.sub { color: var(--dim); font-size: .85rem; }
+
+main { max-width: 60rem; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
+
+form#lookup { display: flex; gap: .5rem; margin-bottom: 1.25rem; }
+input, button {
+  font: inherit;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+input {
+  flex: 1;
+  min-width: 0;
+  padding: .55rem .7rem;
+  background: var(--panel);
+  color: var(--text);
+}
+input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+button {
+  padding: .55rem .9rem;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .4; cursor: default; border-color: var(--line); }
+
+.status { padding: .7rem .9rem; border: 1px solid var(--line); border-radius: 6px; color: var(--dim); }
+.status.err { border-color: #7a3a3a; color: #e6a3a3; }
+
+h2 { font-size: 1.05rem; margin: 0 0 .75rem; font-weight: 600; }
+
+/* Wide content scrolls inside its own box; the page body never scrolls sideways. */
+table { width: 100%; border-collapse: collapse; display: block; overflow-x: auto; }
+thead th {
+  text-align: left;
+  font-size: .72rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+  padding: .4rem .6rem;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+tbody td { padding: .55rem .6rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--panel); }
+.r { text-align: right; }
+.result { font-variant-numeric: tabular-nums; color: var(--accent); }
+
+.back { color: var(--dim); text-decoration: none; font-size: .85rem; }
+.back:hover { color: var(--accent); }
+.meta { color: var(--dim); font-size: .85rem; margin-bottom: 1rem; }
+
+.viewer { display: flex; gap: 1.25rem; flex-wrap: wrap; align-items: flex-start; }
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  width: min(28rem, 100%);
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  flex: 1 1 20rem;
+}
+.sq {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Sized off the square, so the board scales without a font-size table. */
+  font-size: clamp(1rem, 6.5cqw, 2.4rem);
+  line-height: 1;
+  user-select: none;
+}
+.board { container-type: inline-size; }
+.sq.light { background: var(--light-sq); }
+.sq.dark { background: var(--dark-sq); }
+.sq.hl { background-image: linear-gradient(var(--hl), var(--hl)); }
+/* Both colours are drawn as the SOLID glyphs and recoloured. The outline glyphs
+   (♔♕♖) render at a different weight to the solid ones (♚♛♜) in most fonts, so
+   using each set for its own colour makes white pieces look spindly next to
+   black. One glyph set + fill/stroke keeps them identical. */
+.pc { color: #111; text-shadow: 0 0 1px #111; }
+.pc.w { color: #f6f4ee; text-shadow: 0 0 1px #111, 0 0 2px #111; }
+
+.side { flex: 1 1 14rem; min-width: 12rem; }
+
+.moves {
+  list-style: none;
+  margin: 0 0 .75rem;
+  padding: .5rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  max-height: 20rem;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .15rem .35rem;
+  font-variant-numeric: tabular-nums;
+}
+.moves li { padding: .1rem .3rem; border-radius: 3px; cursor: pointer; }
+.moves li.num { color: var(--dim); cursor: default; }
+.moves li.on { background: var(--accent); color: #14151a; }
+.moves li:not(.num):hover { background: var(--line); }
+.moves li.on:hover { background: var(--accent); }
+
+.controls { display: flex; gap: .35rem; }
+.controls button { flex: 1; padding: .4rem; }
+.ply { color: var(--dim); font-size: .8rem; margin-top: .5rem; font-variant-numeric: tabular-nums; }
+.replay-error { margin-top: .5rem; color: #e6a3a3; font-size: .8rem; }
+
+.pgn { margin-top: 1.5rem; }
+.pgn summary { cursor: pointer; color: var(--dim); font-size: .85rem; }
+.pgn pre {
+  margin: .5rem 0 0;
+  padding: .75rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: .8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+footer {
+  border-top: 1px solid var(--line);
+  padding: 1.25rem;
+  color: var(--dim);
+  font-size: .8rem;
+  text-align: center;
+}
+footer p { margin: .2rem 0; }
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f5f2; --panel: #fff; --line: #ddd9d0; --text: #22232a; --dim: #6b6d7c;
+    --light-sq: #e8e2d4; --dark-sq: #9a9384;
+  }
+  .pc.w { color: #fff; text-shadow: 0 0 1px #333, 0 0 2px #333; }
+}

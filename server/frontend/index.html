@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terry's Gambit — game archive</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+  <a class="brand" href="/">TERRY'S GAMBIT</a>
+  <span class="sub">game archive</span>
+</header>
+
+<main>
+  <form id="lookup" autocomplete="off">
+    <input id="steamid" type="text" inputmode="numeric" placeholder="SteamID64 (e.g. 76561197960287930)" aria-label="SteamID64">
+    <button type="submit">Look up</button>
+  </form>
+
+  <div id="status" class="status" hidden></div>
+
+  <section id="list" hidden>
+    <h2 id="list-title"></h2>
+    <table id="games">
+      <thead>
+        <tr><th>Played</th><th>White</th><th>Black</th><th class="r">Result</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section id="game" hidden>
+    <a class="back" href="#" id="back">← back to games</a>
+    <h2 id="game-title"></h2>
+    <div id="game-meta" class="meta"></div>
+
+    <div class="viewer">
+      <div id="board" class="board" role="img" aria-label="Chess board"></div>
+
+      <div class="side">
+        <ol id="moves" class="moves"></ol>
+        <div class="controls">
+          <button id="first" title="Start" aria-label="Start">|◀</button>
+          <button id="prev" title="Previous" aria-label="Previous">◀</button>
+          <button id="next" title="Next" aria-label="Next">▶</button>
+          <button id="last" title="End" aria-label="End">▶|</button>
+        </div>
+        <div id="ply" class="ply"></div>
+        <div id="replay-error" class="replay-error" hidden></div>
+      </div>
+    </div>
+
+    <details class="pgn">
+      <summary>PGN</summary>
+      <pre id="pgn"></pre>
+    </details>
+  </section>
+</main>
+
+<footer>
+  <p>Games played in Terry's Gambit. PGNs are public.</p>
+  <p>No engine analysis is offered here, by design.</p>
+</footer>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

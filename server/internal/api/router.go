@@ -6,6 +6,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"path"
 	"time"
 
 	"github.com/gamah/gambit/server/internal/relay"
@@ -35,7 +36,7 @@ type handler struct {
 	relay *relay.Store
 }
 
-func NewRouter(db *pgxpool.Pool, log *zap.Logger, version, baseURL string) *http.ServeMux {
+func NewRouter(db *pgxpool.Pool, log *zap.Logger, version, baseURL, frontendDir string) *http.ServeMux {
 	h := &handler{
 		db:      db,
 		log:     log,
@@ -65,7 +66,34 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, version, baseURL string) *http
 	mux.HandleFunc("PUT /api/v1/links/lichess", h.putLichessLink)
 	mux.HandleFunc("DELETE /api/v1/links/lichess", h.deleteLichessLink)
 
+	// The archive viewer. Registered last and rooted at "/", which in Go 1.22's
+	// mux is the least-specific pattern — every route above still wins, including
+	// /callback. Blank FRONTEND_DIR serves no web UI and changes nothing else.
+	if frontendDir != "" {
+		fs := http.FileServer(http.Dir(frontendDir))
+		mux.Handle("GET /", noStoreIndex(fs))
+		log.Info("serving the archive viewer", zap.String("dir", frontendDir))
+	} else {
+		log.Warn("FRONTEND_DIR not set — archive viewer disabled")
+	}
+
 	return mux
+}
+
+// noStoreIndex keeps index.html and the JS from being cached across a deploy —
+// the viewer is small and served over one connection, so staleness costs more
+// than the bytes do.
+func noStoreIndex(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// package.json is a build artifact of the JS module layout (it marks the
+		// dir as ESM for node), not part of the site. Don't serve it.
+		if path.Base(r.URL.Path) == "package.json" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (h *handler) health(w http.ResponseWriter, r *http.Request) {

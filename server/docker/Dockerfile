@@ -29,6 +29,8 @@ COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /bin/gamchess /gamchess
 # goose reads migrations from the filesystem at startup, not from embed.
 COPY --from=builder /src/migrations /migrations
+# The archive viewer (static; served when FRONTEND_DIR points here).
+COPY --from=builder /src/frontend /frontend
 
 EXPOSE 6464
 ENTRYPOINT ["/gamchess"]

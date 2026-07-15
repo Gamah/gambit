@@ -36,6 +36,7 @@ services:
       # here and not to prod. Must be distinct from PUBLIC_BASE_URL. Blank
       # disables the code relay on test.
       PUBLIC_BASE_URL: "${TEST_PUBLIC_BASE_URL}"
+      FRONTEND_DIR: "/frontend"
     depends_on:
       postgres:
         condition: service_healthy
