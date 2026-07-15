@@ -218,8 +218,9 @@ move latency and coarse clocks (the poll gives only *your* `secondsLeft`, so liv
 both-sides clocks aren't possible). Fine for Rapid/Classical.
 
 `Sandbox.WebSocket` *is* whitelisted and streams incrementally, but lichess has no
-public `wss://` — it would only help via a relay. See PLAN.md for the two open upgrade
-paths.
+public `wss://` — it would only help via a relay. That relay is now scoped as **gamchess**,
+a small always-on backend on gamah.net (issue #7); see PLAN.md for it and the one other
+open upgrade path.
 
 ### Asset licensing
 
@@ -248,7 +249,54 @@ glTF/FBX, the D5 3D upgrade path); portablejim 2D chess set on FreeSVG
 
 ### HTTP allowlist (D8)
 `"HttpAllowList": ["https://lichess.org/"]` in `gambit.sbproj` — covers `/api/*`,
-`/oauth`, token, import.
+`/oauth`, token, import. gamchess (issue #7) needs `https://chess.gamah.net/` added;
+whether the allowlist also gates `Sandbox.WebSocket` is an open spike.
+
+### gamchess deployment facts (issue #7 — not built yet)
+
+The service is **planned**, not running. Ports/hosts are already allocated in the server's
+Caddyfile (host-side, unversioned — not in this repo):
+
+| | Host | App | Postgres |
+|---|---|---|---|
+| prod | `chess.gamah.net` | 6464 | 5435 |
+| test | `testchess.gamah.net` | 6465 | 5436 |
+
+Both are plain subdomains (a `*.gamah.net` wildcard covers them; a sub-subdomain like
+`test.chess.gamah.net` would have needed its own record — DNS wildcards match one label).
+
+All bind `127.0.0.1` only — **never punch through ufw**. Docker's iptables chains are
+evaluated *before* ufw, so a `0.0.0.0` publish is internet-reachable even with ufw denying
+the port; loopback binding + Caddy fronting is the whole mechanism (rotaliate documents
+this at `docker/docker-compose.yml`). Neighbours on that box: rotaliate 8080/5432 +
+8081/5433, splitclicker 6969/5434, gamah.net 1337, skafinity 6970.
+
+### Identity / auth primitives (not used yet — gamchess, issue #7)
+
+Gambit has **no server-side identity today**; lichess sign-in is client-only and nothing
+is keyed to Steam. If gamchess lands, these are the primitives, and both are already
+proven in `../rotaliate` (the Go backend) — lift, don't redesign:
+
+- **In-game**: `await Sandbox.Services.Auth.GetToken( "gamchess" )` mints a Facepunch auth
+  token; the service-name argument is **cosmetic** (Facepunch validates `{steamid, token}`
+  without it). Returns null rather than throwing on non-Steam builds. Verify server-side at
+  `POST https://public.facepunch.com/sbox/auth/token` → `{"SteamId", "Status"}` — **no
+  persona name comes back, SteamID only**. Ref: `rotaliate/internal/steam/auth.go`.
+  Two rules from that impl: **fail closed** on any error, and **trust only the echoed
+  `SteamId`** — the client's claimed steamID is an unverified input used solely for the
+  equality check (`Status == "ok" && vr.SteamID == steamID`), which is what stops a valid
+  token for account Y authorising as account X.
+- **Web**: Steam's browser login is **OpenID 2.0, not OAuth2** — there is no Steam OAuth2
+  endpoint. `https://steamcommunity.com/openid/login`; ref `rotaliate/internal/steam/openid.go`.
+- The same FP token authenticates `Sandbox.WebSocket` — `Connect(uri, headers)` accepts an
+  `Authorization` header (sbox-docs `networking/websockets.md`), so one mechanism covers
+  both the relay and ordinary HTTP.
+- Display names come from Steam/lichess directly (no username picking). The FP path returns
+  no name, so a server-side name needs `ISteamUser/GetPlayerSummaries/v0002` (Steamworks
+  key, 100k/day — cache it).
+- **The lichess token stays client-side even if gamchess exists** — it relays OAuth *codes*,
+  never tokens. Proxying users' lichess traffic through one server IP would risk their
+  accounts under the Board-API ban rule above.
 
 ---
 
