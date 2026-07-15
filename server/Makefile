@@ -129,30 +129,35 @@ keys-note:
 # version stamp is reliably per-commit. Computing it inside the container is
 # unreliable for the test instance (its build context is a worktree whose .git
 # lives outside the context).
+COMPOSE := docker compose -f docker/docker-compose.yml --env-file .env
+
 up: keys
 	GIT_HASH=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
-	docker compose -f docker/docker-compose.yml --env-file .env up -d --build
+	$(COMPOSE) up -d --build
 	@$(MAKE) --no-print-directory keys-note
 
 rebuild: keys
 	GIT_HASH=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
-	docker compose -f docker/docker-compose.yml --env-file .env build --no-cache app
-	docker compose -f docker/docker-compose.yml --env-file .env up -d
+	$(COMPOSE) build --no-cache app
+	$(COMPOSE) up -d
 	@$(MAKE) --no-print-directory keys-note
 
+# All of these pass --env-file, like up/rebuild do. Without it, compose still
+# works but prints a WARN per unset variable ("PUBLIC_BASE_URL is not set…") —
+# which is pure noise, and worse, it's noise on exactly the commands you run when
+# the server is already broken. It reads like the cause and isn't.
 down:
-	docker compose -f docker/docker-compose.yml down
+	$(COMPOSE) down
 
 logs:
-	docker compose -f docker/docker-compose.yml logs -f app
+	$(COMPOSE) logs -f app
 
 ps:
-	docker compose -f docker/docker-compose.yml ps
+	$(COMPOSE) ps
 
 # ── DB shell ────────────────────────────────────────────────────────────────
 psql:
-	docker compose -f docker/docker-compose.yml exec postgres \
-		psql -U gamchess -d gamchess
+	$(COMPOSE) exec postgres psql -U gamchess -d gamchess
 
 # ── Test instance (parallel stack for a feature branch) ─────────────────────
 # Spins up a SECOND, isolated copy of the app + Postgres alongside prod so you
