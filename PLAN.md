@@ -9,6 +9,124 @@ remains of it is the open spikes below.
 
 ---
 
+## M9: lichess TV on the west wall
+
+Put real lichess games on the spectator wall, streamed through gamchess, loaded lazily so
+we only hold a feed while someone is actually watching it.
+
+Done looks like: you walk up to the west wall in an idle lobby and there's a live 2000+
+blitz game from lichess on it, with clocks and names; "Next" still steps through your
+lobby's own tables; and if you don't want it, you turn it off and it stays off.
+
+### Why this one is easy, and why that's worth saying
+
+**TV is the one lichess feature with no security surface at all.** `GET /api/tv/feed`,
+`/api/tv/{channel}/feed`, `/api/tv/channels` are `security: []` — **anonymous**. No token,
+no scope, no custody question, nothing to encrypt, nothing to revoke, nothing to audit.
+None of M8's hard part applies. Do not let it drift into the token machinery; it must keep
+working for a player who has never linked and never will.
+
+It also lands almost exactly on the shape `SpectatorController` already has. A `fen`
+message is `{fen, lm, wc, bc}` — position, last move, and both clocks **in seconds**,
+which is the unit `TimeControl.Format` already takes. The wall wants
+Fen/LastMoveUci/White/Black/WhiteClock/BlackClock/TickingSeat, and the feed gives all of
+it. This is a data-plumbing milestone, not a design one.
+
+### The shape
+
+**Per-client, and that's the existing pattern rather than a new one.** The west wall is
+already per-client: `SpectatorController._featuredIndex` / `CycleFeatured()` are local, so
+two players at that wall already see different tables today. Everything below just extends
+the cycle.
+
+- **TV is one more channel in the cycle.** "Next" steps through each live table and then
+  the TV channel. Lobby tables don't get priority — a player who wants lichess can sit on
+  it while a game runs at a table.
+- **The client decides whether TV exists.** A setting on the *local* settings board
+  (`SettingsModel.BuildLocalRows`), **default on**, persisted to `PlayerData` — so only
+  someone who turns it OFF has anything saved. Off means TV leaves the cycle; the wall
+  still mirrors tables exactly as it does now.
+- **The client decides the channel**, one of two ways: *follow the host's suggestion*
+  (default) or *pick my own*. Both persisted.
+- **The host suggests**, it doesn't dictate: a `[Sync]` suggested channel, **default
+  blitz**, admin-gated like the BOARDS row (`LobbyNetworkManager.LocalIsAdmin`, routed via
+  the host — remember the admin may not be the network host on a dedi).
+
+### gamchess: one upstream per channel, ref-counted
+
+**This is the whole point of routing TV through gamchess rather than letting clients hit
+lichess directly.** lichess advocates exactly this: one stream held by a central server,
+fanned out to N sessions. So:
+
+- `GET /api/v1/tv/{channel}?since=N` — long poll, same transport as the M8 relay (held
+  ~5s, under the client's 8s ceiling).
+- The upstream `GET /api/tv/{channel}/feed` opens **on the first watcher** and is dropped
+  after an idle TTL once the last one stops polling. Ref-count by pollers, not by lobbies.
+- **N clients cost lichess nothing.** 100 players on blitz = 1 upstream stream. That
+  invariant is the deal, and it's why per-client channel choice is affordable: the cost of
+  everyone picking differently is bounded by the channel count (~6), not the player count.
+- Reuse `internal/lichess`'s stream reader and the etiquette governor — a 429 here must
+  back off like everywhere else, and the User-Agent still identifies us.
+
+### Channels: standard only
+
+lichess's channel keys (lcfirst of lila's `Tv.Channel`): `best` ("Top Rated"), `bullet`,
+`blitz`, `rapid`, `classical`, `ultraBullet`, `bot`, `computer`, plus the variant channels
+`chess960`, `crazyhouse`, `kingOfTheHill`, `threeCheck`, `antichess`, `atomic`, `horde`,
+`racingKings`.
+
+**Offer the standard speed channels only** — Top Rated, Bullet, Blitz, Rapid, Classical,
+UltraBullet — for the same reason the M8 seek offers no variants: our board can't draw
+them. Crazyhouse FENs carry pockets (`…/RNBQKBNR[] w …`) and Chess960 castling is X-FEN
+file letters (`HAha`), neither of which the vendored standard-only rules will parse. A
+channel that renders an empty board is worse than a channel that isn't there. `bot` and
+`computer` would parse fine but are noise on a wall in a chess bar; leave them out unless
+someone asks.
+
+**Default: `blitz`.**
+
+### Do this first, or TV makes it much worse
+
+**gamchess verifies the FP token against Facepunch on EVERY authed request** — there is no
+validation cache (`api/auth.go` → `steam.ValidateToken`, a live HTTP call per request).
+That is already wrong for M8's relay poll (one Facepunch round-trip per player per ~5s of
+a live game), and TV multiplies it by everyone standing at a wall: 8 idle spectators is
+~1.6 Facepunch calls/second, forever, for a public feed.
+
+Two ways out, and they aren't exclusive:
+- **Cache the verification** (steamID+token → verified, short TTL — the client already
+  caches its token 120s, so match that). This fixes the M8 relay too, and is the real fix.
+- **Don't gate TV at all.** It is public, anonymous, unauthenticated data upstream; a
+  proxy of it doesn't obviously need a Steam identity. Cheaper and simpler — but then it's
+  an open endpoint on our box and wants its own rate limit.
+
+Decide before building the poll loop, not after.
+
+### Verification
+
+Provable in the container: channel-key validation (an arbitrary string off the wire must
+never reach a lichess URL), the ndjson `featured`/`fen` state machine against canned
+frames, ref-counting (second watcher doesn't open a second upstream; last one leaving
+drops it after the TTL; a new watcher during the TTL reuses it), and that a 429 backs off.
+The `LichessTv` channel list is Sandbox-free — put it beside `LichessTable` so the dotnet
+harness can check it.
+
+Needs the user, in the editor: the wall shows a real blitz game; "Next" still cycles
+tables; TV off removes it from the cycle and survives a restart; follow-host tracks the
+admin's suggestion; **kill gamchess → the wall falls back to mirroring tables and local
+chess is untouched.**
+
+### Open questions
+
+- **Does "TV off" hide the whole west wall, or just the TV channel?** Taken as: just the
+  channel. The wall keeps mirroring tables, because that's its original job and it predates
+  TV. Say so if you meant the board itself.
+- **Does the featured game changing under you need anything?** lichess swaps the featured
+  game when it ends and sends a fresh `featured` message. Probably just render it; worth a
+  look in case it's jarring mid-watch.
+
+---
+
 ## M8 follow-ups — none of this is verified in a real editor yet
 
 The Go half compiles and its tests pass (197 cases, `-race`). **The engine half has never
@@ -64,6 +182,11 @@ from their side. Outcome is discretionary; there is no registration or blessing 
 
 ### Known gaps in what shipped
 
+- **Every authed request re-verifies the FP token against Facepunch.** There is no
+  validation cache — `api/auth.go` → `steam.ValidateToken` is a live HTTP call on *each*
+  request, so a live relayed game costs one Facepunch round-trip per player per poll
+  (~5s). Nothing has run yet, so nobody has felt it. **M9 makes it materially worse** (idle
+  spectators polling a public feed) and describes the fix; do it there, or here first.
 - **A relayed lichess game is never archived to gamchess.** It lives on lichess and nowhere
   else. The PGN + `%clk` writer already exists — wiring the relay's final state into
   `POST /api/v1/games` would put it in the web viewer too.
