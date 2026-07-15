@@ -1,71 +1,23 @@
 # CLAUDE.md — Terry's Gambit s&box Client
 
-**Terry's Gambit** (repo/ident: `gambit`) — chess in a social s&box lobby, backed by lichess. Forked from rotaliate-client:
-the walk-around lobby, station ring, and networking scaffolding are inherited;
-the arcade game and its Go backend are being replaced by chess boards and the
-lichess API.
+**Terry's Gambit** (repo/ident: `gambit`, org `gamah`, namespace `Gambit.*`) — chess
+in a social s&box lobby, backed by lichess. Forked from rotaliate-client: the
+walk-around lobby, station ring, and networking scaffolding are inherited; the arcade
+game and its Go backend were replaced by chess boards and the lichess API.
 
-**Read `PLAN.md` first** — it is the source of truth for the design: architecture
-decisions (D1–D8), lichess API facts (auth, Board API, streaming, rate limits,
-anonymous play via PGN import), the rotaliate→gambit file mapping, milestones
-M0–M6, and risks. This file carries the s&box engineering lore inherited from the
-parent project — hard-won gotchas that still apply.
+This file is the durable reference: how the game is built, what lichess allows, and
+the s&box lore that keeps biting. **`PLAN.md` is only upcoming work and open issues** —
+read it for what's left, not for how things work.
 
-Current status: **M0–M4 done** (M4 merged to master 2026-07-14); **M5 + M6
-code-complete and gates PASSED on branch `m5-m6-spectate-puzzles` (2026-07-14) —
-ready to merge.** M5:
-lichess **puzzles** solvable at any board (`PuzzleController`, IBoardGame — daily/
-next, local validate, retry/reveal, "doesn't affect your rating"), a west-wall
-**spectator board** (`SpectatorWall`/`SpectatorStation`/`SpectatorController`,
-self-healed by LobbyRoom) that mirrors a live sbox table (M4 relay, real-time) or
-polls **lichess TV / a game by id** (channels JSON + PGN-export → FEN, coarse
-latency), rendered as a real 3D board (`SpectatorBoard3D` — ChessSetBuilder meshes + a raking light for shadows) with a channel
-picker (`SpectatorScreen`). M6: **floor glyph pops** (D6 — CC0 glyph atlas via
-`scripts/gen_glyph_atlas.py`, `floor_checker.shader` rewritten to blend piece
-glyphs opposite the square colour — **confirmed rendering in-editor**), lichess/
-puzzle **move sounds** (confirmed), and rate-limit + token-hygiene audits (clean).
-Deferred (post-v1/optional): draw offer/abort, rated toggle, lichess chat, Poly
-Haven 3D pieces, branding, and a general sound-design revisit. One untested-but-
-low-risk item: the featured-sbox-table wall mirror (proven M4 relay path).
-**`PLAN.md` is the authoritative milestone status.** All legacy Rotaliate gameplay
-code is deleted.
-The world is chess: `ChessRing` builds tables (LobbyRoom auto-adds the ring
-component if the scene lacks one), pieces are lathed runtime meshes in
-`ChessSetBuilder` (`models/chess/{type}.vmdl` is a drop-in upgrade path), and
-`ChessStation` holds two-seat occupancy (`[Sync(FromHost)]` + `[Rpc.Host]`
-first-wins, loser-side reconciliation). Seat cameras orbit the board center
-(`SeatOrbitRadius`/`SeatPitch`/`SeatLookDownAngle`).
-
-M2 (this pass): Gera Chess Library vendored+patched in `Code/Chess/Vendor/`
-(regex/Task/Span/reflection stripped for the whitelist, every change marked
-`GAMBIT VENDOR PATCH`; verified on this host via a dotnet harness mirroring
-s&box compile settings — perft depths 1–4 on six reference positions,
-upstream's 67 xunit tests, 32 wrapper tests). `Code/Chess/ChessGame.cs` is
-the only seam callers may touch (D2); it caches `Fen`/`LastMoveUci`/
-`MoveCount` between moves so per-frame polling is free. `gambit_perft
-[depth]` re-proves the rules in-sandbox — run it before trusting the gate.
-`LocalGameController` + `ChessBoardView` sit beside `ChessStation` on each
-station GO (added by ChessRing, replicate with the network spawn); the relay
-is `NetChessMove(uci, fenAfter)` + host-folded `[Sync] BoardFen`/`Phase`
-(D7). GameHud attaches itself to the scene ScreenPanel at runtime (no scene
-rewire needed). You take the side you walk up to (the D1 first-sitter-always-White
-override was dropped in M4a); leaving a live game is a two-stage resign (Escape/Leave twice).
-
-M2 gate (user, in-editor): `gambit_perft` all PASS → two clients play a full
-game at one table (castle, promote via picker, capture pop) → third client
-watches live and a late joiner sees the mid-game position → import link
-opens the game on lichess → click-to-copy works. Expected tuning: GameHud px
-sizes/position, and verify the first board click lands (the `Select`/mouse1
-action must reach the world past the HUD panels — if clicks die, a panel is
-eating them).
+Status: **M0–M6 complete** (M5+M6 merged 2026-07-15). All legacy Rotaliate gameplay
+code is deleted. Remaining work is deferred/optional — see PLAN.md.
 
 ---
 
 ## Project Setup (first time on a new machine)
 
-s&box's package manager tracks local projects in its own registry — cloning the
-repo and opening the `.sbproj` directly will fail with
-`Unable to find package 'local.gambit#local'`.
+s&box's package manager tracks local projects in its own registry — cloning the repo
+and opening the `.sbproj` directly will fail with `Unable to find package 'local.gambit#local'`.
 
 **Correct flow:**
 1. Open the s&box editor → **New Project** → Game (Empty), pointed at the cloned repo folder
@@ -87,9 +39,216 @@ gambit/                ← open gambit/gambit.sbproj in the editor
 **Paths in csproj/slnx** assume Steam at `D:\Steam\`; the editor regenerates them.
 
 This dev host has **no s&box toolchain** — nothing here compiles or runs locally.
-Verify by careful review + grep; the user tests in their editor. Standalone
-`dotnet` harnesses (plain HttpClient against lichess) may be used to validate
-API handling before porting to s&box idioms.
+Verify by careful review + grep; the user tests in their editor. Standalone `dotnet`
+harnesses (plain HttpClient against lichess) may be used to validate API handling
+before porting to s&box idioms.
+
+---
+
+## Architecture map (what exists and why)
+
+### The world
+- `LobbyRoom` self-provisions the world: it adds `ChessRing` to its GO if the scene
+  lacks one, and `EnsureSpectatorWall` builds the west-wall spectator board. Both
+  are self-healing, so **no scene rewire is needed** for these components.
+- `ChessRing` builds the ring of tables (`BuildChessTable`: table, board frame, 64
+  cells, pieces at the start position, two camera anchors per station) and
+  network-spawns the stations. It also owns the screen-rect UI math
+  (`ScreenFractionRect()` / `UiRectStyle()`).
+- `ChessSetBuilder` lathes each piece as a runtime mesh. `BuildPiece(type, color, scale)`
+  first tries `Model.Load("models/chess/{type}.vmdl")` and falls back to procedural —
+  so dropping in a real piece set later is a one-function swap (**D5**).
+- `ChessStation` holds two-seat occupancy: `[Sync(FromHost)] WhiteSeatSteamId` /
+  `BlackSeatSteamId` (+ names + lichess usernames), claimed via `[Rpc.Host] RequestEnter(seat)`
+  first-wins with loser-side reconciliation (**D1**). Seat cameras orbit the board
+  center (`SeatOrbitRadius`/`SeatPitch`/`SeatLookDownAngle`). You take the side you
+  walk up to; leaving a live game is a two-stage resign (Escape/Leave twice).
+- `FloorCheckerboard` bakes a `PopMap` (checker colour) plus a `GlyphMap` (R = glyph
+  index 0–6, one texel per cell). `floor_checker.shader` looks the piece up in
+  `Assets/textures/chess_glyphs.png` and blends it over the square in the **opposite**
+  colour (**D6**). Pops land on both square colours, round-robin over the 6 types. If
+  the atlas fails to mount, no glyph indices are written → plain checker floor, never
+  solid-square artefacts. Atlas is regenerated by `scripts/gen_glyph_atlas.py`
+  (our own DejaVu Sans raster — CC0-clean, provenance in `Assets/ATTRIBUTION.md`).
+
+### Chess rules (D2)
+- Gera Chess Library (MIT, `d4f3f69`) is vendored+patched in `Code/Chess/Vendor/` —
+  regex/Task/Span/reflection stripped for the whitelist, every change marked
+  `GAMBIT VENDOR PATCH`. Verified on this host via a dotnet harness mirroring s&box
+  compile settings: perft depths 1–4 on six reference positions, upstream's 67 xunit
+  tests, 32 wrapper tests.
+- **`Code/Chess/ChessGame.cs` is the only seam callers may touch.** It caches
+  `Fen`/`LastMoveUci`/`MoveCount` between moves so per-frame polling is free.
+  `TryFromPgnAtPly(pgn, ply)` / `TryFromPgn(pgn)` reconstruct a position from movetext
+  (feeds puzzles and TV).
+- `gambit_perft [depth]` re-proves the rules in-sandbox — run it before trusting a gate.
+
+### Game controllers (all per-station, added by ChessRing beside `ChessStation`)
+`Game/IBoardGame.cs` is the render/drive abstraction; `ChessBoardView` renders whichever
+source is active with no per-source branching (`Source` prefers `Puzzle.Active`, then
+`LichessPlayController.ShowsBoard`, then the local game).
+
+| Controller | Networked? | What it does |
+|---|---|---|
+| `LocalGameController` | host-folded `[Sync] BoardFen`/`Phase` | anonymous two-seat local game + PGN import (**D7**) |
+| `LichessGameController` | `[Sync]` public URLs | open-challenge link flow (sbox↔browser), side assignment, camera routing |
+| `LichessPlayController` | **local-only** + a FEN-only relay | real in-sbox lichess play by polling |
+| `PuzzleController` | **local-only** | lichess puzzles, solved and validated locally |
+| `SpectatorController` | reads relays | wall board: featured sbox table / lichess TV / watch by id |
+
+Each client polls with **its own** token; nothing token-adjacent is ever `[Sync]`ed (**D3**).
+
+### Networking (D7)
+- `LobbyNetworkManager` (`ISceneStartup.OnHostInitialize` → `Networking.CreateLobby`)
+  hosts; joining peers never fire that event. Players spawn by cloning the disabled
+  in-scene `PlayerTemplate` GO (no `.prefab` asset — hand-authoring the format is
+  undocumented) and `NetworkSpawn(connection)`.
+- **The host's own avatar spawn must be deferred.** `OnActive` fires for the host
+  *during* `Networking.CreateLobby`, before its connection settles, so a spawn there
+  never makes it into the snapshot sent to later joiners — joiners saw every client
+  but the host. `OnActive` detects `connection == Connection.Local` and defers the
+  clone+`NetworkSpawn` to the first `OnUpdate`; joiners still spawn inline.
+- Stations are host-built and NetworkSpawned so `[Sync]` occupancy replicates;
+  everything cosmetic is local `NotSaved`/`NotNetworked`, rebuilt per client.
+- The move relay is `NetChessMove(uci, fenAfter)` (`[Rpc.Broadcast]`, client→all) with
+  the host folding the latest FEN into `[Sync] BoardFen` for late joiners.
+  `LichessPlayController` mirrors this with `HostRelay` → `[Sync(FromHost)]`
+  `RelayLive`/`RelayFen`/`RelayLastMove`/`RelayWhite|BlackName` — **FEN and names only,
+  never the token**. Non-players rebuild a read-only `ChessGame` from `RelayFen`.
+- Sitting plants the avatar at its side of the board facing it
+  (`LobbyPlayer.BeginEngage` → `ChessStation.SeatWorldPosition`); standing restores the
+  pre-sit transform so the camera hand-back doesn't snap.
+- Same-machine test instances share `FileSystem.Data` (one identity). Test via the
+  network status icon → "Join via new instance".
+- Small race window (~RTT) if two players press E on the same seat — host picks the
+  winner; known limitation.
+
+### Dev console commands
+`gambit_perft [depth]` · `gambit_lichess_tv` · `gambit_lichess_import_test` ·
+`gambit_oauth` + `gambit_oauth_complete <redirect-url>` · `gambit_signin [token]` ·
+`gambit_signout` · `gambit_whoami` · `gambit_open_challenge` · `gambit_join <url>` ·
+`gambit_challenge <user>` · `gambit_challenge_ai [level]` · `gambit_challenge_seated` ·
+`gambit_play_open` · `gambit_seek [rated|casual]` · `gambit_play_reset` ·
+`gambit_puzzle [daily|next]` · `gambit_tv` · `gambit_watch <id|url>`
+
+---
+
+## Lichess Integration Rules (non-negotiable)
+
+- Humans play through the **Board API only**; anything else risks account bans.
+- **No engine assistance during lichess games, ever** — not even an eval bar. v1 ships
+  no engine at all, eliminating the risk by construction.
+- One REST request at a time; on HTTP 429 back off a **full 60 seconds**. Both are
+  enforced in one place: `LichessApi.Send` (single-flight gate + backoff). The two
+  held-open streams (seek, presence) deliberately bypass the gate — that is documented
+  at the call sites and is the only sanctioned exception.
+- The lichess token is a secret: never `[Sync]`/RPC it, never log it unredacted
+  (`LichessApi.Redact`). It only ever goes into an Authorization header.
+
+### Hard-won API facts
+
+- **Every request needs `Accept: application/json`.** Without it `POST /api/import`
+  returns HTTP 200 **and the game's HTML page** instead of `{id,url}`. This cost a
+  milestone of debugging — `/api/account` works regardless because it is JSON-only, so
+  the failure looks like a body/verb problem when it isn't. The one deliberate override
+  is `GameExportPgn` (`Accept: application/x-chess-pgn`).
+- **Auth**: OAuth2 Authorization Code + **PKCE only** (S256), no client secret;
+  `client_id` is arbitrary (`gambit.gamah`). Tokens live ~1 year, **no refresh tokens**
+  (on 401: clear + re-auth). `DELETE /api/token` = logout, `POST /api/token/test` /
+  `GET /api/account` = validate. Scopes: `board:play`, `challenge:read`, `challenge:write`
+  (+ `puzzle:read` optional).
+- **Fully-automatic OAuth is impossible in s&box** (spiked, verified): no browser-open
+  API, the loopback listener is off-whitelist (`HttpListener`/sockets → SB1000), and
+  **lichess has no device flow** (`/api/oauth/device` and `/oauth/device` both 404). So
+  *some* manual paste is unavoidable. Ships two paths, both converging on
+  `SignInWithToken`: **personal-token paste is primary** (pre-scoped token-create link →
+  paste the `lip_`), and code-paste PKCE (`Api/LichessOAuth.cs`) is the advanced option.
+  **SHA-256 and base64url are hand-rolled in pure integer math** to avoid any
+  `System.Security.Cryptography`/`Convert.ToBase64String` whitelist exposure — verified
+  against System crypto and the RFC 7636 vector.
+- **Time controls**: lobby seeks = Rapid/Classical/Correspondence only. Blitz only via
+  direct challenges / vs AI / bulk pairing. **No Bullet** — barred by lichess *and*
+  impossible at our latency. Surface this in the UI.
+- **Anonymous play has no API path** (verified: unauth seek → 400 "Authentication
+  required", unauth `challenge/ai` → 401). Lichess's own anon web play uses a session
+  cookie, not an obtainable token. So: anonymous users play **locally** in-client, then
+  `POST /api/import` with the PGN (form field `pgn`) — works unauthenticated, 100
+  games/hour anon (200 authed), returns a shareable game URL. Quick-match/AI stay
+  sign-in-gated.
+- **Open challenges**: `POST /api/challenge/open` works unauthenticated → always
+  casual/unrated; returns `urlWhite`/`urlBlack` (public, safe to `[Sync]`). Self-seating
+  an open challenge works via `POST /api/challenge/{id}/accept?color=<seat>` (the `color`
+  query is only valid for open challenges) — no browser needed on our side.
+- **Presence**: while a game is live the client holds `GET /api/board/game/stream/{id}`
+  open **unread**, or lichess flags the player disconnected and the opponent's client
+  shows "left the game" after every move and can claim victory. `EnsurePresence` re-arms
+  it if it drops (with a cooldown); cancelled on game-over/resign/new-game/destroy.
+- **Puzzles**: `GET /api/puzzle/daily|next|{id}` — solutions are embedded in the JSON
+  for local validation, and there is **no endpoint to submit solutions**, so solving in
+  Gambit cannot affect the user's lichess puzzle rating. The UI must say so. Lichess
+  convention: the position is one ply before the solver's turn, so `solution[0]` is the
+  opponent's setup move.
+- **Spectating**: `GET /api/tv/channels` is a plain-JSON snapshot; `/api/tv/feed` has no
+  anti-cheat delay but is ndjson (unusable — see below). Arbitrary ongoing games are
+  delayed ~3 moves / 3–60s by lichess policy — note it in the UI.
+- **NDJSON streams** (if they ever become readable): blank keep-alive line every ~7s,
+  no idle timeout <10s, auto-reconnect and resync from the `gameFull` snapshot. A seek
+  is cancelled the moment its HTTP connection closes. ~8 concurrent streams/IP.
+
+### The streaming constraint (why everything polls)
+
+**`Http.*` genuinely cannot stream**, source-confirmed against `sbox-public`:
+`Http.RequestAsync` ends in `Client.SendAsync(request, ct)` with **no**
+`HttpCompletionOption.ResponseHeadersRead`, so it defaults to `ResponseContentRead` and
+buffers the whole body before returning. On an endless feed it simply never returns —
+it never reaches its own `ReadAsStreamAsync` line. Every `Http.*` helper funnels through
+this, including `RequestStreamAsync` (which hands back a MemoryStream over
+already-buffered bytes). `gambit_lichess_tv` reproduces it.
+
+Raw sockets are off-whitelist too (`System.Net.Http.HttpClient`, `System.Net.Sockets`,
+`SslStream` → SB1000), so we can't build our own client with `ResponseHeadersRead` or
+hand-roll a TLS socket.
+
+**Consequence:** all reads poll. `GET /api/account/playing` (~1.5s) gives each ongoing
+game's `fen`/`lastMove`/`isMyTurn`/`secondsLeft`; moves are `POST /api/board/game/{id}/move/{uci}`
+applied optimistically and reconciled on the next poll (polling is gated so it never
+races an in-flight move). Game-over is detected when the game drops out of
+`account/playing`, then `GET /game/export/{id}` supplies the result. This costs ~1.5s
+move latency and coarse clocks (the poll gives only *your* `secondsLeft`, so live
+both-sides clocks aren't possible). Fine for Rapid/Classical.
+
+`Sandbox.WebSocket` *is* whitelisted and streams incrementally, but lichess has no
+public `wss://` — it would only help via a relay. See PLAN.md for the two open upgrade
+paths.
+
+### Asset licensing
+
+All art must be **CC0**. Record provenance in `Assets/ATTRIBUTION.md` even for CC0.
+
+Lichess is libre (AGPL code) but its bundled art/sounds carry per-set licenses — `lila`'s
+`COPYING.md` is the single authority (there are no per-directory licenses):
+
+- **CC0, usable**: the **rhosgfx** 2D piece set — the only CC0 lichess set.
+- **NOT usable**: all CC BY-NC-SA sets (horsey, staunty, maestro, california,
+  anarcandy, …); alpha/chess7/companion/leipzig/reillycraig/riohacha (no reuse license);
+  the lichess logo. **Do NOT use Cburnett/Wikipedia/lichess's default set — CC-BY-SA/BSD,
+  not CC0.**
+- **Copyleft / attribution-only** (available but outside our self-imposed constraint):
+  cburnett/mono/merida (GPLv2+), mpchess (GPLv3+), pirouetti/letter/pixel (AGPLv3+),
+  shapes (CC BY-SA 4.0), chessnut (Apache 2.0), fantasy/spatial/celtic (MIT),
+  kiwen-suwi/firi/totoy/papercut (CC BY 4.0).
+- **Sounds: none of lichess's are usable.** The classic move/capture sounds are
+  explicitly non-free/lichess-only; only Enigmahack's sets are reusable and those are
+  AGPLv3+. Gambit keeps its own synthesized sounds.
+
+CC0 sources on file: Poly Haven "Chess Set" by Riley Queen (https://polyhaven.com/a/chess_set,
+glTF/FBX, the D5 3D upgrade path); portablejim 2D chess set on FreeSVG
+(https://freesvg.org/portablejim-2d-chess-set-pieces); OpenGameArt /content/chess-pieces-0,
+/content/3d-chess-pieces, /content/chess-set-1, /content/chess. Kenney has no chess pack.
+
+### HTTP allowlist (D8)
+`"HttpAllowList": ["https://lichess.org/"]` in `gambit.sbproj` — covers `/api/*`,
+`/oauth`, token, import.
 
 ---
 
@@ -97,11 +256,17 @@ API handling before porting to s&box idioms.
 
 - **Components**: game logic lives in `Component` subclasses; `OnUpdate()` for per-frame work
 - **UI**: screens are Razor `PanelComponent`s on a `ScreenPanel` GameObject in the scene
-- **State**: `[Sync]` for peer-networked state (host-authoritative with `SyncFlags.FromHost`); `[Rpc.Host]` request / `[Rpc.Broadcast]` relay pattern (see ChessStation occupancy)
+- **State**: `[Sync]` for peer-networked state (host-authoritative with `SyncFlags.FromHost`);
+  `[Rpc.Host]` request / `[Rpc.Broadcast]` relay pattern (see ChessStation occupancy)
 - **Storage**: `FileSystem.Data.ReadAllText/WriteAllText` for JSON player data
-- **HTTP**: `await Http.RequestStringAsync(url)`; `await Http.RequestAsync(url, "POST", content, headers)` — the trailing headers dictionary is undocumented in `../sbox-docs` but works
-- **Hotload**: C# changes hotload in milliseconds. Procedural builders rebuild via `[EditorEvent.Hotload]` in `Editor/HotloadRebuild.cs` — keep new builders registered there
-- **Razor usings**: `System`, `Sandbox`, `Sandbox.UI`, `Sandbox.Rendering` are NOT auto-imported in `.razor` — add `@using` explicitly
+- **HTTP**: `await Http.RequestStringAsync(url)`; `await Http.RequestAsync(url, "POST", content, headers)` —
+  the trailing headers dictionary is undocumented in `../sbox-docs` but works
+- **Hotload**: C# changes hotload in milliseconds. Procedural builders rebuild via
+  `[EditorEvent.Hotload]` in `Editor/HotloadRebuild.cs` — keep new builders registered there
+- **Razor usings**: `System`, `Sandbox`, `Sandbox.UI`, `Sandbox.Rendering` are NOT
+  auto-imported in `.razor` — add `@using` explicitly
+- **Self-attaching UI**: GameHud, SplashScreen, and SpectatorScreen attach themselves to
+  the scene ScreenPanel at runtime — no scene rewire needed for new screens; copy the pattern.
 
 ## s&box API Whitelist
 
@@ -114,10 +279,10 @@ See `../sbox-docs/docs/code/code-basics/api-whitelist.md`.
 | `Console.WriteLine` | `Log.Info` / `Log.Warning` / `Log.Error` |
 | `System.IO.*` | `FileSystem.Data` |
 
-Rule of thumb: avoid `System.Private.CoreLib` reflection/process/threading/IO.
-This matters for the vendored chess library (PLAN.md D2) — expect to patch out
-regex/events. When in doubt check `https://sbox.game/api/` or file a
-false-positive at `https://github.com/Facepunch/sbox-public/issues`.
+Rule of thumb: avoid `System.Private.CoreLib` reflection/process/threading/IO. This is
+why the vendored chess library needed patching and why SHA-256 is hand-rolled. When in
+doubt check `https://sbox.game/api/` or file a false-positive at
+`https://github.com/Facepunch/sbox-public/issues`.
 
 ## World Scale Rules (read before placing/sizing anything)
 
@@ -127,79 +292,62 @@ false-positive at `https://github.com/Facepunch/sbox-public/issues`.
 - The player is ~72 units tall — the human-scale yardstick.
 - `models/dev/box.vmdl` is **NOT 1×1×1**: to make a box of size S,
   `LocalScale = S / Model.Bounds.Size` per axis — use/copy `ChessRing.AddBox`.
-- Never put a `BoxCollider` on a non-uniformly scaled GO — it silently freezes
-  physics. Colliders on uniformly-scaled parents, visuals on scaled children.
-- A WorldPanel GO's scale is a multiplier on the panel's intrinsic pixel size,
-  not world units; the panel plane is local **Y (width) / Z (height)**. World-size
-  and text size are coupled — to grow a board without growing text, scale the GO
-  up and divide stylesheet px by the same factor.
+- Never put a `BoxCollider` on a non-uniformly scaled GO — it silently freezes physics.
+  Colliders on uniformly-scaled parents, visuals on scaled children.
+- A WorldPanel GO's scale is a multiplier on the panel's intrinsic pixel size, not world
+  units; the panel plane is local **Y (width) / Z (height)**. World-size and text size
+  are coupled — to grow a board without growing text, scale the GO up and divide
+  stylesheet px by the same factor.
 - `FacePlayer` yaw-billboards a GO toward the camera; fronts face **+forward**.
-- There is **no documented API to open a URL / Steam overlay** — show links as
-  copyable text (affects the lichess OAuth flow and game-link sharing; see
-  PLAN.md D3). Click-to-copy pattern: `DiscordButton.Copy()`.
+- There is **no documented API to open a URL / Steam overlay** — show links as copyable
+  text (this is why the lichess OAuth flow and game-link sharing are paste-based).
+  Click-to-copy pattern: `DiscordButton.Copy()`.
 
 ## UI Gotchas (learned the hard way)
 
-- **Board vs Screen vocabulary**: a *board* is a display-only WorldPanel in the
-  world (takes no pointer input); a *screen* is an interactive ScreenPanel shown
-  while engaged at a station, clipped to the station rect via
-  `ChessRing.ScreenFractionRect()` / `UiRectStyle()` trig.
-- Engaged-screen centering must live on an absolutely-positioned full-screen
-  child (`.screen-fit` wrapper), NOT on `root` — otherwise content pins top-left.
+- **Board vs Screen vocabulary**: a *board* is a display-only WorldPanel in the world
+  (takes no pointer input); a *screen* is an interactive ScreenPanel shown while engaged
+  at a station, clipped to the station rect via `ChessRing.ScreenFractionRect()` /
+  `UiRectStyle()` trig.
+- **Panel-rendered chess glyphs do not paint.** U+265F renders as a purple emoji, and a
+  WorldPanel glyph atlas wouldn't paint either — this is why the spectator board is real
+  3D `ChessSetBuilder` meshes (`SpectatorBoard3D`, with its own raking `SpotLight` for
+  shadows) rather than a panel. The floor keeps the atlas because that's a shader, not a
+  panel. Reach for meshes over panel art.
+- Engaged-screen centering must live on an absolutely-positioned full-screen child
+  (`.screen-fit` wrapper), NOT on `root` — otherwise content pins top-left.
 - `transform: scale` misplaces panel content — use explicitly sized wrappers.
 - `pointer-events: all` must be set per interactive element; it does not inherit.
-- Panels are flex containers: inline `<span>`s inside a text div become separate
-  flex items; source newlines render as literal whitespace — keep each text div's
-  content on one line. A div's auto height does not grow for wrapped text — use
-  one div per line in a flex column.
-- Deriving font sizes from `Panel.Box.Rect` on a WorldPanel doesn't work — use
-  fixed px in intrinsic pixel space, calibrated against a known-good panel.
-- Don't make a panel `overflow: scroll` if it has draggable controls — s&box
-  drag-scrolls it and fights the clicks.
+- Panels are flex containers: inline `<span>`s inside a text div become separate flex
+  items; source newlines render as literal whitespace — keep each text div's content on
+  one line. A div's auto height does not grow for wrapped text — use one div per line in
+  a flex column.
+- Deriving font sizes from `Panel.Box.Rect` on a WorldPanel doesn't work — use fixed px
+  in intrinsic pixel space, calibrated against a known-good panel.
+- Don't make a panel `overflow: scroll` if it has draggable controls — s&box drag-scrolls
+  it and fights the clicks.
+- A free-floating interactive panel kills roaming mouselook — gate interactive screens on
+  being engaged at a station, and free the cursor there
+  (`UseLookControls=false`+`UseInputControls=false`, restored on close).
 - The citizen `SkinnedModelRenderer` must live on a `Body` child GO, never on the
-  PlayerController's own GO (animator writes to it every frame — welds the player
-  to world origin otherwise).
-- No documented API to add buttons to the built-in escape menu; Escape leaves the
-  station via `Input.EscapePressed`.
-
-## Networking Notes
-
-- `LobbyNetworkManager` (`ISceneStartup.OnHostInitialize` → `Networking.CreateLobby`)
-  hosts; joining peers never fire that event. Players spawn by cloning the disabled
-  in-scene `PlayerTemplate` GO (no `.prefab` asset — hand-authoring the format is
-  undocumented) and `NetworkSpawn(connection)`.
-- Stations are host-built and NetworkSpawned so `[Sync]` occupancy replicates;
-  everything cosmetic is local `NotSaved`/`NotNetworked`, rebuilt per client.
-- Same-machine test instances share `FileSystem.Data` (one identity). Test via
-  the network status icon → "Join via new instance".
-- Small race window (~RTT) if two players press E on the same seat — host picks
-  the winner; known limitation.
+  PlayerController's own GO (animator writes to it every frame — welds the player to
+  world origin otherwise).
+- No documented API to add buttons to the built-in escape menu; Escape leaves the station
+  via `Input.EscapePressed`.
+- If a board click doesn't land, a HUD panel is eating it — the `Select`/mouse1 action
+  must reach the world past the ScreenPanel.
 
 ## Sounds
 
-Synthesized WAVs in `Assets/sounds/sfx/` generated by `scripts/gen_sounds.py`
-(numpy). `.sound` gotchas: `"Sounds"` lists `.vsnd` paths (not `.wav`),
-`"Volume"`/`"Pitch"` are JSON strings, `"UI": true` for 2D playback,
-`"__version": 1`. Planned mapping (PLAN.md M6): tick/tock → clocks, pop →
-captures, servo slides → station rebuild.
+Synthesized WAVs in `Assets/sounds/sfx/` generated by `scripts/gen_sounds.py` (numpy).
+`.sound` gotchas: `"Sounds"` lists `.vsnd` paths (not `.wav`), `"Volume"`/`"Pitch"` are
+JSON strings, `"UI": true` for 2D playback, `"__version": 1`. Mapping: tick/tock →
+clocks (by side), pop → captures, servo slides → station rebuild. Move sounds fire for
+local games, lichess games, and puzzles — 2D on your own board, positional when
+spectating a relayed table.
 
 Music is the `gamah.skafinity` library — source-committed under
 `gambit/Libraries/gamah.skafinity/` (s&box pattern: libraries are source and
 auto-referenced by living there; do NOT add a `PackageReferences` entry — that
 double-registers the compiler). The scene carries a `SkafinityPlayer` +
-`SkafinityMusicPanel`; the panel is enabled only while engaged at the music wall
-board (a free-floating interactive panel kills roaming mouselook).
-
-## Lichess Integration Rules (non-negotiable)
-
-- Humans play through the **Board API only**; anything else risks account bans.
-- **No engine assistance during lichess games, ever** — not even an eval bar.
-  v1 ships no engine at all.
-- One REST request at a time; on HTTP 429 back off a **full 60 seconds**.
-- NDJSON streams: blank keep-alive line every ~7s; auto-reconnect and resync
-  from the `gameFull` snapshot; a seek is cancelled the moment its HTTP
-  connection closes.
-- The lichess token is a secret: never `[Sync]`/RPC it, never log it unredacted
-  (follow the old GUID `Redact()` discipline).
-
-See PLAN.md "Research summary" for endpoints, scopes, and time-control limits.
+`SkafinityMusicPanel`; the panel is enabled only while engaged at the music wall board.
