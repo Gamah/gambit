@@ -28,8 +28,14 @@
 *@
 
 <root>
-	<div class="row">
-		<div class="face @FaceClass( ChessSeat.White )">⬜ @Face( ChessSeat.White )</div>
+	@* The centering lives on an absolutely-positioned full-size child, NOT on root —
+	   CLAUDE.md's UI gotcha, and every WorldPanel in this repo that renders does exactly
+	   this. Centering on root pins the content top-left. *@
+	<div class="fit">
+		<div class="face @FaceClass( ChessSeat.White )">
+			<div class="who">W</div>
+			<div class="time">@Face( ChessSeat.White )</div>
+		</div>
 
 		@* Material. Only while someone is actually ahead — "level" is the normal state of
 		   a chess game and a permanently zeroed gauge is furniture. If it seems never to
@@ -44,52 +50,87 @@
 			}
 		</div>
 
-		<div class="face @FaceClass( ChessSeat.Black )">⬛ @Face( ChessSeat.Black )</div>
+		<div class="face @FaceClass( ChessSeat.Black )">
+			<div class="who">B</div>
+			<div class="time">@Face( ChessSeat.Black )</div>
+		</div>
 	</div>
 </root>
 
 <style>
+	@@import "WallTheme.scss";
+
 	/*
 		This panel's pixel space is ClockPxWidth × ClockPxHeight (1024 × 128), set by
 		ChessRing.BuildStationClock — NOT the WorldPanel default of 512 square. Every px
 		below lives in that space, and the face's world scale is DERIVED there so 1024px
 		spans the clock body's length. Change the panel size there and these move with it;
 		change them here and nothing else does.
+
+		root carries NOTHING but size and pointer-events, and `.fit` does the centering.
+		That is not style — it is the one shape every WorldPanel in this repo that renders
+		actually uses, and CLAUDE.md's gotcha says why: centre on root and the content pins
+		top-left. This panel had root { width: 1024px; align-items: center } and rendered
+		wrong; MarqueeNumberPanel, SpectatorSeatPanel, CenterInfoPanel and
+		StationScreenPanel all use exactly the two rules below. Copy the working one.
 	*/
 	root {
-		width: 1024px;
-		height: 128px;
-		align-items: center;
-		justify-content: center;
+		width: 100%;
+		height: 100%;
 		pointer-events: none;
-		font-family: Consolas, monospace;
 	}
 
-	.row {
+	.fit {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+		height: 100%;
 		flex-direction: row;
 		align-items: center;
 		justify-content: center;
 		gap: 30px;
+		font-family: $wall-font;
 	}
 
 	/* Big: read from a seat across a table, not from a HUD a foot from your face. */
 	.face {
 		flex-direction: row;
 		align-items: center;
-		padding: 4px 22px;
+		gap: 12px;
+		padding: 4px 20px;
 		border-radius: 10px;
+		background-color: rgba(12, 12, 16, 0.5);
+	}
+
+	/*
+		"W" / "B" as TEXT, not ⬜ / ⬛ as glyphs. The glyphs are what this panel had, and
+		they are emoji: CLAUDE.md's rule is that panel-rendered glyphs paint as colour
+		emoji, which at this size made two big square blocks and shoved the actual clock
+		off the face. GameHud gets away with them because it renders at 13px in a HUD;
+		this does not.
+	*/
+	.who {
+		font-size: 34px;
+		font-weight: bold;
+		letter-spacing: 2px;
+		color: rgba(255, 255, 255, 0.4);
+	}
+
+	.time {
 		font-size: 76px;
 		font-weight: bold;
-		background-color: rgba(12, 12, 16, 0.5);
 		color: rgba(255, 255, 255, 0.45);
 	}
 
 	/* The running side is the only one worth looking at. */
-	.face.on { background-color: rgba(20, 22, 28, 0.92); color: #e8e6df; }
+	.face.on { background-color: rgba(20, 22, 28, 0.92); }
+	.face.on .time { color: #e8e6df; }
+	.face.on .who { color: rgba(255, 255, 255, 0.7); }
 
 	/* Under TimeControl.PanicSeconds — the same threshold the panic beep starts at,
 	   which is why it is a shared constant and not a 10f typed in two files. */
-	.face.on.panic { color: #ff5f5f; }
+	.face.on.panic .time { color: #ff5f5f; }
 
 	/* Fixed width so the middle column doesn't shove the clocks around as the bar
 	   appears and disappears mid-game. */
@@ -131,15 +172,34 @@
 
 	IBoardGame Source => BoardGame.Source( Controller, Lichess );
 
-	/// <summary>A seat's clock face, or an em-dash when there is no clock — an untimed
-	/// game, or nothing live. Never blank: an empty face reads as broken, where a dash
-	/// reads as "this game has no clock", which is what is true.</summary>
+	/// <summary>
+	/// A seat's clock face.
+	///
+	/// <para><b>An idle table shows the BANK the next game will start with</b>, not a
+	/// dash. This is what a real chess clock does: you set it, it reads 3:00, and it does
+	/// that until someone presses it. The first version returned SeatClock directly, which
+	/// is null whenever nothing is live — so a table nobody had started yet showed "— —"
+	/// and read as broken. It was, in fact, the entire reason the clock looked like it had
+	/// nothing on it: an idle table is the state you find every table in.</para>
+	///
+	/// <para>Reads the local controller for the bank on purpose: only an idle table has
+	/// one to advertise, and an idle table by definition has no lichess game on it, so
+	/// there is no source to disagree with. Once a game IS live, the seam answers and this
+	/// branch never runs.</para>
+	///
+	/// <para>Unlimited stays a dash, because that is true — there is no clock.</para>
+	/// </summary>
 	string Face( ChessSeat seat )
 	{
 		// TimeControl.Format, never our own formatting. It TRUNCATES rather than rounds,
 		// which is the house rule: a live clock must never read higher than the time
 		// actually left. "{seconds:0.0}" would render 59.96 as "60.0".
-		return Source?.SeatClock( seat ) is float left ? TimeControl.Format( left ) : "—";
+		if ( Source?.SeatClock( seat ) is float left ) return TimeControl.Format( left );
+
+		var tc = Controller?.Tc;
+		if ( tc is { IsUnlimited: false } ) return TimeControl.Format( tc.Value.InitialSeconds );
+
+		return "—";
 	}
 
 	/// <summary>Whose clock is running, off the seam. Not LocalGameController.TickingSeat:

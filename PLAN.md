@@ -165,10 +165,25 @@ Both clocks are text inside `SeatLine`, in a 250px column pinned `right: 24px`, 
 board is in the middle of the screen. In a 3+0 game that is the wrong place for the number
 that ends the game.
 
-**Built, then rebuilt after seeing it.** The first version stood on the +X margin with a face
-per seat: it was a wall in Black's foreground — the exact objection that moved the plaque off
-−X — and its panel was **invisible**, because a `WorldPanel`'s scale was guessed (`0.022` →
-0.85 world units on a 30-unit body) instead of derived from `PanelSize × 0.05 × scale`.
+**Built, then rebuilt twice after actually looking at it** — every failure was a rule this
+repo had already written down and I re-derived from first principles instead:
+
+1. **Invisible**, because a `WorldPanel`'s scale was guessed (`0.022` → 0.85 world units on a
+   30-unit body) instead of derived from `PanelSize × 0.05 × scale`.
+2. **A wall in Black's foreground** at +X — the exact objection that moved the plaque off −X,
+   noted in my own comment while building it there anyway because PLAN.md had reserved +X.
+3. **Nothing legible**, which was three things at once and none of them the camera angle:
+   `root` carried a fixed px size and the centering (CLAUDE.md's documented gotcha — content
+   pins top-left; all four working WorldPanels use one identical `root`); `⬜`/`⬛` rendered as
+   big emoji squares (the glyph rule isn't only about chess pieces); and **the faces read
+   "—" because the table was idle** — `SeatClock` is null when nothing is live, and an idle
+   table is the state you find every table in. A real clock shows its bank until you press
+   it, so it does now.
+
+**A wrong theory worth recording**: I concluded from the screenshot that a −Y strip could
+never be seat-legible (text baseline down the sightline) and was ready to move it back to
++X. Wrong — the text wasn't illegible, it wasn't *rendering*. Fix the thing that is broken
+before redesigning around it.
 
 It is now a **thin low strip beside the board at −Y**, opposite the plaque, with **one** face
 angled up across the board — where a real chess clock goes, and why one face serves both

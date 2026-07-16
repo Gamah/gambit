@@ -957,6 +957,18 @@ doubt check `https://sbox.game/api/` or file a false-positive at
   panel. Reach for meshes over panel art.
 - Engaged-screen centering must live on an absolutely-positioned full-screen child
   (`.screen-fit` wrapper), NOT on `root` — otherwise content pins top-left.
+- **The same rule governs every WorldPanel, and there is exactly one shape that works.**
+  `root { width: 100%; height: 100%; pointer-events: none; }` and *nothing else*, with an
+  absolutely-positioned `left/top: 0; width/height: 100%` child doing the layout.
+  `MarqueeNumberPanel`, `SpectatorSeatPanel`, `CenterInfoPanel` and `StationScreenPanel`
+  are all byte-for-byte this. `TableClockPanel` was written with a fixed px size and the
+  centering on `root` and rendered wrong — **copy the working one rather than reasoning
+  about what root ought to accept.** Note `root` takes `100%`, not the panel's px size:
+  the px space is set by `PanelSize` on the `WorldPanel` component, not in the stylesheet.
+- **`⬜`/`⬛` are emoji too.** The "panel glyphs paint as colour emoji" rule is not only
+  about chess pieces — the geometric-shape block characters are the same trap. `GameHud`
+  uses them safely at 13px in a HUD; at 76px on a world panel they render as two big
+  square blocks that shove the actual content off the face. Use letters.
 - `transform: scale` misplaces panel content — use explicitly sized wrappers.
 - `pointer-events: all` must be set per interactive element; it does not inherit.
 - Panels are flex containers: inline `<span>`s inside a text div become separate flex
