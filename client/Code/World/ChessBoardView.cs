@@ -15,9 +15,15 @@ namespace Gambit.World;
 /// Rendering is a FEN diff: whenever the controller's position changes, pieces
 /// whose square/char pair vanished are matched to appearing pairs of the same
 /// char and lerped there (handles castling's two movers for free); unmatched
-/// vanishing pieces are captures (destroyed), unmatched appearing ones are
-/// spawns (promotion). No incremental board state to corrupt — any FEN resync
-/// renders correctly by the same path.
+/// vanishing pieces are captures, unmatched appearing ones are spawns
+/// (promotion). No incremental board state to corrupt — any FEN resync renders
+/// correctly by the same path.
+///
+/// A captured piece is NOT destroyed: it is offered to the trays (M11), which
+/// adopt it and walk it to its owner's side of the table. What ends up in a tray
+/// is decided by CapturedMaterial.Lost from the position alone, never by counting
+/// captures as they happen — so a resync or a late joiner shows the right trays
+/// having seen none of it. See the "Captured pieces" block below.
 ///
 /// Input while seated: ray from the cursor to the board plane picks squares;
 /// first click selects an own piece (targets highlight), second click commits —
@@ -78,6 +84,17 @@ public sealed class ChessBoardView : Component
 	/// <summary>Peak height of the slide arc, as a fraction of a square.</summary>
 	[Property] public float MoveArc { get; set; } = 0.35f;
 
+	/// <summary>Seconds a captured piece takes to travel to its owner's tray.
+	/// Longer than a move: it is a much longer trip, and the point is that you see
+	/// where it went. It runs UNDER the capturing piece's own slide, so a capture
+	/// reads as two things happening at once rather than a piece blinking out.</summary>
+	[Property] public float CaptureSeconds { get; set; } = 0.45f;
+
+	/// <summary>Arc height for that trip, as a fraction of a square. Taller than a
+	/// move's — the piece is being lifted off the board, not shoved across it, and
+	/// a flat path would drag it through the frame.</summary>
+	[Property] public float CaptureArc { get; set; } = 1.1f;
+
 	// Highlight tints over the cell boxes. Deliberately the SAME on light and
 	// dark squares, and kept saturated + medium-low in value: the overhead table
 	// spotlight (ChessRing.MarqueeBrightness ~3.3) multiplies these before
@@ -122,9 +139,34 @@ public sealed class ChessBoardView : Component
 		public GameObject Piece;
 		public Vector3 From, To;
 		public float Age;
+		public float Seconds;
+		public float Arc;
 	}
 
 	readonly List<Slide> _slides = new();
+
+	// ── Captured pieces ──
+	//
+	// Each player's losses sit in a tray on their own side of the table. Two rules
+	// make this survive things the animation alone would not:
+	//
+	//  1. **Tray contents are a pure function of the FEN**, never an accumulated
+	//     tally. This view rebuilds from the FEN alone and has no history: a
+	//     late joiner or a resync starts with _rendered empty and the first
+	//     SyncPieces is all-additions. An event-counted tray would be empty for
+	//     everyone who didn't watch the whole game — which is most spectators, and
+	//     every player at a table that resynced.
+	//  2. **The animation is a transient overlay on top of that.** When the diff
+	//     happens to have the dying piece's GameObject in hand, the tray adopts it
+	//     so it walks over; when it doesn't, the tray just spawns the piece in
+	//     place. Same result either way, so nothing depends on having seen it.
+	readonly List<(char Ch, GameObject Go)> _trayWhite = new();
+	readonly List<(char Ch, GameObject Go)> _trayBlack = new();
+
+	// Pieces that left the board during THIS diff and haven't found a home yet.
+	// Not necessarily captures — a resync drops pieces too, which is why these are
+	// offered to the trays rather than pushed at them.
+	readonly List<(char Ch, GameObject Go)> _captured = new();
 
 	// ── Input state ──
 
@@ -173,6 +215,13 @@ public sealed class ChessBoardView : Component
 		_piecesRoot.LocalRotation = Rotation.Identity;
 
 		for ( int i = 0; i < 64; i++ ) _rendered[i] = '\0';
+		// The old PiecesView (and every tray piece parented to it) has just gone
+		// with the destroy above — drop the dangling handles, or SyncTray reuses
+		// GameObjects that no longer exist.
+		_trayWhite.Clear();
+		_trayBlack.Clear();
+		_captured.Clear();
+		_slides.Clear();
 		_ready = true;
 		return true;
 	}
@@ -248,10 +297,13 @@ public sealed class ChessBoardView : Component
 				_pieces[from] = null;
 				_rendered[from] = '\0';
 
-				// The destination may hold a captured piece — clear it first
+				// The destination may hold a captured piece — hand it to the trays
+				// rather than destroy it, so it can walk off the board. Read
+				// _rendered[toSquare] BEFORE the overwrite below: it is still the
+				// victim's char here, and is the only record of what died.
 				if ( _pieces[toSquare] != null )
 				{
-					_pieces[toSquare].Destroy();
+					_captured.Add( ( _rendered[toSquare], _pieces[toSquare] ) );
 					_pieces[toSquare] = null;
 				}
 
@@ -266,16 +318,21 @@ public sealed class ChessBoardView : Component
 					From = piece.LocalPosition,
 					To = SquareLocal( toSquare ),
 					Age = 0f,
+					Seconds = MoveSeconds,
+					Arc = MoveArc,
 				} );
 			}
 		}
 
-		// Leftover removals: captures (or resync artifacts) — just delete
+		// Leftover removals: captures the pairing pass couldn't match (en passant
+		// takes this path, not the one above — the pawn vanishes from a square the
+		// mover never lands on), the pawn behind a promotion, and resync artifacts.
+		// Offer them all to the trays; SyncTrays decides which were really taken.
 		if ( removed != null )
 		{
 			foreach ( var sq in removed )
 			{
-				_pieces[sq]?.Destroy();
+				if ( _pieces[sq] != null ) _captured.Add( ( _rendered[sq], _pieces[sq] ) );
 				_pieces[sq] = null;
 				_rendered[sq] = '\0';
 			}
@@ -291,6 +348,101 @@ public sealed class ChessBoardView : Component
 				_rendered[sq] = target[sq];
 			}
 		}
+
+		SyncTrays( target );
+	}
+
+	/// <summary>Reconcile both trays against the position, then dispose of anything
+	/// that left the board without belonging in one.</summary>
+	void SyncTrays( char[] target )
+	{
+		SyncTray( target, white: true, _trayWhite );
+		SyncTray( target, white: false, _trayBlack );
+
+		// Whatever is left wasn't a capture — a resync dropped it, or it was the
+		// pawn consumed by a promotion. Neither belongs in a tray.
+		foreach ( var (_, go) in _captured ) go?.Destroy();
+		_captured.Clear();
+	}
+
+	/// <summary>Bring one player's tray in line with what the FEN says they've lost.
+	/// Reuses the pieces already in the tray, adopts the ones that just died, and
+	/// spawns whatever is still missing.</summary>
+	void SyncTray( char[] target, bool white, List<(char Ch, GameObject Go)> tray )
+	{
+		var ring = ChessRing.Instance;
+		if ( ring == null ) return;
+
+		// The tray IS this list — no history, no tally. See CapturedMaterial.
+		var want = CapturedMaterial.Lost( target, white );
+
+		// Resolve a GameObject for each wanted piece, cheapest source first.
+		var have = new List<(char Ch, GameObject Go)>( tray );
+		var next = new List<(char Ch, GameObject Go)>();
+		foreach ( var ch in want )
+		{
+			int i = have.FindIndex( e => e.Ch == ch && e.Go.IsValid() );
+			if ( i >= 0 ) { next.Add( have[i] ); have.RemoveAt( i ); continue; }
+
+			// Just died on the board: adopt the GO so it travels instead of
+			// blinking out here and reappearing there.
+			int c = _captured.FindIndex( e => e.Ch == ch && e.Go.IsValid() );
+			if ( c >= 0 ) { next.Add( _captured[c] ); _captured.RemoveAt( c ); continue; }
+
+			next.Add( ( ch, null ) ); // nothing to adopt — spawned at its slot below
+		}
+
+		foreach ( var (_, go) in have ) go?.Destroy();
+
+		tray.Clear();
+		for ( int i = 0; i < next.Count && i < CapturedMaterial.MaxSlots; i++ )
+		{
+			var (ch, go) = next[i];
+			var to = ring.TraySlotLocalPosition( white, i );
+
+			if ( go == null || !go.IsValid() )
+			{
+				// A joiner, or a resync: no journey to show, so don't invent one.
+				go = SpawnTrayPiece( ch );
+				if ( go == null ) continue;
+				go.LocalPosition = to;
+			}
+			// Already on its way to this exact slot — leave it alone. Without this
+			// check, the NEXT move restarts a still-travelling piece's slide from
+			// wherever it had got to, which resets its arc and its easing: in bullet
+			// a captured piece would visibly stutter its way to the tray, and a slot
+			// away from the board is a long enough trip to still be mid-flight when
+			// the next move lands.
+			else if ( _slides.FindIndex( s => s.Piece == go && ( s.To - to ).LengthSquared <= 0.01f ) < 0
+				&& ( go.LocalPosition - to ).LengthSquared > 0.01f )
+			{
+				// Either it has just been taken, or a higher-value capture pushed
+				// it along a slot. Same trip, same easing.
+				_slides.RemoveAll( s => s.Piece == go );
+				_slides.Add( new Slide
+				{
+					Piece = go,
+					From = go.LocalPosition,
+					To = to,
+					Age = 0f,
+					Seconds = CaptureSeconds,
+					Arc = CaptureArc,
+				} );
+			}
+
+			tray.Add( ( ch, go ) );
+		}
+	}
+
+	GameObject SpawnTrayPiece( char fenChar )
+	{
+		var ring = ChessRing.Instance;
+		if ( ring == null ) return null;
+
+		bool white = char.IsUpper( fenChar );
+		// Facing matches the owner's board pieces — a tray is pieces set aside, not
+		// a scoreboard, so they keep looking the way they did.
+		return ChessSetBuilder.BuildPiece( _piecesRoot, PieceTypeOf( fenChar ), white, ring.PieceScale, yaw: white ? 0f : 180f );
 	}
 
 	GameObject SpawnPiece( char fenChar, int square )
@@ -318,13 +470,16 @@ public sealed class ChessBoardView : Component
 			}
 
 			slide.Age += Time.Delta;
-			float t = Math.Clamp( slide.Age / MoveSeconds, 0f, 1f );
+			// Duration and arc ride the slide, not the component: a move across a
+			// square and a captured piece's trip to the tray are different journeys.
+			float seconds = slide.Seconds > 0f ? slide.Seconds : MoveSeconds;
+			float t = Math.Clamp( slide.Age / seconds, 0f, 1f );
 			float eased = 1f - MathF.Pow( 1f - t, 3f );
 
 			var pos = Vector3.Lerp( slide.From, slide.To, eased );
 			// Gentle arc so pieces hop rather than plough through each other
 			float cell = ChessRing.Instance?.CellWorldSize ?? 5f;
-			pos.z += MathF.Sin( t * MathF.PI ) * cell * MoveArc;
+			pos.z += MathF.Sin( t * MathF.PI ) * cell * slide.Arc;
 			slide.Piece.LocalPosition = pos;
 
 			if ( t >= 1f )

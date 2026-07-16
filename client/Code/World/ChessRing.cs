@@ -43,7 +43,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	[Property] public Color TableColor { get; set; } = new Color( 0.16f, 0.11f, 0.07f );
 
 	/// <summary>Chess board span (all 8 files) in base units (× TableScale). The
-	/// table top is 34 wide; 26 leaves a healthy margin for clocks/captures later.</summary>
+	/// tabletop margin around it is not slack — see TopSizeX/TopSizeY.</summary>
 	[Property] public float BoardSize { get; set; } = 26f;
 
 	/// <summary>Straight-line distance (world units) from the board center to each
@@ -86,8 +86,48 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	const float FrameThickness = 1f;
 	const float CellThickness = 0.5f;
 
+	// Tabletop footprint in base units. The board frame is BoardSize + 3 = 29
+	// square, so these two numbers ARE the margins, and each margin has a job:
+	//
+	//   X (40 → 5.5 per side): −X is the walk-up side and carries the table
+	//     plaque; +X is reserved for the mesh clocks (PLAN.md's M11 — the space is
+	//     held now so the clock pass isn't a table resize as well).
+	//   Y (44 → 7.5 per side): the two captured-piece trays, one per player.
+	//
+	// Both were 34 (a 2.5 margin) until M11. ChessRing's own comment had promised
+	// "a healthy margin for clocks/captures later" since M1 — it wasn't; two
+	// columns of pieces need 7.5 and the plaque was sitting in one of the trays.
+	// Widening was the cheap half of that debt.
+	const float TopSizeX = 40f;
+	const float TopSizeY = 44f;
+
+	// A tray is a shallow felt-dark slab on the tabletop, outboard of the frame.
+	const float TrayThickness = 0.4f;
+	const int TrayRows = 8;  // along X, one per board file's worth of length
+	const int TrayCols = 2;  // outward from the board
+
 	/// <summary>World height of the playing surface above the station floor.</summary>
 	public float BoardSurfaceZ => ( TableTopZ + FrameThickness + CellThickness ) * TableScale;
+
+	/// <summary>Base-unit center of a tray strip: midway between the board frame's
+	/// edge and the tabletop's, so a tray sits centred in its own margin.</summary>
+	float TrayCenterY => ( ( BoardSize + 3f ) * 0.5f + TopSizeY * 0.5f ) * 0.5f;
+
+	/// <summary>Station-local position of one slot in a player's captured-piece
+	/// tray, at piece-base height. <paramref name="white"/> selects WHOSE tray:
+	/// each player's losses sit on their OWN right (White faces +X, so White's
+	/// right is −Y — s&amp;box is Y-left).
+	/// <para>Slots fill along X first (8 per column), then outward. Ordering is
+	/// ChessBoardView's business, not the ring's.</para></summary>
+	public Vector3 TraySlotLocalPosition( bool white, int slot )
+	{
+		float cell = BoardSize / 8f;
+		int row = slot % TrayRows;
+		int col = slot / TrayRows;
+		float x = ( row - ( TrayRows - 1 ) * 0.5f ) * cell;
+		float y = TrayCenterY + ( col - ( TrayCols - 1 ) * 0.5f ) * cell;
+		return new Vector3( x, white ? -y : y, TableTopZ + TrayThickness ) * TableScale;
+	}
 
 	/// <summary>
 	/// Normalized (0..1) viewport rect the board occupies while the camera is locked
@@ -419,11 +459,17 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		return _spawned;
 	}
 
-	/// <summary>Small angled name-plate at the board's front-left carrying the table number.
+	/// <summary>Small angled name-plate carrying the table number, at the walk-up CORNER.
 	/// Local +X is Black's side (radially inward), −X is White's (the walk-up side); +Y is
-	/// White's left (the a-file edge). The plaque sits just outside the board's left edge, on
-	/// the tabletop below the board, tilted back 45° so it faces up toward an approaching
-	/// player. All offsets are in base units × TableScale — tune in-editor.</summary>
+	/// White's left (the a-file edge). The plaque rests on the tabletop below the board,
+	/// tilted back 45° so it faces up toward an approaching player. All offsets are in base
+	/// units × TableScale — tune in-editor.
+	/// <para>It used to sit mid-edge at +Y, which M11's trays now own — it would have stood
+	/// in Black's tray. It can't move to the middle of the −X edge either: that is exactly
+	/// where White's seat camera looks down the board from, so a plaque there is a lump in
+	/// White's foreground. The corner is the one spot that is clear of the trays (which span
+	/// the board's length only), clear of the clock margin at +X, and out of both
+	/// sightlines.</para></summary>
 	void BuildStationPlaque( GameObject station, int number )
 	{
 		float s = TableScale;
@@ -431,9 +477,8 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 		var plaque = new GameObject( true, $"BoardPlaque {number}" );
 		plaque.Parent = station;
-		// Front-left corner: forward toward White (−X), out past the left edge (+Y), resting on
-		// the tabletop just below the board.
-		plaque.LocalPosition = new Vector3( -boardHalf * 0.45f, ( boardHalf + 2.5f ), TableTopZ + 2f ) * s;
+		// Walk-up corner: past the board's near edge (−X) and past its left edge (+Y).
+		plaque.LocalPosition = new Vector3( -( boardHalf + 2.5f ), boardHalf + 3f, TableTopZ + 2f ) * s;
 		// Face the walk-up side (−X → yaw 180°) and tilt the top back 45° so the face angles up.
 		plaque.LocalRotation = Rotation.From( -45f, 180f, 0f );
 
@@ -508,14 +553,16 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		colliderGo.LocalPosition = new Vector3( 0, 0, 10.5f ) * s;
 		// Tag kept from the cabinet era — Collision.config already knows it.
 		colliderGo.Tags.Add( "cabinet" );
-		colliderGo.AddComponent<BoxCollider>().Scale = new Vector3( 36, 36, 21 ) * s;
+		// Kept a unit proud of the tabletop on each side, as it always was.
+		colliderGo.AddComponent<BoxCollider>().Scale = new Vector3( TopSizeX + 2f, TopSizeY + 2f, 21 ) * s;
 
 		// Body: foot plate, pedestal column, tabletop slab (top surface at TableTopZ).
 		AddBox( table, "Foot", new Vector3( 0, 0, 0.5f ) * s, new Vector3( 20, 20, 1 ) * s );
 		AddBox( table, "Pedestal", new Vector3( 0, 0, 9.5f ) * s, new Vector3( 10, 10, 17 ) * s );
-		AddBox( table, "Top", new Vector3( 0, 0, TableTopZ - 1f ) * s, new Vector3( 34, 34, 2 ) * s );
+		AddBox( table, "Top", new Vector3( 0, 0, TableTopZ - 1f ) * s, new Vector3( TopSizeX, TopSizeY, 2 ) * s );
 
 		BuildBoard( table );
+		BuildTrays( table );
 		BuildPieces( table );
 
 		// Overhead spot pooling neutral white light on the board — the "powered on"
@@ -540,6 +587,11 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	public static readonly Color LightSquare = new( 0.85f, 0.85f, 0.85f );
 	public static readonly Color DarkSquare = new( 0.09f, 0.09f, 0.09f );
 	static readonly Color FrameColor = new( 0.12f, 0.08f, 0.05f );
+	// Darker than the frame and flatter than the wood: a tray should read as a
+	// recess the pieces are set INTO, not another ledge on the table. It also has
+	// to sit under the same ~3.3 overhead spot as the board without competing
+	// with the light squares for the eye.
+	static readonly Color TrayColor = new( 0.05f, 0.035f, 0.02f );
 
 	/// <summary>Station-local position of a square's center at piece-base height
 	/// (the cell top surface). file 0=a … 7=h, rank 0 = rank 1. The Table GO sits
@@ -576,6 +628,23 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 					light ? LightSquare : DarkSquare );
 			}
 		}
+	}
+
+	/// <summary>The two captured-piece trays: a shallow slab in each Y margin,
+	/// running the board's length so a full tray lines up with the board's ranks.
+	/// <para>The names must NOT start with "Cell " — ChessBoardView.ResolveCells
+	/// prefix-scans the Table's children for exactly that and would try to parse a
+	/// tray as a square.</para></summary>
+	void BuildTrays( GameObject table )
+	{
+		float s = TableScale;
+		float cell = BoardSize / 8f;
+		float width = TrayCols * cell + 1f;               // 2 columns + a lip
+		float z = TableTopZ + TrayThickness * 0.5f;       // resting ON the tabletop
+		var size = new Vector3( BoardSize, width, TrayThickness ) * s;
+
+		AddBox( table, "Tray White", new Vector3( 0, -TrayCenterY, z ) * s, size, null, TrayColor );
+		AddBox( table, "Tray Black", new Vector3( 0, TrayCenterY, z ) * s, size, null, TrayColor );
 	}
 
 	/// <summary>Base-unit center of a square: ranks along local X (rank 1 nearest

@@ -12,12 +12,10 @@ public static class SoundPlayer
 
 	public static void PlayTick()  { if ( MyOn ) Sound.Play( "sounds/tick.sound" ); }
 	public static void PlayTock()  { if ( MyOn ) Sound.Play( "sounds/tock.sound" ); }
-	public static void PlayWoosh() { if ( MyOn ) Sound.Play( "sounds/woosh.sound" ); }
 	public static void PlayPop()   { if ( MyOn ) Sound.Play( "sounds/pop.sound" ); }
 
 	// Positional variants (non-UI .sound assets) for other players' stations
 	public static void PlayTickAt( Vector3 pos )  { if ( RemoteOn ) Sound.Play( "sounds/tick3d.sound", pos ); }
-	public static void PlayWooshAt( Vector3 pos ) { if ( RemoteOn ) Sound.Play( "sounds/woosh3d.sound", pos ); }
 	public static void PlayPopAt( Vector3 pos )   { if ( RemoteOn ) Sound.Play( "sounds/pop3d.sound", pos ); }
 
 	// Cabinet slide (issue #54) — emitted by each cabinet as the ring sinks through

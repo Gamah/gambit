@@ -6,7 +6,6 @@ Requires: numpy
 
 Three sounds:
   tick  - short high-pitched sine blip for selector movement
-  woosh - downward sawtooth sweep for rotation
   pop   - ascending C-major arpeggio for group resolve
 """
 import math
@@ -56,29 +55,6 @@ def gen_tock():
     env = exp_ramp(n, 0.0, 0.07, 0.035, 0.001)
     return osc * env
 
-
-def gen_woosh():
-    # Sawtooth 420 → 140 Hz expo over 170 ms; lowpass 900 Hz; gain 0.15 → 0.001 at 190 ms; 200 ms total
-    n = int(0.200 * SR)
-    freq_ramp = int(0.170 * SR)
-    freq = np.empty(n)
-    freq[:freq_ramp] = np.exp(np.linspace(math.log(420), math.log(140), freq_ramp))
-    freq[freq_ramp:] = 140.0
-
-    # Sawtooth via phase accumulation
-    phase = np.cumsum(freq / SR) % 1.0
-    osc = 2 * phase - 1
-
-    # Single-pole IIR lowpass at 900 Hz
-    rc = 1.0 / (2 * math.pi * 900)
-    alpha = (1.0 / SR) / (rc + 1.0 / SR)
-    filtered = np.zeros(n)
-    filtered[0] = osc[0] * alpha
-    for i in range(1, n):
-        filtered[i] = filtered[i - 1] + alpha * (osc[i] - filtered[i - 1])
-
-    env = exp_ramp(n, 0.0, 0.15, 0.190, 0.001)
-    return filtered * env
 
 
 def gen_pop():
@@ -171,7 +147,6 @@ out = "client/Assets/sounds/sfx"
 print("Generating sound effects…")
 write_wav(f"{out}/tick.wav", gen_tick())
 write_wav(f"{out}/tock.wav", gen_tock())
-write_wav(f"{out}/woosh.wav", gen_woosh())
 write_wav(f"{out}/pop.wav", gen_pop())
 
 # Cabinet slide options — descend + reversed (ascend) for each (issue #54)

@@ -131,6 +131,13 @@
 			   is LichessTable.CanMirror/CanSeek; this is copy, not the rule. *@
 			<div class="body" style="color:@WallTheme.TextDim;">The person opposite you: any control from Blitz 3+0 up, Unlimited included. A stranger from lichess's lobby: Rapid 10+0 or Classical 30+0 only — lichess won't put faster games in its lobby, an Unlimited game has no clock to match on, and Bullet can't reach lichess at all. Those are lichess's rules, not ours.</div>
 
+			@* There is no rating control here, and that is deliberate — see CLAUDE.md's
+			   ratingRange trap. lichess matches a seek to a band around your real
+			   rating whether we ask or not, and it knows your rating where we don't.
+			   This line exists because we deleted a "Near my rating" chip that sent a
+			   fixed 1400-1800 to everyone: a control became a true sentence. *@
+			<div class="body" style="color:@WallTheme.TextDim;">You don't pick a rating range for a stranger. lichess picks one around your real lichess rating — it knows what you're rated and we don't, so we let it choose.</div>
+
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 			<div class="section-header" style="color:@WallTheme.AccentCss;">THE BIG BOARD</div>

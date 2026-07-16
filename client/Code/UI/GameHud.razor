@@ -168,9 +168,6 @@
 							<div class="chip @( _seekRated ? "on" : "" )" onclick="@( () => ToggleSeekRated() )">@( _seekRated ? "Rated" : "Casual" )</div>
 							<div class="chip @( _seekColor != "random" ? "on" : "" )" onclick="@( () => CycleSeekColor() )">@SeekColorText()</div>
 						</div>
-						<div class="seek-row">
-							<div class="chip @( _seekNarrow ? "on" : "" )" onclick="@( () => ToggleSeekNarrow() )">@( _seekNarrow ? "Near my rating" : "Any rating" )</div>
-						</div>
 						<div class="button lichess" onclick="@( () => StartSeek() )">♞ Find a game on lichess</div>
 						<div class="setup-hint">@SeekHint()</div>
 					}
@@ -557,10 +554,8 @@
 
 	bool _seekRated;
 	string _seekColor = "random";
-	bool _seekNarrow;
 
 	void ToggleSeekRated() { _seekRated = !_seekRated; StateHasChanged(); }
-	void ToggleSeekNarrow() { _seekNarrow = !_seekNarrow; StateHasChanged(); }
 
 	void CycleSeekColor()
 	{
@@ -575,23 +570,23 @@
 		_ => "Either colour",
 	};
 
-	/// <summary>lichess's own advice is to leave the rating range empty — a narrow
-	/// range on a small pool is a seek that never pairs, and ours are scarce
-	/// already. So "near my rating" is a deliberate opt-in, not the default.
-	/// <para>gamchess doesn't know the player's lichess rating (we never asked for
-	/// a scope that could read it), so the range can't be centred on them — this
-	/// asks for a broad middle band instead. Honest about what it can do.</para></summary>
-	string SeekRatingRange() => _seekNarrow ? "1400-1800" : null;
-
 	string SeekHint()
 	{
 		if ( _seekRated ) return "Rated: this will move your real lichess rating.";
 		return "Casual: it won't touch your lichess rating.";
 	}
 
+	/// <summary>We send NO ratingRange, ever, and that is the strongest option rather
+	/// than the laziest — see CLAUDE.md's ratingRange trap. lila treats an omitted
+	/// range as "no preference" and substitutes a Gaussian band centred on the
+	/// player's REAL rating (`Hook.ratingRangeOrDefault` → `RatingRange.defaultFor`).
+	/// So lichess centres the pool on them for free, with no scope, no /api/account
+	/// fetch and no rating stored our side. This replaced a "Near my rating" chip
+	/// that sent a fixed "1400-1800" to every player regardless of strength — both a
+	/// lie to a 2200 and *narrower and worse-informed* than sending nothing.</summary>
 	void StartSeek()
 	{
-		Lichess()?.RequestSeek( _seekRated, SeekRatingRange(), _seekColor );
+		Lichess()?.RequestSeek( _seekRated, color: _seekColor );
 		StateHasChanged();
 	}
 
@@ -851,6 +846,6 @@
 					src?.DrawOffered, src?.DrawPending,
 					src?.TakebackOffered, src?.TakebackPending,
 					src?.CanTakeback, PremoveUci() ),
-				System.HashCode.Combine( _seekRated, _seekColor, _seekNarrow ) ) );
+				System.HashCode.Combine( _seekRated, _seekColor ) ) );
 	}
 }

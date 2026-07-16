@@ -102,6 +102,38 @@ token and must be signed by *that* token. So:
 - **Omitting both clock fields is how you ask for an unlimited challenge.** Sending `0/0` asks
   for a rejected 0+0 clock instead.
 - **`clock.limit` has a domain**: 0, 15, 30, 45, 60, 90, or any multiple of 60 up to 10800.
+- **An omitted `ratingRange` does NOT mean "pair me with anyone" — it means "lichess picks a band
+  centred on me", and that is the best matchmaking available to us.** Re-derived from lila +
+  the OpenAPI spec 2026-07-16. This one inverts the obvious reading, so the chain matters:
+  - The field is **absolute** (`"1500-1800"`), never a delta — `^\d{3,4}-\d{3,4}$`, both ends
+    within **400–2900**, `min < max` strictly. An invalid string is a **400**, not a silent
+    default (`Mappings.scala` verifies before `orDefault` can fire).
+  - Omitted → `RatingRange.default` = **`400-2900`** (`core/rating.scala`) — nominally
+    unbounded. **But a real-time hook never uses it.** `Hook.scala:46-54` computes
+    `manualRatingRange = ratingRange.ifNotDefault`, and where that is empty falls back to
+    `RatingRange.defaultFor(rating)` — a **Gaussian band** (`Gaussian(1500, 350)`, percentile
+    `0.2`) around **your real rating**, clamped to 400–2900. **[SOURCE]**
+  - So lichess centres on your true rating for free: **no scope, no `/api/account` fetch, no
+    rating stored on the link row.** Anything we compute is worse-informed than lila is. This
+    is why Gambit sends **no `ratingRange` at all** and has **no rating chip** — the old
+    "Near my rating" chip sent a fixed `1400-1800` to every player regardless of strength,
+    which was both a lie on its face and *narrower and less accurate* than doing nothing.
+  - **A real-time seek therefore cannot mean "anyone".** lila filters out a range equal to your
+    rating ±500 as "no preference" — which is exactly what its own UI slider defaults to
+    (`setupCtrl.ts:71`, delta→absolute at `:229`). So lichess's ±500 preset is a decoy: lila
+    recognises and discards it. Asking for a genuinely open pool would mean sending `400-2899`
+    to dodge that equality check. **Don't** — it games an implementation detail to get worse
+    pairings.
+  - **Correspondence is the exception**: `Seek.scala` uses `ratingRange.ifNotDefault` with **no
+    Gaussian fallback**, so a correspondence seek with the default range really is unbounded.
+  - The **±500 clamp is web-UI-only**: `HookConfig.withinLimits` is applied by
+    `Setup.hook`, and **`Setup.boardApiHook` never calls it** — a Board API seek may set a range
+    further than 500 from its own rating. **[SOURCE]**
+  - `GET /api/account` is **`security: [OAuth2: []]`** — a token, but **no specific scope**, so
+    `board:play` reads it — and ratings live at **`perfs.<speed>.rating`**, with `prov: true`
+    marking provisional (lichess disables its own range control when provisional). Recorded
+    because it is the fact that *looks* like it unblocks a rating chip; it doesn't, because the
+    chip shouldn't exist.
 - **An offer POST always answers `200 {"ok":true}`, whether or not lichess took it.**
   `setDraw`/`setTakeback` return Unit in lila and the controller wraps them in `fuccess`, so
   the documented `400 "The draw offering failed"` never fires. lichess silently drops a draw
@@ -195,10 +227,31 @@ this was wrong when recalled from memory first):
 **lichess only sends a clock when a MOVE happens**, so a TV clock rendered raw sits frozen
 through every think and reads as a broken board rather than a thinking player.
 `LichessTvSource` runs the side-to-move's clock down locally from the last frame and snaps
-both to whatever the next one says. It never invents time, only spends it — which keeps the
-house rule that **a live clock must never read HIGHER than the time actually left** (the same
-rule that makes `TimeControl.Format` truncate where the PGN writer rounds). lichess stays the
-only authority, and local drift cannot outlive one move.
+both to whatever the next one says. lichess stays the only authority, and local drift cannot
+outlive one move.
+
+> **The "it can only read low" reasoning was WRONG, and it was written in three places.** This
+> file, PLAN.md and the code comment all claimed the local countdown "drifts LOW by roughly the
+> network latency". It read **HIGH**, and that inverts the house rule below — the one rule the
+> whole clock design exists to satisfy. The mechanism: lichess stamps the clock at the move
+> instant **T₀**; the frame reaches us at **T₀ + L** (lichess → gamchess → client); on arrival
+> the code set the bank and zeroed its age, so at wall-clock T₀+L we displayed the value as of
+> T₀ while the player had already burned **L**. Displayed = true + L, held until the next move.
+> "Counting down from a known-good value can only read low" is the step that fails: **the value
+> is already stale on arrival**, so the countdown starts late, not early.
+>
+> **This is still true in the code as it stands** — the fix is decided but unbuilt (PLAN.md's
+> M11). The agreed shape: gamchess stamps receipt time into the state and the client subtracts
+> the elapsed since, which removes the gamchess→client leg. **It cannot remove the
+> lichess→gamchess leg** — no client-side fix can, because nothing downstream knows T₀ — so a
+> small residual high bias will survive by construction and must be documented rather than
+> denied. Anything that re-derives a TV clock must reason from *when the value was stamped*,
+> never from *when we received it*.
+
+**The house rule: a live clock must never read HIGHER than the time actually left** — the same
+rule that makes `TimeControl.Format` truncate where the PGN writer rounds. Reading low is
+explicitly permitted; reading high is not. The rule is one-directional on purpose, which is why
+a deliberate undershoot satisfies it where an unbiased estimate would not.
 
 > The snap is gated on the **version advancing**, and that guard is the feature. A long poll
 > that reaches its hold answers with the current state at the *same* version, every ~5s
@@ -406,6 +459,15 @@ were proven originally, how a `[TimeControl]`-bearing PGN was checked against th
 writer, and how `LichessTable`'s challenge/seek floors were checked against every preset in
 `TimeControl.All` — prefer it over review whenever the code can be isolated from Sandbox.
 
+**This cuts both ways: it is worth MOVING code to make it testable.** `Code/Chess/
+CapturedMaterial.cs` (the captured-piece trays' material derivation, M11) lives under
+`Code/Chess/` and takes a plain `char[64]` specifically so it can run in a harness — the
+promotion arithmetic in it is exactly the kind of thing that reads as obviously correct and
+isn't. Driving real games through `ChessGame` in the harness immediately proved a real
+capture-promotion line that the naive start-minus-current diff gets wrong in both directions
+at once. Had it stayed a private method on `ChessBoardView` (a `Component`), none of it could
+have been run here at all.
+
 ---
 
 ## Architecture map (what exists and why)
@@ -439,9 +501,27 @@ writer, and how `LichessTable`'s challenge/seek floors were checked against ever
   wasn't). Both are self-healing, so **no scene rewire is needed** for these
   components.
 - `ChessRing` builds the ring of tables (`BuildChessTable`: table, board frame, 64
-  cells, pieces at the start position, two camera anchors per station) and
-  network-spawns the stations. It also owns the screen-rect UI math
+  cells, two capture trays, pieces at the start position, two camera anchors per
+  station) and network-spawns the stations. It also owns the screen-rect UI math
   (`ScreenFractionRect()` / `UiRectStyle()`).
+- **The tabletop margin is allocated, not slack** (M11). `TopSizeX`/`TopSizeY` (40 × 44
+  base units) minus the 29-wide board frame gives every margin a job: **±Y are the two
+  capture trays**, **−X is the walk-up plaque**, **+X is reserved for the mesh clocks**.
+  It was 34 square (a 2.5 margin) while a comment promised "a healthy margin for
+  clocks/captures later" — it wasn't one, and the plaque was standing in what is now
+  Black's tray. **Don't put anything new on the tabletop without checking which margin
+  it lands in**, and note the plaque can't go mid-edge at −X: that is exactly where
+  White's seat camera looks down the board from.
+- **Each player's captured pieces sit in a tray on their own right** (White faces +X, so
+  White's right is −Y — s&box is Y-left). `ChessRing.TraySlotLocalPosition` owns the
+  geometry; `ChessBoardView` owns the ordering; **`Code/Chess/CapturedMaterial.cs` owns
+  what's in it, and derives it from the FEN alone — never from a tally of captures.**
+  That is load-bearing: `ChessBoardView` rebuilds from the FEN and has no history, so an
+  event-counted tray would be empty for every late joiner and every resync. The capture
+  animation is a transient overlay on top; when the diff happens to have the dying piece's
+  GameObject the tray adopts it, and when it doesn't the tray just spawns it in place.
+  **Tray geometry must never be named `Cell …`** — `ChessBoardView.ResolveCells`
+  prefix-scans the Table's children for exactly that.
 - `ChessSetBuilder` lathes each piece as a runtime mesh. `BuildPiece(type, color, scale)`
   first tries `Model.Load("models/chess/{type}.vmdl")` and falls back to procedural —
   so dropping in a real piece set later is a one-function swap (**D5**).
@@ -740,8 +820,15 @@ Deviating from them is how un-compilable mistakes get in.
   `[EditorEvent.Hotload]` in `Editor/HotloadRebuild.cs` — keep new builders registered there
 - **Razor usings**: `System`, `Sandbox`, `Sandbox.UI`, `Sandbox.Rendering` are NOT
   auto-imported in `.razor` — add `@using` explicitly
-- **Self-attaching UI**: GameHud, SplashScreen, and SpectatorScreen attach themselves to
-  the scene ScreenPanel at runtime — no scene rewire needed for new screens; copy the pattern.
+- **Self-attaching UI**: **GameHud and SpectatorScreen — those two, and no others** — attach
+  themselves to the scene ScreenPanel at runtime (`LobbyPlayer.cs:128-144` walks
+  `Scene.GetAllComponents<ScreenPanel>()`), so a new screen of that kind needs no scene rewire;
+  copy that pattern. **InfoScreen, SettingsScreen, ChatPanel and LobbyOverlay are NOT
+  self-attaching** — they are serialized components in `lobby.scene` and adding one means
+  editing the scene. This line cited `SplashScreen` as an exemplar for a long time; **there is
+  no `SplashScreen`** — no `.cs`, no `.razor`, only an orphan scene entry (see the scene-orphan
+  rule below). It was pointing at a file that does not exist, in the file every session is told
+  to trust.
 
 ## s&box API Whitelist
 
@@ -764,6 +851,19 @@ doubt check `https://sbox.game/api/` or file a false-positive at
 - **Never trust code defaults or docs for component property values** — the scene
   overrides them and gets retuned in-editor. `grep Assets/scenes/lobby.scene` for
   current values before sizing anything.
+- **…but confirm the component still has a class, because the scene lies too.** The rule
+  above assumes every scene entry is real. `lobby.scene` carried **eight components from the
+  rotaliate fork with no class anywhere in `client/Code/`** — every property on them inert,
+  and two of them actively contradicting the code that really runs: `ArcadeRing`'s
+  `BoardSize: 28` next to the real `ChessRing`'s **26**, and `SpectatorBoard`'s
+  `ClearAboveWall: 20` next to the real `SpectatorWall`'s **18**. Grepping the scene and
+  believing it got you the wrong number, **the exact inverse of this rule**. They are deleted
+  now; the habit is the point — `grep -r "class Foo" client/Code/` before trusting a scene
+  value.
+- **A runtime-built component runs on code defaults and cannot be retuned in-editor.**
+  `SpectatorWall` is not in the scene at all (`LobbyRoom.EnsureSpectatorWall()` builds it), so
+  every one of its values is a code default. A design pass on the north wall is an
+  edit-and-hotload loop, not a scene-tweak loop — unlike east and south.
 - The player is ~72 units tall — the human-scale yardstick.
 - `models/dev/box.vmdl` is **NOT 1×1×1**: to make a box of size S,
   `LocalScale = S / Model.Bounds.Size` per axis — use/copy `ChessRing.AddBox`.
@@ -816,9 +916,39 @@ doubt check `https://sbox.game/api/` or file a false-positive at
 
 Synthesized WAVs in `Assets/sounds/sfx/` generated by `scripts/gen_sounds.py` (numpy).
 `.sound` gotchas: `"Sounds"` lists `.vsnd` paths (not `.wav`), `"Volume"`/`"Pitch"` are
-JSON strings, `"UI": true` for 2D playback, `"__version": 1`. Mapping: tick/tock →
-clocks (by side), pop → captures, servo slides → station rebuild. Move sounds fire for
-your own board (2D) and other players' boards (positional).
+JSON strings, `"UI": true` for 2D playback, `"__version": 1`.
+
+**`tick`/`tock` are MOVE sounds, not clock sounds.** This line read "tick/tock → clocks (by
+side)" for a long time, which describes a ticking clock that **has never existed** — nothing in
+the client makes a per-second sound. They fire **once per move**, by side. The real map, which
+is the whole of it — **7 call sites in the entire client**:
+
+| Moment | Sound | Where |
+|---|---|---|
+| Move, your table | `tick` (White) / `tock` (Black), 2D | `LocalGameController.cs` |
+| Move, another table | `tick3d` — **always**, see below | " |
+| Capture | `pop` 2D / `pop3d` positional | " |
+| Ring rebuild | servo slide, follows the cabinet | `ChessRing.cs` → `ChessStation.cs` |
+| Settings click | `tick` 2D | `SettingsScreen.razor` |
+
+**There is no `tock3d.sound`**, so the by-side distinction that exists at your own board is
+lost at everyone else's — remote boards are mono-tick. That is an unmade asset, not a design
+decision, and it is recorded here rather than fixed because six tables all ticking by side is
+a question, not an oversight.
+
+The gate is **your table is 2D, the room's tables are 3D, and the room must not become a slot
+machine with six tables**. Gates are `MyCabinetSounds` / `RemoteCabinetSounds`
+(`SoundPlayer.cs`), both default true.
+
+**A sound reaches a lichess game only through the `IBoardGame` seam — and today none does.**
+`LichessGameController` contains **zero sound calls**: `PlayMoveSound` is only ever called from
+`LocalGameController`, so **a real lichess game at a table — the M8 headline feature — is
+completely silent.** No move, no capture, nothing. Anything that fires a sound off a move must
+hang off the seam, not off the local controller, or it silently covers only half the tables.
+(Fixing this is M11 work, and it is a *missing call*, not a new sound.)
+
+Also confirmed silent: **check · mate · game over · resign · draw offer · takeback offer ·
+premove fire · clock flag · panic · sit/stand · TV fanfare.**
 
 Music is the `gamah.skafinity` library — source-committed under
 `client/Libraries/gamah.skafinity/` (s&box pattern: libraries are source and
