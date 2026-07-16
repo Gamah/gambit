@@ -89,10 +89,12 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	// Tabletop footprint in base units. The board frame is BoardSize + 3 = 29
 	// square, so these two numbers ARE the margins, and each margin has a job:
 	//
-	//   X (40 → 5.5 per side): −X is the walk-up side and carries the table
-	//     plaque; +X is reserved for the mesh clocks (PLAN.md's M11 — the space is
-	//     held now so the clock pass isn't a table resize as well).
-	//   Y (44 → 7.5 per side): the two captured-piece trays, one per player.
+	//   X (40 → 5.5 per side): −X is the walk-up side (kept clear — it is where
+	//     White's seat camera looks down the board from); +X carries the table clock
+	//     (BuildStationClock).
+	//   Y (44 → 7.5 per side): the two captured-piece trays, one per player. The
+	//     table plaque hangs off the +Y edge, below the tabletop, clear of the tray
+	//     that sits on it.
 	//
 	// Both were 34 (a 2.5 margin) until M11. ChessRing's own comment had promised
 	// "a healthy margin for clocks/captures later" since M1 — it wasn't; two
@@ -458,40 +460,79 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			if ( BuildTables )
 			{
 				BuildChessTable( station );
-				// Board number on a little angled plaque at the board's front-left, instead of a
-				// number floating overhead (needs the table/board to sit against).
+				// Board number on a little angled plaque hanging off the table's left edge,
+				// instead of a number floating overhead (needs the table to sit against).
 				BuildStationPlaque( station, i );
+				// The clock, standing on the +X margin this table was widened to hold (M11).
+				BuildStationClock( station, controller, lichess );
 			}
 		}
 
 		return _spawned;
 	}
 
-	/// <summary>Small angled name-plate carrying the table number, at the walk-up CORNER.
-	/// Local +X is Black's side (radially inward), −X is White's (the walk-up side); +Y is
-	/// White's left (the a-file edge). The plaque rests on the tabletop below the board,
-	/// tilted back 45° so it faces up toward an approaching player. All offsets are in base
-	/// units × TableScale — tune in-editor.
-	/// <para>It used to sit mid-edge at +Y, which M11's trays now own — it would have stood
-	/// in Black's tray. It can't move to the middle of the −X edge either: that is exactly
-	/// where White's seat camera looks down the board from, so a plaque there is a lump in
-	/// White's foreground. The corner is the one spot that is clear of the trays (which span
-	/// the board's length only), clear of the clock margin at +X, and out of both
-	/// sightlines.</para></summary>
+	// The number plate, in base units: thin along its facing normal (plaque-local X),
+	// PlaqueLength along its width, PlaqueHeight down its face. The drop below derives
+	// from PlaqueHeight rather than restating it — two hand-tuned numbers that are
+	// supposed to mean "flush with the tabletop" is exactly how they stop meaning it.
+	const float PlaqueThickness = 0.6f;
+	const float PlaqueLength = 8f;
+	const float PlaqueHeight = 5.5f;
+
+	/// <summary>Tilt of the plate's face, degrees. Negative pitches the face upward, so a
+	/// plaque hanging off the table edge angles up toward someone standing at it rather
+	/// than presenting its edge.</summary>
+	const float PlaqueTilt = -45f;
+
+	/// <summary>How far outboard of the tabletop edge the plate hangs.</summary>
+	const float PlaqueOutset = 0.5f;
+
+	/// <summary>Small angled name-plate carrying the table number, hanging off the table's
+	/// LEFT edge. Local +X is Black's side (radially inward), −X is White's (the walk-up
+	/// side); +Y is White's left (the a-file edge) — s&amp;box is Y-left. All offsets are in
+	/// base units × TableScale — tune in-editor.
+	///
+	/// <para><b>Where it has been, and why it moved twice.</b> It sat mid-edge at +Y until
+	/// M11, which the trays now own — it would have stood in Black's tray. It then moved to
+	/// the walk-up CORNER (−X,+Y) facing White. That worked and read wrong: a plate facing
+	/// the White seat is furniture aimed at one of the two players, when the number exists
+	/// for the room. It could never go mid-edge at −X either — that is exactly where White's
+	/// seat camera looks down the board from, so a plaque there is a lump in White's
+	/// foreground.</para>
+	///
+	/// <para><b>Now: the left edge, hanging down.</b> Yaw 90° instead of 180° — the same
+	/// plate turned a quarter clockwise, so its length runs along the table's X rather than
+	/// its Y, and its face looks outward (+Y) at the room instead of inward at a seat. Its
+	/// TOP edge is flush with the tabletop surface and the body hangs below, which is why
+	/// the drop is computed from the plate's own height and tilt rather than typed in: at
+	/// 45° a plate of height h only reaches h·cos45 up the world Z axis, and half of that is
+	/// how far its centre must sit below the top to put its top edge on it.</para>
+	///
+	/// <para>Nothing needs to move for this: the plate is a child of the plaque GO, so its
+	/// dimensions are plaque-local and the yaw carries them round with it.</para></summary>
 	void BuildStationPlaque( GameObject station, int number )
 	{
 		float s = TableScale;
-		float boardHalf = ( BoardSize + 3f ) * 0.5f; // board-frame half-extent, base units
+
+		// Half the plate's height as it projects onto world Z once tilted. This is the
+		// whole reason PlaqueTilt and PlaqueHeight are constants: change either and the
+		// top edge stays on the tabletop.
+		float halfDrop = PlaqueHeight * 0.5f * MathF.Cos( PlaqueTilt * (MathF.PI / 180f) );
 
 		var plaque = new GameObject( true, $"BoardPlaque {number}" );
 		plaque.Parent = station;
-		// Walk-up corner: past the board's near edge (−X) and past its left edge (+Y).
-		plaque.LocalPosition = new Vector3( -( boardHalf + 2.5f ), boardHalf + 3f, TableTopZ + 2f ) * s;
-		// Face the walk-up side (−X → yaw 180°) and tilt the top back 45° so the face angles up.
-		plaque.LocalRotation = Rotation.From( -45f, 180f, 0f );
+		// Centred along the table's length, just outboard of the LEFT (+Y) edge, hanging
+		// from the tabletop's top surface.
+		plaque.LocalPosition = new Vector3(
+			0f,
+			TopSizeY * 0.5f + PlaqueOutset,
+			TableTopZ - halfDrop ) * s;
+		// Face the room off the left edge (+Y → yaw 90°) and tilt the face up 45°.
+		plaque.LocalRotation = Rotation.From( PlaqueTilt, 90f, 0f );
 
 		// The physical plate (thin along the plaque's facing normal = local +X).
-		AddBox( plaque, "Plate", Vector3.Zero, new Vector3( 0.6f, 8f, 5.5f ) * s, null, FrameColor );
+		AddBox( plaque, "Plate", Vector3.Zero,
+			new Vector3( PlaqueThickness, PlaqueLength, PlaqueHeight ) * s, null, FrameColor );
 
 		// The number, flush on the plate's front face (+X), not billboarded — it rides the
 		// plaque's tilt like a real plate.
@@ -501,6 +542,87 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		num.LocalScale = 0.16f * s;
 		num.AddComponent<WorldPanel>();
 		num.AddComponent<Gambit.UI.MarqueeNumberPanel>().Number = number.ToString();
+	}
+
+	// The clock body, in base units. It stands on the +X margin — the space M11's table
+	// widening reserved for exactly this, so the clock pass wasn't a table resize too.
+	const float ClockLength = 16f;    // along Y, across the board's far edge
+	const float ClockDepth = 3.2f;    // along X, its footprint on the margin
+	const float ClockHeight = 5.5f;   // how far it stands off the tabletop
+
+	/// <summary>Tilt of the clock's two faces. Negative pitches them up, so a player
+	/// looking down at the table reads the face rather than its edge.</summary>
+	const float ClockFaceTilt = -20f;
+
+	/// <summary>
+	/// The table's clock: a body on the far (+X) margin with a face on each side, so
+	/// both seats read their own copy.
+	///
+	/// <para><b>Why both faces.</b> The seats look along X at each other — White's camera
+	/// sits beyond −X looking toward +X, Black's beyond +X looking back. A single face
+	/// would be readable to exactly one of them, and a clock only one player can see is
+	/// worse than no clock. Each face shows BOTH clocks, as a real chess clock does.</para>
+	///
+	/// <para><b>Local, never networked.</b> Same rule as the board view: every client
+	/// renders its own, reading state that is already replicated. Nothing here decides
+	/// anything — the host owns a local game's clock and lichess owns a lichess game's,
+	/// and this shows whichever the seam resolves to.</para>
+	///
+	/// <para>Needs the editor. The +X margin is in Black's near foreground the way the
+	/// −X margin is in White's — which is exactly the objection that moved the plaque off
+	/// it. A clock is worth looking at where a plaque isn't, but "worth it" is a judgement
+	/// nobody has made from a chair yet.</para>
+	/// </summary>
+	void BuildStationClock( GameObject station, Gambit.Game.LocalGameController controller,
+		Gambit.Game.LichessGameController lichess )
+	{
+		float s = TableScale;
+		// Centre of the +X margin: midway between the board frame's edge and the
+		// tabletop's, so the clock sits in its own margin rather than crowding either.
+		float x = ( ( BoardSize + 3f ) * 0.5f + TopSizeX * 0.5f ) * 0.5f;
+
+		var clock = new GameObject( true, "TableClock" );
+		clock.Parent = station;
+		clock.LocalPosition = new Vector3( x, 0f, TableTopZ ) * s;
+
+		// The body, sitting on the tabletop and centred on its own height.
+		AddBox( clock, "Body", new Vector3( 0f, 0f, ClockHeight * 0.5f ) * s,
+			new Vector3( ClockDepth, ClockLength, ClockHeight ) * s, null, FrameColor );
+
+		// A face on each side. side −1 faces back down the board at White; +1 faces out
+		// at Black. The panel plane is local Y (width) / Z (height), so the face's yaw
+		// puts its width along the body's length.
+		BuildClockFace( clock, "FaceWhite", -1f, controller, lichess );
+		BuildClockFace( clock, "FaceBlack", +1f, controller, lichess );
+	}
+
+	/// <summary>One readable face of the table clock. <paramref name="side"/> −1 points it
+	/// at White (back along −X), +1 at Black.</summary>
+	void BuildClockFace( GameObject clock, string name, float side,
+		Gambit.Game.LocalGameController controller, Gambit.Game.LichessGameController lichess )
+	{
+		float s = TableScale;
+
+		var face = new GameObject( true, name );
+		face.Parent = clock;
+		// Just proud of the body's face, at eye height on it.
+		face.LocalPosition = new Vector3(
+			side * ( ClockDepth * 0.5f + 0.15f ),
+			0f,
+			ClockHeight * 0.6f ) * s;
+		// Yaw 0 looks down +X (at Black); yaw 180 looks down −X (at White). Tilt the face
+		// up toward whoever is reading it.
+		face.LocalRotation = Rotation.From( ClockFaceTilt, side > 0 ? 0f : 180f, 0f );
+
+		// A WorldPanel GO's scale multiplies the panel's INTRINSIC pixel size — it is not
+		// world units. So world size and text size are coupled: to change how big this
+		// reads without restyling it, change this number, not the stylesheet.
+		face.LocalScale = 0.022f * s;
+		face.AddComponent<WorldPanel>();
+
+		var panel = face.AddComponent<Gambit.UI.TableClockPanel>();
+		panel.Controller = controller;
+		panel.Lichess = lichess;
 	}
 
 	/// <summary>Locked-camera anchor for one seat. side −1 = White (outward),

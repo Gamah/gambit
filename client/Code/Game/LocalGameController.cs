@@ -222,10 +222,13 @@ public sealed class LocalGameController : Component, IBoardGame
 	public ChessSeat? LocalSeat =>
 		ChessStation.Active == Station && Station != null ? ChessStation.ActiveSeat : null;
 
-	/// <summary>Seconds left on the local player's own clock — the seam's copy. Null
-	/// when not seated here, not playing, or untimed.</summary>
-	public float? LocalSeatClock =>
-		Playing && !Tc.IsUnlimited && LocalSeat is { } seat ? ClockFor( seat ) : null;
+	/// <summary>Seconds left on a seat's clock — the seam's copy. Null when nothing is
+	/// live or the game is untimed.</summary>
+	public float? SeatClock( ChessSeat seat ) =>
+		Playing && !Tc.IsUnlimited ? ClockFor( seat ) : null;
+
+	/// <summary>Seconds left on the local player's own clock. Null when not seated here.</summary>
+	public float? LocalSeatClock => LocalSeat is { } seat ? SeatClock( seat ) : null;
 
 	/// <summary>It's the local seated player's turn in a live game.</summary>
 	public bool IsMyTurn =>

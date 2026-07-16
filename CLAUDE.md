@@ -527,12 +527,20 @@ have been run here at all.
   (`ScreenFractionRect()` / `UiRectStyle()`).
 - **The tabletop margin is allocated, not slack** (M11). `TopSizeX`/`TopSizeY` (40 × 44
   base units) minus the 29-wide board frame gives every margin a job: **±Y are the two
-  capture trays**, **−X is the walk-up plaque**, **+X is reserved for the mesh clocks**.
+  capture trays**, **+X is the table clock** (`BuildStationClock`), **−X is kept clear**.
   It was 34 square (a 2.5 margin) while a comment promised "a healthy margin for
   clocks/captures later" — it wasn't one, and the plaque was standing in what is now
   Black's tray. **Don't put anything new on the tabletop without checking which margin
-  it lands in**, and note the plaque can't go mid-edge at −X: that is exactly where
-  White's seat camera looks down the board from.
+  it lands in.**
+  **Neither X margin is neutral ground**: −X is exactly where White's seat camera looks
+  down the board from, and +X is the same thing for Black. Anything mid-edge there is in
+  a player's foreground — which is why the plaque was moved off both and now hangs below
+  the **+Y** edge, and why the clock being at +X is a deliberate trade (a clock is worth
+  looking at where a plaque isn't) rather than free space.
+- **The table clock has a face on EACH side**, and that isn't decoration: the seats look
+  along X at each other, so a single face is readable to exactly one of them, and a clock
+  only one player can see is worse than no clock. Each face shows both clocks, as a real
+  chess clock does.
 - **Each player's captured pieces sit in a tray on their own right** (White faces +X, so
   White's right is −Y — s&box is Y-left). `ChessRing.TraySlotLocalPosition` owns the
   geometry; `ChessBoardView` owns the ordering; **`Code/Chess/CapturedMaterial.cs` owns
@@ -608,9 +616,20 @@ implementations that agree — lichess-org's own **dartchess** (`lib/src/pgn.dar
   (centiseconds): a third digit is false precision when the clock is decremented by a
   ~16ms frame delta, and lichess itself keeps clocks in centiseconds. Two is a strict
   subset, so both still parse it.
-- `ChessGame.ClkField` **rounds**; `TimeControl.Format` (the live HUD) **truncates**. Not
-  an inconsistency: a live clock must never read higher than the time actually left,
+- `ChessGame.ClkField` **rounds**; `TimeControl.Format` (every live clock) **truncates**.
+  Not an inconsistency: a live clock must never read higher than the time actually left,
   whereas the archive should match the reference writers.
+
+**Where a live clock is rendered (M11): on the TABLE, not the HUD.** `TableClockPanel`, on a
+mesh body at each table's +X margin, a face per side. It was text in a 250px column pinned to
+the right of the screen while the board sat in the middle of it — in a 3+0 game, the wrong
+place for the number that ends the game. Two things moved with it and must move back if it ever
+does: **`TimeControl.PanicSeconds`** (where a clock reddens — shared with the panic beep so the
+two can't disagree, which is why it lives on `TimeControl` rather than on a panel), and **the
+string-hashing** — clock faces are hashed as their RENDERED TEXT, so a panel repaints when a
+digit changes rather than every frame. Hash the raw float and every live table in the ring
+repaints continuously. The HUD now has no clock on it and no panic red: reddening a *name* next
+to no number is an alarm about something that isn't on the screen.
 
 Clocks are stamped by the **host** (`NetClockStamp`), never read from a client's own
 synced copy — that copy lags the increment. The `chess_js_perft.mjs` gate holds the JS

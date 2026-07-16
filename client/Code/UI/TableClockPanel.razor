@@ -1,0 +1,205 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.Chess;
+@using Gambit.Game;
+@using Gambit.World;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	The face of the mesh clock standing on each table's +X margin
+	(ChessRing.BuildStationClock). Display only — no pointer-events.
+
+	This is where the clocks LIVE now. They were text in a 250px column pinned to the
+	right of the screen while the board sat in the middle of it: in a 3+0 game that is
+	the wrong place for the number that ends the game. Now they are on the table, next
+	to the board, where you are already looking.
+
+	Everything here reads the IBoardGame seam, never LocalGameController. During a
+	lichess game the local controller's clocks are FROZEN by the host on purpose
+	(HostTickClocks early-returns on LichessGame, so it cannot flag a player who is
+	fine on lichess's clock) — so a clock reading it would simply never move.
+*@
+
+<root>
+	<div class="faces">
+		<div class="face @WhiteClass()">
+			<div class="who">WHITE</div>
+			<div class="time">@Face( ChessSeat.White )</div>
+		</div>
+		<div class="face @BlackClass()">
+			<div class="who">BLACK</div>
+			<div class="time">@Face( ChessSeat.Black )</div>
+		</div>
+	</div>
+
+	@* Material. Hidden while level rather than shown as an empty bar: "nobody is
+	   ahead" is the normal state of a chess game, and a permanent zeroed gauge is
+	   furniture. It appears the moment it has something to say. *@
+	@if ( Advantage() is int adv && adv != 0 )
+	{
+		<div class="bar">
+			<div class="track">
+				<div class="fill @( adv > 0 ? "white" : "black" )" style="width: @( FillPercent( adv ) )%;"></div>
+			</div>
+			<div class="lead @( adv > 0 ? "white" : "black" )">@Lead( adv )</div>
+		</div>
+	}
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		pointer-events: none;
+		font-family: Consolas, monospace;
+	}
+
+	.faces { flex-direction: row; gap: 26px; }
+
+	.face {
+		flex-direction: column;
+		align-items: center;
+		padding: 10px 22px;
+		border-radius: 10px;
+		background-color: rgba(12, 12, 16, 0.55);
+	}
+
+	.who {
+		font-size: 34px;
+		letter-spacing: 6px;
+		color: rgba(255, 255, 255, 0.35);
+	}
+
+	/* Big, because this is read across a table rather than from a HUD. */
+	.time {
+		font-size: 128px;
+		font-weight: bold;
+		color: rgba(255, 255, 255, 0.55);
+	}
+
+	/* The running side is the only one worth looking at. */
+	.face.on { background-color: rgba(20, 22, 28, 0.9); }
+	.face.on .time { color: #e8e6df; }
+	.face.on .who { color: rgba(255, 255, 255, 0.6); }
+
+	/* Under TimeControl.PanicSeconds — the same threshold the panic beep starts at,
+	   which is why it is a shared constant and not a 10f typed in two files. */
+	.face.on.panic .time { color: #ff5f5f; }
+
+	.bar { flex-direction: row; align-items: center; gap: 12px; margin-top: 14px; }
+
+	/* Fixed width so the fill's percentage means the same thing every frame. */
+	.track {
+		width: 300px;
+		height: 12px;
+		border-radius: 6px;
+		background-color: rgba(255, 255, 255, 0.12);
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.fill { height: 12px; border-radius: 6px; }
+	.fill.white { background-color: #e8e6df; }
+	.fill.black { background-color: #2b2b33; }
+
+	.lead { font-size: 40px; font-weight: bold; }
+	.lead.white { color: #e8e6df; }
+	.lead.black { color: #9a9aa8; }
+</style>
+
+@code {
+	/// <summary>Wired by ChessRing at build, exactly as the board view and the sounds are
+	/// — same refs, same seam, so all three answer for the same game.
+	///
+	/// <para>No ChessStation here, unlike them: they need to know whose table this is
+	/// (the sounds to pick 2D or 3D, the view to take input). A clock face says the same
+	/// thing to everyone who can see it.</para></summary>
+	[Property] public LocalGameController Controller { get; set; }
+	[Property] public LichessGameController Lichess { get; set; }
+
+	IBoardGame Source => BoardGame.Source( Controller, Lichess );
+
+	/// <summary>A seat's clock face, or an em-dash when there is no clock — an untimed
+	/// game, or nothing live. Never blank: an empty clock face reads as broken, and a
+	/// dash reads as "this game has no clock", which is what is true.</summary>
+	string Face( ChessSeat seat )
+	{
+		// TimeControl.Format, never our own formatting. It TRUNCATES rather than rounds,
+		// which is the house rule: a live clock must never read higher than the time
+		// actually left. "{seconds:0.0}" would render 59.96 as "60.0".
+		return Source?.SeatClock( seat ) is float left ? TimeControl.Format( left ) : "—";
+	}
+
+	/// <summary>Whose clock is running, off the seam. Not LocalGameController.TickingSeat:
+	/// during a lichess game its ChessGame never advances, so it answers "White" for the
+	/// whole game.</summary>
+	ChessSeat? Ticking =>
+		Source is { Playing: true, Game: { } game } && Source.SeatClock( ChessSeat.White ) != null
+			? ( game.WhiteToMove ? ChessSeat.White : ChessSeat.Black )
+			: null;
+
+	string WhiteClass() => FaceClass( ChessSeat.White );
+	string BlackClass() => FaceClass( ChessSeat.Black );
+
+	string FaceClass( ChessSeat seat )
+	{
+		if ( Ticking != seat ) return "";
+		return Source?.SeatClock( seat ) is float left && left < TimeControl.PanicSeconds
+			? "on panic" : "on";
+	}
+
+	/// <summary>Material balance in pawns, positive for White — or null when there is no
+	/// position to read.
+	///
+	/// <para>Derived from the FEN through CapturedMaterial, never from a tally of
+	/// captures: this panel has no history, and a late joiner or a resync would show a
+	/// level bar in a game somebody is a rook up in. Same rule the trays follow, and the
+	/// same reason.</para></summary>
+	int? Advantage()
+	{
+		var game = Source?.Game;
+		if ( game == null ) return null;
+
+		var squares = new char[64];
+		for ( int rank = 0; rank < 8; rank++ )
+			for ( int file = 0; file < 8; file++ )
+				squares[rank * 8 + file] = game.PieceAt( file, rank );
+
+		return CapturedMaterial.Advantage( squares );
+	}
+
+	/// <summary>"+3" — always the LEADER's margin, so the sign never has to be read.
+	/// The colour says who; the number says by how much.</summary>
+	string Lead( int adv ) => $"+{Math.Abs( adv )}";
+
+	/// <summary>How much of the track the leader fills.
+	///
+	/// <para>Clamped at <see cref="BarFullAt"/> rather than scaled to the theoretical
+	/// maximum (~103 pawns of material). A queen up is a winning game and should look
+	/// like one; scaling to the maximum would render it as a sliver.</para></summary>
+	float FillPercent( int adv ) =>
+		Math.Min( Math.Abs( adv ), BarFullAt ) / (float)BarFullAt * 100f;
+
+	/// <summary>Material lead at which the bar is full. Nine — a queen. Past that the
+	/// game is not more decided in any way a bar can show.</summary>
+	const int BarFullAt = 9;
+
+	/// <summary>Repaint on visible change only.
+	///
+	/// <para>The clock faces are hashed as their RENDERED STRINGS, which is what the seat
+	/// lines did before the clock moved here — and it moved with them deliberately.
+	/// Hashing the raw float would repaint every frame of every live table in the ring;
+	/// hashing the text repaints exactly when a digit changes. The panic class is in here
+	/// too because it changes with nothing else changing: it crosses at 10.0s, which is a
+	/// frame where the visible digits also change, but only because Format happens to
+	/// show tenths down there — that is a coincidence of two constants, not a
+	/// guarantee.</para></summary>
+	protected override int BuildHash() => System.HashCode.Combine(
+		Face( ChessSeat.White ), Face( ChessSeat.Black ),
+		WhiteClass(), BlackClass(), Advantage() );
+}

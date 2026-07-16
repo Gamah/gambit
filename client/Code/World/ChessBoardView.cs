@@ -52,14 +52,15 @@ public sealed class ChessBoardView : Component
 
 	/// <summary>Which controller owns the board.
 	///
-	/// <para>This is the one line that ever branches on the source, and it is why
-	/// M8 needed no renderer change: everything below reads <see cref="IBoardGame"/>
-	/// and cannot tell a lichess game from a local one. The seam was built for
-	/// exactly this.</para>
+	/// <para>Nothing below ever branches on the source, and it is why M8 needed no
+	/// renderer change: everything here reads <see cref="IBoardGame"/> and cannot tell a
+	/// lichess game from a local one. The seam was built for exactly this.</para>
 	///
-	/// <para>The lichess controller only claims the board once the local player has
-	/// opted in at this table; otherwise the local game owns it, unchanged.</para></summary>
-	IBoardGame Source => Lichess is { Engaged: true } ? Lichess : Controller;
+	/// <para>The resolution itself now lives on <see cref="BoardGame.Source"/> — the view,
+	/// the sounds and the table clock all ask it, so they cannot end up describing
+	/// different games. The lichess controller claims the board only once the local player
+	/// has opted in at this table; otherwise the local game owns it, unchanged.</para></summary>
+	IBoardGame Source => BoardGame.Source( Controller, Lichess );
 
 	/// <summary>The local player may arm a premove right now: a live game they're
 	/// seated in, with the BOARD saying the opponent is on move.

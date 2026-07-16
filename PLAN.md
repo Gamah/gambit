@@ -121,16 +121,11 @@ Each player's losses now sit in a tray on their own side of the table, and a cap
   (`1.h4 g5 2.hxg5 h5 3.gxh6 d6 4.h7 e6 5.hxg8=Q`), which is the case the naive diff gets
   wrong in both directions at once.
 
-**Still to check in the editor** (nothing here can be seen on this host):
+**Checked in the editor and signed off**: the trays read as trays, and the ring still looks
+like a ring despite the oblong table. `CaptureSeconds` (0.45) / `CaptureArc` (1.1) stand
+un-objected-to. The east wall still reads as a wall.
 
-- Do the trays read as trays, or as two dark stripes? `TrayColor` is one line.
-- Is the plaque's new corner clear of White's camera in practice? It is *nearer* the camera
-  than it was, at the same lateral offset.
-- `CaptureSeconds` (0.45) / `CaptureArc` (1.1) have never been watched. The arc is taller
-  than a move's on purpose — the piece is lifted off the board, not shoved across it.
-- The table is now visibly oblong rather than square. Neighbour spacing is fine (66 world
-  units of table against ~138 of chord), but whether the ring still *looks* like a ring is a
-  question for someone standing in it.
+**The plaque moved again** — it is no longer at the walk-up corner. See the clock section.
 
 ### The TV clock reads HIGH, and three places said otherwise
 
@@ -170,10 +165,34 @@ Both clocks are text inside `SeatLine`, in a 250px column pinned `right: 24px`, 
 board is in the middle of the screen. In a 3+0 game that is the wrong place for the number
 that ends the game.
 
-**Decided: a real lathed mesh clock on the table**, on the far (+X) edge. The board is real
-meshes rather than panel art and the clock should be too. **The space is already reserved** —
-that is what the X margin widening above was for, so the clock pass isn't a table resize as
-well.
+**Built.** The clock is a body on the far (+X) margin with a **face on each side**, because
+the seats look along X at each other and a single face is readable to exactly one of them —
+a clock only one player can see is worse than none. Each face shows both clocks, as a real
+chess clock does, plus the material bar. `ChessRing.BuildStationClock` + `TableClockPanel`.
+
+**The HUD no longer has a clock on it at all**, and the repaint hashing moved with it — that
+was the load-bearing part (see below). `SeatClass` also lost its panic red: reddening a *name*
+on a HUD with no clock on it is an alarm about a number that isn't on the same screen.
+
+**The material bar** is `CapturedMaterial.Advantage`, and it is counted from the pieces **on
+the board** rather than by valuing `Lost`. Not a detail: `Lost` carries a documented lie (a
+captured piece that had itself been promoted reads as a captured pawn — a FEN can't say which
+queen was born one), so valuing it would report a player 8 points poorer than they are.
+Summing the board has no such problem: a promoted queen simply *is* a queen. So the tray and
+the bar are derived two different ways from the same position, deliberately — the tray answers
+"what did you lose" (history it can't fully know), the bar answers "who is ahead now" (which
+the position states outright). Proven in the harness, including the case where the two must
+disagree.
+
+**The plaque moved off the corner to the left (+Y) edge**, hanging below the tabletop at 45°,
+turned a quarter clockwise so its face looks outward at the room rather than inward at White's
+seat. Its drop is computed from its own height and tilt so the top edge stays flush with the
+tabletop if either changes.
+
+**Wants the editor**: the +X margin is in Black's near foreground the way −X is in White's —
+which is the exact objection that moved the plaque off it. A clock is worth looking at where a
+plaque isn't, but nobody has judged that from a chair. Face tilt, scale and the body's size
+are all one constant each.
 
 Load-bearing constraints a redesign must not break (all verified, all in CLAUDE.md's `%clk`
 section):
@@ -187,8 +206,9 @@ section):
   nobody can flag on lag. Anything that makes the clock feel smoother must not become a
   local countdown. (The TV wall is the documented exception, and the section above is what
   it cost.)
-- **Seat lines are hashed as rendered STRINGS** — that is what makes the clock repaint on
-  visible-text change instead of every frame. Move the clock, move that.
+- **Seat lines are hashed as rendered STRINGS** — that is what made the clock repaint on
+  visible-text change instead of every frame. **Moved with the clock**: `TableClockPanel`
+  hashes its faces as text and the HUD no longer repaints on a ticking digit at all.
 - **`PanicSeconds` (10f) is deliberately not `DecimalBelowSeconds`** — one decides when
   tenths are legible, the other when you're in trouble.
 - **`SeatLine` checks lichess first**, because a seek leaves `ctrl.Playing` false for its
@@ -425,19 +445,44 @@ switched off purely so it can redraw it worse.
 - **The lichess disclosure copy is intact** (`lichess_pages.go`) — both load-bearing warnings
   present. Don't trim them.
 
+### The music board was busted on joined instances only — fixed, needs confirming
+
+Reported from M10 testing: a **joined** instance (never the first editor instance) pressing E
+at the music wall got a completely broken skafinity panel.
+
+**Mechanism, found by reading:** `SkafinityMusicPanel.OnStart` resolves its player **once** —
+`Player ??= Scene.GetAllComponents<SkafinityPlayer>().FirstOrDefault()` — and
+`GetAllComponents` is **enabled-only**. Miss that instant and `Player` is null for the rest of
+the session, at which point every field in the panel renders `Player?.X ?? default`: seed "—",
+N 0, empty queue, dead buttons. A whole board of nothing.
+
+**Why joiners only** — and this is the trap CLAUDE.md already documents for M12's voice work,
+arriving early: `/UI` (the panel) and `/GameController` (the player) are both **`NetworkMode`
+2 = Snapshot**, so a joining client **rebuilds them from the host's snapshot** instead of
+loading them the way the first instance does. Different construction order, different answer
+from a one-shot first-frame lookup.
+
+**Fixed in `MusicBoardScreen`, not in the library**: it now retries `_panel.Player ??= …` every
+frame until one exists — the same shape as the `_panel` lookup directly above it, which already
+retries for exactly this kind of reason. The library is source-committed but it is a drop-in,
+and its one-shot resolve is only wrong for hosts whose panel outlives an absent player.
+
+**Confirm it**: the old failure logs `SkafinityMusicPanel: no SkafinityPlayer found in the
+scene` on the joined instance. If that line is absent and the board still looks wrong, this
+diagnosis is wrong and the snapshot is corrupting something else.
+
 ### Open — needs a decision
 
-- **The east wall** (above): does it still read as a wall? Needs you in the room.
 - **Wall board title sizes**: three on one wall. Taste.
-- **Panic red vs the spectator wall's green-only clocks**: they disagree today — and now
-  the HUD beeps there too, so the wall is the only place a clock is never urgent.
+- **Panic red vs the spectator wall's green-only clocks**: they disagree — and now the table
+  clock reddens *and* beeps, so the wall is the only place a clock is never urgent.
 - **The four new sounds**, none of which anyone has heard — see Sound above.
-- **One action, two buttons.** `GameHud:262` and `LobbyOverlay:18` both render a resign
-  control simultaneously while seated in a live game, both calling
-  `LobbyPlayer.Local?.RequestLeave()`, both off the same `LeaveArmed` — with **different
-  labels** ("Resign & stand up" / "Sure? This resigns" vs "Stand Up" / "Resign & Stand Up?").
-  Not a bug — they agree on behaviour — but two vocabularies for one action, in a milestone
-  about how it feels.
+- **The table clock in the room**: it lands in Black's near foreground. See above.
+- **One action, two buttons.** `GameHud` and `LobbyOverlay` both render a resign control
+  simultaneously while seated in a live game, both calling `LobbyPlayer.Local?.RequestLeave()`,
+  both off the same `LeaveArmed` — with **different labels** ("Resign & stand up" / "Sure? This
+  resigns" vs "Stand Up" / "Resign & Stand Up?"). Both paths tested and working; not a bug —
+  two vocabularies for one action, in a milestone about how it feels.
 
 ### Dead code found while reading — proposed for deletion
 

@@ -32,6 +32,50 @@ public static class CapturedMaterial
 	/// never captured, so a 16th slot could only ever stay empty.</summary>
 	public const int MaxSlots = 15;
 
+	/// <summary>Conventional value of a piece type, in pawns. Lowercase type char; the
+	/// king is 0 because it is never captured and never traded — including it would add
+	/// the same number to both sides forever.</summary>
+	public static int Value( char type ) => type switch
+	{
+		'q' => 9,
+		'r' => 5,
+		'b' => 3,
+		'n' => 3,
+		'p' => 1,
+		_ => 0,
+	};
+
+	/// <summary>
+	/// Material balance in pawns: positive means WHITE is ahead, negative Black, zero
+	/// level. <paramref name="squares"/> is the same 64-entry board <see cref="Lost"/>
+	/// takes.
+	///
+	/// <para><b>Counted from the pieces ON the board, deliberately — not by valuing what
+	/// <see cref="Lost"/> returns.</b> They are not the same sum, and the difference is
+	/// promotion. Lost carries a documented lie: a captured piece that had itself been
+	/// promoted reads as a captured pawn, because a FEN cannot say which queen was born
+	/// one. Valuing that list would inherit the lie and report a player 8 points poorer
+	/// than they are. Summing the board has no such problem — a promoted queen simply IS
+	/// a queen, worth 9, and needs no forgiveness arithmetic at all.</para>
+	///
+	/// <para>So the tray and the bar are derived two different ways from the same
+	/// position, and that is correct rather than an inconsistency to tidy up: the tray
+	/// answers "what did you lose", which is about history it cannot fully know, and the
+	/// bar answers "who is ahead now", which the position states outright.</para>
+	/// </summary>
+	public static int Advantage( char[] squares )
+	{
+		int score = 0;
+		for ( int sq = 0; sq < squares.Length; sq++ )
+		{
+			char c = squares[sq];
+			if ( c == '\0' ) continue;
+			int v = Value( char.ToLowerInvariant( c ) );
+			score += char.IsUpper( c ) ? v : -v;
+		}
+		return score;
+	}
+
 	/// <summary>How many of a type each side starts with. Lowercase type char.</summary>
 	public static int StartCount( char type ) => type switch
 	{

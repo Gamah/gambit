@@ -12,6 +12,20 @@ public static class BoardGame
 	/// after looking back at the board, short enough that it's gone before it could be
 	/// mistaken for a comment on your NEXT premove.</summary>
 	public const float PremoveDroppedSeconds = 4f;
+
+	/// <summary>
+	/// Which game owns a board: the lichess relay once it has claimed the table,
+	/// otherwise the local two-seat game.
+	///
+	/// <para><b>One copy, and that is the point.</b> Four things now answer for the same
+	/// table — the board view, the sounds, the table clock and the HUD — and if any two
+	/// of them resolved this differently the player would be looking at one game, hearing
+	/// another, and reading a third's clock. It was three hand-copies of
+	/// <c>lichess is { Engaged: true } ? lichess : controller</c> agreeing by inspection;
+	/// a fourth was the point to stop. Agreeing by construction costs nothing.</para>
+	/// </summary>
+	public static IBoardGame Source( LocalGameController local, LichessGameController lichess ) =>
+		lichess is { Engaged: true } ? lichess : local;
 }
 
 /// <summary>
@@ -47,14 +61,21 @@ public interface IBoardGame
 	/// that fired on !Playing would fire every time anyone stood up.</para></summary>
 	bool GameOver { get; }
 
-	/// <summary>Seconds left on the LOCAL player's own clock, or null when they aren't
-	/// seated here, no game is live, or the game is untimed.
+	/// <summary>Seconds left on a seat's clock, or null when there is no clock to show —
+	/// nothing live, or an untimed game.
 	///
-	/// <para>On the seam so the panic beep has one source of truth for "my clock". The
-	/// alternative — reading <c>LocalGameController.ClockFor</c> — is wrong during a
-	/// lichess game by construction: the host FREEZES its copy (HostTickClocks
-	/// early-returns on LichessGame) precisely so it can't flag a player who is fine on
-	/// lichess's clock, so it would sit at its start value and never panic at all.</para></summary>
+	/// <para>On the seam so that everything showing a clock reads the same one. The
+	/// alternative — <c>LocalGameController.ClockFor</c> — is <b>wrong by construction</b>
+	/// during a lichess game: the host FREEZES its copy (HostTickClocks early-returns on
+	/// LichessGame) precisely so it can't flag a player who is fine on lichess's clock. So
+	/// it sits at its start value forever, and anything reading it shows a clock that
+	/// never moves.</para></summary>
+	float? SeatClock( ChessSeat seat );
+
+	/// <summary>Seconds left on the LOCAL player's own clock, or null when they aren't
+	/// seated here. Sugar over <see cref="SeatClock"/> — the panic beep and the clock's
+	/// own highlight both want "mine", and resolving the seat at each call site is how
+	/// they'd end up disagreeing about which seat that is.</summary>
 	float? LocalSeatClock { get; }
 
 	/// <summary>It's the local seated player's move.</summary>
