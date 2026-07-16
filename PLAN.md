@@ -249,6 +249,29 @@ What the rebuild bought, concretely:
 **Player names go above the clock later**, which is the label worth the room — and that is now
 a third plate, not a third div.
 
+**The text was sized against the wrong string.** It was tuned on "3:00" — the default Blitz
+table, the one on screen while building — which is 4 characters. "10:00" and "30:00" are **5**,
+so every Rapid and Classical table rendered a quarter wider than the table it was tuned on.
+`ClockMaxChars` now asks `TimeControl.All` for its worst case (every preset has zero increment,
+so a clock can never climb past its initial bank), and `ClockPxWidth` derives from it — add a
+longer control and the text shrinks to fit on its own. The font-size in CSS is not the knob it
+looks like: it cancels out of the world size entirely, and `ClockTextSpanLength` is the real one.
+
+**The bar is upright on the base's front face, full width.** It was tilted 30° in the plates'
+plane and rationed to the gap they left — a gauge whose entire signal is a LENGTH, read off-axis
+and cut short. The base's face is already vertical, already square to the room, already as wide
+as the assembly. This also retires the "don't let a plate clip the bar" problem instead of
+solving it again: the plates are above the base, the bar is on it, and no plate size can reach
+it — `ClockBarGap`/`ClockPlateInnerX` existed only to referee that fight and are gone.
+
+The bar is **thin (0.06)** because `ClockBoardGap` is 0.2 and the bar now spends it: on that face
+"proud" points at the board, and at the plates' 0.2 thickness the fill landed at −14.44 against a
+frame edge of −14.5 — a real intersection (the frame is a slab at z 0..1, the bar sits at z
+0.4..1.8). Widening the gap was the other option and was **rejected**: it would have shoved the
+whole assembly 0.4 off the board, moving the plates and the badge, which had just been confirmed
+right in the room. Depth costs nothing here anyway — the bar is read head-on as a coloured
+length.
+
 **A sixth bug, and it was arithmetic — which is the point.** The plates and the bar were
 centred on the body's top *surface*, so half of every plate was buried in the body and the
 material bar, being shorter, was **entirely** inside it and could never have rendered at all.

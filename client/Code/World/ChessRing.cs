@@ -123,7 +123,13 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	//
 	// Everything below DERIVES from these four, so the tray, its slots and the clock
 	// cannot drift apart: change one and the rest move.
-	const float ClockBoardGap = 0.2f;   // board frame → clock
+	// This 0.2 is now SHARED with the material bar, which lives on the clock's front face and
+	// therefore projects into it (see BuildClockBar). A 0.2-thick bar spends all of it and puts
+	// its fill at −14.44 against a board frame edge of −14.5 — a real intersection, not a near
+	// miss, since the frame is a slab at clock-local z 0..1 and the bar sits at z 0.4..1.8.
+	// The bar is thin BECAUSE of this number; widening the gap instead would shove the whole
+	// assembly away from the board and take the tray's slot pitch with it.
+	const float ClockBoardGap = 0.2f;   // board frame → clock, and the bar's headroom
 	const float ClockTrayGap = 0.2f;    // clock → tray
 	const float TrayEdgeGap = 1.0f;     // tray → tabletop edge
 
@@ -662,20 +668,75 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// changes size, and what it becomes instead is "overhanging" or "clipping the bar".</para></summary>
 	static float ClockPlateOffsetX => ( ClockLength - ClockPlateLength ) * 0.5f;
 
-	/// <summary>X of a plate's INNER edge — where the middle, and so the bar, has to stop.</summary>
-	static float ClockPlateInnerX => ClockPlateOffsetX - ClockPlateLength * 0.5f;
-
 	/// <summary>Lift of a panel off its plate's face, along the plate's own normal — clear of
 	/// it rather than z-fighting it. BuildStationPlaque's PlaqueOutset, same job.</summary>
 	const float ClockTextOutset = 0.05f;
 
-	// The plate face's pixel space. Width is arbitrary (it only fixes how many px a base unit
-	// is worth); HEIGHT IS DERIVED from the TEXT SPAN's aspect — the box the panel actually
-	// maps onto — so the panel's pixel space and its world span cannot drift out of
-	// proportion. Typing both by hand is how a stylesheet's px stop meaning what the geometry
-	// says they mean.
-	const float ClockPxWidth = 512f;
-	const float ClockPxHeight = ClockPxWidth * ClockTextSpanHeight / ClockTextSpanLength;
+	/// <summary>The longest string a clock face can EVER be asked to show, in characters —
+	/// derived from TimeControl.All, never typed.
+	///
+	/// <para><b>This is the number that sizes the text, and getting it from the wrong string is
+	/// exactly how the face came to be too big.</b> It was sized against "3:00" — the default
+	/// Blitz table, the one on screen while tuning — which is 4 characters. "10:00" and "30:00"
+	/// are 5, so every Rapid and Classical table rendered a quarter wider than the one it was
+	/// tuned on. Tuning a shared face against whichever table you happen to be standing at is
+	/// the bug; asking the menu for its worst case is the fix.</para>
+	///
+	/// <para>Every preset has ZERO increment (checked, not assumed), so a clock can never climb
+	/// above the bank it started with and the initial values really are the worst case. If an
+	/// incrementing or longer control is ever added, this re-derives and the text shrinks to
+	/// fit on its own — which is the point of computing it rather than writing "5".</para></summary>
+	static int ClockMaxChars
+	{
+		get
+		{
+			int max = 1;
+			foreach ( var tc in Gambit.Game.TimeControl.All )
+			{
+				// "∞" for an untimed table, exactly as TableClock renders it.
+				var face = tc.IsUnlimited ? "∞" : Gambit.Game.TimeControl.Format( tc.InitialSeconds );
+				if ( face.Length > max ) max = face.Length;
+			}
+			return max;
+		}
+	}
+
+	/// <summary>Character advance of $wall-font, as a fraction of the font size.
+	///
+	/// <para><b>Measured off a real render, not read from the font.</b> This host has no s&amp;box
+	/// toolchain and cannot load the face, so its metrics are not knowable here. "3:00" at 130px
+	/// measured ~90% of a 512px panel (2026-07-16) — about 0.9em per character.</para>
+	///
+	/// <para><b>It does NOT match the nominal metric, and the error is deliberately one-way.</b>
+	/// $wall-font is monospace (Consolas/Roboto Mono), whose digits advance ~0.6em, so the face
+	/// s&amp;box actually falls back to is much wider than the stack asks for. Over-stating the
+	/// advance only ever makes the text SMALLER than it strictly needs to be; under-stating it
+	/// overflows the plate. Round this UP when unsure.</para></summary>
+	const float ClockCharAdvanceEm = 0.9f;
+
+	/// <summary>How much of the text span the LONGEST string is allowed to fill. The rest is
+	/// slack inside the span, on top of the bare plate ClockPlateMarginX adds outside it.</summary>
+	const float ClockTextFitFraction = 0.84f;
+
+	/// <summary>The face's font size. <b>MUST match TableClockTextPanel's `font-size`</b> — it is
+	/// the one number that lives in two files, and the stylesheet is the one that actually
+	/// renders.
+	///
+	/// <para>It reads as a text-size knob and is NOT one: it cancels out of the world size
+	/// entirely (text world height = span × fit ÷ (maxChars × advance), with no font term). All
+	/// it decides is the panel's pixel RESOLUTION. <b>To resize the text, turn
+	/// ClockTextSpanLength.</b></para></summary>
+	const float ClockFontPx = 130f;
+
+	// The plate face's pixel space, DERIVED so the longest string the menu can produce lands on
+	// ClockTextFitFraction of the span. Width was a typed 512 and the font was tuned against it
+	// by eye — which is the same mistake as a typed plate offset: it silently stops meaning
+	// "fits" the moment the string it was tuned on isn't the longest one.
+	//
+	// HEIGHT keeps deriving from the TEXT SPAN's aspect — the box the panel maps onto — so the
+	// pixel space and the world span cannot drift out of proportion.
+	static float ClockPxWidth => ClockMaxChars * ClockCharAdvanceEm * ClockFontPx / ClockTextFitFraction;
+	static float ClockPxHeight => ClockPxWidth * ClockTextSpanHeight / ClockTextSpanLength;
 
 	/// <summary>Z at which everything in the tilted plane is CENTRED — the plates and the bar
 	/// alike, which is what keeps their bottom edges level with each other for free.
@@ -698,36 +759,42 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 	// ── The material bar ──
 	//
-	// Mesh, not a div. A track that is ALWAYS there, and a fill growing from dead centre
-	// toward whoever is ahead — so at level the track is all you see, which is what a material
-	// bar at zero should look like: a centred bar. Centre-out is also what lets the bar say
-	// WHO as well as by how much. Lives in the plates' plane so the three read as one
-	// instrument; its bottom edge is level with theirs (see BuildClockBar).
-	const float ClockBarHeight = 1.4f;
-	const float ClockBarThickness = 0.2f;
+	// Mesh, not a div. A track that is ALWAYS there, and a fill growing from dead centre toward
+	// whoever is ahead — so at level the track is all you see, which is what a material bar at
+	// zero should look like: a centred bar. Centre-out is also what lets it say WHO as well as
+	// by how much.
+	//
+	// It lives on the BASE'S FRONT FACE — upright, full width, its own surface. It was in the
+	// plates' tilted plane, squeezed into the gap they left, and that was two compromises at
+	// once: a gauge reading its length at 30° off-axis, and a length rationed by whatever the
+	// plates didn't want. The base's face is already vertical, already square to the room, and
+	// already the full width of the assembly.
+	//
+	// It also retires the whole "don't let a plate clip the bar" problem rather than solving it
+	// again: the plates are ABOVE the base and the bar is ON it, so no plate size can reach it.
+	// ClockBarGap and ClockPlateInnerX existed only to referee that fight and are gone.
+	const float ClockBarHeight = 1.4f;      // a band on a 2.2 face: 0.4 of bare base above and below
 
-	/// <summary>Clear space between a plate's inner edge and the bar's end.</summary>
-	const float ClockBarGap = 0.7f;
+	/// <summary>Thin, and not by taste — this is an applique on a face, and its whole depth is
+	/// spent out of ClockBoardGap, which is only 0.2. At the plates' 0.2 the fill reached into
+	/// the board frame. Thickness costs nothing here anyway: the bar is read head-on as a
+	/// coloured LENGTH, and depth is not part of the signal.</summary>
+	const float ClockBarThickness = 0.06f;
 
-	/// <summary>The track's length — DERIVED from whatever the plates leave, so a plate can
-	/// never grow into the bar. This is the "don't clip the bar" constraint expressed as
-	/// arithmetic rather than as two hand-set numbers that have to be remembered together.</summary>
-	static float ClockBarLength => 2f * ( ClockPlateInnerX - ClockBarGap );
-
-	/// <summary>How far the fill stands proud of its track, along the plate normal.</summary>
-	const float ClockBarProud = 0.12f;
+	/// <summary>How far the fill stands proud of its track — only enough to beat z-fighting.
+	/// The fill is told from the track by COLOUR, not by depth.</summary>
+	const float ClockBarProud = 0.04f;
 
 	// ── The lead badge ──
 	//
-	// The real material difference, ALWAYS drawn, on its own small plate standing proud IN
-	// FRONT OF the bar. It is a second string, so by this file's own rule it is a second
-	// plate — never a second div on an existing panel.
+	// The real material difference, ALWAYS drawn, on its own small plate between the two clock
+	// plates. It is a second string, so by this file's own rule it is a second plate — never a
+	// second div on an existing panel.
 	//
-	// It carries its own black plate rather than floating text straight onto the bar because
-	// the thing behind it CHANGES COLOUR: White's fill is near-white and Black's is near-black,
-	// so no single text colour is legible against both. A plate makes the background a
-	// constant, which is the only way "always draws in front of the bar" can also mean
-	// "always readable".
+	// It sat proud in front of the bar until the bar moved down to the base's face; its own
+	// transform is UNCHANGED, because the position was confirmed right in the room. It keeps
+	// its plate — the plate is why the number was legible in the first place, and a small black
+	// plate standing between two big ones reads as part of the row.
 	//
 	// It is what keeps the bar honest past saturation: the bar pins at BarFullAt and stops
 	// telling the truth, and the number never does.
@@ -735,11 +802,20 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	const float ClockLeadHeight = 1.3f;      // inside ClockBarHeight — it sits ON the bar
 	const float ClockLeadThickness = 0.2f;
 
-	/// <summary>Proud of the FILL, not just the track — the fill passes behind this. Must
-	/// clear ClockBarProud + half the fill's thickness or the badge and the fill intersect.</summary>
+	/// <summary>Proud of the tilted plane's origin. It was sized to clear the fill that used to
+	/// pass behind it; the fill has gone to the base's face, and this is kept at its exact value
+	/// anyway — it is what puts the badge where the room says it belongs. Turning it now moves
+	/// the badge along the plane's normal, which is not a free tidy-up.</summary>
 	const float ClockLeadProud = 0.34f;
 
-	const float ClockLeadPxHeight = ClockPxWidth * ClockLeadHeight / ClockLeadLength;
+	/// <summary>Badge centre below the tilted plane's origin. Its ONE job is to keep the badge
+	/// exactly where it was when the bar left this plane: it used to be `(ClockPlateHeight −
+	/// ClockBarHeight) / 2`, sharing the bar's bottoms-level drop, and the moment the bar moved
+	/// that expression became a phantom dependency on a number that is no longer here.
+	/// Confirmed in the room — do not "derive" it back into something tidier and 0.05 lower.</summary>
+	const float ClockLeadDropZ = 0.75f;
+
+	static float ClockLeadPxHeight => ClockPxWidth * ClockLeadHeight / ClockLeadLength;
 
 	// Plate tints. BLACK, and that is not the same as "a very dark number": the table spot
 	// runs at MarqueeBrightness 3.3, and tint is albedo — it gets MULTIPLIED by the light. The
@@ -826,6 +902,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		driver.BlackPlate = blackPlate;
 
 		BuildClockBar( clock, driver );
+		BuildClockLead( clock, driver );
 	}
 
 	/// <summary>One seat's plate: a mesh standing on the strip with a one-string panel flush
@@ -879,48 +956,48 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		text = face.AddComponent<Gambit.UI.TableClockTextPanel>();
 	}
 
-	/// <summary>The material bar: a track that is ALWAYS drawn, a fill growing from dead
-	/// centre toward whoever is ahead, and the lead badge standing proud in front of both.
-	/// <see cref="TableClock"/> moves the fill and writes the number.
+	/// <summary>The material bar: a track that is ALWAYS drawn, and a fill growing from dead
+	/// centre toward whoever is ahead. <see cref="TableClock"/> moves the fill.
 	///
-	/// <para><b>The track never hides, and that is the design.</b> Level is where every game
-	/// starts, and at level the track — centred, empty — is exactly what a material bar should
-	/// look like. It used to hide itself outright, which meant the normal state of the object
-	/// was "not there".</para>
+	/// <para><b>Upright, on the base's front face, the full width of the assembly.</b> It was
+	/// tilted 30° in the plates' plane and rationed to the gap they left — a gauge whose whole
+	/// signal is a LENGTH, read off-axis and cut short. This face is already vertical, already
+	/// square to the room, and already as wide as the clock; the bar just uses all of it.</para>
 	///
-	/// <para><b>Bottom edge level with the plates', by arithmetic.</b> The bar is shorter than
-	/// a plate, so centring it in the plane would float it around the plates' middles and read
-	/// as three unrelated things; bottoms level is what makes them one instrument. That was
-	/// `align-items: flex-end` when this was CSS — here it is the plate's half-height minus
-	/// the bar's, which is a number that can be checked.</para></summary>
+	/// <para><b>Everything it projects comes out of ClockBoardGap</b>, because on this face
+	/// "proud" points at the board. At the old 0.2 gap the fill landed inside the board frame —
+	/// see ClockBoardGap, which is now the bar's clearance rather than spare tabletop.</para>
+	///
+	/// <para>The track's back face sits flush against the base rather than inside it: the base
+	/// is opaque, so anything not proud of that face is simply not there. Same lesson as the
+	/// plates being buried, arriving on a different axis.</para></summary>
 	void BuildClockBar( GameObject clock, TableClock driver )
 	{
 		float s = TableScale;
 
 		var bar = new GameObject( true, "Bar" );
 		bar.Parent = clock;
-		// The plates' origin AND their rotation — so all three lie in one plane, and the bar
-		// rests on the plinth exactly as they do rather than sinking into it.
-		bar.LocalPosition = new Vector3( 0f, 0f, ClockPlaneOriginZ ) * s;
-		bar.LocalRotation = Rotation.From( ClockFaceTilt, 90f, 0f );
+		// On the front (+Y, board-facing) face, centred on the base's height. Pushed out by half
+		// the track's thickness so the track's BACK lands flush on the face and all of its body
+		// is outside the base.
+		bar.LocalPosition = new Vector3(
+			0f, ClockDepth * 0.5f + ClockBarThickness * 0.5f, ClockHeight * 0.5f ) * s;
+		// Yaw only — UPRIGHT. The plates' pitch is deliberately absent; this is the one thing on
+		// the clock that is not in their plane. Yaw 90 still maps local +Y onto table −X, so the
+		// fill's sign in TableClock is unchanged by the move.
+		bar.LocalRotation = Rotation.From( 0f, 90f, 0f );
 
-		// Bottoms level: the plate spans ±ClockPlateHeight/2 about its centre and both are
-		// centred at the same height, so dropping the bar by the difference of the half-heights
-		// puts its lower edge exactly on the plates'. Sharing ClockPlaneOriginZ is what makes
-		// that true for free — level with each other, and both level with the plinth's top.
-		float dropZ = ( ClockPlateHeight - ClockBarHeight ) * 0.5f;
-
-		AddBox( bar, "Track", new Vector3( 0f, 0f, -dropZ ) * s,
-			new Vector3( ClockBarThickness, ClockBarLength, ClockBarHeight ) * s,
+		AddBox( bar, "Track", Vector3.Zero,
+			new Vector3( ClockBarThickness, ClockLength, ClockBarHeight ) * s,
 			null, ClockBarTrackColor );
 
-		// The fill is built at FULL extension — dead centre to one end, half the track — and
-		// the driver scales it down from there. Building it full is what lets TableClock hold
-		// the full scale as a number instead of re-deriving it from Model.Bounds: AddBoxGo did
-		// that arithmetic once already, and doing it twice is how the two come to disagree.
-		float halfLength = ClockBarLength * 0.5f;
+		// The fill is built at FULL extension — dead centre to one end, half the track — and the
+		// driver scales it down from there. Building it full is what lets TableClock hold the
+		// full scale as a number instead of re-deriving it from Model.Bounds: AddBoxGo did that
+		// arithmetic once already, and doing it twice is how the two come to disagree.
+		float halfLength = ClockLength * 0.5f;
 		var fill = AddBoxGo( bar, "Fill",
-			new Vector3( ClockBarProud, 0f, -dropZ ) * s,
+			new Vector3( ClockBarProud, 0f, 0f ) * s,
 			new Vector3( ClockBarThickness, halfLength, ClockBarHeight ) * s,
 			null, ClockBarWhiteColor );
 		if ( fill is null ) return;
@@ -930,30 +1007,33 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		driver.BarFillFullScale = fill.LocalScale;
 		driver.BarFillBasePosition = fill.LocalPosition;
 		driver.BarFillHalfLength = halfLength * s;
-
-		BuildClockLead( bar, driver, -dropZ );
 	}
 
-	/// <summary>The lead badge: the real material difference, on its own black plate standing
-	/// proud in front of the bar, centred on it.
+	/// <summary>The lead badge: the real material difference, on its own black plate standing in
+	/// the plates' tilted plane, centred between them and above the base.
 	///
-	/// <para>Its own plate, and not text laid straight onto the bar, because the thing behind
-	/// it changes colour — White's fill is near-white, Black's near-black, and no single text
-	/// colour survives both. The plate makes the background a constant.</para>
+	/// <para><b>Its transform is unchanged and that is the point.</b> It was built as a child of
+	/// the bar; when the bar moved down to the base's face it got its own anchor carrying the
+	/// identical plane transform, so the badge itself did not move by a thousandth. The position
+	/// was called right in the room, and "it had to be reparented" is not a reason to
+	/// re-tune it.</para>
 	///
-	/// <para>It covers the middle of the fill, which is fine and deliberate: the fill grows
-	/// from the centre, so its TIP is the part that carries the length, and the tip is always
-	/// outboard of this. For a lead too small to clear the badge, the number is the readout
-	/// anyway.</para></summary>
-	void BuildClockLead( GameObject bar, TableClock driver, float localZ )
+	/// <para>Its own plate, not text laid onto something else, because the plate is what makes
+	/// the background a constant — which is why the number was legible at all.</para></summary>
+	void BuildClockLead( GameObject clock, TableClock driver )
 	{
 		float s = TableScale;
 
+		// The plates' plane, as an anchor of its own. This used to BE the bar's GO — the badge
+		// rode it for free — so it is spelled out here rather than lost with it.
+		var plane = new GameObject( true, "LeadPlane" );
+		plane.Parent = clock;
+		plane.LocalPosition = new Vector3( 0f, 0f, ClockPlaneOriginZ ) * s;
+		plane.LocalRotation = Rotation.From( ClockFaceTilt, 90f, 0f );
+
 		var badge = new GameObject( true, "Lead" );
-		badge.Parent = bar;
-		// In the bar's own plane and rotation (it is a child), just proud of the FILL — see
-		// ClockLeadProud, which must clear the fill or the two intersect.
-		badge.LocalPosition = new Vector3( ClockLeadProud, 0f, localZ ) * s;
+		badge.Parent = plane;
+		badge.LocalPosition = new Vector3( ClockLeadProud, 0f, -ClockLeadDropZ ) * s;
 
 		AddBox( badge, "Plate", Vector3.Zero,
 			new Vector3( ClockLeadThickness, ClockLeadLength, ClockLeadHeight ) * s,

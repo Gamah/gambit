@@ -159,6 +159,10 @@ public sealed class TableClock : Component
 	/// a material bar at zero should look like — the object saying "nobody is ahead", not the
 	/// object being absent. This used to hide the bar entirely, which made "not there" the
 	/// normal state of a thing whose normal state is level.</para>
+	///
+	/// <para>The number no longer sits in front of the fill — the bar moved down onto the base's
+	/// upright face and the badge stayed in the plates' plane above it. Nothing here changed for
+	/// it: the two were never coupled in code, only in space.</para>
 	/// </summary>
 	void DriveBar()
 	{
@@ -192,12 +196,13 @@ public sealed class TableClock : Component
 		// draw it as a sliver. Past ten the bar pins and the number carries it.
 		float frac = Math.Min( Math.Abs( lead ), BarFullAt ) / (float)BarFullAt;
 
-		// Local +Y is White's end of the strip, and that is derived, not guessed: the plates
-		// and this bar share the face's rotation (pitch, yaw 90), and yaw 90 maps local +Y
-		// onto table −X — which BuildStationPlaque's own comment fixes as White's side (+X
-		// is Black's, radially inward). The old panel had to reason about a WorldPanel's
-		// content-space handedness to get this right and got it backwards on the first try,
-		// rendering each player their OPPONENT's clock. In table space it is just a sign.
+		// Local +Y is White's end of the bar, and that is derived, not guessed: the bar is
+		// yawed 90°, and yaw 90 maps local +Y onto table −X — which BuildStationPlaque's own
+		// comment fixes as White's side (+X is Black's, radially inward). Unchanged when the
+		// bar moved off the plates' tilted plane onto the base's upright face: it lost the
+		// PITCH, and pitch never touched the local Y axis. The old panel had to reason about a
+		// WorldPanel's content-space handedness for this same fact and got it backwards on the
+		// first try, rendering each player their OPPONENT's clock. In table space it is a sign.
 		float sign = lead > 0 ? 1f : -1f;
 
 		// Grow from the centre: scale the length axis by frac, then slide the fill's centre
