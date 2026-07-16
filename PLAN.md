@@ -232,15 +232,24 @@ from their side. Outcome is discretionary; there is no registration or blessing 
 - ~~**No takeback.**~~ **Wired up**, both halves, with draw-decline (which had existed
   server-side and unreachable from the UI since M8) and premove. Unverified in an editor.
 - **No berserk, no chat.** Both exist on the Board API and neither is wired up.
-- **"Quick pairing" is not a thing we can have, and the seek is not it.** Checked against the
-  live spec and lila, not recalled: lichess.org's homepage pools are a **WebSocket lobby**
-  concept (`poolIn`/`poolOut` in lila-ws), `grep -i pool` over the whole OpenAPI spec finds a
-  single line of prose saying pools are off-limits, and lila's `conf/routes` has no pool
-  endpoint at all. `POST /api/board/seek` is the only random-opponent mechanism the Board API
-  offers, it is already built ("♞ Find a game on lichess"), and it is **Rapid or slower** —
-  so the default Blitz 3+0 table can never find a stranger, and no amount of client work
-  changes that. Playing a stranger in blitz would need lichess to expose the pools. **Don't
-  re-open this without new facts from their side.**
+- **"Quick pairing" and blitz seeks are both behind the `web:mobile` scope — and we won't
+  take it.** Re-derived from lila + lila-ws master 2026-07-16 (see CLAUDE.md for the full
+  chain). The short version:
+  - Quick pairing is a **pool**, not a seek — two different systems in lila. Pools have **no
+    HTTP endpoint** (`grep -i pool` over `conf/routes` is empty); they're on the WebSocket
+    lobby, and lila-ws's bearer auth requires scope `web:mobile` or `web:polygon`. A
+    `board:play` token cannot authenticate there at all.
+  - Blitz seeks aren't universally refused: `boardApiHook`'s `allowFastGames` skips the Rapid
+    check for `isMobileOauth || isTakex3` — the same two scopes.
+  - `web:mobile`'s own description is **"Official Lichess mobile app"**. Requesting it would
+    be claiming to be lichess's first-party client to get past a gate aimed at third-party
+    board clients, on an API where our whole playerbase shares one IP and lichess can kill
+    the app on `clientOrigin`. It would also force every linked player to re-link.
+  → So: the seek is the only random-opponent path we may use, it's already built ("♞ Find a
+  game on lichess"), and it's **Rapid or slower**. The Blitz table can only ever play the
+  person opposite you. **Don't re-open this without new facts from lichess's side** — the
+  accommodation channel is Discord, and the ask would be "may we seek blitz", not a scope
+  we help ourselves to.
 - **No correspondence.** `SeekCorrespondence` exists in the lichess package and has no route:
   it's the one seek shape that costs the relay nothing (buffered, no held stream, no per-IP
   seek cap), but days-per-move doesn't fit sitting down at a table.
