@@ -17,9 +17,10 @@
 
 	ONE ROW, and that is geometry rather than taste. The clock is a thin strip sharing the
 	Y margin with a tray, and the face is tilted up out of it — so its height projects
-	back into Y and a tall face leans over the board. 1024×128 is what fits. Anything
-	added here has to fit on one line at a glance from a seat, or it does not belong on
-	this object.
+	back into Y and a tall face leans over the board — so the panel's height and
+	ClockFaceTilt trade off against each other and neither is tunable alone. Anything added
+	here has to fit on one line at a glance from a seat, or it does not belong on this
+	object.
 
 	JUST THE TIMES, one plate per player, pinned to the end of the strip nearest that
 	player and extending inward, with the material bar between them. There are no W/B
@@ -52,7 +53,7 @@
 			labels are gone now, so if this is ever flipped back the symptom will be
 			invisible and both players will simply read the wrong number.
 		*@
-		<div class="face @FaceClass( ChessSeat.Black )">@Face( ChessSeat.Black )</div>
+		<div class="face @FaceClass( ChessSeat.Black )"><div class="t">@Face( ChessSeat.Black )</div></div>
 
 		@* Material. Only while someone is actually ahead — "level" is the normal state of
 		   a chess game and a permanently zeroed gauge is furniture. If it seems never to
@@ -67,7 +68,7 @@
 			}
 		</div>
 
-		<div class="face @FaceClass( ChessSeat.White )">@Face( ChessSeat.White )</div>
+		<div class="face @FaceClass( ChessSeat.White )"><div class="t">@Face( ChessSeat.White )</div></div>
 	</div>
 </root>
 
@@ -75,7 +76,7 @@
 	@@import "WallTheme.scss";
 
 	/*
-		This panel's pixel space is ClockPxWidth × ClockPxHeight (1024 × 128), set by
+		This panel's pixel space is ClockPxWidth × ClockPxHeight (1024 × 208), set by
 		ChessRing.BuildStationClock — NOT the WorldPanel default of 512 square. Every px
 		below lives in that space, and the face's world scale is DERIVED there so 1024px
 		spans the clock body's length. Change the panel size there and these move with it;
@@ -137,27 +138,38 @@
 	.mid > div { flex-shrink: 0; }
 
 	/*
-		A plate is now nothing but the time — no W/B label. They were on the WRONG SIDES
-		(see the markup), and the fix for that is the ordering, not the label; a correct
-		label on a correct side is still noise on an object whose whole job is one number.
-		Player NAMES go above the clock later, which is the label that earns its place.
+		THE PLATE IS THE BOX; `.t` IS THE TEXT — two divs, not one, and that split is the
+		fix rather than a tidy-up.
 
-		Sized and centred like MarqueeNumberPanel's .num — explicit width/height with the
-		text centred inside — rather than left to hug its content. Content-hugging is what
-		made these two small plates adrift at the ends of a long strip.
+		This was a single div carrying the background AND the centring, and the time
+		rendered hanging off the plate's bottom edge: top third on the plate, the rest
+		spilling onto the tabletop. MarqueeNumberPanel — the WorldPanel that draws a big
+		number correctly — never does that. It sizes root and puts the glyph in an
+		absolutely-positioned 100%×100% child with an explicit `display: flex` and the
+		centring on THAT. This is the same shape, and the fourth time this panel's answer
+		has been "copy the working one".
 	*/
 	.face {
 		width: 255px;
 		height: 184px;
-		align-items: center;
-		justify-content: center;
-		text-align: center;
-		white-space: nowrap;
 		border-radius: 16px;
 		/* Opaque. Hex rather than rgba(...,1) so nobody reads the alpha as a knob: the
 		   plate reads as a physical face on a physical clock, and seeing the tabletop
 		   through it undid that. */
 		background-color: #0c0c10;
+	}
+
+	.t {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+		height: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		text-align: center;
+		white-space: nowrap;
 		/*
 			76px is calibrated and stays put — the plate around it is what changed size.
 			The panel's WIDTH is what fixes its world scale (1024px spans the clock body),
@@ -173,11 +185,12 @@
 	/* The running side is the only one worth looking at. Both plates are opaque now, so
 	   the ticking one is told apart by its TEXT going bright rather than by the plate
 	   getting less see-through — which is the stronger signal anyway. */
-	.face.on { background-color: #14161c; color: #e8e6df; }
+	.face.on { background-color: #14161c; }
+	.face.on .t { color: #e8e6df; }
 
 	/* Under TimeControl.PanicSeconds — the same threshold the panic beep starts at,
 	   which is why it is a shared constant and not a 10f typed in two files. */
-	.face.on.panic { color: #ff5f5f; }
+	.face.on.panic .t { color: #ff5f5f; }
 
 	/* Fixed width so the middle column doesn't shove the clocks around as the bar
 	   appears and disappears mid-game — the plates are edge-pinned, but a middle that
