@@ -32,6 +32,14 @@ namespace Gambit.Game;
 /// client's own ChessGame — players seated from move 1 have all of it; a FEN
 /// resync or late join keeps the position but loses the history, which only
 /// costs a shorter move list (and means that client won't archive the game).
+///
+/// Draws and takebacks are agreed here too, not just on lichess: the offers are
+/// [Sync] state, the host decides when an agreement has happened, and it derives the
+/// caller's seat from Rpc.Caller so nobody can agree on the other player's behalf. A
+/// takeback rewinds every client's board IN PLACE (ChessGame.TruncateToPly), which is
+/// what keeps the surviving moves — and keeps MoveCount an absolute ply, which is the
+/// index space _clockLog is keyed in. Moves carry a takeback epoch so one crossing a
+/// rewind on the wire is dropped rather than putting the undone move back.
 /// </summary>
 public sealed class LocalGameController : Component, IBoardGame
 {
@@ -101,6 +109,16 @@ public sealed class LocalGameController : Component, IBoardGame
 	[Sync( SyncFlags.FromHost )] public bool WhiteLichess { get; set; }
 	[Sync( SyncFlags.FromHost )] public bool BlackLichess { get; set; }
 
+	/// <summary>Standing draw / takeback offers, by seat. Host-authoritative like every
+	/// other table fact, and <c>[Sync]</c> rather than a broadcast because an offer is
+	/// STATE, not an event: a late joiner (and a spectator) must see the offer that is
+	/// already standing, and a client that missed the RPC would show a draw button that
+	/// silently means something else.</summary>
+	[Sync( SyncFlags.FromHost )] public bool WhiteDrawOffer { get; set; }
+	[Sync( SyncFlags.FromHost )] public bool BlackDrawOffer { get; set; }
+	[Sync( SyncFlags.FromHost )] public bool WhiteTakebackOffer { get; set; }
+	[Sync( SyncFlags.FromHost )] public bool BlackTakebackOffer { get; set; }
+
 	/// <summary>Captured by the host at game start: this game is being played on
 	/// lichess. Frozen for the game's duration, so a toggle can't change the rules
 	/// under a game in progress.</summary>
@@ -165,6 +183,19 @@ public sealed class LocalGameController : Component, IBoardGame
 	float _sinceClockSync;
 	int _hostPly; // moves the host has folded this game — the ply NetClockStamp keys on
 
+	/// <summary>How many takebacks have landed on THIS board, counted locally.
+	///
+	/// <para>The stale-move guard, and it can't be a ply number. A move carries the
+	/// epoch it was played under; a takeback bumps it. After a rewind the plies repeat,
+	/// so "this move is stale" and "I am behind" look identical by ply — and guessing
+	/// wrong either drops a real move (board freezes) or applies a dead one (the rewind
+	/// silently undoes itself and the history goes with it).</para>
+	///
+	/// <para>Set from NetTakeback's own payload rather than from a [Sync], so it changes
+	/// at the exact instant the board rewinds. A [Sync] arrives on its own schedule, and
+	/// the whole race is measured in the gap.</para></summary>
+	int _takebackEpoch;
+
 	/// <summary>Authoritative post-move clocks per 0-based ply, for the PGN's {[%clk]}
 	/// comments. Filled by <see cref="NetClockStamp"/> on every client, because the
 	/// seated clients are the ones that archive and only the host knows the real time.
@@ -201,6 +232,10 @@ public sealed class LocalGameController : Component, IBoardGame
 		SyncLocalGame();
 		TryArchive();
 
+		// After SyncLocalGame, so a premove is judged against the position we
+		// actually hold rather than one we're about to throw away.
+		FirePremove();
+
 		if ( Networking.IsHost )
 			HostUpdate();
 	}
@@ -219,6 +254,7 @@ public sealed class LocalGameController : Component, IBoardGame
 			{
 				Game = null;
 				_localGameId = 0;
+				_premoveUci = null;
 			}
 			return;
 		}
@@ -227,6 +263,8 @@ public sealed class LocalGameController : Component, IBoardGame
 
 		_localGameId = GameId;
 		Game = new ChessGame();
+		_premoveUci = null;   // a premove must never outlive the game it was armed in
+		_takebackEpoch = 0;
 		_historyIntact = true;
 		_clockLog.Clear();
 
@@ -457,8 +495,19 @@ public sealed class LocalGameController : Component, IBoardGame
 		// Consumed by the start, so a rematch needs a fresh pair of presses.
 		WhiteReady = false;
 		BlackReady = false;
+		HostClearOffers();
 
 		Phase = PhasePlaying;
+	}
+
+	/// <summary>Host-side: drop every standing offer. An offer belongs to the position
+	/// it was made in — see the call in HostFold.</summary>
+	void HostClearOffers()
+	{
+		WhiteDrawOffer = false;
+		BlackDrawOffer = false;
+		WhiteTakebackOffer = false;
+		BlackTakebackOffer = false;
 	}
 
 	void HostSetIdle()
@@ -470,6 +519,7 @@ public sealed class LocalGameController : Component, IBoardGame
 		OverResult = null;
 		WhiteReady = false;
 		BlackReady = false;
+		HostClearOffers();
 		_whiteRemaining = 0f;
 		_blackRemaining = 0f;
 		PublishClocks();
@@ -483,6 +533,11 @@ public sealed class LocalGameController : Component, IBoardGame
 
 		BoardFen = fenAfter;
 		LastMoveUci = uci;
+
+		// Playing on IS declining — the ordinary way both offers die. Without this a
+		// draw offered on move 4 would still be standing (and acceptable) on move 40,
+		// long after the position that prompted it stopped existing.
+		HostClearOffers();
 
 		HostApplyIncrement( fenAfter );
 
@@ -571,6 +626,329 @@ public sealed class LocalGameController : Component, IBoardGame
 	/// without caring which controller owns the board.</summary>
 	public bool TryMakeMove( string uci ) => TryMakeLocalMove( uci );
 
+	// ── Offers: draw and takeback ──
+	//
+	// The two-seat table has had neither until now, on the reasoning that the players
+	// can just say so across the table. That was wrong about the draw in a way worth
+	// recording: SAYING SO DOESN'T END THE GAME. There was no way to record a 1/2-1/2
+	// at a table at all — agreeing meant one player resigning a drawn position, or the
+	// game sitting there. And it was wrong about the takeback because the clocks are
+	// real: a misclick in a 3+0 game cost the position with no way back.
+	//
+	// Every request is [Rpc.Host]: the host owns the offer flags and decides when an
+	// agreement has happened, the same way it owns Phase and the clocks. None of them
+	// takes a seat argument — the host derives the caller's seat from Rpc.Caller via
+	// IsSeatedCaller, so a client cannot name the seat it acts for and cannot agree a
+	// draw on the other player's behalf. (The older NetResign( whiteResigned ) does
+	// take its caller's word for it; that is not a pattern worth copying.)
+
+	/// <summary>Offers belong to the game actually being played at this table.
+	///
+	/// <para>While lichess owns the board this controller is a SHELL: it holds the seats
+	/// and the ClientGameId, its ChessGame never advances (moves go to the relay, not
+	/// NetChessMove), and the host stops ticking its clocks for exactly that reason. A
+	/// draw agreed on it would end a table game that isn't happening, while the real one
+	/// carried on at lichess. The HUD reads the lichess controller in that state and
+	/// never calls these — this is the guard for when something else does.</para></summary>
+	bool OffersLive => Playing && !LichessGame;
+
+	/// <summary>The opponent has a draw offer standing.</summary>
+	public bool DrawOffered =>
+		OffersLive && LocalSeat is { } seat
+		&& ( seat == ChessSeat.White ? BlackDrawOffer : WhiteDrawOffer );
+
+	/// <summary>We have a draw offer standing.</summary>
+	public bool DrawPending =>
+		OffersLive && LocalSeat is { } seat
+		&& ( seat == ChessSeat.White ? WhiteDrawOffer : BlackDrawOffer );
+
+	/// <summary>Offer a draw, or accept one already offered.</summary>
+	public void OfferDraw()
+	{
+		if ( !OffersLive || LocalSeat == null ) return;
+		RequestDraw( GameId );
+	}
+
+	/// <summary>Decline the draw the opponent is offering.</summary>
+	public void DeclineDraw()
+	{
+		if ( !OffersLive || LocalSeat == null ) return;
+		RequestDeclineDraw( GameId );
+	}
+
+	/// <summary>The opponent is proposing a takeback.</summary>
+	public bool TakebackOffered =>
+		OffersLive && LocalSeat is { } seat
+		&& ( seat == ChessSeat.White ? BlackTakebackOffer : WhiteTakebackOffer );
+
+	/// <summary>We are proposing a takeback.</summary>
+	public bool TakebackPending =>
+		OffersLive && LocalSeat is { } seat
+		&& ( seat == ChessSeat.White ? WhiteTakebackOffer : BlackTakebackOffer );
+
+	/// <summary>A takeback is possible: a live game we're seated in, both sides have
+	/// moved, and our own move history is intact.
+	///
+	/// <para>The history clause is the local one. A client whose board came from a FEN
+	/// resync has no moves to rewind through and would have to be handed a position
+	/// instead — the same reason such a client stays quiet at archive time. The HOST's
+	/// history is what actually does the rewind, and the host is present for every game
+	/// in its own lobby, so this is about the asker's board, not the truth.</para></summary>
+	public bool CanTakeback =>
+		OffersLive && LocalSeat != null && _historyIntact
+		&& Game != null && Game.MoveCount >= 2;
+
+	/// <summary>Propose a takeback, or accept one already proposed.</summary>
+	public void OfferTakeback()
+	{
+		if ( !CanTakeback ) return;
+		RequestTakeback( GameId );
+	}
+
+	/// <summary>Decline the takeback the opponent is proposing.</summary>
+	public void DeclineTakeback()
+	{
+		if ( !OffersLive || LocalSeat == null ) return;
+		RequestDeclineTakeback( GameId );
+	}
+
+	[Rpc.Host]
+	void RequestDraw( int gameId )
+	{
+		if ( gameId != GameId || !OffersLive || !IsSeatedCaller( out var seat ) ) return;
+		bool white = seat == ChessSeat.White;
+
+		// Offering into a standing offer is accepting it — one gesture, like lichess.
+		if ( white ? BlackDrawOffer : WhiteDrawOffer )
+		{
+			NetAgreeDraw( GameId );
+			return;
+		}
+
+		if ( white ) WhiteDrawOffer = true; else BlackDrawOffer = true;
+	}
+
+	[Rpc.Host]
+	void RequestDeclineDraw( int gameId )
+	{
+		if ( gameId != GameId || !OffersLive || !IsSeatedCaller( out var seat ) ) return;
+		bool white = seat == ChessSeat.White;
+
+		// Decline clears the OPPONENT's offer — the one being refused.
+		if ( white ) BlackDrawOffer = false; else WhiteDrawOffer = false;
+	}
+
+	/// <summary>Host → everyone: the draw was agreed. Every client records it on its own
+	/// ChessGame so the PGN it archives says 1/2-1/2, exactly as NetResign does.</summary>
+	[Rpc.Broadcast]
+	void NetAgreeDraw( int gameId )
+	{
+		if ( gameId != GameId || GameOver ) return;
+
+		SyncLocalGame();
+		Game?.AgreeDraw();
+
+		if ( Networking.IsHost )
+			HostEnd( "Agreement", "1/2-1/2" );
+	}
+
+	[Rpc.Host]
+	void RequestTakeback( int gameId )
+	{
+		if ( gameId != GameId || !OffersLive || !IsSeatedCaller( out var seat ) ) return;
+		bool white = seat == ChessSeat.White;
+
+		if ( white ? BlackTakebackOffer : WhiteTakebackOffer )
+		{
+			HostApplyTakeback( acceptedByWhite: white );
+			return;
+		}
+
+		if ( white ) WhiteTakebackOffer = true; else BlackTakebackOffer = true;
+	}
+
+	[Rpc.Host]
+	void RequestDeclineTakeback( int gameId )
+	{
+		if ( gameId != GameId || !OffersLive || !IsSeatedCaller( out var seat ) ) return;
+		bool white = seat == ChessSeat.White;
+
+		if ( white ) BlackTakebackOffer = false; else WhiteTakebackOffer = false;
+	}
+
+	/// <summary>Host-side: rewind the game far enough to hand the PROPOSER their move
+	/// back, then tell everyone.
+	///
+	/// <para>How far is the whole question, and it is not "one move". A takeback exists
+	/// to undo a move you regret, so it must rewind until the proposer is on move: one
+	/// ply if they've just moved and the opponent hasn't replied, two if the opponent
+	/// already has. Rewinding a fixed one ply would hand the move back to whoever
+	/// happened to be on move — sometimes the other player.</para>
+	///
+	/// <para>The host's own history does the work, and the host is in every game in its
+	/// own lobby from ply 0. If its board ever fell back to a FEN snapshot there is
+	/// nothing to rewind through and the request is dropped rather than guessed at.</para></summary>
+	void HostApplyTakeback( bool acceptedByWhite )
+	{
+		WhiteTakebackOffer = false;
+		BlackTakebackOffer = false;
+
+		if ( !_historyIntact || Game == null ) return;
+
+		// The proposer is whoever DIDN'T just accept.
+		bool proposerIsWhite = !acceptedByWhite;
+
+		// ABSOLUTE plies from the standard start, which is the space _clockLog is keyed
+		// in — and stays absolute across a takeback only because TruncateToPly rewinds
+		// in place instead of rebuilding a fresh game from a FEN.
+		int ply = Game.MoveCount;
+
+		// Rewind to the last position with the proposer on move: plies alternate, so an
+		// even ply count means White is on move.
+		int target = ( ply % 2 == 0 ) == proposerIsWhite ? ply - 2 : ply - 1;
+		if ( target < 0 ) return;
+
+		// Rewind our own copy first, to get the FEN to publish as the checksum. Every
+		// client truncates in NetTakeback, including this one — where it lands on the
+		// ply we're already at and no-ops.
+		if ( !Game.TruncateToPly( target ) )
+		{
+			// Each undo is atomic but the walk is not, so a refusal partway leaves the
+			// host holding a position nobody else has — a desync, not an inconvenience.
+			// Publish whatever we actually ended up at so everyone converges on the host,
+			// and leave the clocks alone (they belong to moves that may still exist).
+			//
+			// Unreachable as far as anyone can tell: the vendor only refuses to Cancel
+			// while its board is browsing history, which a live game never does. Handled
+			// anyway, because "can't happen" and "leaves the table split in two" is a bad
+			// pairing.
+			Log.Warning( $"[Gambit] takeback: couldn't rewind to ply {target} — resyncing at {Game.MoveCount}" );
+			_hostPly = Game.MoveCount;
+			NetTakeback( GameId, _takebackEpoch + 1, Game.MoveCount, Game.Fen, Game.LastMoveUci,
+				_whiteRemaining, _blackRemaining );
+			return;
+		}
+
+		// Clocks go back to what they were after the last surviving move. Ply 0 means
+		// nothing survives, so the bank is the time control's own.
+		float w = Tc.InitialSeconds, b = Tc.InitialSeconds;
+		if ( target > 0 && _clockLog.TryGetValue( target - 1, out var stamp ) )
+			( w, b ) = stamp;
+
+		_whiteRemaining = w;
+		_blackRemaining = b;
+		_hostPly = target;
+
+		NetTakeback( GameId, _takebackEpoch + 1, target, Game.Fen, Game.LastMoveUci, w, b );
+	}
+
+	/// <summary>Host → everyone: rewind to <paramref name="toPly"/>.
+	///
+	/// <para>Everyone rewinds their OWN board in place rather than adopting the FEN,
+	/// which is what keeps the game archivable: <see cref="ChessGame.TruncateToPly"/>
+	/// keeps the surviving moves, where rebuilding from a FEN would silently leave the
+	/// table with a stub PGN for the rest of the game. The FEN rides along as the
+	/// checksum and the fallback, the same bargain NetChessMove strikes.</para></summary>
+	[Rpc.Broadcast]
+	void NetTakeback( int gameId, int epoch, int toPly, string fenAfter, string lastMoveUci, float white, float black )
+	{
+		if ( gameId != GameId || GameOver ) return;
+
+		SyncLocalGame();
+
+		// Before the rewind, so any move still in flight from the epoch we're leaving is
+		// dropped by NetChessMove rather than putting the undone move back.
+		_takebackEpoch = epoch;
+
+		// A premove aimed at a position that no longer exists must not survive the
+		// rewind — it would fire into a board its owner never saw.
+		_premoveUci = null;
+
+		if ( _historyIntact && Game != null && Game.TruncateToPly( toPly ) && Game.Fen == fenAfter )
+		{
+			// Rewound with the history intact — still archivable.
+		}
+		else if ( ChessGame.TryFromFen( fenAfter, out var snapshot ) )
+		{
+			// No history to rewind through, or ours disagreed with the host's. Take the
+			// position and stop claiming this client can archive the game — the same
+			// bargain (and the same flag) as a FEN resync.
+			Game = snapshot;
+			_historyIntact = false;
+		}
+		else
+		{
+			Log.Warning( "[Gambit] takeback carried an unreadable FEN — board frozen until next move" );
+			return;
+		}
+
+		// Stamps at or past the rewind point describe moves that no longer happened.
+		// Keyed absolutely, like Game.MoveCount, so what survives still lines up with
+		// the moves that survive — that is what keeps {[%clk]} on the right move, and
+		// on the right side.
+		var stale = new List<int>();
+		foreach ( int p in _clockLog.Keys )
+			if ( p >= toPly ) stale.Add( p );
+		foreach ( int p in stale )
+			_clockLog.Remove( p );
+
+		if ( Networking.IsHost )
+		{
+			BoardFen = fenAfter;
+			LastMoveUci = lastMoveUci;
+			_whiteRemaining = white;
+			_blackRemaining = black;
+			WhiteClock = white;
+			BlackClock = black;
+		}
+	}
+
+	// ── Premove ──
+
+	string _premoveUci;
+
+	/// <inheritdoc/>
+	public string PremoveUci => _premoveUci;
+
+	/// <inheritdoc/>
+	public void SetPremove( string uci )
+	{
+		if ( !Playing || LocalSeat == null ) return;
+		if ( uci is not { Length: >= 4 } ) return;
+		_premoveUci = uci;
+	}
+
+	/// <inheritdoc/>
+	public void ClearPremove() => _premoveUci = null;
+
+	/// <summary>Play the armed premove once the opponent's move has landed.
+	///
+	/// <para>Driven from <see cref="OnUpdate"/> rather than from the end of
+	/// <see cref="ApplyRemoteMove"/>, which is where the opponent's move actually
+	/// arrives. Firing there would raise a broadcast (NetChessMove) from inside a
+	/// broadcast handler — the same shape as the NetClockStamp call this file already
+	/// flags as worth an eye on. A premove is worth a frame (~16ms) to avoid nesting
+	/// one relay inside another; it is not worth a networking mystery.</para>
+	///
+	/// <para>An illegal premove is DROPPED, not held: it was aimed at a position the
+	/// opponent didn't play into, and firing it later at a position it was never meant
+	/// for is how a premove hangs a queen two moves after you forgot about it.</para></summary>
+	void FirePremove()
+	{
+		if ( _premoveUci == null ) return;
+
+		if ( !Playing || LocalSeat == null ) { _premoveUci = null; return; }
+		if ( !IsMyTurn ) return;
+
+		string uci = _premoveUci;
+
+		// Disarm BEFORE playing: TryMakeLocalMove can refuse, and a premove left armed
+		// through its own refusal would retry every frame for the rest of the game.
+		_premoveUci = null;
+
+		TryMakeLocalMove( uci );
+	}
+
 	public bool TryMakeLocalMove( string uci )
 	{
 		if ( !IsMyTurn || Game == null ) return false;
@@ -579,16 +957,26 @@ public sealed class LocalGameController : Component, IBoardGame
 		if ( !Game.ApplyUci( uci ) ) return false;
 
 		PlayMoveSound( fenBefore, Game.Fen );
-		NetChessMove( GameId, uci, Game.Fen );
+		NetChessMove( GameId, _takebackEpoch, uci, Game.Fen );
 		return true;
 	}
 
 	/// <summary>Mover → everyone: apply this UCI; fenAfter doubles as checksum
 	/// and resync snapshot. The host additionally folds it into BoardFen.</summary>
 	[Rpc.Broadcast]
-	void NetChessMove( int gameId, string uci, string fenAfter )
+	void NetChessMove( int gameId, int epoch, string uci, string fenAfter )
 	{
 		if ( gameId != GameId ) return; // stale relay from a previous game
+
+		// A move played from a position that no longer exists: it was in flight when a
+		// takeback rewound the board under it. Applying it — or worse, adopting its FEN
+		// through ApplyRemoteMove's resync — would put the undone move back and undo the
+		// takeback, taking the move history with it.
+		//
+		// A client that hasn't SEEN the takeback yet has the old epoch too, so it accepts
+		// the move and converges a moment later when NetTakeback truncates past it. The
+		// guard drops only what is genuinely from a dead epoch.
+		if ( epoch != _takebackEpoch ) return;
 
 		bool isSelf = Rpc.Caller != null && Rpc.Caller == Connection.Local;
 		if ( !isSelf )
@@ -611,7 +999,18 @@ public sealed class LocalGameController : Component, IBoardGame
 		{
 			// Missed context (join race, desync) — the FEN snapshot is authoritative.
 			if ( ChessGame.TryFromFen( fenAfter, out var snapshot ) )
+			{
 				Game = snapshot;
+
+				// A FEN snapshot has no moves behind it, so this client can no longer
+				// archive the game and its MoveCount is no longer an absolute ply.
+				// SyncLocalGame's own snapshot path has always said so; this one didn't,
+				// which left _historyIntact lying — TryArchive would upload a stub PGN,
+				// permanently (the POST is idempotent on client_game_id), and a takeback
+				// would read the relative MoveCount as an absolute ply and rewind to the
+				// wrong move.
+				_historyIntact = false;
+			}
 			else
 				Log.Warning( $"[Gambit] table relay carried an unreadable FEN — board frozen until next move" );
 		}

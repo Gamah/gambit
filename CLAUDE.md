@@ -94,7 +94,7 @@ token and must be signed by *that* token. So:
   `lila.core.game.isBoardCompatible` is `Speed(clock) >= Rapid` (≥ 480s) and gates **seeks**
   (via `SetupForm.boardApiHook`). Same name, different files, different answers. `Speed` comes
   from scalachess's `byTime(limit + 40*increment)`. **[SOURCE]**
-  → **Bullet never reaches lichess by any path.** The default table (Blitz 3+2, estimate 260)
+  → **Bullet never reaches lichess by any path.** The default table (Blitz 3+0, estimate 180)
   is challengeable but **not** seekable — which is why a direct challenge is the primary flow.
   Unlimited *is* challengeable (no clock → Correspondence speed) but not seekable.
 - **A seek's `time` is MINUTES; a challenge's `clock.limit` is SECONDS.** An easy way to ask
@@ -102,6 +102,55 @@ token and must be signed by *that* token. So:
 - **Omitting both clock fields is how you ask for an unlimited challenge.** Sending `0/0` asks
   for a rejected 0+0 clock instead.
 - **`clock.limit` has a domain**: 0, 15, 30, 45, 60, 90, or any multiple of 60 up to 10800.
+- **An offer POST always answers `200 {"ok":true}`, whether or not lichess took it.**
+  `setDraw`/`setTakeback` return Unit in lila and the controller wraps them in `fuccess`, so
+  the documented `400 "The draw offering failed"` never fires. lichess silently drops a draw
+  offered before ply 2, a second draw within 20 ply of your last, and a takeback before both
+  sides have moved. **The only truth is the standing offer on the NEXT `gameState`** —
+  `wdraw`/`bdraw`/`wtakeback`/`btakeback`, which lichess **omits when false** rather than
+  sending false. Nothing may report an offer landed from a status code. This is why the
+  takeback button is hidden before move 2 rather than shown and dead.
+- **Draw and takeback are ONE endpoint each, not three.** `/draw/{accept}` and
+  `/takeback/{accept}`: offering and accepting are the same call, and the path segment is
+  parsed by lila's `Form.trueish` (`1|true|True|on|yes`) — so decline is "any non-truthy
+  word", not a `no` keyword. Both are on the **Board** API, not just the Bot API.
+- **A takeback offer arrives as an ordinary `gameState`.** lila `pushState`s on
+  `BoardTakebackOffer` exactly as it does on a move — there is no takeback event type to
+  look for. (The offer's classifier subscribes to `BoardTakeback.makeChan`, which *reads*
+  like a dead handler until you find `BoardTakebackOffer.makeChan = BoardTakeback.makeChan`.)
+- **Premove is not a lichess concept.** There is no API surface for it and no server
+  involvement: every `premove` hit in lila is `ui/` TypeScript or a *user preference*
+  (`enablePremove`) that lichess's own client reads. A premove is just "POST the move the
+  instant it is legal" — so ours is client-only by nature, not by choice.
+- **Quick pairing and blitz seeks are both locked behind ONE door: the `web:mobile` scope.**
+  Re-derived from lila + lila-ws master 2026-07-16, correcting an earlier, blunter claim in
+  this file that the API simply forbids them. It doesn't — it gates them on being lichess's
+  own app, which amounts to the same thing for us and is a very different reason.
+  - **Quick pairing (the homepage pools) is not `POST /api/board/seek`.** They are different
+    systems in lila: a seek is a *hook*, quick pairing is a *pool*. `grep -i pool` over
+    lila's `conf/routes` returns **nothing** — there is no HTTP endpoint at all. Pools live
+    on the **WebSocket lobby** (`poolIn`/`poolOut` in lila-ws's `ClientOut`), and lila-ws's
+    bearer auth requires the token's scopes to be **`web:mobile` or `web:polygon`** — a
+    `board:play` token cannot authenticate to lila-ws, full stop.
+  - **Blitz seeks are not universally refused.** `SetupForm.boardApiHook` takes an
+    **`allowFastGames`** flag that skips the Rapid check entirely, and `Setup.boardApiHook`
+    passes `ctx.isMobileOauth || ctx.isTakex3 || (ctx.isAnon && isLichessMobile)`. Both
+    `isMobileOauth` and `isTakex3` are scope checks (`Web.Mobile` = `web:mobile`,
+    `Web.Takex3` = `web:polygon`). So blitz IS seekable — **if you hold the scope whose own
+    description reads "Official Lichess mobile app"**.
+  - **We do not request it, and this is a rule, not an oversight.** `board:play` is the only
+    scope we ever ask for. Taking `web:mobile` would mean claiming to be lichess's first-party
+    app to bypass a gate they put on third-party board clients deliberately — against an API
+    whose limits our whole playerbase shares on one IP, whose traffic we made attributable
+    to us on purpose, and which lichess can kill wholesale on `clientOrigin`. It would also
+    force every linked player through a re-link. **Don't "fix" the blitz seek this way.**
+  → The consequence stands: **a blitz table can never find a stranger**, and quick pairing is
+  not a feature we can have. The direct challenge is the primary flow *because* of this.
+- **A real-time seek's response carries no game id** — it is a stream of empty lines whose
+  only job is to stay open (closing it cancels the seek), which is why the seek flow needs
+  the event stream and the paired flow doesn't. A **correspondence** seek is the exception:
+  plain JSON, returns `{"id":…}` immediately, no held connection. There is also an
+  undocumented `DELETE /api/board/seek` (`Setup.boardApiHookCancel`) that the spec omits.
 - Tokens are long-lived (~1 year) with **no refresh tokens**. A scope change forces a full
   re-link for everyone, so `board:play` is the only scope we ever request.
 - **Imported games are unrated and attributed to NOBODY** — `[White]`/`[Black]` are display

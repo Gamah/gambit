@@ -55,7 +55,7 @@ public sealed class SpectatorController : Component
 	/// <summary>Which seat's clock is running on the featured table, or null.</summary>
 	public ChessSeat? TickingSeat { get; private set; }
 
-	/// <summary>Menu name of the featured table's time control ("Blitz 3+2"), or null
+	/// <summary>Menu name of the featured table's time control ("Blitz 3+0"), or null
 	/// when nothing is live.</summary>
 	public string TimeControlLabel { get; private set; }
 

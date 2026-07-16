@@ -123,6 +123,11 @@ type PlayState struct {
 	Finished      bool   `json:"finished"`
 	WhiteDraw     bool   `json:"white_draw"`
 	BlackDraw     bool   `json:"black_draw"`
+	// Standing takeback proposals, same shape as the draw pair above. These are
+	// the only honest answer to "did my takeback land?" — the POST that offered
+	// it always returns 200 whether lichess took it or dropped it.
+	WhiteTakeback bool `json:"white_takeback"`
+	BlackTakeback bool `json:"black_takeback"`
 }
 
 // PlayRequest is an intent to put a game on lichess. Two shapes:
@@ -750,6 +755,8 @@ func applyState(s *PlayState, st *lichess.GameState) {
 	s.Winner = st.Winner
 	s.WhiteDraw = st.Wdraw
 	s.BlackDraw = st.Bdraw
+	s.WhiteTakeback = st.Wtakeback
+	s.BlackTakeback = st.Btakeback
 
 	if lichess.Finished(st.Status) {
 		s.Finished = true
@@ -793,6 +800,10 @@ func (r *relay) Act(ctx context.Context, p *play, steamID int64, action, uci str
 		return lichess.Draw(ctx, token, state.GameID, true)
 	case "draw-decline":
 		return lichess.Draw(ctx, token, state.GameID, false)
+	case "takeback":
+		return lichess.Takeback(ctx, token, state.GameID, true)
+	case "takeback-decline":
+		return lichess.Takeback(ctx, token, state.GameID, false)
 	case "abort":
 		return lichess.Abort(ctx, token, state.GameID)
 	default:

@@ -19,11 +19,17 @@ namespace Gambit.World;
 /// spawns (promotion). No incremental board state to corrupt — any FEN resync
 /// renders correctly by the same path.
 ///
-/// Input while seated and it's our turn: ray from the cursor to the board
-/// plane picks squares; first click selects an own piece (legal targets
-/// highlight), second click moves — via the controller, which validates with
-/// the embedded rules before anything touches the network. A pawn reaching the
-/// last rank parks as PendingPromotion until GameHud's picker chooses a piece.
+/// Input while seated: ray from the cursor to the board plane picks squares;
+/// first click selects an own piece (targets highlight), second click commits —
+/// via the controller, which validates with the embedded rules before anything
+/// touches the network. A pawn reaching the last rank parks as PendingPromotion
+/// until GameHud's picker chooses a piece.
+///
+/// The same two clicks do two jobs. On our turn they play a move, against the
+/// LEGAL targets. On the opponent's they arm a premove, against the permissive
+/// PremoveTargets — a different question with a different answer. See
+/// CanPremove and ChessGame.PremoveTargets.
+///
 /// Highlights reuse the board's cell boxes: tint swaps, no extra geometry.
 /// </summary>
 public sealed class ChessBoardView : Component
@@ -48,6 +54,23 @@ public sealed class ChessBoardView : Component
 	/// <para>The lichess controller only claims the board once the local player has
 	/// opted in at this table; otherwise the local game owns it, unchanged.</para></summary>
 	IBoardGame Source => Lichess is { Engaged: true } ? Lichess : Controller;
+
+	/// <summary>The local player may arm a premove right now: a live game they're
+	/// seated in, with the BOARD saying the opponent is on move.
+	///
+	/// <para>Goes through <see cref="IBoardGame"/> like everything else here, because
+	/// premove belongs to any game with a clock — see <see cref="IBoardGame.PremoveUci"/>
+	/// for why it isn't lichess-only.</para>
+	///
+	/// <para>Deliberately not <c>!IsMyTurn</c>, which is a stronger claim than it
+	/// looks: on lichess it also goes false while our own move is in flight, and the
+	/// board doesn't advance until lichess confirms. In that window "not my turn" is
+	/// true while the position on screen is still the one BEFORE our move — arming
+	/// there would premove a knight that has already left the square it's drawn on,
+	/// and it would silently evaporate when it fired.</para></summary>
+	bool CanPremove =>
+		Source is { Playing: true, Game: { } game, LocalSeat: { } seat }
+		&& game.WhiteToMove != ( seat == ChessSeat.White );
 
 	/// <summary>Seconds a piece takes to slide to its new square.</summary>
 	[Property] public float MoveSeconds { get; set; } = 0.22f;
@@ -77,6 +100,10 @@ public sealed class ChessBoardView : Component
 	static readonly Color HoverTint = new( 0.20f, 0.45f, 0.90f );
 	static readonly Color LastMoveTint = new( 0.45f, 0.38f, 0.10f );
 	static readonly Color CheckTint = new( 0.85f, 0.14f, 0.10f );
+	// An armed premove: purple, because it is the one highlight that shows a move
+	// that HASN'T happened and might never. It must not be mistaken for the gold
+	// of a live selection or the olive of a move lichess actually played.
+	static readonly Color PremoveTint = new( 0.52f, 0.16f, 0.72f );
 
 	const string StartPlacement = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
 
@@ -314,10 +341,20 @@ public sealed class ChessBoardView : Component
 	{
 		_hoverSquare = -1;
 
-		// Only the seated local player interacts, only while the game is live,
-		// only on their turn, and not while the promotion picker is up.
+		// Only the seated local player interacts, only while the game is live, and
+		// not while the promotion picker is up. On their own turn they move; on the
+		// opponent's turn they may arm a premove, and nothing else.
 		var source = Source;
-		if ( source == null || !source.IsMyTurn || PendingPromotion != null )
+		bool premoving = CanPremove;
+
+		// The turn flipped under a live selection: the squares lit up are answers to
+		// a question nobody is asking any more. PremoveTargets is deliberately
+		// permissive, so leaving them up once it IS your turn would paint illegal
+		// moves green and then refuse them on click.
+		if ( Selected != null && _targetsArePremove != premoving )
+			ClearSelection();
+
+		if ( source == null || ( !source.IsMyTurn && !premoving ) || PendingPromotion != null )
 		{
 			// Game ended or reset from under us (resign/abandon produce no board
 			// diff) — drop any half-finished input state.
@@ -340,9 +377,14 @@ public sealed class ChessBoardView : Component
 		string clicked = SquareName( square );
 		bool ownPiece = IsOwnPiece( _rendered[square] );
 
+		// Any click cancels an armed premove. It is the only way to take one back,
+		// and re-arming costs the same two clicks that armed it — so a click that
+		// goes on to arm a new one just replaces it.
+		source.ClearPremove();
+
 		if ( Selected == null )
 		{
-			if ( ownPiece ) Select( clicked );
+			if ( ownPiece ) Select( clicked, premoving );
 		}
 		else if ( clicked == Selected )
 		{
@@ -350,7 +392,18 @@ public sealed class ChessBoardView : Component
 		}
 		else if ( _targets.Contains( clicked ) )
 		{
-			if ( game.IsPromotion( Selected, clicked ) )
+			if ( premoving )
+			{
+				// Promotion is decided here rather than by the picker: the picker
+				// is a modal on a board it isn't your turn to touch, and a premoved
+				// pawn may never reach the last rank at all. Queen, silently — the
+				// same default the rest of the world's premoves use, and the piece
+				// you want in all but a rare underpromotion.
+				string promo = game.IsPromotion( Selected, clicked ) ? "q" : "";
+				source.SetPremove( Selected + clicked + promo );
+				ClearSelection();
+			}
+			else if ( game.IsPromotion( Selected, clicked ) )
 			{
 				// Park until GameHud's picker calls ChoosePromotion
 				PendingPromotion = (Selected, clicked);
@@ -364,7 +417,7 @@ public sealed class ChessBoardView : Component
 		}
 		else if ( ownPiece )
 		{
-			Select( clicked ); // switch selection
+			Select( clicked, premoving ); // switch selection
 		}
 		else
 		{
@@ -372,11 +425,24 @@ public sealed class ChessBoardView : Component
 		}
 	}
 
-	void Select( string square )
+	/// <summary>Select a piece and work out where it may go.
+	///
+	/// <para><paramref name="premoving"/> switches which rules answer that: on your
+	/// turn, the legal moves; on the opponent's, the permissive premove mobility
+	/// (see <see cref="ChessGame.PremoveTargets"/>), because the position a premove
+	/// is aimed at doesn't exist yet.</para></summary>
+	void Select( string square, bool premoving )
 	{
 		Selected = square;
-		_targets = Source.Game.LegalTargets( square );
+		_targetsArePremove = premoving;
+		_targets = premoving
+			? Source.Game.PremoveTargets( square )
+			: Source.Game.LegalTargets( square );
 	}
+
+	/// <summary>Which rules produced <see cref="_targets"/>. Kept so the selection
+	/// can be dropped when the turn flips out from under it.</summary>
+	bool _targetsArePremove;
 
 	void ClearSelection()
 	{
@@ -467,13 +533,25 @@ public sealed class ChessBoardView : Component
 		var game = source?.Game;
 		string lastMove = game != null ? game.LastMoveUci ?? source.LastMoveUci : null;
 		string checkedKing = game?.CheckedKingSquare;
-		bool interactive = source?.IsMyTurn == true && PendingPromotion == null;
+		// Targets light up on your turn AND while arming a premove — in premove
+		// mode they're PremoveTargets, so the green means "you can aim here", not
+		// "this is legal".
+		bool interactive = ( source?.IsMyTurn == true || CanPremove ) && PendingPromotion == null;
+		// From/To derived here rather than on the seam: the controllers hold ONE value
+		// (the whole premove), and two halves of it would be two things to keep in step.
+		string premove = source?.PremoveUci;
+		string premoveFrom = premove is { Length: >= 4 } ? premove[..2] : null;
+		string premoveTo = premove is { Length: >= 4 } ? premove[2..4] : null;
 
 		// Repaint only when an input into the tint decision changed — idle
 		// tables (and non-hovered frames) skip the 64-cell walk entirely. While
 		// cells are still binding, repaint regardless so latecomers get tinted.
+		// The premove squares are part of the tint decision, so they belong in the
+		// hash: leave them out and an armed premove paints only if something else
+		// happened to change in the same frame — which, while the opponent thinks,
+		// nothing does.
 		int hash = HashCode.Combine( lastMove, checkedKing, interactive,
-			Selected, _hoverSquare, _targets );
+			Selected, _hoverSquare, _targets, premoveFrom, premoveTo );
 		if ( !binding && hash == _lastPaintHash ) return;
 		_lastPaintHash = hash;
 
@@ -484,8 +562,9 @@ public sealed class ChessBoardView : Component
 			lastTo = lastMove[2..4];
 		}
 
-		// _hoverSquare is only set on the local player's own turn (UpdateInput),
-		// so the hover glow naturally appears only when the player can act.
+		// _hoverSquare is only set when UpdateInput ran to completion — the local
+		// player's own turn, or while they can arm a premove — so the hover glow
+		// naturally appears only when the player can act.
 		for ( int sq = 0; sq < 64; sq++ )
 		{
 			var renderer = _cells[sq];
@@ -498,6 +577,11 @@ public sealed class ChessBoardView : Component
 			Color tint;
 			if ( Selected == name )
 				tint = SelectedTint;
+			else if ( premoveFrom == name || premoveTo == name )
+				// Above check and last-move: while a premove is armed it's the most
+				// important thing on the board, because it's the thing about to
+				// happen without you.
+				tint = PremoveTint;
 			else if ( interactive && _targets.Contains( name ) )
 				// Legal move target — deeper green under the cursor ("move here");
 				// light/dark variant keeps the square's checker color reading through

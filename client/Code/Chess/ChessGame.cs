@@ -236,6 +236,110 @@ public sealed class ChessGame
 		return targets;
 	}
 
+	/// <summary>
+	/// Squares the piece on <paramref name="fromSquare"/> may be PREMOVED to —
+	/// the moves worth arming while the opponent is still thinking.
+	///
+	/// <para>These are deliberately NOT legal moves, and can't be: a premove is aimed
+	/// at a position that doesn't exist yet. The commonest premove of all — a
+	/// recapture onto a square the opponent hasn't captured on yet — is illegal in
+	/// every position where you'd want to arm it. So this is PURE geometric mobility:
+	/// blockers ignored (they may be gone by the time it fires), pawn diagonals always
+	/// offered, and squares holding your OWN pieces offered as well — a recapture aims
+	/// at exactly those. Check, pins and turn order are not consulted.</para>
+	///
+	/// <para>That makes it permissive: it will happily arm a rook slide through a wall
+	/// of pawns, or a queen onto a friendly knight that isn't going anywhere. It is not
+	/// a promise the move will play. Legality is decided once, for real, by
+	/// <see cref="ApplyUci"/> at the moment the premove fires, and a premove that
+	/// doesn't survive contact is dropped. Being permissive costs a discarded premove;
+	/// being strict cost the recapture the feature exists for, which is how the first
+	/// version shipped unable to do the one thing anyone wanted it for.</para>
+	///
+	/// <para>Colour is taken from the PIECE, not from whose turn it is — during a
+	/// premove it is by definition not your turn.</para>
+	/// </summary>
+	public List<string> PremoveTargets( string fromSquare )
+	{
+		var targets = new List<string>();
+		if ( IsGameOver || !TryParseSquare( fromSquare, out var from ) ) return targets;
+
+		var piece = _board[from];
+		if ( piece == null ) return targets;
+
+		bool white = piece.Color == ChessLib.PieceColor.White;
+		int ff = from.X, fr = from.Y;
+
+		void Add( int f, int r )
+		{
+			if ( f is < 0 or > 7 || r is < 0 or > 7 ) return;
+
+			// Only the piece's own square is excluded, and only because a move to it
+			// isn't a move. NOTHING else is filtered — occupancy least of all.
+			//
+			// A square holding YOUR OWN piece is offered, which looks wrong and is the
+			// most important case in here. During the opponent's turn your pieces never
+			// move, so the only way such a square can free up is if they CAPTURE the
+			// piece standing on it — which makes "premove onto my own piece" precisely
+			// the recapture, the commonest premove in chess. Filtering own-occupied
+			// squares (the first version did) leaves the feature unable to do the one
+			// thing it's for.
+			if ( f == ff && r == fr ) return;
+
+			targets.Add( $"{(char)( 'a' + f )}{(char)( '1' + r )}" );
+		}
+
+		void Ray( int df, int dr )
+		{
+			for ( int i = 1; i < 8; i++ ) Add( ff + df * i, fr + dr * i );
+		}
+
+		var type = piece.Type;
+		int backRank = white ? 0 : 7;
+
+		if ( type == ChessLib.PieceType.Pawn )
+		{
+			int dir = white ? 1 : -1;
+			Add( ff, fr + dir );
+			if ( fr == ( white ? 1 : 6 ) ) Add( ff, fr + 2 * dir );
+			// Both diagonals, occupied or not: the capture you're waiting for
+			// hasn't happened yet, and en passant lands on an empty square too.
+			Add( ff - 1, fr + dir );
+			Add( ff + 1, fr + dir );
+		}
+		else if ( type == ChessLib.PieceType.Knight )
+		{
+			int[] df = { 1, 2, 2, 1, -1, -2, -2, -1 };
+			int[] dr = { 2, 1, -1, -2, -2, -1, 1, 2 };
+			for ( int i = 0; i < 8; i++ ) Add( ff + df[i], fr + dr[i] );
+		}
+		else if ( type == ChessLib.PieceType.Bishop )
+		{
+			Ray( 1, 1 ); Ray( 1, -1 ); Ray( -1, 1 ); Ray( -1, -1 );
+		}
+		else if ( type == ChessLib.PieceType.Rook )
+		{
+			Ray( 1, 0 ); Ray( -1, 0 ); Ray( 0, 1 ); Ray( 0, -1 );
+		}
+		else if ( type == ChessLib.PieceType.Queen )
+		{
+			Ray( 1, 0 ); Ray( -1, 0 ); Ray( 0, 1 ); Ray( 0, -1 );
+			Ray( 1, 1 ); Ray( 1, -1 ); Ray( -1, 1 ); Ray( -1, -1 );
+		}
+		else if ( type == ChessLib.PieceType.King )
+		{
+			for ( int f = -1; f <= 1; f++ )
+				for ( int r = -1; r <= 1; r++ )
+					Add( ff + f, fr + r );
+			// Castling, as the same g/c-file hop LegalTargets reports. Only from
+			// the home square, so it isn't offered for a king that has obviously
+			// already moved.
+			if ( ff == 4 && fr == backRank ) { Add( 6, fr ); Add( 2, fr ); }
+		}
+
+		return targets;
+	}
+
 	/// <summary>Whether from→to is a pawn move onto the last rank, i.e. the view
 	/// must pop the promotion picker and append the piece char to the UCI.</summary>
 	public bool IsPromotion( string fromSquare, string toSquare )
@@ -298,6 +402,58 @@ public sealed class ChessGame
 	{
 		if ( !IsGameOver )
 			_board.Draw();
+	}
+
+	// ── Takeback ──
+
+	/// <summary>
+	/// Rewind to <paramref name="ply"/> half-moves, KEEPING the history of the moves
+	/// that survive. Returns false if the position can't be rewound that far.
+	///
+	/// <para>This is what a takeback needs, and <see cref="TryFromPgnAtPly"/> is NOT:
+	/// that rebuilds a CLEAN game from the FEN at a ply, so the result has no move list,
+	/// a <c>[Variant "From Position"]</c> header and a <c>MoveCount</c> of 0. A takeback
+	/// built on it looks right on the board and quietly destroys the game — the HUD's
+	/// move list empties, and the archived PGN keeps only the moves played after the
+	/// takeback, permanently, because the upload is idempotent on client_game_id.</para>
+	///
+	/// <para>So it undoes in place, one move at a time, through the vendored board's own
+	/// <c>Cancel()</c> — which restores the captured piece, undoes castling/en-passant
+	/// via the move's Parameter, pops <c>executedMoves</c> and clears any EndGame. Two
+	/// properties fall out of that and BOTH are load-bearing: the SAN list stays real
+	/// (so the game is still archivable), and <see cref="MoveCount"/> stays an ABSOLUTE
+	/// ply count from the standard start — which is the index space the caller's clock
+	/// log is keyed in.</para>
+	/// </summary>
+	public bool TruncateToPly( int ply )
+	{
+		if ( ply < 0 || ply > _moveCount ) return false;
+
+		bool ok = true;
+		while ( _moveCount > ply )
+		{
+			int before = _board.ExecutedMoves.Count;
+			_board.Cancel();
+
+			// Cancel() no-ops rather than throwing if it can't (nothing to undo, or the
+			// board isn't displaying its last move). Spinning on that would hang the
+			// frame, so stop and report failure instead.
+			if ( _board.ExecutedMoves.Count >= before ) { ok = false; break; }
+
+			_moveCount--;
+		}
+
+		// Refreshed on BOTH exits, and that is the point. Every undo is atomic but the
+		// walk is not: bailing early having already cancelled a move or two would
+		// otherwise leave a post-truncation MoveCount reporting a pre-truncation Fen
+		// and LastMoveUci. The caller's failure path publishes exactly those two to
+		// resync the table — so stale caches here would make the recovery the desync.
+		_fen = null;
+		_checkedKingDirty = true;
+		_lastMoveUci = _moveCount > 0
+			? UciOf( _board.ExecutedMoves[_moveCount - 1] )
+			: null;
+		return ok;
 	}
 
 	// ── PGN ──

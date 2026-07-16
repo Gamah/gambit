@@ -8,12 +8,16 @@
 
 @*
 	Display-only info board mounted on the east wall (see InfoWall). No pointer events.
-	The short version of InfoScreen's Welcome page — walk up and press E for that.
 
-	THIS BOARD IS THE GAME'S FRONT DOOR, and it is the first thing to go stale: it
-	described a lobby where the first sitter was usually White and where saved games were
-	"coming soon", long after neither was true. If you change how the world behaves, this
-	board and InfoScreen's Welcome branch are part of the change — see CLAUDE.md.
+	A SIGNPOST, NOT A PAGE. It used to be the short version of InfoScreen's Welcome
+	page and it is where this repo learned that duplicated copy rots: it described a
+	lobby where the first sitter was usually White and where saved games were "coming
+	soon", long after neither was true, because nobody re-reads a wall. Saying one
+	thing — where the answers are — is the only version that cannot go stale.
+
+	So DON'T restore the summary. If a fact belongs to players, it belongs in
+	InfoScreen's Welcome branch (press E), which is one place to keep honest instead
+	of two. See CLAUDE.md.
 *@
 
 <root>
@@ -23,15 +27,7 @@
 
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
-		<div class="section-header" style="color:@WallTheme.AccentCss;">HOW TO PLAY</div>
-		<div class="body-text" style="color:@WallTheme.TextDim;">Walk up to either side of a chess table and press E to take that seat — you play the colour you walked up to. A friend takes the other side. Pick a time control before you start. Escape stands you up.</div>
-
-		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
-
-		<div class="section-header" style="color:@WallTheme.AccentCss;">ALSO HERE</div>
-		<div class="body-text" style="color:@WallTheme.TextDim;">Your games are saved to chess.gamah.net · Link lichess and play there for real · The north wall shows a live table, or lichess TV</div>
-
-		<div class="discord-btn">Check out the Discord: @Gambit.World.DiscordButton.InviteCode. Press E to view &amp; copy</div>
+		<div class="prompt" style="color:@WallTheme.AccentCss;">PRESS E FOR HELP / INFO</div>
 	</div>
 </root>
 
@@ -45,11 +41,13 @@
 	}
 
 	/* Shared WallTheme palette (see WallTheme.scss); geometry stays board-specific —
-	   layout happens in the WorldPanel's fixed intrinsic pixel space (sub-px borders,
-	   ~5px fonts), so this board keeps its own small radii/sizes, not the theme radius.
-	   The GO scale only sizes/stretches the rendered quad. These px values are tuned so
-	   the content fills the panel height with just a small margin under the Discord line —
-	   change them (not the GO scale) to fix blank space or overflow. */
+	   layout happens in the WorldPanel's fixed intrinsic pixel space (sub-px borders),
+	   so this board keeps its own small radii/sizes, not the theme radius. The GO scale
+	   only sizes/stretches the rendered quad; change these px (not the GO scale) to fix
+	   blank space or overflow.
+
+	   height:auto and a bottom anchor mean this board is now SHORT — it holds three
+	   lines, not a page. That's the signpost working, not a layout bug to pad out. */
 	.board {
 		width: 100%;
 		height: auto;
@@ -86,45 +84,18 @@
 		margin: 1.5px 0;
 	}
 
-	.section-header {
-		font-size: 5px;
+	/* The whole point of the board, so it is sized like it: bigger than the title,
+	   which is the only other thing here. This is intrinsic panel px (see CLAUDE.md
+	   — px here is not world size; the GO scale does that), calibrated against the
+	   13px title rather than derived from Box.Rect, which doesn't work on a
+	   WorldPanel. */
+	.prompt {
+		font-size: 15px;
 		font-weight: bold;
 		letter-spacing: 1.5px;
-	}
-
-	.body-text {
-		font-size: 5px;
-		line-height: 1.4;
-		white-space: pre-wrap;
-	}
-
-	.note {
-		font-size: 5px;
-		font-style: italic;
-	}
-
-	.discord-btn {
+		text-align: center;
 		justify-content: center;
-		margin-top: 2px;
-		padding: 4px 7px;
-		background-color: rgba(88, 101, 242, 0.25);
-		border: 0.75px solid rgba(88, 101, 242, 0.6);
-		border-radius: 5.25px;
-		font-size: 6px;
-		color: rgba(255, 255, 255, 0.85);
-		font-weight: bold;
-	}
-
-	.prizes-notice {
-		justify-content: center;
-		margin-top: 2px;
-		padding: 4px 7px;
-		background-color: rgba(44, 200, 20, 0.25);
-		border: 0.75px solid rgba(88, 101, 242, 0.6);
-		border-radius: 5.25px;
-		font-size: 6px;
-		color: rgba(255, 255, 255, 0.85);
-		font-weight: bold;
+		padding: 3px 0 1px 0;
 	}
 </style>
 

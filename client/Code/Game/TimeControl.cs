@@ -15,7 +15,7 @@ namespace Gambit.Game;
 /// </summary>
 public readonly struct TimeControl
 {
-	/// <summary>Menu label, e.g. "Blitz 3+2".</summary>
+	/// <summary>Menu label, e.g. "Blitz 3+0".</summary>
 	public readonly string Name;
 
 	/// <summary>Starting bank per side, in seconds. 0 = untimed.</summary>
@@ -42,13 +42,19 @@ public readonly struct TimeControl
 	public static readonly IReadOnlyList<TimeControl> All = new[]
 	{
 		new TimeControl( "Bullet 1+0", 60, 0 ),
-		new TimeControl( "Blitz 3+2", 180, 2 ),
+		// 3+0 estimates at exactly 180 — the FIRST second of lichess's Blitz band
+		// (scalachess: Blitz is `180 to 479`, and byTime uses an inclusive
+		// `range.contains`, verified against scalachess master 2026-07-16). So it is
+		// challengeable with nothing to spare: drop the initial bank by one second,
+		// or shave the increment when there is none left to shave, and the default
+		// table silently stops being playable on lichess at all.
+		new TimeControl( "Blitz 3+0", 180, 0 ),
 		new TimeControl( "Rapid 10+0", 600, 0 ),
 		new TimeControl( "Classical 30+0", 1800, 0 ),
 		new TimeControl( "Unlimited", 0, 0 ),
 	};
 
-	/// <summary>Index of the control a fresh table starts on (Blitz 3+2).</summary>
+	/// <summary>Index of the control a fresh table starts on (Blitz 3+0).</summary>
 	public const int DefaultIndex = 1;
 
 	/// <summary>Is this a selectable index? The RPC guard — a client sends an int.</summary>

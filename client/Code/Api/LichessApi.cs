@@ -155,6 +155,19 @@ public static class LichessApi
 	public static Task<GamchessApi.Result> DeclineDraw( string clientGameId ) =>
 		Act( clientGameId, "draw-decline", null );
 
+	/// <summary>Propose a takeback, or accept one already proposed — one call for
+	/// both, exactly as with a draw.
+	///
+	/// <para>lichess refuses a takeback until both players have moved, and it
+	/// refuses by IGNORING the call rather than failing it. Nothing here can
+	/// report that; the standing offer on the next poll is the only truth.</para>
+	/// </summary>
+	public static Task<GamchessApi.Result> OfferTakeback( string clientGameId ) =>
+		Act( clientGameId, "takeback", null );
+
+	public static Task<GamchessApi.Result> DeclineTakeback( string clientGameId ) =>
+		Act( clientGameId, "takeback-decline", null );
+
 	/// <summary>Abort — only legal before both sides have moved; lichess refuses
 	/// otherwise and says so.</summary>
 	public static Task<GamchessApi.Result> Abort( string clientGameId ) =>

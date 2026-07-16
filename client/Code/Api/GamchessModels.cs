@@ -103,6 +103,8 @@ public sealed class LichessPlayState
 	public bool finished { get; set; }
 	public bool white_draw { get; set; }      // that side is offering a draw
 	public bool black_draw { get; set; }
+	public bool white_takeback { get; set; }  // that side is proposing a takeback
+	public bool black_takeback { get; set; }
 }
 
 /// <summary>The game session bearer, from <c>POST /api/v1/session</c> (M9).

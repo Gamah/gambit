@@ -218,6 +218,12 @@ func TestWriterPaths(t *testing.T) {
 		{"draw no", func(ctx context.Context, tok string) error {
 			return Draw(ctx, tok, "g4me", false)
 		}, "/api/board/game/g4me/draw/no", nil},
+		{"takeback yes", func(ctx context.Context, tok string) error {
+			return Takeback(ctx, tok, "g4me", true)
+		}, "/api/board/game/g4me/takeback/yes", nil},
+		{"takeback no", func(ctx context.Context, tok string) error {
+			return Takeback(ctx, tok, "g4me", false)
+		}, "/api/board/game/g4me/takeback/no", nil},
 		{"abort", func(ctx context.Context, tok string) error {
 			return Abort(ctx, tok, "g4me")
 		}, "/api/board/game/g4me/abort", nil},
@@ -427,6 +433,45 @@ func ndjsonServer(t *testing.T, lines string) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		io.WriteString(w, lines)
 	})
+}
+
+// A takeback offer reaches us as an ORDINARY gameState — lila pushes state on a
+// takeback offer exactly as it does on a move, so there is no takeback event type
+// to look for and no envelope work to do. The offer flags ride the same line as
+// the draw flags.
+//
+// The encoding is the part worth pinning: lichess OMITS wdraw/bdraw/wtakeback/
+// btakeback when they are false rather than sending false. So "absent" must read
+// as "not offering", and a flag must not survive into the next state once the
+// offer is gone.
+func TestStreamGameStateCarriesOffers(t *testing.T) {
+	ndjsonServer(t, `{"type":"gameState","moves":"e2e4 e7e5","wtime":179000,"btime":178000,"winc":0,"binc":0,"status":"started","wtakeback":true}
+{"type":"gameState","moves":"e2e4 e7e5","wtime":179000,"btime":178000,"winc":0,"binc":0,"status":"started","bdraw":true}
+{"type":"gameState","moves":"e2e4","wtime":179000,"btime":180000,"winc":0,"binc":0,"status":"started"}
+`)
+
+	var events []GameEvent
+	if err := StreamGame(context.Background(), "tok", "g4me", func(e GameEvent) {
+		events = append(events, e)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3", len(events))
+	}
+
+	// White proposing a takeback, nobody offering a draw.
+	if st := events[0].State; st == nil || !st.Wtakeback || st.Btakeback || st.Wdraw || st.Bdraw {
+		t.Fatalf("white's takeback offer: %+v", st)
+	}
+	// Black offering a draw, and the takeback flag must NOT leak across lines.
+	if st := events[1].State; st == nil || !st.Bdraw || st.Wtakeback || st.Btakeback || st.Wdraw {
+		t.Fatalf("black's draw offer: %+v", st)
+	}
+	// Everything omitted: no offers stand.
+	if st := events[2].State; st == nil || st.Wdraw || st.Bdraw || st.Wtakeback || st.Btakeback {
+		t.Fatalf("omitted flags must read as no offer: %+v", st)
+	}
 }
 
 func TestStreamGameStateMachine(t *testing.T) {
