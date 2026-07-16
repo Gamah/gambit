@@ -829,11 +829,20 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// 3.3× even 0.012 reads as a visible dark grey.</summary>
 	internal static readonly Color ClockPlateOnColor = new( 0.012f, 0.012f, 0.014f );
 
-	// Bar tints. The track is a MID grey so that both fills contrast with it — White's is
-	// near-white and Black's near-black, and a dark track would swallow Black's fill whole.
+	// Bar tints. ONE fill colour, always — the fill does not change colour with who is ahead.
+	//
+	// It used to: near-white for White, near-black for Black. Black's was hard to see, and it
+	// could not really be fixed, only traded — the fill sits on a track on a dark base, so the
+	// colour that MEANS Black is the colour that disappears there. The direction was always
+	// carrying "who" anyway (the fill grows from dead centre toward the leader), so the colour
+	// was saying the same thing a second time and doing it badly. One legible fill beats two
+	// where one of them is a guess at the light.
+	//
+	// The track stays a mid grey. It was mid specifically so a near-black fill could still be
+	// told from it; with only a pale fill left it now just has to be darker than that, and it
+	// is — turn it down if the bar wants more punch.
 	static readonly Color ClockBarTrackColor = new( 0.05f, 0.05f, 0.055f );
-	internal static readonly Color ClockBarWhiteColor = new( 0.90f, 0.89f, 0.86f );
-	internal static readonly Color ClockBarBlackColor = new( 0.002f, 0.002f, 0.003f );
+	static readonly Color ClockBarFillColor = new( 0.90f, 0.89f, 0.86f );
 
 	/// <summary>The engine's WorldPanel pixel→world constant
 	/// (<c>ScenePanelObject.ScreenToWorldScale</c>, read from the shipped engine, not
@@ -999,11 +1008,12 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		var fill = AddBoxGo( bar, "Fill",
 			new Vector3( ClockBarProud, 0f, 0f ) * s,
 			new Vector3( ClockBarThickness, halfLength, ClockBarHeight ) * s,
-			null, ClockBarWhiteColor );
+			null, ClockBarFillColor );
 		if ( fill is null ) return;
 
+		// Tinted once, here, and never again — TableClock has no reference to this renderer
+		// because there is nothing left for it to decide about the colour.
 		driver.BarFill = fill;
-		driver.BarFillRenderer = fill.GetComponent<ModelRenderer>();
 		driver.BarFillFullScale = fill.LocalScale;
 		driver.BarFillBasePosition = fill.LocalPosition;
 		driver.BarFillHalfLength = halfLength * s;

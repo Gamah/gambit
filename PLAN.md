@@ -272,6 +272,14 @@ whole assembly 0.4 off the board, moving the plates and the badge, which had jus
 right in the room. Depth costs nothing here anyway — the bar is read head-on as a coloured
 length.
 
+**The fill is always pale — it never turns black for Black.** It was near-white for White and
+near-black for Black, and Black's was hard to see. That is not a tuning miss, it is unfixable in
+the terms it was posed: the colour that *means* Black is the colour that vanishes against a dark
+track on a dark base. The **direction** already says who — the fill grows from dead centre toward
+the leader — so colour was the same fact twice and the second telling was the one that failed.
+The whole mechanism goes with it: `ChessRing` tints the fill once at build, `TableClock` holds no
+renderer for it, and there is no per-frame colour decision left to get wrong.
+
 **A sixth bug, and it was arithmetic — which is the point.** The plates and the bar were
 centred on the body's top *surface*, so half of every plate was buried in the body and the
 material bar, being shorter, was **entirely** inside it and could never have rendered at all.

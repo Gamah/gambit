@@ -45,7 +45,6 @@ public sealed class TableClock : Component
 	/// <see cref="DriveBar"/>. The TRACK behind it has no reference here on purpose — it never
 	/// changes and never hides, so nothing needs to hold it.</summary>
 	[Property] public GameObject BarFill { get; set; }
-	[Property] public ModelRenderer BarFillRenderer { get; set; }
 
 	/// <summary>The lead badge's one string — the real material difference, always drawn.</summary>
 	[Property] public TableClockTextPanel LeadText { get; set; }
@@ -163,6 +162,13 @@ public sealed class TableClock : Component
 	/// <para>The number no longer sits in front of the fill — the bar moved down onto the base's
 	/// upright face and the badge stayed in the plates' plane above it. Nothing here changed for
 	/// it: the two were never coupled in code, only in space.</para>
+	///
+	/// <para><b>The fill's colour is not decided here, because it does not change.</b> It was
+	/// near-white for White and near-black for Black, and Black's was hard to see — unfixably
+	/// so rather than badly tuned: the colour that MEANS Black is the colour that vanishes
+	/// against a track on a dark base. The DIRECTION already says who (the fill grows from dead
+	/// centre toward the leader), so the colour was the same fact twice and the second telling
+	/// was the one that failed. ChessRing tints it once at build.</para>
 	/// </summary>
 	void DriveBar()
 	{
@@ -219,9 +225,6 @@ public sealed class TableClock : Component
 			BarFillBasePosition.x,
 			sign * frac * BarFillHalfLength * 0.5f,
 			BarFillBasePosition.z );
-
-		if ( BarFillRenderer.IsValid() )
-			BarFillRenderer.Tint = lead > 0 ? ChessRing.ClockBarWhiteColor : ChessRing.ClockBarBlackColor;
 	}
 
 	/// <summary>Material balance in pawns, positive for White — or null when there is no
