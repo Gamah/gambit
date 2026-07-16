@@ -603,21 +603,24 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	const float ClockDepth = 1.4f;    // across Y — thin, it shares this margin with a tray
 	const float ClockHeight = 2.2f;   // a low wedge, not a tower: it must not fence the board
 
-	/// <summary>Tilt of the clock's face. Negative pitches it up, so it reads from the
-	/// seats rather than presenting its edge. Steep, because the seats are at ±X and the
-	/// face points at +Y: nobody looks at it straight on, everybody looks DOWN at it — the
-	/// same way you read a real chess clock sitting beside a board.</summary>
-	const float ClockFaceTilt = -55f;
+	/// <summary>
+	/// Tilt of the clock's face. Negative pitches it up, so it reads from the seats rather
+	/// than presenting its edge — the same way you read a real chess clock sitting beside a
+	/// board: nobody is square to it, everybody is looking down at it.
+	///
+	/// <para><b>This is coupled to <see cref="ClockPxHeight"/> and cannot be tuned alone.</b>
+	/// The face is tilted up out of a 1.4-deep strip, so its height projects sin(tilt) of
+	/// itself straight back into Y — a tall face at a steep tilt leans out over the board
+	/// and clips the a-file. The two trade off exactly: this was 128px at 55°, and the face
+	/// was made twice as tall (208px) by dropping the tilt to 30°, which lands on the SAME
+	/// Y footprint (0.12 base units over the board frame, inside the 0.2 gap). Raise one
+	/// and lower the other, or the clock grows into the board.</para></summary>
+	const float ClockFaceTilt = -30f;
 
-	// The face's own pixel space. Very wide and very short, because the clock is — and
-	// this aspect is a geometric constraint, not a style choice. The face is tilted up out
-	// of a 1.4-deep strip, so its height projects sin(55°) ≈ 0.82 of itself back into Y: a
-	// tall face leans out over the board and clips the a-file. At 1024×128 it projects
-	// ~1.0 base units either side of the strip's centre and stays in its own margin. That
-	// is what forces the single-row layout in TableClockPanel — two stacked faces do not
-	// fit on a clock this thin, and the strip is thin because it shares the margin.
+	// The face's own pixel space. Wide and short, because the clock is. Height is a
+	// geometric constraint, not a style choice — see ClockFaceTilt.
 	const float ClockPxWidth = 1024f;
-	const float ClockPxHeight = 128f;
+	const float ClockPxHeight = 208f;
 
 	/// <summary>The engine's WorldPanel pixel→world constant
 	/// (<c>ScenePanelObject.ScreenToWorldScale</c>, read from the shipped engine, not

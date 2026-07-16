@@ -147,21 +147,28 @@
 		made these two small plates adrift at the ends of a long strip.
 	*/
 	.face {
-		width: 340px;
-		height: 92px;
+		width: 255px;
+		height: 184px;
 		align-items: center;
 		justify-content: center;
 		text-align: center;
 		white-space: nowrap;
-		border-radius: 12px;
-		background-color: rgba(12, 12, 16, 0.5);
+		border-radius: 16px;
+		background-color: rgba(12, 12, 16, 0.75);
+		/*
+			76px is calibrated and stays put — the plate around it is what changed size.
+			The panel's WIDTH is what fixes its world scale (1024px spans the clock body),
+			so growing ClockPxHeight moves nothing here: a px is the same world distance
+			either way. That is what lets the plate double in world height while the text
+			it contains does not move at all.
+		*/
 		font-size: 76px;
 		font-weight: bold;
 		color: rgba(255, 255, 255, 0.45);
 	}
 
 	/* The running side is the only one worth looking at. */
-	.face.on { background-color: rgba(20, 22, 28, 0.92); color: #e8e6df; }
+	.face.on { background-color: rgba(20, 22, 28, 0.98); color: #e8e6df; }
 
 	/* Under TimeControl.PanicSeconds — the same threshold the panic beep starts at,
 	   which is why it is a shared constant and not a 10f typed in two files. */
