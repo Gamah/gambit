@@ -182,7 +182,7 @@ key switches lichess off entirely rather than storing plaintext.
 | `POST /api/v1/lichess/play` | FP | play the person opposite you. `{client_game_id, white_steam_id, black_steam_id, limit_seconds, increment_seconds, unlimited}` — **both seats must POST** |
 | `POST /api/v1/lichess/seek` | FP | play a random opponent. `{client_game_id, time_minutes, increment_seconds, rated, rating_range, color}` — one caller |
 | `GET /api/v1/lichess/play/{id}?since=N` | FP | **long poll** (held ~5s) for game state; 404 if you aren't in it |
-| `POST /api/v1/lichess/play/{id}/{action}` | FP | `move` (body `{uci}`) · `resign` · `draw` · `draw-decline` · `abort` |
+| `POST /api/v1/lichess/play/{id}/{action}` | FP | `move` (body `{uci}`) · `resign` · `draw` · `draw-decline` · `takeback` · `takeback-decline` · `abort` |
 | `DELETE /api/v1/lichess/play/{id}` | FP | withdraw a seek / drop a pending pairing |
 | `POST /api/v1/lichess/audit` | `LICHESS_AUDIT_KEY` | sweep our token store against lichess. 404 when unconfigured |
 
@@ -225,7 +225,7 @@ lichess-off; local play and spectating tables never touch it.
 
 ### Lichess TV (M9)
 
-Real lichess games on the west spectator wall. **This is the one lichess feature with no
+Real lichess games on the north spectator wall. **This is the one lichess feature with no
 security surface upstream**: `GET /api/tv/{channel}/feed` is `security: []` — anonymous. No
 token, no scope, no custody question, nothing to encrypt, revoke, or audit. **None of M8's
 hard part applies, and none of it may creep in — TV must keep working for a player who has

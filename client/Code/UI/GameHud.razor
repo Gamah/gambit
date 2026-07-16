@@ -56,6 +56,21 @@
 				{
 					<div class="reason">Your opponent offers a draw.</div>
 				}
+				@if ( lc.TakebackOffered )
+				{
+					<div class="reason">Your opponent wants to take back a move.</div>
+				}
+				@if ( lc.TakebackPending )
+				{
+					<div class="reason">Takeback offered — waiting for your opponent.</div>
+				}
+				@* A premove is the one thing on this HUD the player can't see on the
+				   board from their seat if they've looked away: say it in words too,
+				   because it will play itself the moment they're back on move. *@
+				@if ( lc.HasPremove )
+				{
+					<div class="reason premove">Premove armed: @lc.PremoveFrom→@lc.PremoveTo. Click the board to cancel.</div>
+				}
 			}
 			else if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
 			{
@@ -173,11 +188,40 @@
 				<div class="button" onclick="@( () => Lichess()?.CancelSeek() )">Cancel — stop looking</div>
 			}
 
-			@* Draw offers, lichess only: the local two-seat game has never had them
-			   (there's a table between the players — they can just say so). *@
+			@* Draw offers and takebacks, lichess only: the local two-seat game has
+			   never had them (there's a table between the players — they can just
+			   say so, and take the move back themselves). *@
 			@if ( OnLichess() && ( Lichess()?.Playing ?? false ) )
 			{
-				<div class="button draw" onclick="@( () => Lichess()?.OfferDraw() )">@DrawText()</div>
+				<div class="offer-row">
+					<div class="button draw" onclick="@( () => Lichess()?.OfferDraw() )">@DrawText()</div>
+					@* Only offer a decline when there's something to decline — a
+					   standing "no" button would be a way to decline nothing. *@
+					@if ( Lichess()?.DrawOffered ?? false )
+					{
+						<div class="button decline" onclick="@( () => Lichess()?.DeclineDraw() )">No</div>
+					}
+				</div>
+
+				@* Hidden, not disabled, before both sides have moved: lichess drops
+				   a takeback proposed that early and still answers 200, so a button
+				   there would look like it worked and do nothing.
+
+				   Nothing here while OUR proposal is standing, either: re-offering is
+				   a no-op on lichess's side, and the waiting state is already said
+				   once as a status line above. A button whose only effect is to
+				   re-send a request the opponent has already been asked is a button
+				   that lies about doing something. *@
+				@if ( ( Lichess()?.CanTakeback ?? false ) && !( Lichess()?.TakebackPending ?? false ) )
+				{
+					<div class="offer-row">
+						<div class="button takeback" onclick="@( () => Lichess()?.OfferTakeback() )">@TakebackText()</div>
+						@if ( Lichess()?.TakebackOffered ?? false )
+						{
+							<div class="button decline" onclick="@( () => Lichess()?.DeclineTakeback() )">No</div>
+						}
+					</div>
+				}
 			}
 
 			@if ( ( Source()?.Playing ?? false ) )
@@ -305,12 +349,31 @@
 	.button.draw { background-color: rgba(255, 214, 10, 0.18); }
 	.button.draw:hover { background-color: rgba(255, 214, 10, 0.34); }
 
+	/* Takeback: the same "ask the opponent for something" family as the draw, one
+	   hue over, so the two read as a pair of offers rather than two unrelated
+	   controls. */
+	.button.takeback { background-color: rgba(120, 210, 255, 0.18); }
+	.button.takeback:hover { background-color: rgba(120, 210, 255, 0.34); }
+
+	/* Decline sits beside the offer it refuses, so it stays narrow: the offer is
+	   the choice being made, "No" is the escape from it. */
+	.offer-row { flex-direction: row; gap: 4px; }
+	.offer-row .button { flex-grow: 1; }
+	.button.decline {
+		flex-grow: 0;
+		background-color: rgba(255, 255, 255, 0.1);
+	}
+	.button.decline:hover { background-color: rgba(255, 45, 85, 0.4); }
+
 	.status { font-size: 16px; font-weight: bold; }
 	.status.wait { color: #ffd60a; font-weight: normal; font-size: 14px; }
 	.status.turn { color: #7fd47f; }
 	.status.over { color: #ffd60a; font-size: 20px; }
 	.reason { font-size: 13px; color: rgba(255, 255, 255, 0.6); }
 	.reason.lichess-err { color: rgba(255, 180, 40, 0.95); }
+	/* Same purple as the board's premove highlight (ChessBoardView.PremoveTint) —
+	   the line and the squares are one statement. */
+	.reason.premove { color: rgba(197, 120, 240, 0.95); }
 
 	.moves {
 		flex-direction: column;
@@ -513,6 +576,13 @@
 	static string DrawText() =>
 		( Lichess()?.DrawOffered ?? false ) ? "Accept draw" : "Offer draw";
 
+	/// <summary>Two states, like the draw button, because lichess's takeback/yes is
+	/// the same call for proposing and accepting. There is no third "waiting" state
+	/// here: while our own proposal stands the button isn't rendered at all, and the
+	/// status line says so instead.</summary>
+	static string TakebackText() =>
+		( Lichess()?.TakebackOffered ?? false ) ? "Accept takeback" : "Ask for takeback";
+
 	/// <summary>Status line while a lichess game is being set up or run, or null
 	/// when there is nothing to say and the turn indicator should show.</summary>
 	static string LichessStatus()
@@ -692,13 +762,16 @@
 					SeatLine( ctrl, ChessSeat.White ), SeatLine( ctrl, ChessSeat.Black ) ),
 				// Lichess: the seat lines already cover its clocks and names (they
 				// hash as rendered text), so this is the rest — status, result, draw
-				// offers, whether it owns the board, and the seek controls.
+				// and takeback offers, the armed premove, whether it owns the board,
+				// and the seek controls.
 				System.HashCode.Combine(
 					System.HashCode.Combine(
 						OnLichess(), Lichess()?.State?.status, Lichess()?.State?.finished,
 						Lichess()?.DrawOffered, Lichess()?.Error, Lichess()?.Seeking,
 						ctrl?.WhiteLichess, ctrl?.BlackLichess ),
 					System.HashCode.Combine(
-						LichessLinkState.Linked, _seekRated, _seekColor, _seekNarrow ) ) ) );
+						LichessLinkState.Linked, _seekRated, _seekColor, _seekNarrow,
+						Lichess()?.TakebackOffered, Lichess()?.TakebackPending,
+						Lichess()?.CanTakeback, Lichess()?.PremoveUci ) ) ) );
 	}
 }

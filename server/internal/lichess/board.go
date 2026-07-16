@@ -88,6 +88,11 @@ type GameState struct {
 	Winner string `json:"winner"` // "white" | "black" | "" (no winner / unfinished)
 	Wdraw  bool   `json:"wdraw"`
 	Bdraw  bool   `json:"bdraw"`
+	// Standing takeback proposals. lichess OMITS these when false rather than
+	// sending false, so absent and "not proposing" are the same thing — which is
+	// what a bool zero-value already means.
+	Wtakeback bool `json:"wtakeback"`
+	Btakeback bool `json:"btakeback"`
 }
 
 // GameFull is the gameFull line — always the first line of a game stream.
@@ -272,12 +277,34 @@ func Resign(ctx context.Context, token, gameID string) error {
 }
 
 // Draw offers a draw (accept=true) or declines/retracts one (accept=false).
+//
+// A 200 HERE MEANS NOTHING. lila's setDraw returns Unit and the controller wraps
+// it in fuccess, so every call answers 200 {"ok":true} — including one it dropped
+// on the floor. lichess silently refuses an offer before ply 2, a second offer
+// within 20 ply of your last one, and one against an AI. The documented 400 does
+// not fire. The ONLY truth about whether an offer landed is Wdraw/Bdraw on the
+// next gameState, which is why nothing upstream of here reports success.
 func Draw(ctx context.Context, token, gameID string, accept bool) error {
 	verb := "no"
 	if accept {
 		verb = "yes"
 	}
 	return post(ctx, token, "/api/board/game/"+url.PathEscape(gameID)+"/draw/"+verb, nil)
+}
+
+// Takeback proposes a takeback (accept=true), or accepts one the opponent has
+// already proposed — lichess folds both into takeback/yes exactly as it does for
+// draw/yes. accept=false declines.
+//
+// lichess refuses a takeback before both players have moved, and in tournament,
+// simul and swiss games. It says so by IGNORING the call, not by failing it (see
+// the note on Draw): the truth is Wtakeback/Btakeback on the next gameState.
+func Takeback(ctx context.Context, token, gameID string, accept bool) error {
+	verb := "no"
+	if accept {
+		verb = "yes"
+	}
+	return post(ctx, token, "/api/board/game/"+url.PathEscape(gameID)+"/takeback/"+verb, nil)
 }
 
 // Abort a game that hasn't left the opening. Only legal before both sides have

@@ -236,6 +236,104 @@ public sealed class ChessGame
 		return targets;
 	}
 
+	/// <summary>
+	/// Squares the piece on <paramref name="fromSquare"/> may be PREMOVED to —
+	/// the moves worth arming while the opponent is still thinking.
+	///
+	/// <para>These are deliberately NOT legal moves, and can't be: a premove is
+	/// aimed at a position that doesn't exist yet. The commonest premove of all —
+	/// a pawn recapture onto a square the opponent hasn't taken yet — is illegal
+	/// in every position where you'd want to arm it. So this is geometric mobility
+	/// with blockers IGNORED (they may be gone by the time it fires) and pawn
+	/// diagonals always offered, minus only the squares your own pieces stand on.
+	/// Check, pins and turn order are not consulted.</para>
+	///
+	/// <para>That makes it permissive: it will happily arm a rook slide through a
+	/// wall of pawns. It is not a promise the move will play. Legality is decided
+	/// once, for real, by <see cref="ApplyUci"/> at the moment the premove fires,
+	/// and a premove that doesn't survive contact is dropped. Being permissive
+	/// costs a discarded premove; being strict would refuse the recapture the
+	/// feature exists for.</para>
+	///
+	/// <para>Colour is taken from the PIECE, not from whose turn it is — during a
+	/// premove it is by definition not your turn.</para>
+	/// </summary>
+	public List<string> PremoveTargets( string fromSquare )
+	{
+		var targets = new List<string>();
+		if ( IsGameOver || !TryParseSquare( fromSquare, out var from ) ) return targets;
+
+		var piece = _board[from];
+		if ( piece == null ) return targets;
+
+		bool white = piece.Color == ChessLib.PieceColor.White;
+		int ff = from.X, fr = from.Y;
+
+		void Add( int f, int r )
+		{
+			if ( f is < 0 or > 7 || r is < 0 or > 7 ) return;
+			if ( f == ff && r == fr ) return;
+
+			// Your own piece is the one blocker that still counts. It might move —
+			// but offering the square would mostly arm premoves onto pieces that
+			// aren't going anywhere, and a wrong square is worse than a missing one.
+			char occupant = PieceAt( f, r );
+			if ( occupant != '\0' && char.IsUpper( occupant ) == white ) return;
+
+			targets.Add( $"{(char)( 'a' + f )}{(char)( '1' + r )}" );
+		}
+
+		void Ray( int df, int dr )
+		{
+			for ( int i = 1; i < 8; i++ ) Add( ff + df * i, fr + dr * i );
+		}
+
+		var type = piece.Type;
+		int backRank = white ? 0 : 7;
+
+		if ( type == ChessLib.PieceType.Pawn )
+		{
+			int dir = white ? 1 : -1;
+			Add( ff, fr + dir );
+			if ( fr == ( white ? 1 : 6 ) ) Add( ff, fr + 2 * dir );
+			// Both diagonals, occupied or not: the capture you're waiting for
+			// hasn't happened yet, and en passant lands on an empty square too.
+			Add( ff - 1, fr + dir );
+			Add( ff + 1, fr + dir );
+		}
+		else if ( type == ChessLib.PieceType.Knight )
+		{
+			int[] df = { 1, 2, 2, 1, -1, -2, -2, -1 };
+			int[] dr = { 2, 1, -1, -2, -2, -1, 1, 2 };
+			for ( int i = 0; i < 8; i++ ) Add( ff + df[i], fr + dr[i] );
+		}
+		else if ( type == ChessLib.PieceType.Bishop )
+		{
+			Ray( 1, 1 ); Ray( 1, -1 ); Ray( -1, 1 ); Ray( -1, -1 );
+		}
+		else if ( type == ChessLib.PieceType.Rook )
+		{
+			Ray( 1, 0 ); Ray( -1, 0 ); Ray( 0, 1 ); Ray( 0, -1 );
+		}
+		else if ( type == ChessLib.PieceType.Queen )
+		{
+			Ray( 1, 0 ); Ray( -1, 0 ); Ray( 0, 1 ); Ray( 0, -1 );
+			Ray( 1, 1 ); Ray( 1, -1 ); Ray( -1, 1 ); Ray( -1, -1 );
+		}
+		else if ( type == ChessLib.PieceType.King )
+		{
+			for ( int f = -1; f <= 1; f++ )
+				for ( int r = -1; r <= 1; r++ )
+					Add( ff + f, fr + r );
+			// Castling, as the same g/c-file hop LegalTargets reports. Only from
+			// the home square, so it isn't offered for a king that has obviously
+			// already moved.
+			if ( ff == 4 && fr == backRank ) { Add( 6, fr ); Add( 2, fr ); }
+		}
+
+		return targets;
+	}
+
 	/// <summary>Whether from→to is a pawn move onto the last rank, i.e. the view
 	/// must pop the promotion picker and append the piece char to the UCI.</summary>
 	public bool IsPromotion( string fromSquare, string toSquare )

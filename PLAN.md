@@ -101,6 +101,68 @@ always meant.
 
 ---
 
+## Takeback, draw-decline and premove — the Go half is proven, the client isn't
+
+The Go half compiles and `go test ./... -race` passes, including the new writer paths and
+a test that pins the offer flags' omitted-when-false encoding. `ChessGame.PremoveTargets`
+is proven by a dotnet scratch harness (12 cases against the real vendored rules, including
+castling, sliders through blockers, and the pawn-recapture-onto-an-empty-square case the
+feature exists for). **Nothing under `client/` has been compiled.**
+
+**Draws were already built end-to-end in M8** — offer, accept, and the `DrawOffered`
+notice. What was missing was the *decline* button: `LichessApi.DeclineDraw` and the
+server's `draw-decline` action had both shipped and neither was reachable. It is wired now.
+
+### The rule that shapes all of this: a 200 from lichess means nothing
+
+`setDraw`/`setTakeback` return Unit in lila and the controller wraps them in `fuccess`, so
+**every** offer POST answers `200 {"ok":true}` — including one lichess dropped on the floor.
+The documented `400` does not fire. lichess silently refuses a draw before ply 2, a second
+draw within 20 ply of your last, and a takeback before both sides have moved.
+
+So **the standing offer on the next poll is the only truth**, and nothing in this feature
+reports success from a POST. That's why the takeback button is *hidden* before move 2 rather
+than shown-and-dead: a button that always looks like it worked is worse than no button.
+
+### First-run verification
+
+1. Two linked players, a real lichess game. **Draw:** one offers, the other sees "Your
+   opponent offers a draw" and gets a **No** button beside the accept. Decline → the offer
+   clears on both sides. Then accept one → the game ends as a draw on lichess.
+2. **Draw before move 2 does nothing, silently** — that's lichess, not us. Expect the button
+   to appear to work and no offer to arrive. If that reads badly, the fix is to hide it
+   before ply 2 the way the takeback button already is.
+3. **Takeback:** the button must not exist until both sides have moved. After that: ask →
+   "Takeback offered…" here, "Your opponent wants to take back a move" there, with a **No**.
+   Accept → **the board rewinds**. It rewinds for free: `Rebuild` reconstructs from lichess's
+   move list every poll, so a shorter list is just another position.
+4. **Premove:** on the opponent's turn, click a piece — the greens are *premove* targets, not
+   legal moves, so a pawn will offer both diagonals onto empty squares. Arm one; both squares
+   go purple and the HUD says so. When the opponent moves, it plays instantly.
+5. **A premove that the opponent's move made illegal is DROPPED**, not held — arm one aimed
+   at a square they don't play into, and it must vanish rather than fire later at a position
+   it was never meant for.
+6. **Any click on the board cancels an armed premove.** It's the only way to take one back.
+7. **Premove promotion is always a queen**, chosen without the picker (the picker is a modal
+   on a board it isn't your turn to touch). Underpromotion by premove is not possible; if
+   that ever matters, the picker would have to learn to run out of turn.
+8. Premove must not exist in a local table game — it's lichess-only, and `ChessBoardView`
+   reaches past `IBoardGame` for it deliberately. Check a local game still can't arm one.
+
+### Open questions
+
+- **Is "any click cancels" right?** It matches the click-to-move flow (a click is how you'd
+  re-arm anyway), but a misclick while idly watching silently disarms you. Right-click-only
+  cancel is the alternative and costs a binding.
+- **`PremoveTargets` is deliberately permissive** — geometric mobility with blockers ignored,
+  minus your own pieces. It will arm a rook slide through a wall of pawns, which then gets
+  dropped. Strict-but-wrong would refuse the recapture the feature is for, so this is the
+  right trade; but it's unwatched. It is NOT claimed to match chessground's rules.
+- **Nothing shows a premove was dropped.** It just doesn't happen, which from the seat looks
+  identical to it never arming. A beat of "premove cancelled" may be worth it.
+
+---
+
 ## M8 follow-ups — none of this is verified in a real editor yet
 
 The Go half compiles and its tests pass (197 cases, `-race`). **The engine half has never
@@ -167,7 +229,18 @@ from their side. Outcome is discretionary; there is no registration or blessing 
   scope for it), so "near my rating" asks for a fixed 1400-1800 band rather than one centred
   on them. Either fetch the rating at link time (it comes back from `/api/account` — no new
   scope needed) or drop the control.
-- **No takeback, no berserk, no chat.** All exist on the Board API and none are wired up.
+- ~~**No takeback.**~~ **Wired up**, both halves, with draw-decline (which had existed
+  server-side and unreachable from the UI since M8) and premove. Unverified in an editor.
+- **No berserk, no chat.** Both exist on the Board API and neither is wired up.
+- **"Quick pairing" is not a thing we can have, and the seek is not it.** Checked against the
+  live spec and lila, not recalled: lichess.org's homepage pools are a **WebSocket lobby**
+  concept (`poolIn`/`poolOut` in lila-ws), `grep -i pool` over the whole OpenAPI spec finds a
+  single line of prose saying pools are off-limits, and lila's `conf/routes` has no pool
+  endpoint at all. `POST /api/board/seek` is the only random-opponent mechanism the Board API
+  offers, it is already built ("♞ Find a game on lichess"), and it is **Rapid or slower** —
+  so the default Blitz 3+2 table can never find a stranger, and no amount of client work
+  changes that. Playing a stranger in blitz would need lichess to expose the pools. **Don't
+  re-open this without new facts from their side.**
 - **No correspondence.** `SeekCorrespondence` exists in the lichess package and has no route:
   it's the one seek shape that costs the relay nothing (buffered, no held stream, no per-IP
   seek cap), but days-per-move doesn't fit sitting down at a table.

@@ -102,6 +102,37 @@ token and must be signed by *that* token. So:
 - **Omitting both clock fields is how you ask for an unlimited challenge.** Sending `0/0` asks
   for a rejected 0+0 clock instead.
 - **`clock.limit` has a domain**: 0, 15, 30, 45, 60, 90, or any multiple of 60 up to 10800.
+- **An offer POST always answers `200 {"ok":true}`, whether or not lichess took it.**
+  `setDraw`/`setTakeback` return Unit in lila and the controller wraps them in `fuccess`, so
+  the documented `400 "The draw offering failed"` never fires. lichess silently drops a draw
+  offered before ply 2, a second draw within 20 ply of your last, and a takeback before both
+  sides have moved. **The only truth is the standing offer on the NEXT `gameState`** —
+  `wdraw`/`bdraw`/`wtakeback`/`btakeback`, which lichess **omits when false** rather than
+  sending false. Nothing may report an offer landed from a status code. This is why the
+  takeback button is hidden before move 2 rather than shown and dead.
+- **Draw and takeback are ONE endpoint each, not three.** `/draw/{accept}` and
+  `/takeback/{accept}`: offering and accepting are the same call, and the path segment is
+  parsed by lila's `Form.trueish` (`1|true|True|on|yes`) — so decline is "any non-truthy
+  word", not a `no` keyword. Both are on the **Board** API, not just the Bot API.
+- **A takeback offer arrives as an ordinary `gameState`.** lila `pushState`s on
+  `BoardTakebackOffer` exactly as it does on a move — there is no takeback event type to
+  look for. (The offer's classifier subscribes to `BoardTakeback.makeChan`, which *reads*
+  like a dead handler until you find `BoardTakebackOffer.makeChan = BoardTakeback.makeChan`.)
+- **Premove is not a lichess concept.** There is no API surface for it and no server
+  involvement: every `premove` hit in lila is `ui/` TypeScript or a *user preference*
+  (`enablePremove`) that lichess's own client reads. A premove is just "POST the move the
+  instant it is legal" — so ours is client-only by nature, not by choice.
+- **Quick pairing is unreachable, and `POST /api/board/seek` is not the same thing.**
+  lichess.org's homepage pools are a **WebSocket lobby** concept (`poolIn`/`poolOut` in
+  lila-ws); `grep -i pool` over the whole OpenAPI spec finds one line of prose saying pools
+  are off-limits, and lila's `conf/routes` has no pool endpoint at all. The seek is the only
+  random-opponent mechanism the Board API has — and it's Rapid+ (see the `isBoardCompatible`
+  trap above), so **a blitz table can never find a stranger**, by any path.
+- **A real-time seek's response carries no game id** — it is a stream of empty lines whose
+  only job is to stay open (closing it cancels the seek), which is why the seek flow needs
+  the event stream and the paired flow doesn't. A **correspondence** seek is the exception:
+  plain JSON, returns `{"id":…}` immediately, no held connection. There is also an
+  undocumented `DELETE /api/board/seek` (`Setup.boardApiHookCancel`) that the spec omits.
 - Tokens are long-lived (~1 year) with **no refresh tokens**. A scope change forces a full
   re-link for everyone, so `board:play` is the only scope we ever request.
 - **Imported games are unrated and attributed to NOBODY** — `[White]`/`[Black]` are display

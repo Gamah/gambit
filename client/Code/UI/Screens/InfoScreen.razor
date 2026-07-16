@@ -116,6 +116,11 @@
 
 			<div class="section-header" style="color:@WallTheme.AccentCss;">PLAY ON LICHESS FOR REAL</div>
 			<div class="body" style="color:@WallTheme.TextDim;">Link a lichess account at the board next door and a game here can be a real game there, in your real lichess history — against the person opposite you, or a stranger from lichess's lobby.</div>
+			@* Named because they're the controls a lichess player expects to find and
+			   would otherwise assume are missing. Premove is deliberately described
+			   by what it does, not by its name: it is the only one of the three that
+			   isn't a request to the opponent. *@
+			<div class="body" style="color:@WallTheme.TextDim;">Offer a draw or ask for a takeback from the game panel — your opponent has to agree. On their turn you can click out your reply in advance: it plays the moment they move.</div>
 
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
@@ -125,12 +130,14 @@
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 			@* Only things that are genuinely NOT built. Checked against the code, not
-			   remembered: takebacks/chat exist on lichess's Board API and are not wired
-			   up (PLAN.md), and the piece set is procedural with CC0 models on file (D5).
+			   remembered: chat exists on lichess's Board API and is not wired up
+			   (PLAN.md), and the piece set is procedural with CC0 models on file (D5).
+			   Takebacks came OFF this list when they shipped — which is the whole
+			   hazard of this section, so re-check it rather than trusting it.
 			   "Rated games" nearly went in here and would have been false — lichess games
 			   already take a `rated` flag. This is the copy that rots; re-check it. *@
 			<div class="section-header" style="color:@WallTheme.AccentCss;">COMING SOON</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Takebacks and chat on lichess games · a proper 3D piece set</div>
+			<div class="body" style="color:@WallTheme.TextDim;">Chat on lichess games · a proper 3D piece set</div>
 
 			<div class="discord-btn" onclick="@CopyDiscord">@DiscordLabel()</div>
 		}

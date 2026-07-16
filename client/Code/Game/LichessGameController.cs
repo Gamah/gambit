@@ -121,6 +121,73 @@ public sealed class LichessGameController : Component, IBoardGame
 
 	bool _moveInFlight;
 
+	// ── Premove ──
+
+	/// <summary>The move armed to play the instant it becomes legal, as UCI, or
+	/// null. ONE, deliberately: lichess allows a single premove, and a queue would
+	/// need a plan for the moment move two turns out to be illegal.
+	///
+	/// <para>Stored as SQUARES rather than anything derived from the position it
+	/// was armed in. <see cref="Rebuild"/> throws the board away and rebuilds it
+	/// from lichess's move list on every poll, so a premove holding a reference
+	/// into the old position would be stale before it ever fired.</para></summary>
+	string _premoveUci;
+
+	/// <summary>The armed premove as UCI, or null. One value rather than two so a
+	/// caller can watch the whole premove change — the HUD's repaint hash has no
+	/// room to spend two slots on halves of the same thing.</summary>
+	public string PremoveUci => _premoveUci;
+
+	/// <summary>The armed premove's from/to squares, for the board's highlight.
+	/// Null when nothing is armed.</summary>
+	public string PremoveFrom => _premoveUci is { Length: >= 4 } u ? u[..2] : null;
+	public string PremoveTo => _premoveUci is { Length: >= 4 } u ? u[2..4] : null;
+
+	public bool HasPremove => _premoveUci != null;
+
+	/// <summary>Arm a premove. Only while a lichess game is live, we're seated, and
+	/// it is NOT our turn — on our own turn the move is simply played.</summary>
+	public void SetPremove( string uci )
+	{
+		if ( !Playing || LocalSeat == null || IsMyTurn ) return;
+		if ( uci is not { Length: >= 4 } ) return;
+		_premoveUci = uci;
+	}
+
+	public void ClearPremove() => _premoveUci = null;
+
+	/// <summary>Play the armed premove if the position that just arrived makes it
+	/// legal. Called once per adopted state, straight after the rebuild.
+	///
+	/// <para>It costs no clock time in any sense we control: lichess starts your
+	/// clock when it publishes the opponent's move, and this fires on the poll
+	/// that carries it — so a premove spends one poll's latency and no thinking
+	/// time. It is not free, it is just as fast as knowing is possible.</para>
+	///
+	/// <para>An illegal premove is DROPPED, not held. It was aimed at a position
+	/// the opponent didn't play into; keeping it armed would fire it at some later
+	/// position it was never meant for — which is how a premove ends up hanging a
+	/// queen two moves after you forgot about it.</para></summary>
+	void FirePremove()
+	{
+		if ( _premoveUci == null ) return;
+
+		if ( !Playing || LocalSeat == null ) { _premoveUci = null; return; }
+
+		// Not our turn yet (or our own last move is still in flight) — keep it
+		// armed and try again on the next state.
+		if ( !IsMyTurn ) return;
+
+		string uci = _premoveUci;
+
+		// Disarm BEFORE playing, not after: TryMakeMove can refuse, and a premove
+		// left armed through its own refusal would re-fire every poll for the rest
+		// of the game.
+		_premoveUci = null;
+
+		TryMakeMove( uci );
+	}
+
 	async Task SendMove( string uci )
 	{
 		var res = await LichessApi.Move( _clientGameId, uci );
@@ -340,6 +407,7 @@ public sealed class LichessGameController : Component, IBoardGame
 		_version = 0;
 		_renderedMoves = null;
 		_lastMoveUci = null;
+		_premoveUci = null;   // a premove must never outlive the game it was armed in
 	}
 
 	protected override void OnUpdate()
@@ -499,6 +567,10 @@ public sealed class LichessGameController : Component, IBoardGame
 		}
 
 		Rebuild( st.moves );
+
+		// After the rebuild, never before: the premove is aimed at the position
+		// lichess just sent, and IsMyTurn reads the board Rebuild just built.
+		FirePremove();
 	}
 
 	/// <summary>
@@ -558,6 +630,56 @@ public sealed class LichessGameController : Component, IBoardGame
 	public bool DrawOffered =>
 		State != null && LocalSeat is { } seat
 		&& ( seat == ChessSeat.White ? State.black_draw : State.white_draw );
+
+	/// <summary>Decline the draw the opponent is offering.</summary>
+	public void DeclineDraw()
+	{
+		if ( !Playing || LocalSeat == null ) return;
+		_ = LichessApi.DeclineDraw( _clientGameId );
+	}
+
+	/// <summary>Propose a takeback, or accept one already proposed — one call for
+	/// both, exactly as with a draw.
+	///
+	/// <para>Nothing here reports whether it landed, because lichess doesn't tell
+	/// us: it drops a takeback proposed before both sides have moved and still
+	/// answers 200. <see cref="TakebackOffered"/> on the next poll is the truth,
+	/// which is why the button doesn't try to look like it worked.</para></summary>
+	public void OfferTakeback()
+	{
+		if ( !Playing || LocalSeat == null ) return;
+		_ = LichessApi.OfferTakeback( _clientGameId );
+	}
+
+	/// <summary>Decline the takeback the opponent is proposing.</summary>
+	public void DeclineTakeback()
+	{
+		if ( !Playing || LocalSeat == null ) return;
+		_ = LichessApi.DeclineTakeback( _clientGameId );
+	}
+
+	/// <summary>True when the OTHER side has a takeback proposal standing.</summary>
+	public bool TakebackOffered =>
+		State != null && LocalSeat is { } seat
+		&& ( seat == ChessSeat.White ? State.black_takeback : State.white_takeback );
+
+	/// <summary>True when WE have a takeback proposal standing — the button
+	/// becomes "waiting", not a second proposal.</summary>
+	public bool TakebackPending =>
+		State != null && LocalSeat is { } seat
+		&& ( seat == ChessSeat.White ? State.white_takeback : State.black_takeback );
+
+	/// <summary>Takeback needs a move from each side; lichess silently drops one
+	/// proposed earlier, so the button is hidden rather than dead.</summary>
+	public bool CanTakeback =>
+		Playing && LocalSeat != null && MoveCount >= 2;
+
+	/// <summary>How many half-moves lichess has confirmed. Counted off the state's
+	/// own move list rather than the rebuilt board, so it can't disagree with what
+	/// lichess is gating on.</summary>
+	int MoveCount =>
+		string.IsNullOrWhiteSpace( State?.moves ) ? 0
+			: State.moves.Split( ' ', StringSplitOptions.RemoveEmptyEntries ).Length;
 
 	/// <summary>Result string for the HUD, once lichess says it's over — or null
 	/// when lichess ended the game WITHOUT a result.
