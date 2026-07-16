@@ -236,10 +236,24 @@ never linked a lichess account and never will.**
 | `GET /api/v1/tv/channels` | session/FP | `{default, channels:[{key,label}]}` — what we'll actually serve |
 | `GET /api/v1/tv/{channel}?since=N` | session/FP | **long poll** (held ~5s) for the channel's featured game |
 
+**Two fields on the TV state exist only to keep the wall's clock legal**, and they are
+durations rather than timestamps on purpose. `clock_age_ms` is how long ago gamchess received
+those clocks from lichess; `hold_ms` is how long gamchess sat on this request. The client
+subtracts `clock_age_ms + (its own round trip − hold_ms)` from the **ticking** seat, because
+lichess only sends a clock when a move happens and the value is therefore already stale on
+arrival — without this the wall reads HIGHER than the time actually left, which is the one
+direction a live clock may never be wrong in.
+
+An absolute timestamp would not work here: we don't share a wall clock with the client, so a
+skewed one would correct in either direction, including up. And `hold_ms` is not diagnostics —
+without it a 5s long-poll hold reads as 5s of network latency. The **lichess→gamchess** leg is
+irrecoverable by construction (nothing downstream knows when lichess stamped it), so a small
+residual bias survives and is documented rather than denied.
+
 **One upstream stream per CHANNEL, however many are watching.** 100 players on blitz cost
 lichess exactly one stream. That invariant is the entire reason TV is proxied rather than hit
 from each client (lichess advocates precisely this), and it is what makes per-client channel
-choice affordable: the cost is bounded by the channel count (6), not the player count. The
+choice affordable: the cost is bounded by the channel count (15), not the player count. The
 stream opens on the first watcher and is dropped ~45s after the last one stops polling —
 ref-counted by **pollers**, via a last-polled timestamp rather than a counter, because a
 counter needs a decrement on every exit path including the ones a dropped connection never

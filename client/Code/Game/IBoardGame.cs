@@ -3,14 +3,47 @@ using Gambit.World;
 
 namespace Gambit.Game;
 
+/// <summary>Constants shared by everything implementing <see cref="IBoardGame"/> —
+/// one copy, so the two kinds of table can't drift apart on a number that is supposed
+/// to make them behave alike.</summary>
+public static class BoardGame
+{
+	/// <summary>How long the "premove dropped" notice stands. Long enough to read
+	/// after looking back at the board, short enough that it's gone before it could be
+	/// mistaken for a comment on your NEXT premove.</summary>
+	public const float PremoveDroppedSeconds = 4f;
+
+	/// <summary>
+	/// Which game owns a board: the lichess relay once it has claimed the table,
+	/// otherwise the local two-seat game.
+	///
+	/// <para><b>One copy, and that is the point.</b> Four things now answer for the same
+	/// table — the board view, the sounds, the table clock and the HUD — and if any two
+	/// of them resolved this differently the player would be looking at one game, hearing
+	/// another, and reading a third's clock. It was three hand-copies of
+	/// <c>lichess is { Engaged: true } ? lichess : controller</c> agreeing by inspection;
+	/// a fourth was the point to stop. Agreeing by construction costs nothing.</para>
+	/// </summary>
+	public static IBoardGame Source( LocalGameController local, LichessGameController lichess ) =>
+		lichess is { Engaged: true } ? lichess : local;
+}
+
 /// <summary>
 /// The slice of a game controller that <see cref="Gambit.World.ChessBoardView"/>
-/// needs to render a position and turn cursor clicks into moves. Abstracting it
-/// lets one board view drive either the local two-seat game
-/// (<see cref="LocalGameController"/>) with no per-source branching in the view.
+/// needs to render a position and turn cursor clicks into moves, and that
+/// <see cref="Gambit.Audio.TableSounds"/> needs to make a noise about it.
+/// Abstracting it lets one board view and one sound watcher drive either the local
+/// two-seat game (<see cref="LocalGameController"/>) or a real lichess game
+/// (<see cref="LichessGameController"/>) with no per-source branching in either.
 ///
-/// The view resolves this to the local controller,
-/// so M2 behaviour is byte-for-byte unchanged.
+/// <para><b>This seam is the reason a feature can't ship for half the tables</b>, and
+/// it has already caught that twice. M8 added a whole second kind of game with no
+/// renderer change at all — but sound was NOT on the seam, it hung off
+/// LocalGameController, and so a real lichess game at a table, the M8 headline
+/// feature, played in complete silence for two whole milestones without one line of
+/// code looking wrong. Anything that reacts to a move, a result or a clock belongs
+/// up here. If you find yourself typing <c>LocalGameController</c> in a new reactive
+/// feature, that is the mistake happening again.</para>
 /// </summary>
 public interface IBoardGame
 {
@@ -19,6 +52,31 @@ public interface IBoardGame
 
 	/// <summary>A game is live right now (accept input, run the clock).</summary>
 	bool Playing { get; }
+
+	/// <summary>The game at this board has ENDED and its result is still on display.
+	///
+	/// <para>Not just <c>!Playing</c>: an idle table, a table mid-setup and a table
+	/// showing a result are all not-playing, and only the last one is a game that just
+	/// finished. <see cref="Gambit.Audio.TableSounds"/> needs the difference — a sound
+	/// that fired on !Playing would fire every time anyone stood up.</para></summary>
+	bool GameOver { get; }
+
+	/// <summary>Seconds left on a seat's clock, or null when there is no clock to show —
+	/// nothing live, or an untimed game.
+	///
+	/// <para>On the seam so that everything showing a clock reads the same one. The
+	/// alternative — <c>LocalGameController.ClockFor</c> — is <b>wrong by construction</b>
+	/// during a lichess game: the host FREEZES its copy (HostTickClocks early-returns on
+	/// LichessGame) precisely so it can't flag a player who is fine on lichess's clock. So
+	/// it sits at its start value forever, and anything reading it shows a clock that
+	/// never moves.</para></summary>
+	float? SeatClock( ChessSeat seat );
+
+	/// <summary>Seconds left on the LOCAL player's own clock, or null when they aren't
+	/// seated here. Sugar over <see cref="SeatClock"/> — the panic beep and the clock's
+	/// own highlight both want "mine", and resolving the seat at each call site is how
+	/// they'd end up disagreeing about which seat that is.</summary>
+	float? LocalSeatClock { get; }
 
 	/// <summary>It's the local seated player's move.</summary>
 	bool IsMyTurn { get; }
@@ -51,6 +109,19 @@ public interface IBoardGame
 	void SetPremove( string uci );
 
 	void ClearPremove();
+
+	/// <summary>A premove fired and was REFUSED — show it, briefly.
+	///
+	/// <para>Exists because the failure is invisible and looks exactly like success.
+	/// Both controllers used to throw away the bool from their TryMakeMove, which
+	/// returns false silently: no error, no log, no sound. The only observable was the
+	/// premove highlight disappearing — <b>which is also what it does when it works</b>.
+	/// You watch your premove vanish and believe you moved.</para>
+	///
+	/// <para>Self-clearing after <see cref="BoardGame.PremoveDroppedSeconds"/> rather
+	/// than needing a dismissal: it is news about a move that isn't happening, and the
+	/// board behind it already tells the whole story.</para></summary>
+	bool PremoveDropped { get; }
 
 	// ── Offers ──
 	//

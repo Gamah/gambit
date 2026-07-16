@@ -81,6 +81,21 @@ public readonly struct TimeControl
 	public const float DecimalBelowSeconds = 60f;
 
 	/// <summary>
+	/// Below this many seconds left, you are in trouble: the ticking seat's clock turns
+	/// red and (at your own table, for your own clock) starts beeping once a second.
+	///
+	/// <para>Deliberately NOT <see cref="DecimalBelowSeconds"/>. That one decides when
+	/// tenths are legible; this one decides when you're in trouble. A whole bullet game
+	/// is played under sixty seconds, and colouring all of it red — or beeping through
+	/// all of it — would say nothing.</para>
+	///
+	/// <para>Lives here rather than on the HUD because it is no longer only a colour:
+	/// the panic sound and the red text have to agree on where panic starts, and two
+	/// copies of 10f in two files is how they'd quietly stop agreeing.</para>
+	/// </summary>
+	public const float PanicSeconds = 10f;
+
+	/// <summary>
 	/// A remaining-time bank as a clock face. Minutes:seconds normally, dropping to
 	/// tenths under <see cref="DecimalBelowSeconds"/>, where a whole second is an age —
 	/// the entire bullet time control lives down there. Never renders negative: a flagged

@@ -322,6 +322,21 @@ public sealed class SpectatorController : Component
 		// highlight while the dead game is still up.
 		if ( _tv.ShowingFinished )
 		{
+			// Sound the ending, once (M11). Quiet and POSITIONAL — the wall is always
+			// audible to the whole room, and on UltraBullet a game ends every ~30
+			// seconds, so this has to be something you notice standing at the wall and
+			// never something the room has to listen to forever. Same gate as everyone
+			// else's tables (RemoteCabinetSounds), because that is what it is: a game
+			// finishing somewhere you aren't sitting.
+			//
+			// Keyed on the headline changing rather than on ShowingFinished, which stays
+			// true for the whole hold and would re-fire every frame of it.
+			if ( _tv.FanfareText != _lastFanfareSounded )
+			{
+				_lastFanfareSounded = _tv.FanfareText;
+				Audio.SoundPlayer.PlayGameOver( mine: false, WorldPosition );
+			}
+
 			FanfareText = _tv.FanfareText;
 			FanfareHeadline = _tv.FanfareHeadline;
 			FanfareReason = _tv.FanfareReason;
@@ -393,7 +408,16 @@ public sealed class SpectatorController : Component
 		FanfareText = null;
 		FanfareHeadline = null;
 		FanfareReason = null;
+
+		// Re-arm the sound. Without this, two games in a row ending the same way — which
+		// on a fast channel is routine ("White won — Checkmate" twice) — would announce
+		// the first and sit silent through the second, because the text never changed.
+		_lastFanfareSounded = null;
 	}
+
+	/// <summary>The fanfare text we last made a noise for. Guards against re-firing
+	/// every frame of the hold; cleared between games by <see cref="ClearFanfare"/>.</summary>
+	string _lastFanfareSounded;
 
 	static string TableNumber( ChessStation st )
 	{

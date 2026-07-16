@@ -166,6 +166,27 @@ public sealed class TvState
 	/// from the FEN's side-to-move.</summary>
 	public string ticking_seat { get; set; }
 
+	/// <summary>How long ago gamchess RECEIVED these clocks from lichess, in ms.
+	///
+	/// <para>Milliseconds of age, not a timestamp, and that is the point: we do not
+	/// share a wall clock with gamchess, so an absolute stamp would be corrected by
+	/// whatever our machine's clock skew happens to be — including upwards, which is
+	/// the one direction a live clock may never be wrong in. A duration survives
+	/// skew.</para>
+	///
+	/// <para>0 on the common path (the long poll wakes on the frame itself) and on any
+	/// gamchess too old to send it — which is why the client treats a missing value as
+	/// "no correction" and simply keeps the old behaviour rather than breaking.</para></summary>
+	public long clock_age_ms { get; set; }
+
+	/// <summary>How long gamchess sat on our request before answering, in ms.
+	///
+	/// <para>Subtracted from our own measured round trip to leave the NETWORK time.
+	/// Without it a 5s long-poll hold reads as 5s of latency, and the wall's clock
+	/// would run five seconds fast-forward of the truth — a bigger lie than the one
+	/// this exists to fix.</para></summary>
+	public long hold_ms { get; set; }
+
 	// How the PREVIOUS featured game ended.
 	//
 	// <para>The TV feed says nothing about a game ending — it just swaps to the next

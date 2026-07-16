@@ -521,9 +521,16 @@ type SeekParams struct {
 	// the reason the UI asks rather than assumes.
 	Rated bool
 
-	// RatingRange narrows the opponent pool, e.g. "1500-1800". lichess's own
-	// advice is "better left empty" — a narrow range on a small pool means a seek
-	// that never pairs, and Gambit's seeks are already scarce.
+	// RatingRange narrows the opponent pool, e.g. "1500-1800" — ABSOLUTE ratings,
+	// never a delta, both ends within 400-2900, min < max strictly. An invalid
+	// string is a 400, not a silent default.
+	//
+	// Leaving it empty is not "pair me with anyone" and not laziness: for a
+	// real-time hook lila discards a default range and centres a Gaussian band on
+	// the seeker's REAL rating (Hook.ratingRangeOrDefault -> RatingRange.defaultFor).
+	// It knows their rating; we don't. So empty is the STRONGEST value we can send,
+	// and Gambit always sends it. See CLAUDE.md's ratingRange trap before setting
+	// this to anything.
 	RatingRange string
 
 	// Color is "white", "black", or ""/"random". lichess's advice is again to

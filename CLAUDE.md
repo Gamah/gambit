@@ -102,6 +102,38 @@ token and must be signed by *that* token. So:
 - **Omitting both clock fields is how you ask for an unlimited challenge.** Sending `0/0` asks
   for a rejected 0+0 clock instead.
 - **`clock.limit` has a domain**: 0, 15, 30, 45, 60, 90, or any multiple of 60 up to 10800.
+- **An omitted `ratingRange` does NOT mean "pair me with anyone" — it means "lichess picks a band
+  centred on me", and that is the best matchmaking available to us.** Re-derived from lila +
+  the OpenAPI spec 2026-07-16. This one inverts the obvious reading, so the chain matters:
+  - The field is **absolute** (`"1500-1800"`), never a delta — `^\d{3,4}-\d{3,4}$`, both ends
+    within **400–2900**, `min < max` strictly. An invalid string is a **400**, not a silent
+    default (`Mappings.scala` verifies before `orDefault` can fire).
+  - Omitted → `RatingRange.default` = **`400-2900`** (`core/rating.scala`) — nominally
+    unbounded. **But a real-time hook never uses it.** `Hook.scala:46-54` computes
+    `manualRatingRange = ratingRange.ifNotDefault`, and where that is empty falls back to
+    `RatingRange.defaultFor(rating)` — a **Gaussian band** (`Gaussian(1500, 350)`, percentile
+    `0.2`) around **your real rating**, clamped to 400–2900. **[SOURCE]**
+  - So lichess centres on your true rating for free: **no scope, no `/api/account` fetch, no
+    rating stored on the link row.** Anything we compute is worse-informed than lila is. This
+    is why Gambit sends **no `ratingRange` at all** and has **no rating chip** — the old
+    "Near my rating" chip sent a fixed `1400-1800` to every player regardless of strength,
+    which was both a lie on its face and *narrower and less accurate* than doing nothing.
+  - **A real-time seek therefore cannot mean "anyone".** lila filters out a range equal to your
+    rating ±500 as "no preference" — which is exactly what its own UI slider defaults to
+    (`setupCtrl.ts:71`, delta→absolute at `:229`). So lichess's ±500 preset is a decoy: lila
+    recognises and discards it. Asking for a genuinely open pool would mean sending `400-2899`
+    to dodge that equality check. **Don't** — it games an implementation detail to get worse
+    pairings.
+  - **Correspondence is the exception**: `Seek.scala` uses `ratingRange.ifNotDefault` with **no
+    Gaussian fallback**, so a correspondence seek with the default range really is unbounded.
+  - The **±500 clamp is web-UI-only**: `HookConfig.withinLimits` is applied by
+    `Setup.hook`, and **`Setup.boardApiHook` never calls it** — a Board API seek may set a range
+    further than 500 from its own rating. **[SOURCE]**
+  - `GET /api/account` is **`security: [OAuth2: []]`** — a token, but **no specific scope**, so
+    `board:play` reads it — and ratings live at **`perfs.<speed>.rating`**, with `prov: true`
+    marking provisional (lichess disables its own range control when provisional). Recorded
+    because it is the fact that *looks* like it unblocks a rating chip; it doesn't, because the
+    chip shouldn't exist.
 - **An offer POST always answers `200 {"ok":true}`, whether or not lichess took it.**
   `setDraw`/`setTakeback` return Unit in lila and the controller wraps them in `fuccess`, so
   the documented `400 "The draw offering failed"` never fires. lichess silently drops a draw
@@ -169,7 +201,7 @@ never asked for it, on a stream held open for hours, would be a real leak.
 **The invariant that pays for the proxy: one upstream stream per CHANNEL.** 100 players on
 blitz cost lichess one stream. That is why TV goes through gamchess rather than each client
 hitting lichess (lichess advocates precisely this), and why per-client channel choice is
-affordable — the cost is bounded by the channel count (6), not the player count. Ref-counted
+affordable — the cost is bounded by the channel count (15), not the player count. Ref-counted
 by **pollers via a last-polled timestamp, not a counter**: a counter needs a decrement on
 every exit path including the ones a dropped HTTP connection never gives us, and one missed
 decrement leaks a stream forever. A timestamp cannot leak.
@@ -195,10 +227,52 @@ this was wrong when recalled from memory first):
 **lichess only sends a clock when a MOVE happens**, so a TV clock rendered raw sits frozen
 through every think and reads as a broken board rather than a thinking player.
 `LichessTvSource` runs the side-to-move's clock down locally from the last frame and snaps
-both to whatever the next one says. It never invents time, only spends it — which keeps the
-house rule that **a live clock must never read HIGHER than the time actually left** (the same
-rule that makes `TimeControl.Format` truncate where the PGN writer rounds). lichess stays the
-only authority, and local drift cannot outlive one move.
+both to whatever the next one says. lichess stays the only authority, and local drift cannot
+outlive one move.
+
+> **The "it can only read low" reasoning was WRONG, and it was written in three places.** This
+> file, PLAN.md and the code comment all claimed the local countdown "drifts LOW by roughly the
+> network latency". It read **HIGH**, and that inverts the house rule below — the one rule the
+> whole clock design exists to satisfy. The mechanism: lichess stamps the clock at the move
+> instant **T₀**; the frame reaches us at **T₀ + L** (lichess → gamchess → client); on arrival
+> the code set the bank and zeroed its age, so at wall-clock T₀+L we displayed the value as of
+> T₀ while the player had already burned **L**. Displayed = true + L, held until the next move.
+> "Counting down from a known-good value can only read low" is the step that fails: **the value
+> is already stale on arrival**, so the countdown starts late, not early.
+>
+> **Fixed in M11** — and the fix is not the one this file specified, which is worth keeping.
+> The agreed shape was "gamchess stamps receipt time into the state and the client subtracts the
+> elapsed since". **That does not work, for two reasons found on building it:**
+>
+> 1. **We do not share a wall clock with gamchess.** An absolute stamp is meaningless to a
+>    client, and a skewed one corrects by the skew — *including upwards*, the one direction the
+>    house rule forbids. The correction has to travel as a **duration**, not a timestamp.
+> 2. **The stamp alone is a no-op on the common path.** The long poll wakes on the frame, so
+>    gamchess sends it instantly and its own staleness is ~0. The bias that actually exists is
+>    the **network leg**, and no server-side stamp can express it.
+>
+> So `TvState` carries **two** durations, both computed at send: `clock_age_ms` (how long the
+> value sat with gamchess — ~0 normally, and it earns its keep only on a late or reconnecting
+> poll) and `hold_ms` (how long gamchess sat on the request). The client measures its own round
+> trip and takes **network = round trip − hold_ms**; without `hold_ms` a 5s long-poll hold reads
+> as 5s of latency and the clock runs five seconds fast-forward of the truth — a *bigger* lie
+> than the one being fixed. It subtracts the **full** remaining round trip rather than halving
+> it for the downstream leg: the house rule is one-directional, so a deliberate undershoot is
+> free where a fair estimate is a coin-flip on the forbidden outcome.
+>
+> **The lichess→gamchess leg survives by construction** — nothing downstream knows T₀ — so a
+> small residual high bias remains, documented rather than denied. Its magnitude has never been
+> measured; only its direction is certain.
+>
+> **The lag applies to the TICKING seat only.** The idle side's clock isn't running, so however
+> stale the frame is their bank is still exactly right; subtracting from both would invent a
+> loss of time that never happened. Anything that re-derives a TV clock must reason from *when
+> the value was stamped*, never from *when we received it*.
+
+**The house rule: a live clock must never read HIGHER than the time actually left** — the same
+rule that makes `TimeControl.Format` truncate where the PGN writer rounds. Reading low is
+explicitly permitted; reading high is not. The rule is one-directional on purpose, which is why
+a deliberate undershoot satisfies it where an unbiased estimate would not.
 
 > The snap is gated on the **version advancing**, and that guard is the feature. A long poll
 > that reaches its hold answers with the current state at the *same* version, every ~5s
@@ -238,7 +312,7 @@ and its replacement land in one state so the client can never show the new game 
 (one slot, overwritten), so "hold for 3s, then take whatever is current" abandons all but the
 latest by construction — no queue, no catch-up, no speed-up logic.
 
-**All 16 channels, variants included** (default `best` — "Top Rated", the best game in
+**All 15 channels, variants included** (default `best` — "Top Rated", the best game in
 progress whatever the speed; a wall wants something worth looking up at, and blitz is a fine
 game but an arbitrary one). This was **six** at first, excluded on the reasoning that the
 vendored rules are standard-only so a variant FEN can't be drawn —
@@ -406,6 +480,15 @@ were proven originally, how a `[TimeControl]`-bearing PGN was checked against th
 writer, and how `LichessTable`'s challenge/seek floors were checked against every preset in
 `TimeControl.All` — prefer it over review whenever the code can be isolated from Sandbox.
 
+**This cuts both ways: it is worth MOVING code to make it testable.** `Code/Chess/
+CapturedMaterial.cs` (the captured-piece trays' material derivation, M11) lives under
+`Code/Chess/` and takes a plain `char[64]` specifically so it can run in a harness — the
+promotion arithmetic in it is exactly the kind of thing that reads as obviously correct and
+isn't. Driving real games through `ChessGame` in the harness immediately proved a real
+capture-promotion line that the naive start-minus-current diff gets wrong in both directions
+at once. Had it stayed a private method on `ChessBoardView` (a `Component`), none of it could
+have been run here at all.
+
 ---
 
 ## Architecture map (what exists and why)
@@ -439,9 +522,56 @@ writer, and how `LichessTable`'s challenge/seek floors were checked against ever
   wasn't). Both are self-healing, so **no scene rewire is needed** for these
   components.
 - `ChessRing` builds the ring of tables (`BuildChessTable`: table, board frame, 64
-  cells, pieces at the start position, two camera anchors per station) and
-  network-spawns the stations. It also owns the screen-rect UI math
+  cells, two capture trays, pieces at the start position, two camera anchors per
+  station) and network-spawns the stations. It also owns the screen-rect UI math
   (`ScreenFractionRect()` / `UiRectStyle()`).
+- **The tabletop margin is allocated, not slack** (M11), and **the Y margin's budget is
+  DERIVED, not typed**. `TopSizeX`/`TopSizeY` (40 × 44 base units) minus the 29-wide board
+  frame gives every margin a job: **−Y is the clock strip then White's tray**, **+Y is
+  Black's tray** (with the number plaque hanging below its edge), and **±X are kept clear
+  — they are the seat cameras' sightlines.**
+  It was 34 square (a 2.5 margin) while a comment promised "a healthy margin for
+  clocks/captures later" — it wasn't one, and the plaque was standing in what is now
+  Black's tray. **Don't put anything new on the tabletop without checking which margin
+  it lands in.**
+- **`ClockBoardGap` / `ClockDepth` / `ClockTrayGap` / `TrayEdgeGap` are the whole Y
+  budget**; `TrayInnerY`, `TrayCenterY`, `TrayWidth`, `TraySlotPitchY` and `ClockCenterY`
+  all derive from them. This is not tidiness. The tray slab used to be
+  `TrayCols * cell + 1`, which at these numbers is *exactly* the 7.5 margin — so it ran
+  flush from the board frame to the table edge with no gap anywhere, on both sides.
+  **Nobody chose that; it is what the expression happened to equal**, the same accident as
+  the "healthy margin" that wasn't. Change one constant now and everything else moves.
+- **Neither X margin is neutral ground**: −X is exactly where White's seat camera looks
+  down the board from, and +X is the same for Black. Anything mid-edge there is in a
+  player's foreground. The clock was built at +X with a face per seat and read as a wall in
+  Black's face; it is now **beside** the board at −Y with **one** face angled up across it —
+  which is where a real chess clock goes, and why one face serves both seats: neither is
+  square to it, both are looking down at the table anyway.
+- **A `WorldPanel`'s `LocalScale` is not a world size and cannot be eyeballed.** World size
+  is `PanelSize × 0.05 × scale` — the 0.05 is the engine's
+  `ScenePanelObject.ScreenToWorldScale`, and the default `PanelSize` is 512 square. The
+  clock face was guessed at `0.022` and rendered **0.85 world units on a 30-unit body**: an
+  invisible speck that read as "the panel is broken". Derive it —
+  `wanted_world_size / (PanelSize × 0.05)`. `ChessRing.PxToWorld` and `SpectatorSeatPanel`
+  each keep a copy of that constant for this reason.
+- **The clock plates' HEIGHT is a geometric constraint, not a style choice.** They are tilted
+  up out of a 1.4-deep strip, so a plate's height projects `sin(tilt)` of itself back into Y:
+  a tall plate at a steep tilt leans out over the board and clips the a-file. `ClockPlateHeight`
+  and `ClockFaceTilt` therefore trade off exactly and **neither is tunable alone** — 2.4 at 30°
+  spends ±0.6 of the strip's own ±0.7. Nothing stacks on a clock this thin, and it is thin
+  because it shares the margin with a tray. The plate's **pixel** space is not a second knob:
+  `ClockPxHeight` is *derived* from the plate's aspect, so the panel and the mesh it sits on
+  cannot drift out of proportion.
+- **Each player's captured pieces sit in a tray on their own right** (White faces +X, so
+  White's right is −Y — s&box is Y-left). `ChessRing.TraySlotLocalPosition` owns the
+  geometry; `ChessBoardView` owns the ordering; **`Code/Chess/CapturedMaterial.cs` owns
+  what's in it, and derives it from the FEN alone — never from a tally of captures.**
+  That is load-bearing: `ChessBoardView` rebuilds from the FEN and has no history, so an
+  event-counted tray would be empty for every late joiner and every resync. The capture
+  animation is a transient overlay on top; when the diff happens to have the dying piece's
+  GameObject the tray adopts it, and when it doesn't the tray just spawns it in place.
+  **Tray geometry must never be named `Cell …`** — `ChessBoardView.ResolveCells`
+  prefix-scans the Table's children for exactly that.
 - `ChessSetBuilder` lathes each piece as a runtime mesh. `BuildPiece(type, color, scale)`
   first tries `Model.Load("models/chess/{type}.vmdl")` and falls back to procedural —
   so dropping in a real piece set later is a one-function swap (**D5**).
@@ -507,9 +637,24 @@ implementations that agree — lichess-org's own **dartchess** (`lib/src/pgn.dar
   (centiseconds): a third digit is false precision when the clock is decremented by a
   ~16ms frame delta, and lichess itself keeps clocks in centiseconds. Two is a strict
   subset, so both still parse it.
-- `ChessGame.ClkField` **rounds**; `TimeControl.Format` (the live HUD) **truncates**. Not
-  an inconsistency: a live clock must never read higher than the time actually left,
+- `ChessGame.ClkField` **rounds**; `TimeControl.Format` (every live clock) **truncates**.
+  Not an inconsistency: a live clock must never read higher than the time actually left,
   whereas the archive should match the reference writers.
+
+**Where a live clock is rendered (M11): on the TABLE, not the HUD.** A low strip in each
+table's **−Y** margin (never +X — that is Black's seat camera's sightline, and a clock there
+read as a wall in their face), carrying **two mesh plates and a mesh material bar** that all
+share one upward facing across the board: `ChessRing.BuildStationClock` + `World/TableClock.cs`
++ `UI/TableClockTextPanel.razor`. One facing serves both seats because neither player is square
+to it and both are looking down at the table — two dials on one body, as a real chess clock is.
+It was text in a 250px column pinned to the right of the screen while the board sat in the
+middle of it — in a 3+0 game, the wrong place for the number that ends the game. Two things
+moved with it and must move back if it ever does: **`TimeControl.PanicSeconds`** (where a clock reddens — shared with the panic beep so the
+two can't disagree, which is why it lives on `TimeControl` rather than on a panel), and **the
+string-hashing** — clock faces are hashed as their RENDERED TEXT, so a panel repaints when a
+digit changes rather than every frame. Hash the raw float and every live table in the ring
+repaints continuously. The HUD now has no clock on it and no panic red: reddening a *name* next
+to no number is an alarm about something that isn't on the screen.
 
 Clocks are stamped by the **host** (`NetClockStamp`), never read from a client's own
 synced copy — that copy lags the increment. The `chess_js_perft.mjs` gate holds the JS
@@ -520,8 +665,16 @@ captured from the dotnet harness, so regenerate them there rather than hand-edit
 `Game/IBoardGame.cs` is the render/drive abstraction; `ChessBoardView` renders the
 active source with **one** branch (`Source => Lichess is { Engaged: true } ? Lichess :
 Controller`). The seam paid for itself: M8 added a whole second kind of game with no renderer
-change at all. Anything that reads the position should go through it — `GameHud` does too, for
-the same reason.
+change at all. Anything that reads the position should go through it — `GameHud` and
+`Audio/TableSounds` do too, and all three resolve `Source` with that identical expression on
+purpose: **what you see, what the HUD says and what you hear must be the same game.**
+
+**But the seam only protects what is actually ON it.** Sound wasn't — it hung off
+`LocalGameController`, and so a real lichess game at a table was completely silent from M8 to
+M11 with nothing looking wrong in any diff (see Sounds). `GameOver`, `LocalSeatClock` and
+`PremoveDropped` are on the seam for that reason: each is something a reactive feature would
+otherwise read off `LocalGameController`, where during a lichess game it is **wrong by
+construction** — the host freezes that controller's clocks and its `ChessGame` never advances.
 
 | Controller | Networked? | What it does |
 |---|---|---|
@@ -740,8 +893,15 @@ Deviating from them is how un-compilable mistakes get in.
   `[EditorEvent.Hotload]` in `Editor/HotloadRebuild.cs` — keep new builders registered there
 - **Razor usings**: `System`, `Sandbox`, `Sandbox.UI`, `Sandbox.Rendering` are NOT
   auto-imported in `.razor` — add `@using` explicitly
-- **Self-attaching UI**: GameHud, SplashScreen, and SpectatorScreen attach themselves to
-  the scene ScreenPanel at runtime — no scene rewire needed for new screens; copy the pattern.
+- **Self-attaching UI**: **GameHud and SpectatorScreen — those two, and no others** — attach
+  themselves to the scene ScreenPanel at runtime (`LobbyPlayer.cs:128-144` walks
+  `Scene.GetAllComponents<ScreenPanel>()`), so a new screen of that kind needs no scene rewire;
+  copy that pattern. **InfoScreen, SettingsScreen, ChatPanel and LobbyOverlay are NOT
+  self-attaching** — they are serialized components in `lobby.scene` and adding one means
+  editing the scene. This line cited `SplashScreen` as an exemplar for a long time; **there is
+  no `SplashScreen`** — no `.cs`, no `.razor`, only an orphan scene entry (see the scene-orphan
+  rule below). It was pointing at a file that does not exist, in the file every session is told
+  to trust.
 
 ## s&box API Whitelist
 
@@ -764,11 +924,36 @@ doubt check `https://sbox.game/api/` or file a false-positive at
 - **Never trust code defaults or docs for component property values** — the scene
   overrides them and gets retuned in-editor. `grep Assets/scenes/lobby.scene` for
   current values before sizing anything.
+- **…but confirm the component still has a class, because the scene lies too.** The rule
+  above assumes every scene entry is real. `lobby.scene` carried **eight components from the
+  rotaliate fork with no class anywhere in `client/Code/`** — every property on them inert,
+  and two of them actively contradicting the code that really runs: `ArcadeRing`'s
+  `BoardSize: 28` next to the real `ChessRing`'s **26**, and `SpectatorBoard`'s
+  `ClearAboveWall: 20` next to the real `SpectatorWall`'s **18**. Grepping the scene and
+  believing it got you the wrong number, **the exact inverse of this rule**. They are deleted
+  now; the habit is the point — `grep -r "class Foo" client/Code/` before trusting a scene
+  value.
+- **A runtime-built component runs on code defaults and cannot be retuned in-editor.**
+  `SpectatorWall` is not in the scene at all (`LobbyRoom.EnsureSpectatorWall()` builds it), so
+  every one of its values is a code default. A design pass on the north wall is an
+  edit-and-hotload loop, not a scene-tweak loop — unlike east and south.
 - The player is ~72 units tall — the human-scale yardstick.
 - `models/dev/box.vmdl` is **NOT 1×1×1**: to make a box of size S,
   `LocalScale = S / Model.Bounds.Size` per axis — use/copy `ChessRing.AddBox`.
 - Never put a `BoxCollider` on a non-uniformly scaled GO — it silently freezes physics.
   Colliders on uniformly-scaled parents, visuals on scaled children.
+- **A tilted object's EDGE is not half its size from its centre — derive the edge through
+  the rotation, never place it by the number that would be right if it were flat.** This has
+  now cost two rounds on two different objects. The table plaque dropped its centre by
+  `h·cos(tilt)` and forgot the `h·sin(tilt)` the same tilt swings sideways, so its top edge
+  was at the right height but tucked under the tabletop. The clock then centred its plates on
+  the body's top *surface* — so a box centred on its origin buried half of every plate in the
+  body, and buried the shorter material bar **entirely**, where it could never have rendered
+  at all. Both times the arithmetic looked obviously right on the page and the room disagreed.
+  `ChessRing.ClockPlaneOriginZ` is the worked example: surface + `h/2·cos(tilt)`, derived once
+  and shared by everything in the plane, which is also what keeps their bottom edges level for
+  free. **Nothing on this host can render, so a placement bug ships unless the edge is computed
+  — check where the EDGES land, not where the centre does.**
 - A WorldPanel GO's scale is a multiplier on the panel's intrinsic pixel size, not world
   units; the panel plane is local **Y (width) / Z (height)**. World-size and text size
   are coupled — to grow a board without growing text, scale the GO up and divide
@@ -791,12 +976,58 @@ doubt check `https://sbox.game/api/` or file a false-positive at
   panel. Reach for meshes over panel art.
 - Engaged-screen centering must live on an absolutely-positioned full-screen child
   (`.screen-fit` wrapper), NOT on `root` — otherwise content pins top-left.
+- **The same rule governs every WorldPanel, and there is exactly one shape that works.**
+  `root { width: 100%; height: 100%; pointer-events: none; }` and *nothing else*, with an
+  absolutely-positioned `left/top: 0; width/height: 100%` child doing the layout.
+  `MarqueeNumberPanel`, `SpectatorSeatPanel`, `CenterInfoPanel` and `StationScreenPanel`
+  are all byte-for-byte this. The old `TableClockPanel` was written with a fixed px size and
+  the centering on `root` and rendered wrong — **copy the working one rather than reasoning
+  about what root ought to accept.** Note `root` takes `100%`, not the panel's px size:
+  the px space is set by `PanelSize` on the `WorldPanel` component, not in the stylesheet.
+- **…and that shape CANNOT BE COMPOSED. It holds ONE string. A second string is a second
+  panel on a second mesh — build it in 3D, not in CSS.** This is the most expensive lesson
+  in this file, and it was learned five times before it was learned once. The table clock
+  tried to draw two times and a material bar in one WorldPanel and cost **five rounds, five
+  bugs, every one of them layout and not one of them data** — the world scale, the `root`
+  rule, nowrap/flex-shrink, plate-vs-text centring, and finally `position: absolute`
+  retargeting to an ancestor box instead of `root`. `gambit_clock` proved the seam correct
+  the entire time. The mechanism is mechanical, not bad luck: **the moment a box sits between
+  `root` and the text div, `position: absolute` retargets to that box and every centring rule
+  silently means something else.** The working panels have no such box because they have
+  nothing to compose.
+  → So the clock is now **the table-plaque pattern twice** (mesh plate + one-string panel)
+  **plus a mesh bar**: `ChessRing.BuildClockPlate`/`BuildClockBar` + `World/TableClock.cs` +
+  `UI/TableClockTextPanel.razor`. It is the same instinct as the spectator board being real
+  meshes, and the same rule two bullets up — *reach for meshes over panel art*. It also moves
+  the design out of the domain this host cannot test and into **arithmetic**, which is the
+  domain where the M11 pass got the margin budget, the tilt/height tradeoff and the plaque
+  corner right on the first attempt every time.
+  → It buys correctness, not just tidiness: a mesh plate sits at table-local `x = −7` for
+  White, so **a wrong side is visible in the diff**. The panel had to reason about a
+  WorldPanel's content-space handedness for the same fact and got it backwards, rendering
+  each player their opponent's clock.
+- **`⬜`/`⬛` are emoji too.** The "panel glyphs paint as colour emoji" rule is not only
+  about chess pieces — the geometric-shape block characters are the same trap. `GameHud`
+  uses them safely at 13px in a HUD; at 76px on a world panel they render as two big
+  square blocks that shove the actual content off the face. Use letters.
 - `transform: scale` misplaces panel content — use explicitly sized wrappers.
 - `pointer-events: all` must be set per interactive element; it does not inherit.
 - Panels are flex containers: inline `<span>`s inside a text div become separate flex
   items; source newlines render as literal whitespace — keep each text div's content on
   one line. A div's auto height does not grow for wrapped text — use one div per line in
   a flex column.
+- **…which means every text div in a flex row needs `white-space: nowrap` AND
+  `flex-shrink: 0`.** These two are one rule, and it is the single most expensive line in
+  this file. A flex item's *default* is to shrink when the row is tight; a shrunk text div
+  doesn't ellipsize, it **wraps**; and the rule above then clips it to a sliver of its
+  first line. The result is not a missing element or an error — it is a **few visible
+  pixels of the middle of your text**, which reads as a rendering bug anywhere but the
+  stylesheet. `SpectatorSeatPanel` carries `.tag > div { flex-shrink: 0 }` plus `nowrap`
+  on every text div for exactly this; the old `TableClockPanel` omitted both and rendered its
+  clock as **a single dot** while `gambit_clock` proved the value was `168.1s` the whole
+  time. Short strings hide it — "W" cannot wrap, so a one-character label renders fine
+  next to a four-character one that doesn't. **If some text on a panel renders and some
+  doesn't, check the string lengths before you check anything else.**
 - Deriving font sizes from `Panel.Box.Rect` on a WorldPanel doesn't work — use fixed px
   in intrinsic pixel space, calibrated against a known-good panel.
 - Don't make a panel `overflow: scroll` if it has draggable controls — s&box drag-scrolls
@@ -816,9 +1047,61 @@ doubt check `https://sbox.game/api/` or file a false-positive at
 
 Synthesized WAVs in `Assets/sounds/sfx/` generated by `scripts/gen_sounds.py` (numpy).
 `.sound` gotchas: `"Sounds"` lists `.vsnd` paths (not `.wav`), `"Volume"`/`"Pitch"` are
-JSON strings, `"UI": true` for 2D playback, `"__version": 1`. Mapping: tick/tock →
-clocks (by side), pop → captures, servo slides → station rebuild. Move sounds fire for
-your own board (2D) and other players' boards (positional).
+JSON strings, `"UI": true` for 2D playback, `"__version": 1`.
+
+**`tick`/`tock` are MOVE sounds, not clock sounds.** This line read "tick/tock → clocks (by
+side)" for a long time, which describes a ticking clock that did not then exist. They fire
+**once per move**, by side. (There *is* one per-second sound now — `panic` — and it is the only
+one; see below.)
+
+**Every board sound goes through `Gambit.Audio.TableSounds`, which watches the `IBoardGame`
+seam.** That is the whole design, and it is worth knowing why it isn't a call in the
+controllers. Sound used to hang off `LocalGameController`, and so **a real lichess game at a
+table — the M8 headline feature — was completely silent from M8 to M11**: no move, no capture,
+nothing. Nothing looked wrong in any diff, because the code that was there was correct; it just
+only ever covered half the tables. A watcher on the seam makes that class of bug impossible
+rather than merely fixed — a third kind of game gets these sounds by existing.
+
+**Don't add a `Sound.Play` to a game controller.** If a new reactive feature has you typing
+`LocalGameController`, that is the same mistake starting again.
+
+| Moment | Sound | Yours (2D) | The room's (3D) |
+|---|---|---|---|
+| Move | `tick` (White) / `tock` (Black) | ✅ | ✅ `tick3d`/`tock3d` |
+| Capture | `pop` | ✅ | ✅ `pop3d` |
+| Check | `check` | ✅ | ❌ — six tables checking is noise, and the king is already tinted red |
+| Game over (incl. a flag) | `gameover` | ✅ | ✅ `gameover3d` at 45% — worth a glance up, not the room's attention |
+| Draw / takeback offered | `offer` | ✅ | ❌ — only the player being asked |
+| Clock under `TimeControl.PanicSeconds` | `panic`, **1/sec** | ✅ | ❌ — the first per-second sound in the game, and it stays at one table |
+| lichess TV game ends | `gameover3d` | — | ✅ at the north wall |
+| Ring rebuild | servo slide, follows the cabinet | — | ✅ (`ChessRing.cs` → `ChessStation.cs`) |
+| Settings click | `tick` | ✅ | — |
+
+The gate is **your table is 2D, the room's tables are 3D, and the room must not become a slot
+machine with six tables** — which is why the right-hand column has three ❌ in it. Gates are
+`MyCabinetSounds` / `RemoteCabinetSounds` (`SoundPlayer.cs`), both default true. **Which sounds
+cross the room is decided in `SoundPlayer`, not at the call site**: every method there takes
+`mine` rather than letting a caller pick between the 2D and 3D asset, because a call site that
+gets to choose is one that can get it half right.
+
+**A 3D variant is a `.sound` file with `"UI": false` pointing at the SAME `.vsnd`** — no second
+WAV. This is why `tock3d` finally exists: it was recorded here for a whole milestone as "an
+unmade asset", which was wrong — it was six lines of JSON reusing the `tock.wav` that was
+already there. **Check what an asset actually costs before recording it as a decision.**
+
+**There is no separate flag sound.** A clock running out *is* the game ending, and the
+game-over sound covers it; firing both would be the same sound with a grace note.
+
+Still silent, deliberately: **resign** (it's a game over, and it makes that sound) and **sit /
+stand** (you know you sat).
+
+**No sound may be fired from a FEN diff alone.** `Code/Chess/BoardDiff.cs` classifies a
+position change as `Move` / `Rewind` / `None` and is Sandbox-free so it can be run here — a FEN
+change on its own also means a takeback, a table reset, or a late joiner's first sync, and only
+the **ply direction** separates those from a move. It is proven in a dotnet harness against
+real games through the vendored rules (en passant, capture-promotion, castling, the resync).
+That extraction is the `CapturedMaterial` lesson again: left as a private method on the
+watcher `Component`, none of it could have been executed on this host.
 
 Music is the `gamah.skafinity` library — source-committed under
 `client/Libraries/gamah.skafinity/` (s&box pattern: libraries are source and

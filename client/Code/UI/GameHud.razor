@@ -9,12 +9,19 @@
 @inherits PanelComponent
 
 @*
-	Seated-game HUD: seat names and clocks, whose turn, the time-control picker and
-	ready button while the table is idle, SAN move list, resign,
-	promotion picker, and the result after the game. Attached to
-	the scene ScreenPanel at runtime by LobbyPlayer.EnsureGameHud. Screen-space
-	overlay: the board itself is the 3D world — this sits in a column on the
-	right edge, clear of the board (px values are uncalibrated, tune in-editor).
+	Seated-game HUD: seat names, whose turn, the time-control picker and ready button
+	while the table is idle, SAN move list, resign, promotion picker, and the result
+	after the game. Attached to the scene ScreenPanel at runtime by
+	LobbyPlayer.EnsureGameHud. Screen-space overlay: the board itself is the 3D world —
+	this sits in a column on the right edge, clear of the board (px values are
+	uncalibrated, tune in-editor).
+
+	NO CLOCKS (M11). They are on the table now, as a real mesh clock with a face per seat
+	— ChessRing.BuildStationClock and TableClock. Both clocks used to be text in this
+	column, pinned to the right of the screen while the board sat in the middle of it,
+	which in a 3+0 game is the wrong place for the number that ends the game. If a clock
+	ever comes back here, TimeControl.PanicSeconds and the rendered-string hashing have to
+	come with it — see BuildHash.
 *@
 
 <root>
@@ -26,8 +33,8 @@
 		<div class="hud">
 			<div class="title">@BoardTitle( ctrl )</div>
 			<div class="names">
-				<div class="name @SeatClass( ctrl, ChessSeat.White )">⬜ @SeatLine( ctrl, ChessSeat.White )</div>
-				<div class="name @SeatClass( ctrl, ChessSeat.Black )">⬛ @SeatLine( ctrl, ChessSeat.Black )</div>
+				<div class="name @SeatClass( ChessSeat.White )">⬜ @SeatLine( ctrl, ChessSeat.White )</div>
+				<div class="name @SeatClass( ChessSeat.Black )">⬛ @SeatLine( ctrl, ChessSeat.Black )</div>
 			</div>
 
 			@* While a lichess game owns the board, LICHESS is the authority on what
@@ -96,6 +103,14 @@
 			@if ( PremoveUci() is string pre )
 			{
 				<div class="reason premove">Premove armed: @( pre[..2] )→@( pre[2..4] ). Click the board to cancel.</div>
+			}
+
+			@* And when it didn't fire. Without this the highlight just vanishes, which
+			   is precisely what it does on success — so a dropped premove read as a
+			   played one and you'd sit waiting for a move you never made. *@
+			@if ( Source() is { PremoveDropped: true } )
+			{
+				<div class="reason premove">Premove dropped — it wasn't legal any more.</div>
 			}
 
 			@* A lichess game that never started. Lives OUTSIDE the OnLichess() block
@@ -167,9 +182,6 @@
 						<div class="seek-row">
 							<div class="chip @( _seekRated ? "on" : "" )" onclick="@( () => ToggleSeekRated() )">@( _seekRated ? "Rated" : "Casual" )</div>
 							<div class="chip @( _seekColor != "random" ? "on" : "" )" onclick="@( () => CycleSeekColor() )">@SeekColorText()</div>
-						</div>
-						<div class="seek-row">
-							<div class="chip @( _seekNarrow ? "on" : "" )" onclick="@( () => ToggleSeekNarrow() )">@( _seekNarrow ? "Near my rating" : "Any rating" )</div>
 						</div>
 						<div class="button lichess" onclick="@( () => StartSeek() )">♞ Find a game on lichess</div>
 						<div class="setup-hint">@SeekHint()</div>
@@ -319,7 +331,6 @@
 	.name { font-size: 14px; }
 	/* The side whose clock is running. */
 	.name.ticking { color: #7fd47f; font-weight: bold; }
-	.name.ticking.low { color: #ff453a; }
 
 	.setup-label {
 		font-size: 11px;
@@ -528,14 +539,10 @@
 	/// <summary>The lichess controller beside the table we're seated at.</summary>
 	static LichessGameController Lichess() => LichessGameController.For( ChessStation.Active );
 
-	/// <summary>Whichever controller owns this board — the same resolution
-	/// ChessBoardView.Source does, and for the same reason: everything that reads
-	/// the position should be unable to tell a lichess game from a local one.</summary>
-	static IBoardGame Source()
-	{
-		var lc = Lichess();
-		return lc is { Engaged: true } ? lc : Controller();
-	}
+	/// <summary>Whichever controller owns this board. Goes through BoardGame.Source, the
+	/// one copy of that resolution — the view, the sounds and the table clock all ask it
+	/// too, so none of them can end up describing a different game from this HUD.</summary>
+	static IBoardGame Source() => BoardGame.Source( Controller(), Lichess() );
 
 	/// <summary>A real lichess game owns this board right now — the HUD reads
 	/// lichess's state instead of the local table's.</summary>
@@ -557,10 +564,8 @@
 
 	bool _seekRated;
 	string _seekColor = "random";
-	bool _seekNarrow;
 
 	void ToggleSeekRated() { _seekRated = !_seekRated; StateHasChanged(); }
-	void ToggleSeekNarrow() { _seekNarrow = !_seekNarrow; StateHasChanged(); }
 
 	void CycleSeekColor()
 	{
@@ -575,23 +580,23 @@
 		_ => "Either colour",
 	};
 
-	/// <summary>lichess's own advice is to leave the rating range empty — a narrow
-	/// range on a small pool is a seek that never pairs, and ours are scarce
-	/// already. So "near my rating" is a deliberate opt-in, not the default.
-	/// <para>gamchess doesn't know the player's lichess rating (we never asked for
-	/// a scope that could read it), so the range can't be centred on them — this
-	/// asks for a broad middle band instead. Honest about what it can do.</para></summary>
-	string SeekRatingRange() => _seekNarrow ? "1400-1800" : null;
-
 	string SeekHint()
 	{
 		if ( _seekRated ) return "Rated: this will move your real lichess rating.";
 		return "Casual: it won't touch your lichess rating.";
 	}
 
+	/// <summary>We send NO ratingRange, ever, and that is the strongest option rather
+	/// than the laziest — see CLAUDE.md's ratingRange trap. lila treats an omitted
+	/// range as "no preference" and substitutes a Gaussian band centred on the
+	/// player's REAL rating (`Hook.ratingRangeOrDefault` → `RatingRange.defaultFor`).
+	/// So lichess centres the pool on them for free, with no scope, no /api/account
+	/// fetch and no rating stored our side. This replaced a "Near my rating" chip
+	/// that sent a fixed "1400-1800" to every player regardless of strength — both a
+	/// lie to a 2200 and *narrower and worse-informed* than sending nothing.</summary>
 	void StartSeek()
 	{
-		Lichess()?.RequestSeek( _seekRated, SeekRatingRange(), _seekColor );
+		Lichess()?.RequestSeek( _seekRated, color: _seekColor );
 		StateHasChanged();
 	}
 
@@ -662,34 +667,42 @@
 		return LocalReady( ctrl ) ? "Ready ✓ (click to cancel)" : "Ready";
 	}
 
-	/// <summary>Seat line: the name, plus the clock once there's a clock to show.
+	/// <summary>Seat line: who is on a side, and what they've agreed to.
 	/// One div per line and no inline markup — CLAUDE.md UI Gotchas.</summary>
+	///
+	/// <remarks>
+	/// <para><b>The clock is not here any more (M11).</b> It lives on the table, as a real
+	/// mesh clock with a face for each seat — see ChessRing.BuildStationClock and
+	/// TableClock. Both clocks used to be text in this 250px column pinned to the
+	/// right of the screen while the board sat in the middle of it, which in a 3+0 game is
+	/// the wrong place for the number that ends the game.</para>
+	///
+	/// <para><b>The hashing moved with it, and that was the load-bearing part.</b> These
+	/// lines are hashed as their rendered STRINGS, which is what repainted the HUD on a
+	/// visible digit change rather than every frame. Now that the clock is elsewhere, the
+	/// panel showing it does that instead; this line changes rarely and hashes for almost
+	/// nothing. Don't put a clock back in here without moving that consideration back too.</para>
+	///
+	/// <para>Still lichess-first, for the half that remains: a SEEK starts no local game,
+	/// so ctrl.Playing is false for its whole duration, and checking the local table first
+	/// would fall into the idle branch and never show a seek's opponent.</para>
+	/// </remarks>
 	static string SeatLine( LocalGameController ctrl, ChessSeat seat )
 	{
 		string name = SeatName( seat );
 
-		// LICHESS FIRST — before any question about the local table.
-		//
-		// A lichess game runs on lichess's clock, not the host's: the host stops
-		// ticking its copy entirely (LocalGameController.HostTickClocks), so its
-		// value is frozen and meaningless. And a SEEK starts no local game at all,
-		// so ctrl.Playing is false for its whole duration — checking the local
-		// table first would fall into the idle branch below and never show a seek's
-		// clock or its opponent's name.
-		if ( OnLichess() )
-			return LichessClock( seat ) is float left ? $"{name}  {TimeControl.Format( left )}" : name;
+		if ( OnLichess() ) return name;
+		if ( ctrl == null ) return name;
 
-		if ( ctrl == null || ctrl.Tc.IsUnlimited ) return name;
-
-		// Idle table: advertise the bank rather than a running clock, and say who
-		// has agreed to what.
+		// Idle table: say who has agreed to what. Nothing to say once a game is live —
+		// the clock on the table is the live state now.
 		if ( !ctrl.Playing && !ctrl.GameOver )
 		{
 			if ( ctrl.ReadyFor( seat ) ) return $"{name}  ready";
 			return ctrl.LichessFor( seat ) ? $"{name}  ♞" : name;
 		}
 
-		return $"{name}  {TimeControl.Format( ctrl.ClockFor( seat ) )}";
+		return name;
 	}
 
 	/// <summary>Who is on a side.
@@ -712,49 +725,22 @@
 		return string.IsNullOrEmpty( name ) ? "—" : name;
 	}
 
-	/// <summary>Seconds left on a seat's clock per lichess, or null when no lichess
-	/// game owns this board.</summary>
-	static float? LichessClock( ChessSeat seat )
+	/// <summary>Accent the side on move.
+	///
+	/// <para><b>No panic red here any more (M11).</b> This used to return "ticking low"
+	/// under TimeControl.PanicSeconds — reddening a name that sat next to a clock. The
+	/// clock is on the table now, and its own face reddens; reddening a NAME on a HUD with
+	/// no clock on it would be an alarm about a number that isn't in the same place, or
+	/// even on the same screen.</para>
+	///
+	/// <para>Reads the SEAM rather than ctrl.TickingSeat: during a lichess game the local
+	/// controller's ChessGame never advances (moves go to the relay, not NetChessMove), so
+	/// it answers "White" for the whole game.</para></summary>
+	static string SeatClass( ChessSeat seat )
 	{
-		if ( !OnLichess() ) return null;
-		if ( Lichess().State is not { } st ) return null;
-
-		// An unlimited game has no clock to show, and lichess sends 0 for it — which
-		// would render as a flagged 0:00.0. Seeks always have a clock (lichess's
-		// lobby refuses a clockless real-time seek), so only the table's control can
-		// make this happen.
-		if ( !st.seek && ( Controller()?.Tc.IsUnlimited ?? false ) ) return null;
-
-		// lichess sends milliseconds; TimeControl.Format takes seconds. Note 0 is
-		// NOT filtered here: a genuine flag must read 0:00.0.
-		long ms = seat == ChessSeat.White ? st.white_time_ms : st.black_time_ms;
-		return ms / 1000f;
-	}
-
-	/// <summary>Where the ticking clock turns red. Its own threshold, deliberately not
-	/// TimeControl.DecimalBelowSeconds: that one decides when tenths are legible, this one
-	/// decides when you're in trouble. A whole bullet game reads in tenths, and colouring
-	/// all of it red would say nothing.</summary>
-	const float PanicSeconds = 10f;
-
-	/// <summary>Accent the side whose clock is running, and redden it near the flag.</summary>
-	static string SeatClass( LocalGameController ctrl, ChessSeat seat )
-	{
-		// During a lichess game the local controller's clock is FROZEN (the host
-		// stops ticking it — lichess owns the clock) and its ChessGame never
-		// advances, so ctrl.TickingSeat would be stuck on White for the whole game.
-		// Read the live source instead.
-		if ( OnLichess() )
-		{
-			var lc = Lichess();
-			if ( !lc.Playing || lc.Game == null ) return "";
-			var ticking = lc.Game.WhiteToMove ? ChessSeat.White : ChessSeat.Black;
-			if ( ticking != seat ) return "";
-			return LichessClock( seat ) is float left && left < PanicSeconds ? "ticking low" : "ticking";
-		}
-
-		if ( ctrl == null || ctrl.TickingSeat != seat ) return "";
-		return ctrl.ClockFor( seat ) < PanicSeconds ? "ticking low" : "ticking";
+		if ( Source() is not { Playing: true, Game: { } game } ) return "";
+		var ticking = game.WhiteToMove ? ChessSeat.White : ChessSeat.Black;
+		return ticking == seat ? "ticking" : "";
 	}
 
 	static bool Visible() =>
@@ -816,9 +802,12 @@
 		}
 	}
 
-	/// <summary>Repaint triggers. The seat lines are hashed as their rendered strings
-	/// rather than as raw clock floats: that is what drives the ticking display, and it
-	/// repaints exactly when the visible text changes instead of every frame.
+	/// <summary>Repaint triggers. The seat lines are still hashed as their rendered
+	/// strings — now cheap rather than load-bearing. With the clock moved onto the table
+	/// (M11) they change only when a name or a ready state does, so this HUD no longer
+	/// repaints on a ticking digit at all. TableClockTextPanel took that job and carries the
+	/// same string-hashing reasoning; read its BuildHash before putting any per-second
+	/// value back in here.
 	///
 	/// <para>Anything the markup reads has to be in here. The offers are hashed off
 	/// SOURCE(), not off the lichess controller: they render for a local game too now,
@@ -847,10 +836,14 @@
 					ctrl?.WhiteLichess, ctrl?.BlackLichess,
 					LichessLinkState.Linked ),
 				// Offers and the premove, off the seam — true for either kind of game.
+				// PremoveDropped self-clears on a timer rather than on an event, so it
+				// is the one value in here that changes with nothing else changing: left
+				// out, the notice would appear (some other repaint would carry it) and
+				// then never go away. 7 of 8 used.
 				System.HashCode.Combine(
 					src?.DrawOffered, src?.DrawPending,
 					src?.TakebackOffered, src?.TakebackPending,
-					src?.CanTakeback, PremoveUci() ),
-				System.HashCode.Combine( _seekRated, _seekColor, _seekNarrow ) ) );
+					src?.CanTakeback, PremoveUci(), src?.PremoveDropped ),
+				System.HashCode.Combine( _seekRated, _seekColor ) ) );
 	}
 }

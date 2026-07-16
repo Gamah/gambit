@@ -67,6 +67,41 @@ public sealed class LichessGameController : Component, IBoardGame
 	/// <summary>A lichess game is live at this table right now.</summary>
 	public bool Playing => Engaged && State != null && State.status == "live" && !State.finished;
 
+	/// <summary>lichess says this game is over and we're still showing it.
+	///
+	/// <para>An ABORT is deliberately not a game over: lichess aborts a game nobody
+	/// moved in, scores nothing and rates nothing, and <see cref="Adopt"/> hands the
+	/// board straight back rather than displaying a result. Sounding a fanfare over a
+	/// game that never started would be announcing a non-event — same reasoning as
+	/// <see cref="ResultString"/> refusing to call it a draw.</para></summary>
+	public bool GameOver => Engaged && State is { finished: true } && ResultString != null;
+
+	/// <summary>Seconds left on a seat's clock, per lichess.
+	///
+	/// <para>An unlimited TABLE game has no clock and lichess sends 0 for it, which
+	/// would read as a permanently flagged clock. A SEEK always has one — lichess's
+	/// lobby refuses a clockless real-time seek — so only the table's own control can
+	/// produce that case, and only it is filtered.</para>
+	///
+	/// <para><b>lichess only sends a clock when a MOVE happens</b>, so this is frozen at
+	/// the opponent's last move for the whole of a think. That is honest rather than
+	/// ideal, and it is deliberately NOT run down locally: the TV wall does that, and it
+	/// is why the TV clock read HIGH for two milestones (see LichessTvSource). Doing it
+	/// here would need the same receipt-stamp machinery the relay does not carry.</para></summary>
+	public float? SeatClock( ChessSeat seat )
+	{
+		if ( !Playing || State is not { } st ) return null;
+		if ( !st.seek && ( Local?.Tc.IsUnlimited ?? false ) ) return null;
+
+		// lichess sends milliseconds. 0 is NOT filtered: a genuine flag is real.
+		long ms = seat == ChessSeat.White ? st.white_time_ms : st.black_time_ms;
+		return ms / 1000f;
+	}
+
+	/// <summary>Seconds left on the local player's own clock. Null when we hold no seat
+	/// in this game.</summary>
+	public float? LocalSeatClock => LocalSeat is { } seat ? SeatClock( seat ) : null;
+
 	/// <summary>The side the local player holds in the lichess game, or null.
 	///
 	/// <para>Read from <c>your_color</c>, which gamchess stamps per caller — not by
@@ -182,8 +217,18 @@ public sealed class LichessGameController : Component, IBoardGame
 		// of the game.
 		_premoveUci = null;
 
-		TryMakeMove( uci );
+		// Use the answer — see IBoardGame.PremoveDropped for why throwing it away was
+		// worse than it sounds. This catches a premove our OWN rules refuse (the
+		// opponent didn't play into the position it was aimed at). A premove lichess
+		// refuses after we've sent it surfaces through Error instead, on the next poll.
+		if ( !TryMakeMove( uci ) )
+			_premoveDropped = BoardGame.PremoveDroppedSeconds;
 	}
+
+	RealTimeUntil _premoveDropped;
+
+	/// <summary>The last premove was refused, within the notice window.</summary>
+	public bool PremoveDropped => (float)_premoveDropped > 0f;
 
 	async Task SendMove( string uci )
 	{

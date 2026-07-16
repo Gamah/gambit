@@ -151,8 +151,13 @@ type PlayRequest struct {
 	Seek          bool
 	SeekerSteamID int64
 	Rated         bool
-	RatingRange   string // "1500-1800"; empty means any
-	Color         string // "white" | "black" | "random"/"" — lichess default is 50/50
+	// RatingRange is "1500-1800" (absolute, never a delta). Empty does NOT mean
+	// "any" — lila reads an omitted range as "no preference" and substitutes a
+	// Gaussian band around the seeker's real rating. Gambit always sends empty;
+	// see CLAUDE.md's ratingRange trap. The field stays on the wire because the
+	// endpoint is a faithful mirror of lichess's, not because a caller sets it.
+	RatingRange string
+	Color       string // "white" | "black" | "random"/"" — lichess default is 50/50
 }
 
 // matches reports whether two intents describe the same game. Both seats must

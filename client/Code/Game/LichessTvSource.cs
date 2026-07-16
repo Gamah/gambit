@@ -129,6 +129,10 @@ public sealed class LichessTvSource
 	int _whiteBank, _blackBank;
 	RealTimeSince _sinceBank;
 
+	/// <summary>How stale the banked clocks already were when we got them, in seconds.
+	/// Subtracted from the ticking seat — see <see cref="ClockFor"/>.</summary>
+	float _bankLag;
+
 	/// <summary>Seconds left for each seat, counted down locally between frames.
 	///
 	/// <para><b>lichess only sends a clock when a move happens</b>, so a frame's value is
@@ -137,12 +141,32 @@ public sealed class LichessTvSource
 	/// reads as a broken board, not a thinking player. So we run the side-to-move's clock
 	/// down from the last frame and snap both back to whatever the next one says.</para>
 	///
-	/// <para>lichess stays the only authority: this never invents time, only spends it,
-	/// and every frame overwrites it. That direction matters — the house rule is that a
-	/// live clock must never read HIGHER than the time actually left (it's why
-	/// <see cref="TimeControl.Format"/> truncates where the PGN writer rounds), and
-	/// counting down from a known-good value can only ever read low. It drifts low by
-	/// about the network latency, and corrects on every move.</para></summary>
+	/// <para><b>The house rule: a live clock must never read HIGHER than the time actually
+	/// left.</b> It is why <see cref="TimeControl.Format"/> truncates where the PGN writer
+	/// rounds, and reading LOW is explicitly permitted where reading high is not.</para>
+	///
+	/// <para><b>This code broke that rule for two milestones, and the reason it gave was
+	/// written in three places.</b> The claim was that "counting down from a known-good
+	/// value can only ever read low", so it drifts low by about the network latency. That
+	/// fails at its first step: <b>the value is already stale on arrival.</b> lichess
+	/// stamps the clock at the move instant T0; the frame reaches us at T0+L; the code
+	/// banked it and zeroed its age, so at wall-clock T0+L we displayed T0's value while
+	/// the player had already burned L. Displayed = true + L. It read HIGH, by the whole
+	/// chain, until the next move corrected it. Anything that re-derives a clock here must
+	/// reason from <b>when the value was stamped</b>, never from when we received it.</para>
+	///
+	/// <para><b>What <see cref="_bankLag"/> now removes, and what it cannot.</b> gamchess
+	/// reports <c>clock_age_ms</c> (how long the value sat with IT) and <c>hold_ms</c> (how
+	/// long it sat on our request), so we can subtract its staleness plus our own measured
+	/// network time. <b>The lichess → gamchess leg survives by construction</b> — nothing
+	/// downstream of lichess knows T0, and no client-side fix can invent it. So a small
+	/// residual high bias remains, and it is documented rather than denied. Its magnitude
+	/// has never been measured; only its direction is certain.</para>
+	///
+	/// <para>The network estimate deliberately uses the FULL round trip rather than half
+	/// of it. An unbiased estimate would be wrong in both directions; the house rule is
+	/// one-directional, so a deliberate undershoot satisfies it where a fair guess would
+	/// not. Erring low is free, and erring high is the bug.</para></summary>
 	public float WhiteClock => ClockFor( ChessSeat.White );
 	public float BlackClock => ClockFor( ChessSeat.Black );
 
@@ -155,8 +179,13 @@ public sealed class LichessTvSource
 		if ( ShowingFinished ) return bank;
 		// Only the side to move is spending time. Nothing to run down before the first
 		// frame either — TickingSeat is null until then.
+		//
+		// The lag applies ONLY here, and that is not an optimisation: the idle side's
+		// clock is not running, so however stale the frame is, their bank is still
+		// exactly right. Subtracting the lag from both would invent a loss of time that
+		// never happened — and on a wall showing a 60s bullet game, visibly.
 		if ( TickingSeat != seat ) return bank;
-		return MathF.Max( 0f, bank - (float)_sinceBank );
+		return MathF.Max( 0f, bank - _bankLag - (float)_sinceBank );
 	}
 
 	public ChessSeat? TickingSeat { get; private set; }
@@ -234,7 +263,13 @@ public sealed class LichessTvSource
 		// Capture the channel we're asking about: SetChannel can land while this is in
 		// flight, and applying a blitz frame to a rapid channel would be a real bug.
 		var asked = Channel;
+
+		// Time our own round trip. Most of a long poll's round trip is gamchess WAITING,
+		// not the network — so this is only half the measurement; hold_ms in the answer
+		// is the other half. See _bankLag.
+		RealTimeSince sent = 0f;
 		var res = await LichessTvApi.PollChannel( asked, _version );
+		_lastRoundTrip = (float)sent;
 		_pollInFlight = false;
 
 		if ( asked != Channel ) return; // the player cycled mid-poll; the answer is stale
@@ -385,6 +420,7 @@ public sealed class LichessTvSource
 		{
 			_whiteBank = st.white_clock;
 			_blackBank = st.black_clock;
+			_bankLag = LagOf( st );
 			_sinceBank = 0f;
 		}
 
@@ -396,6 +432,41 @@ public sealed class LichessTvSource
 		};
 		StatusText = null;
 	}
+
+	/// <summary>How stale these clocks already were when they reached us, in seconds:
+	/// gamchess's own staleness plus our network time.
+	///
+	/// <para>Network time is the round trip MINUS the hold, because a long poll's round
+	/// trip is mostly gamchess waiting for something to happen. Reading the hold as
+	/// latency would subtract up to 5 seconds from the clock.</para>
+	///
+	/// <para>Uses the full remaining round trip rather than halving it for the downstream
+	/// leg. That over-subtracts, deliberately: the house rule is one-directional, so an
+	/// undershoot is free and a fair estimate is a coin-flip on the one outcome that is
+	/// forbidden. See <see cref="ClockFor"/>.</para>
+	///
+	/// <para>Clamped at both ends. Zero when gamchess sends nothing (one that predates
+	/// this simply gets the old behaviour instead of a broken clock), and capped at
+	/// <see cref="MaxLagSeconds"/> so a pathological measurement can't blank a clock that
+	/// has real time on it — a wall reading 0:00 on a live game is its own kind of
+	/// lie.</para></summary>
+	float LagOf( TvState st )
+	{
+		float age = st.clock_age_ms / 1000f;
+		float hold = st.hold_ms / 1000f;
+		float network = MathF.Max( 0f, _lastRoundTrip - hold );
+		return Math.Clamp( age + network, 0f, MaxLagSeconds );
+	}
+
+	/// <summary>Our last poll's round trip, seconds. Includes gamchess's hold; LagOf
+	/// takes that back off.</summary>
+	float _lastRoundTrip;
+
+	/// <summary>Ceiling on the staleness correction. Generous — this is a backstop
+	/// against a nonsense measurement, not a tuning knob. A real correction is
+	/// milliseconds; anything near this means something else is wrong, and eating a
+	/// player's whole clock because a poll took a minute would be worse than the bias.</summary>
+	const float MaxLagSeconds = 10f;
 
 	void Clear()
 	{
@@ -409,6 +480,11 @@ public sealed class LichessTvSource
 		BlackRating = 0;
 		_whiteBank = 0;
 		_blackBank = 0;
+		// The lag belongs to the banks it was measured for — cleared with them. Nothing
+		// depends on this today (the next state is always a newGame, which re-derives
+		// it), but a bank and its staleness are one value in two fields, and clearing
+		// only one of them is how that stops being true.
+		_bankLag = 0f;
 		// TickingSeat null stops ClockFor counting down against a bank of 0 anyway, but
 		// clearing it is what makes "no position" mean no clock rather than 0:00.
 		TickingSeat = null;
