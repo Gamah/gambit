@@ -66,8 +66,21 @@ public sealed class PlayerData
 	/// that produced it.</summary>
 	public string LichessTvChannel { get; set; } = LichessTv.DefaultChannel;
 
-	/// <summary>Keyboard rebinds: game action → keyboard key override.</summary>
-	public Dictionary<string, string> Bindings { get; set; } = new();
+	// ── Proximity voice (M12) ──
+	/// <summary>How far this client HEARS others while seated at a table, in world units.
+	/// <para>Voice range is necessarily a receive-side, client-local setting: s&amp;box
+	/// applies the 3D falloff on the RECEIVER (each remote avatar's proxy Voice component
+	/// spatialises the incoming audio), so "how far voices carry to me" is my choice, not
+	/// the speaker's — which is exactly why it lives on the per-client world-settings board
+	/// and needs no networking. Two ranges because the room reads differently seated vs
+	/// roaming: a tighter range at a table keeps the ring's chatter out of your game, a
+	/// wider one while walking lets you talk as you move. Applied by
+	/// <see cref="Gambit.World.VoiceScreen"/>.</para></summary>
+	public float VoiceRangeAtTable { get; set; } = 300f;
+
+	/// <summary>How far this client HEARS others while roaming, in world units. See
+	/// <see cref="VoiceRangeAtTable"/> for why range is a receive-side, per-client value.</summary>
+	public float VoiceRangeRoaming { get; set; } = 600f;
 
 	/// <summary>Controller rebinds: game action → probe-action name (the per-button
 	/// gamepad action it should listen to, e.g. "MoveUp" → "PadUp"). Empty = the
@@ -88,6 +101,7 @@ public sealed class PlayerData
 	// Slider ranges; clamping on use guards hand-edited JSON.
 	public static float ClampLightScale( float v ) => Math.Clamp( v, 0f, 1.5f );
 	public static float ClampPopRate( float v ) => Math.Clamp( v, 0.25f, 3f );
+	public static float ClampVoiceRange( float v ) => Math.Clamp( v, 150f, 1200f );
 
 	const string FileName = "player.json";
 

@@ -227,7 +227,27 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 		var player = PlayerTemplate.Clone( spawnPos );
 		player.Name = $"Player - {connection.DisplayName}";
 		player.Enabled = true;
+		AddVoice( player );
 		player.NetworkSpawn( connection );
+	}
+
+	/// <summary>Attach proximity voice (M12) to a freshly-cloned avatar, host-side, before it's
+	/// network-spawned so the component replicates to every client. Only the owner records their mic;
+	/// every other client plays it back in 3D at the avatar's position (WorldspacePlayback), driving
+	/// lip-sync on the citizen body. It starts SILENT in Manual mode — the owner's client-local
+	/// VoiceScreen flips it to AlwaysOn when they enable voice, and each client applies its own hearing
+	/// Distance/Falloff on the receive side (see VoiceScreen.ApplyHearingRange), so the Distance set
+	/// here is only a first value until that runs.</summary>
+	static void AddVoice( GameObject player )
+	{
+		var voice = player.Components.Create<GambitVoice>();
+		voice.WorldspacePlayback = true;           // 3D / proximity playback at the avatar's position
+		voice.Renderer = player.GetComponentInChildren<SkinnedModelRenderer>(); // lip-sync visemes on the body
+		voice.Mode = Voice.ActivateMode.Manual;    // start silent; VoiceScreen drives transmit state
+		voice.IsListening = false;
+		voice.Distance = 600f;                     // receive-side default until each client's VoiceScreen applies its own
+		voice.Falloff = new Curve( new Curve.Frame( 0f, 1f ), new Curve.Frame( 1f, 0f ) ); // linear, not front-loaded
+		voice.Volume = 2f;
 	}
 
 	/// <summary>Called on the host when a connection drops — free any seat they occupied.</summary>

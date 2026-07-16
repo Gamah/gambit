@@ -146,6 +146,7 @@
 			$"CHECKERBOARD — {floor}",
 			$"MY BOARD SOUNDS — {OnOff( data.MyCabinetSounds )}",
 			$"OTHER BOARD SOUNDS — {OnOff( data.RemoteCabinetSounds )}",
+			$"VOICE RANGE — {PlayerData.ClampVoiceRange( data.VoiceRangeAtTable ):0}u / {PlayerData.ClampVoiceRange( data.VoiceRangeRoaming ):0}u",
 		};
 	}
 

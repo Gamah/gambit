@@ -117,6 +117,7 @@ public sealed class LobbyPlayer : Component
 		_spawnPos = WorldPosition;
 		EnsureGameHud();
 		EnsureSpectatorScreen();
+		EnsureVoiceScreen();
 
 	}
 
@@ -142,6 +143,24 @@ public sealed class LobbyPlayer : Component
 		{
 			if ( screen.Components.Get<Gambit.UI.Screens.SpectatorScreen>() == null )
 				screen.GameObject.AddComponent<Gambit.UI.Screens.SpectatorScreen>();
+			return; // first ScreenPanel is the scene UI root
+		}
+	}
+
+	/// <summary>Attach the proximity-voice driver + HUD (M12) to the scene ScreenPanel at runtime
+	/// (local player only) — same self-heal as EnsureGameHud, so no scene rewire is needed. VoiceScreen
+	/// is the keyboard driver (G toggles voice, B the mute roster); VoicePanel is its chip/roster HUD.
+	/// Both are strictly client-local (the mute/enabled state lives in per-user cookies), so parenting
+	/// them off the ScreenPanel — not off a networked object — is what keeps them from riding anyone's
+	/// snapshot (see the HUD-parenting rule in CLAUDE.md).</summary>
+	void EnsureVoiceScreen()
+	{
+		foreach ( var screen in Scene.GetAllComponents<ScreenPanel>() )
+		{
+			if ( screen.Components.Get<VoiceScreen>() == null )
+				screen.GameObject.AddComponent<VoiceScreen>();
+			if ( screen.Components.Get<Gambit.UI.Screens.VoicePanel>() == null )
+				screen.GameObject.AddComponent<Gambit.UI.Screens.VoicePanel>();
 			return; // first ScreenPanel is the scene UI root
 		}
 	}

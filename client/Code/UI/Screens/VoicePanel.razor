@@ -1,0 +1,247 @@
+@using System
+@using System.Linq
+@using Sandbox
+@using Sandbox.UI
+@using Gambit.Game
+@using Gambit.World
+@namespace Gambit.UI.Screens
+@inherits PanelComponent
+
+@*
+	Proximity-voice HUD (M12, copied from terryball's VoicePanel). Two parts, both pointer-events: none
+	(keyboard-only — the roster is navigated with ↑/↓, never the cursor, so mouselook is never
+	interrupted):
+
+	  • An always-visible mic chip (bottom-left) reflecting the master switch + the player's real s&box
+	    voice mode / push-to-talk key.
+	  • The mute roster, shown only while VoiceScreen.IsOpen: one row per other player with a speaking
+	    dot, MUTED state and the selected-row highlight.
+
+	Keys are handled by VoiceScreen (G toggles voice, B opens the roster). This panel is purely the
+	affordance. NOTE the s&box gotcha: NO inline <span>s inside a line of text — panels lay children out
+	as flex items, not inline flow, so mixed spans shatter a paragraph into columns. Block lines only.
+*@
+
+<root>
+	@{
+		var screen = Driver;
+		var enabled = VoicePrefs.VoiceEnabled;
+		var mutedCount = VoicePrefs.MutedCount;
+	}
+
+	@* Always-visible key hints — G (voice) over B (mute). White key-cap glyph style. *@
+	<div class="voice-hints">
+		<div class="hint @( enabled ? "on" : "off" )">
+			<div class="key">G</div>
+			<div class="label">@ChipLabel</div>
+		</div>
+		<div class="hint @( mutedCount > 0 ? "has-muted" : "" )">
+			<div class="key">B</div>
+			<div class="label">@MuteLabel</div>
+		</div>
+	</div>
+
+	@if ( screen is not null && screen.IsOpen )
+	{
+		<div class="roster">
+			<div class="roster-title">MUTE PLAYERS</div>
+			@{
+				var rows = screen.Roster;
+			}
+			@for ( int i = 0; i < rows.Count; i++ )
+			{
+				var conn = rows[i];
+				var muted = VoicePrefs.IsMuted( conn.SteamId );
+				var selected = i == screen.SelectedIndex;
+				var voice = screen.VoiceFor( conn );
+				var speaking = voice.IsValid() && voice.LastPlayed < 0.3f;
+
+				<div class="row @( selected ? "sel" : "" )">
+					<div class="dot @( speaking ? "live" : "" )"></div>
+					<div class="name">@conn.DisplayName</div>
+					<div class="state @( muted ? "muted" : "" )">@( muted ? "MUTED" : "" )</div>
+				</div>
+			}
+			<div class="roster-foot">↑↓ select · Enter mute · Esc close</div>
+		</div>
+	}
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		font-family: Poppins, sans-serif;
+	}
+
+	/* Two-row key-hint stack, bottom-left. Matches the white key-cap glyph style used elsewhere. */
+	.voice-hints {
+		position: absolute;
+		left: 16px;
+		bottom: 44px;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+		pointer-events: none;
+	}
+
+	.hint {
+		flex-direction: row;
+		align-items: center;
+		gap: 8px;
+		font-size: 14px;
+		text-shadow: 0px 1px 3px rgba(0, 0, 0, 0.8);
+		pointer-events: none;
+	}
+
+	.hint .key {
+		font-size: 13px;
+		font-weight: 700;
+		color: rgba(0, 0, 0, 0.8);
+		background-color: rgba(255, 255, 255, 0.85);
+		padding: 1px 8px;
+		border-radius: 5px;
+	}
+
+	.hint .label {
+		font-weight: 600;
+		color: rgba(255, 255, 255, 0.85);
+	}
+
+	.hint.off .label {
+		color: rgba(255, 255, 255, 0.55);
+	}
+
+	.hint.on .label {
+		color: rgba(110, 211, 255, 0.95);
+	}
+
+	.hint.has-muted .label {
+		color: rgba(255, 110, 110, 0.95);
+	}
+
+	.roster {
+		position: absolute;
+		left: 16px;
+		bottom: 100px;
+		flex-direction: column;
+		width: 320px;
+		padding: 12px 14px;
+		border-radius: 12px;
+		background-color: rgba(8, 10, 16, 0.92);
+		border-width: 1px;
+		border-color: rgba(110, 211, 255, 0.4);
+		pointer-events: none;
+	}
+
+	.roster-title {
+		font-size: 13px;
+		font-weight: 800;
+		letter-spacing: 1px;
+		color: #6fd3ff;
+		margin-bottom: 8px;
+	}
+
+	.row {
+		flex-direction: row;
+		align-items: center;
+		gap: 10px;
+		padding: 5px 8px;
+		border-radius: 7px;
+		margin-bottom: 2px;
+	}
+
+	.row.sel {
+		background-color: rgba(110, 211, 255, 0.18);
+		border-width: 1px;
+		border-color: rgba(110, 211, 255, 0.5);
+	}
+
+	.row .dot {
+		width: 9px;
+		height: 9px;
+		border-radius: 5px;
+		background-color: rgba(255, 255, 255, 0.18);
+	}
+
+	.row .dot.live {
+		background-color: #2ecc71;
+	}
+
+	.row .name {
+		flex-grow: 1;
+		font-size: 15px;
+		font-weight: 600;
+		color: rgba(255, 255, 255, 0.9);
+	}
+
+	.row .state {
+		font-size: 12px;
+		font-weight: 700;
+		color: rgba(255, 110, 110, 0.95);
+	}
+
+	.roster-foot {
+		font-size: 12px;
+		color: rgba(255, 255, 255, 0.5);
+		margin-top: 8px;
+	}
+</style>
+
+@code
+{
+	private VoiceScreen _driver;
+	private VoiceScreen Driver => _driver ??= Scene?.GetAllComponents<VoiceScreen>().FirstOrDefault();
+
+	// The mic chip's text: OFF prompt, or — when enabled — surface the player's real s&box voice mode,
+	// which game code cannot change (it lives in their sound settings).
+	private string ChipLabel
+	{
+		get
+		{
+			if ( !VoicePrefs.VoiceEnabled )
+				return "Voice off";
+
+			return Preferences.VoiceMode switch
+			{
+				VoiceMode.OpenMicrophone => "Voice live",
+				VoiceMode.PushToTalk => $"Voice on — hold {Input.GetButtonOrigin( "Voice" )} to talk",
+				_ => "Voice disabled in s&box settings",
+			};
+		}
+	}
+
+	// The B-hint label: prompts to open the roster, or shows how many players are currently muted.
+	private string MuteLabel
+	{
+		get
+		{
+			var n = VoicePrefs.MutedCount;
+			return n > 0 ? $"Muted: {n}" : "Mute players";
+		}
+	}
+
+	protected override int BuildHash()
+	{
+		var screen = Driver;
+		int speaking = 0;
+		if ( screen is not null && screen.IsOpen )
+		{
+			foreach ( var c in screen.Roster )
+			{
+				var v = screen.VoiceFor( c );
+				speaking = HashCode.Combine( speaking, v.IsValid() && v.LastPlayed < 0.3f );
+			}
+		}
+
+		return HashCode.Combine(
+			VoicePrefs.VoiceEnabled,
+			Preferences.VoiceMode,
+			screen?.IsOpen ?? false,
+			screen?.SelectedIndex ?? -1,
+			screen?.Roster.Count ?? 0,
+			VoicePrefs.MutedCount,
+			speaking );
+	}
+}

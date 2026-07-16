@@ -159,6 +159,14 @@
 
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
+			@* Lobby chat + proximity voice (M12). Chat is the engine's own overlay now (T), voice is
+			   the terryball-derived proximity mic. Master voice is OFF until pressed, said plainly —
+			   nobody's mic is live without their say-so. The range knobs live on the world board. *@
+			<div class="section-header" style="color:@WallTheme.AccentCss;">TALK TO THE ROOM</div>
+			<div class="body" style="color:@WallTheme.TextDim;">Press T to chat — a text box the whole lobby sees. For voice, press G to turn your mic on (it starts off; hold V to talk if you use push-to-talk). People near you hear you and you hear them, fading with distance — press B to mute someone. How far voices carry, seated and roaming, is on the world-settings board.</div>
+
+			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
 			@* Only things that are genuinely NOT built. Checked against the code, not
 			   remembered: chat exists on lichess's Board API and is not wired up
 			   (PLAN.md), and the piece set is procedural with CC0 models on file (D5).

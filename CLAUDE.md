@@ -941,15 +941,18 @@ Deviating from them is how un-compilable mistakes get in.
   `[EditorEvent.Hotload]` in `Editor/HotloadRebuild.cs` — keep new builders registered there
 - **Razor usings**: `System`, `Sandbox`, `Sandbox.UI`, `Sandbox.Rendering` are NOT
   auto-imported in `.razor` — add `@using` explicitly
-- **Self-attaching UI**: **GameHud and SpectatorScreen — those two, and no others** — attach
-  themselves to the scene ScreenPanel at runtime (`LobbyPlayer.cs:128-144` walks
-  `Scene.GetAllComponents<ScreenPanel>()`), so a new screen of that kind needs no scene rewire;
-  copy that pattern. **InfoScreen, SettingsScreen, ChatPanel and LobbyOverlay are NOT
-  self-attaching** — they are serialized components in `lobby.scene` and adding one means
-  editing the scene. This line cited `SplashScreen` as an exemplar for a long time; **there is
-  no `SplashScreen`** — no `.cs`, no `.razor`, only an orphan scene entry (see the scene-orphan
-  rule below). It was pointing at a file that does not exist, in the file every session is told
-  to trust.
+- **Self-attaching UI**: **GameHud, SpectatorScreen, and the M12 voice pair (VoiceScreen +
+  VoicePanel)** — those, and no others — attach themselves to the scene ScreenPanel at runtime
+  (`LobbyPlayer` walks `Scene.GetAllComponents<ScreenPanel>()` in `EnsureGameHud` /
+  `EnsureSpectatorScreen` / `EnsureVoiceScreen`), so a new screen of that kind needs no scene
+  rewire; copy that pattern. The voice pair MUST self-attach for a specific reason, not just
+  tidiness: it is strictly client-local (mute/enabled live in `VoicePrefs` cookies), so hanging it
+  off the ScreenPanel keeps it off every networked snapshot — the HUD-parenting trap. **InfoScreen,
+  SettingsScreen, ChatPanel and LobbyOverlay are NOT self-attaching** — they are serialized
+  components in `lobby.scene` and adding one means editing the scene. This line cited `SplashScreen`
+  as an exemplar for a long time; **there is no `SplashScreen`** — no `.cs`, no `.razor`, only an
+  orphan scene entry (see the scene-orphan rule below). It was pointing at a file that does not
+  exist, in the file every session is told to trust.
 
 ## s&box API Whitelist
 
@@ -1156,3 +1159,55 @@ Music is the `gamah.skafinity` library — source-committed under
 auto-referenced by living there; do NOT add a `PackageReferences` entry — that
 double-registers the compiler). The scene carries a `SkafinityPlayer` +
 `SkafinityMusicPanel`; the panel is enabled only while engaged at the music wall board.
+
+## Lobby chat and proximity voice (M12)
+
+### Chat is the ENGINE'S overlay now, not ours
+
+`ChatShowUI` is **`true`** in `Platform.config`, and `ChatPanel.razor` is a **thin hint only**
+(a keycap glyph telling roaming players which key opens chat). The engine draws the feed and the
+input box; messages route/filter through the host as before. This replaced a **288-line** custom
+chat box (feed + `TextEntry` + fade + hand-rolled word-wrap) copied from rotaliate and kept alive
+*only* by turning the engine overlay off to redraw it worse — terryball threw the same box away
+(`8ad9f4b`), and this is Gambit catching up. **Do not re-add a custom chat box.**
+
+- `ChatPanel.IsOpen` is a **stub `=> false`** kept so `LobbyPlayer`'s "don't walk while typing"
+  gate compiles. That gate is now **dead code, and that's fine** — the engine's focused text box
+  already stops WASD leaking into the world. Don't try to revive it.
+- The keycap is read live from `Input.GetButtonOrigin( "Chat" )`, **never hardcoded**. The old
+  panel's comment claimed the key was "rebindable in Settings" and resolved it through
+  `PlayerData.Bindings` — but **nothing ever wrote `Bindings`**, so it was dead code guarding a
+  feature that doesn't exist. `Bindings` is **deleted** from `PlayerData` (old saves drop the
+  unknown key on load); `GamepadBindings` is the real, separate thing — don't confuse them.
+
+### Proximity voice, copied from terryball
+
+`GambitVoice` (a `Voice` subclass) rides every avatar, added host-side in
+`LobbyNetworkManager.AddVoice` before `NetworkSpawn`. `VoiceScreen` (keyboard driver) + `VoicePanel`
+(chip/roster HUD) self-attach to the ScreenPanel — client-local, so the mute/enabled state (cookies
+in `Gambit.Game.VoicePrefs`) never rides a snapshot. **Master voice defaults OFF.**
+
+- **Playback gates on the RECEIVER**: `ShouldHearVoice(Connection c) => VoicePrefs.VoiceEnabled &&
+  !VoicePrefs.IsMuted(c.SteamId)`, called with the *sender's* connection — so mute needs no sync,
+  no authority, no server state. Transmit is gated owner-locally via `Voice.Mode` (AlwaysOn +
+  `"Voice"` PTT binding when on; Manual + `NoVoiceInput` unbound sentinel when off). **Never touch
+  a networked Enabled flag.**
+- **Hearing RANGE is a receive-side, per-client value** — the 3D falloff is applied on the receiver
+  off each proxy's `Voice.Distance`/`Falloff`, so "how far voices carry to me" is my choice, not the
+  speaker's. That is *why* it lives on the **world-settings board** (two `PlayerData` sliders:
+  `VoiceRangeAtTable` / `VoiceRangeRoaming`) and needs no networking. `VoiceScreen.ApplyHearingRange`
+  writes `Distance` onto **every** avatar's voice each frame, keyed on the LOCAL player's engage
+  state (tighter seated, wider roaming — both tunable). Enabled/muted stay cookie-light in
+  `VoicePrefs`; only range is on the board, because range is a room-tuning knob.
+- **Gotchas that were the reason to copy** (all live in the code comments): `Voice.OnUpdate` is
+  **sealed** (only the hear/exclude hooks are virtual); the engine's default `Falloff` is savagely
+  front-loaded (~4% by 20% of range) so we use a **linear** `Curve` + `Volume = 2f`; the default
+  `Distance` (15,000u) is wrong for the 800u room, hence the sliders; **V is the engine's
+  push-to-talk**, so the master toggle is **G** and the mute roster is **B** (both free in Gambit's
+  `Input.config`; a new `"Voice"` action bound to V is the PTT key). `Voice.IsListening` honours the
+  user's s&box `voip_mode`, which game code can't change — the chip surfaces it, never claims to be
+  the switch.
+- **Stripped from terryball**: the first-run help pop-up (Gambit's welcome board is its own thing),
+  `LocalIsBowling`, `TerryAvatar`. The `INetworkListener`-fires-on-every-component trap that gave
+  terryball N avatars per joiner **does not apply** — Gambit has one `LobbyNetworkManager` and one
+  `AddVoice` call site.

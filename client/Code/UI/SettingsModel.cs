@@ -54,6 +54,12 @@ public static class SettingsModel
 	public static readonly float[] PopRates =
 		{ 0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.25f, 2.5f, 2.75f, 3f };
 
+	// Proximity-voice hearing range in world units (M12). The room is ~800u across and two
+	// seated opponents sit ~50u apart, so this spans "just my table" to "much of the ring".
+	// Two independent sliders below use it — one for seated, one for roaming.
+	public static readonly float[] VoiceRanges =
+		{ 150f, 300f, 450f, 600f, 750f, 900f, 1050f, 1200f };
+
 	public const int MinBoards = 2;
 	public const int MaxBoards = 16;
 
@@ -79,6 +85,16 @@ public static class SettingsModel
 			v => Mutate( d => d.MyCabinetSounds = v ) ) );
 		rows.Add( ToggleRow( "OTHER BOARD SOUNDS", data.RemoteCabinetSounds,
 			v => Mutate( d => d.RemoteCabinetSounds = v ) ) );
+
+		// Proximity-voice hearing range (M12): how far THIS client hears others, split by whether
+		// you're seated or roaming. Range is a receive-side, per-client value (the falloff is applied
+		// on the receiver), which is why it belongs here on the world board rather than being networked.
+		rows.Add( RangeRow( "VOICE RANGE — SEATED",
+			PlayerData.ClampVoiceRange( data.VoiceRangeAtTable ), VoiceRanges,
+			v => Mutate( d => d.VoiceRangeAtTable = v ) ) );
+		rows.Add( RangeRow( "VOICE RANGE — ROAMING",
+			PlayerData.ClampVoiceRange( data.VoiceRangeRoaming ), VoiceRanges,
+			v => Mutate( d => d.VoiceRangeRoaming = v ) ) );
 
 		// NOTE: lichess TV (M9) is deliberately NOT here — not the on/off, not the
 		// channel, not the lobby's suggestion. It all lives on the spectator board,
@@ -179,6 +195,25 @@ public static class SettingsModel
 	static SettingRow RateRow( string label, float current, float[] steps, Action<float> set )
 	{
 		var row = new SettingRow { Label = $"{label} — {current:0.##}×" };
+		float half = steps.Length > 1 ? ( steps[1] - steps[0] ) * 0.5f : 0.01f;
+		foreach ( var s in steps )
+		{
+			float v = s;
+			row.Cells.Add( new SettingCell
+			{
+				Css = v <= current + 0.001f ? "tick filled" : "tick",
+				Selected = MathF.Abs( v - current ) <= half,
+				Activate = () => set( v ),
+			} );
+		}
+		return row;
+	}
+
+	// Stepped "slider" over an explicit set of world-unit distances (voice range). Same filled-tick
+	// bar as RateRow, but the header reads in units and the nearest tick is the selected one.
+	static SettingRow RangeRow( string label, float current, float[] steps, Action<float> set )
+	{
+		var row = new SettingRow { Label = $"{label} — {current:0}u" };
 		float half = steps.Length > 1 ? ( steps[1] - steps[0] ) * 0.5f : 0.01f;
 		foreach ( var s in steps )
 		{
