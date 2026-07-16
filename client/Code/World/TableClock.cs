@@ -41,13 +41,14 @@ public sealed class TableClock : Component
 	[Property] public ModelRenderer WhitePlate { get; set; }
 	[Property] public ModelRenderer BlackPlate { get; set; }
 
-	/// <summary>The material bar's parent — hidden outright when the game is level.</summary>
-	[Property] public GameObject Bar { get; set; }
-
 	/// <summary>The bar's moving part. Scaled along its length and slid off centre; see
-	/// <see cref="DriveBar"/>.</summary>
+	/// <see cref="DriveBar"/>. The TRACK behind it has no reference here on purpose — it never
+	/// changes and never hides, so nothing needs to hold it.</summary>
 	[Property] public GameObject BarFill { get; set; }
 	[Property] public ModelRenderer BarFillRenderer { get; set; }
+
+	/// <summary>The lead badge's one string — the real material difference, always drawn.</summary>
+	[Property] public TableClockTextPanel LeadText { get; set; }
 
 	/// <summary>The fill's scale at full extension, captured at build. The driver scales this
 	/// rather than recomputing from Model.Bounds — <c>ChessRing.AddBoxGo</c> already did that
@@ -145,34 +146,50 @@ public sealed class TableClock : Component
 	}
 
 	/// <summary>
-	/// The material bar: a fill running from dead centre toward whoever is ahead.
+	/// The material bar: a fill running from dead centre toward whoever is ahead, and the
+	/// number in front of it.
 	///
-	/// <para><b>Shown only while someone is actually ahead.</b> "Level" is the normal state
-	/// of a chess game and a permanently zeroed gauge is furniture. If it seems never to
-	/// appear: that is this condition, not a broken bar. Take a piece.</para>
+	/// <para><b>The number always draws, and it is the REAL difference — never clamped.</b>
+	/// That is the whole division of labour here: the bar saturates at <see cref="BarFullAt"/>
+	/// and from there on it is lying by omission (a +10 and a +25 draw identically), and the
+	/// number is what stays true. Clamp the number to match the bar and the pair becomes
+	/// useless at exactly the moment the position is most lopsided.</para>
 	///
-	/// <para><b>Centre-out is why there is no +N text.</b> The old panel drew a left-anchored
-	/// track plus a "+3" caption because a bar that only grows rightward cannot say WHO. One
-	/// that grows from the middle can: the direction is the player and the length is the
-	/// margin. That is one object saying what two used to, and the one it drops is the second
-	/// string — which is exactly the thing a one-string panel cannot hold.</para>
+	/// <para><b>At level, the fill goes and the track stays.</b> A centred, empty track is what
+	/// a material bar at zero should look like — the object saying "nobody is ahead", not the
+	/// object being absent. This used to hide the bar entirely, which made "not there" the
+	/// normal state of a thing whose normal state is level.</para>
 	/// </summary>
 	void DriveBar()
 	{
-		if ( !Bar.IsValid() || !BarFill.IsValid() ) return;
+		if ( !BarFill.IsValid() ) return;
 
-		var adv = Advantage();
-		if ( adv is not int lead || lead == 0 )
+		// Null (no position to read at all) reads as level: an idle table shows a centred
+		// track and a zero, exactly as its clocks show the bank they will start from.
+		int lead = Advantage() ?? 0;
+
+		if ( LeadText.IsValid() )
 		{
-			Bar.Enabled = false;
+			// Magnitude only — the FILL's direction says who, so a sign here would be the
+			// same fact twice. "0" rather than "+0" or a dash: a dash reads as broken, and
+			// this is a working gauge reporting a level game.
+			LeadText.Text = lead == 0 ? "0" : $"+{Math.Abs( lead )}";
+			// Bright: a readout, not an idle clock face. TableClockTextPanel's states are
+			// display states ("" dim / "on" bright / "panic" red), not game states.
+			LeadText.State = "on";
+		}
+
+		if ( lead == 0 )
+		{
+			BarFill.Enabled = false;
 			return;
 		}
 
-		Bar.Enabled = true;
+		BarFill.Enabled = true;
 
 		// Clamped at BarFullAt rather than scaled to the theoretical maximum (~103 pawns).
-		// A queen up is a winning game and should look like one; scaling to the maximum
-		// would draw it as a sliver.
+		// Ten pawns up is a won game and should look like one; scaling to the maximum would
+		// draw it as a sliver. Past ten the bar pins and the number carries it.
 		float frac = Math.Min( Math.Abs( lead ), BarFullAt ) / (float)BarFullAt;
 
 		// Local +Y is White's end of the strip, and that is derived, not guessed: the plates
@@ -185,9 +202,12 @@ public sealed class TableClock : Component
 
 		// Grow from the centre: scale the length axis by frac, then slide the fill's centre
 		// out by half of what it now spans, so its inner end stays pinned at dead centre.
+		//
 		// Vector3s spelled out rather than WithY() — this host has no s&box toolchain and no
 		// engine reference to grep, so an API recalled from memory is an unverifiable claim.
-		// A constructor is a fact.
+		// A constructor is a fact. The x and z come from the built position and must survive:
+		// they carry the fill's lift off its track and the drop that levels the bar's bottom
+		// edge with the plates'.
 		BarFill.LocalScale = new Vector3(
 			BarFillFullScale.x, BarFillFullScale.y * frac, BarFillFullScale.z );
 		BarFill.LocalPosition = new Vector3(
@@ -219,7 +239,8 @@ public sealed class TableClock : Component
 		return CapturedMaterial.Advantage( squares );
 	}
 
-	/// <summary>Material lead at which the bar is fully extended. Nine — a queen. Past that
-	/// the game is not more decided in any way a bar can show.</summary>
-	const int BarFullAt = 9;
+	/// <summary>Material lead at which the bar is fully extended. Past this it pins, and the
+	/// number in front of it is the only thing still reporting the truth — which is why the
+	/// number is never clamped to match.</summary>
+	const int BarFullAt = 10;
 }

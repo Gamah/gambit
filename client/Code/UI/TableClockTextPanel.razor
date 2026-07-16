@@ -82,8 +82,13 @@
 	/// the hash below means "per-frame" costs a repaint only when a digit changes.</summary>
 	[Property] public string Text { get; set; } = "";
 
-	/// <summary>"" (idle), "on" (this seat is ticking) or "panic". Colour only — see the
-	/// note above about what may not go in here.</summary>
+	/// <summary>A DISPLAY state, not a game state: "" (dim), "on" (bright) or "panic" (red).
+	/// Colour only — see the note above about what may not go in here.
+	///
+	/// <para>Named for what it looks like rather than what it means, because two different
+	/// callers mean different things by it: a clock plate is "on" when that seat's clock is
+	/// running, and the lead badge is "on" always, being a readout rather than an idle face.
+	/// A state called <c>ticking</c> would have been a lie on the badge.</para></summary>
 	[Property] public string State { get; set; } = "";
 
 	/// <summary>Hashed as the RENDERED STRING, never the raw float behind it. Hashing
