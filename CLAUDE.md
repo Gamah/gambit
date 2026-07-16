@@ -525,22 +525,40 @@ have been run here at all.
   cells, two capture trays, pieces at the start position, two camera anchors per
   station) and network-spawns the stations. It also owns the screen-rect UI math
   (`ScreenFractionRect()` / `UiRectStyle()`).
-- **The tabletop margin is allocated, not slack** (M11). `TopSizeX`/`TopSizeY` (40 × 44
-  base units) minus the 29-wide board frame gives every margin a job: **±Y are the two
-  capture trays**, **+X is the table clock** (`BuildStationClock`), **−X is kept clear**.
+- **The tabletop margin is allocated, not slack** (M11), and **the Y margin's budget is
+  DERIVED, not typed**. `TopSizeX`/`TopSizeY` (40 × 44 base units) minus the 29-wide board
+  frame gives every margin a job: **−Y is the clock strip then White's tray**, **+Y is
+  Black's tray** (with the number plaque hanging below its edge), and **±X are kept clear
+  — they are the seat cameras' sightlines.**
   It was 34 square (a 2.5 margin) while a comment promised "a healthy margin for
   clocks/captures later" — it wasn't one, and the plaque was standing in what is now
   Black's tray. **Don't put anything new on the tabletop without checking which margin
   it lands in.**
-  **Neither X margin is neutral ground**: −X is exactly where White's seat camera looks
-  down the board from, and +X is the same thing for Black. Anything mid-edge there is in
-  a player's foreground — which is why the plaque was moved off both and now hangs below
-  the **+Y** edge, and why the clock being at +X is a deliberate trade (a clock is worth
-  looking at where a plaque isn't) rather than free space.
-- **The table clock has a face on EACH side**, and that isn't decoration: the seats look
-  along X at each other, so a single face is readable to exactly one of them, and a clock
-  only one player can see is worse than no clock. Each face shows both clocks, as a real
-  chess clock does.
+- **`ClockBoardGap` / `ClockDepth` / `ClockTrayGap` / `TrayEdgeGap` are the whole Y
+  budget**; `TrayInnerY`, `TrayCenterY`, `TrayWidth`, `TraySlotPitchY` and `ClockCenterY`
+  all derive from them. This is not tidiness. The tray slab used to be
+  `TrayCols * cell + 1`, which at these numbers is *exactly* the 7.5 margin — so it ran
+  flush from the board frame to the table edge with no gap anywhere, on both sides.
+  **Nobody chose that; it is what the expression happened to equal**, the same accident as
+  the "healthy margin" that wasn't. Change one constant now and everything else moves.
+- **Neither X margin is neutral ground**: −X is exactly where White's seat camera looks
+  down the board from, and +X is the same for Black. Anything mid-edge there is in a
+  player's foreground. The clock was built at +X with a face per seat and read as a wall in
+  Black's face; it is now **beside** the board at −Y with **one** face angled up across it —
+  which is where a real chess clock goes, and why one face serves both seats: neither is
+  square to it, both are looking down at the table anyway.
+- **A `WorldPanel`'s `LocalScale` is not a world size and cannot be eyeballed.** World size
+  is `PanelSize × 0.05 × scale` — the 0.05 is the engine's
+  `ScenePanelObject.ScreenToWorldScale`, and the default `PanelSize` is 512 square. The
+  clock face was guessed at `0.022` and rendered **0.85 world units on a 30-unit body**: an
+  invisible speck that read as "the panel is broken". Derive it —
+  `wanted_world_size / (PanelSize × 0.05)`. `ChessRing.PxToWorld` and `SpectatorSeatPanel`
+  each keep a copy of that constant for this reason.
+- **The clock face's ASPECT is a geometric constraint, not a style choice.** It is tilted up
+  out of a 1.4-deep strip, so its height projects `sin(tilt)` of itself back into Y: a tall
+  face leans out over the board and clips the a-file. 1024×128 is what fits, and that is
+  what forces `TableClockPanel`'s single-row layout. Stacked faces do not fit on a clock
+  this thin, and it is thin because it shares the margin with a tray.
 - **Each player's captured pieces sit in a tray on their own right** (White faces +X, so
   White's right is −Y — s&box is Y-left). `ChessRing.TraySlotLocalPosition` owns the
   geometry; `ChessBoardView` owns the ordering; **`Code/Chess/CapturedMaterial.cs` owns

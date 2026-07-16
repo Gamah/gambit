@@ -165,10 +165,16 @@ Both clocks are text inside `SeatLine`, in a 250px column pinned `right: 24px`, 
 board is in the middle of the screen. In a 3+0 game that is the wrong place for the number
 that ends the game.
 
-**Built.** The clock is a body on the far (+X) margin with a **face on each side**, because
-the seats look along X at each other and a single face is readable to exactly one of them —
-a clock only one player can see is worse than none. Each face shows both clocks, as a real
-chess clock does, plus the material bar. `ChessRing.BuildStationClock` + `TableClockPanel`.
+**Built, then rebuilt after seeing it.** The first version stood on the +X margin with a face
+per seat: it was a wall in Black's foreground — the exact objection that moved the plaque off
+−X — and its panel was **invisible**, because a `WorldPanel`'s scale was guessed (`0.022` →
+0.85 world units on a 30-unit body) instead of derived from `PanelSize × 0.05 × scale`.
+
+It is now a **thin low strip beside the board at −Y**, opposite the plaque, with **one** face
+angled up across the board — where a real chess clock goes, and why one face serves both
+seats: neither is square to it, both are looking down at the table. Single row
+(`⬜ 3:00 · bar · ⬛ 2:47`), because the face is tilted out of a 1.4-deep strip and a taller
+one leans over the a-file. `ChessRing.BuildStationClock` + `TableClockPanel`.
 
 **The HUD no longer has a clock on it at all**, and the repaint hashing moved with it — that
 was the load-bearing part (see below). `SeatClass` also lost its panic red: reddening a *name*
@@ -184,15 +190,20 @@ the bar are derived two different ways from the same position, deliberately — 
 the position states outright). Proven in the harness, including the case where the two must
 disagree.
 
-**The plaque moved off the corner to the left (+Y) edge**, hanging below the tabletop at 45°,
-turned a quarter clockwise so its face looks outward at the room rather than inward at White's
-seat. Its drop is computed from its own height and tilt so the top edge stays flush with the
-tabletop if either changes.
+**The plaque hangs off the left (+Y) edge**, turned a quarter clockwise so its face looks
+outward at the room rather than inward at White's seat. It first read as **inset under an
+overhang**, because the drop was computed and the matching inward offset wasn't: a plate
+tilted 45° swings its top corner inward exactly as far as it lowers it, and at 45° the two
+terms are equal — which is why the missing one was invisible in the arithmetic and obvious in
+the room. Both derive from `PlaqueHeight`/`PlaqueTilt` now.
 
-**Wants the editor**: the +X margin is in Black's near foreground the way −X is in White's —
-which is the exact objection that moved the plaque off it. A clock is worth looking at where a
-plaque isn't, but nobody has judged that from a chair. Face tilt, scale and the body's size
-are all one constant each.
+**The trays had no gap anywhere** — the slab was `TrayCols * cell + 1`, which at these numbers
+is *exactly* the 7.5 margin, so it ran flush from the board frame to the table edge. Nobody
+chose that. The whole Y budget is now derived from four constants (`ClockBoardGap`,
+`ClockDepth`, `ClockTrayGap`, `TrayEdgeGap`): clock strip 14.7–16.1, tray 16.3–21.0, then 1.0
+of bare tabletop. Tray slots pitch 2.35 across Y against the board's 3.25, so captured pieces
+sit closer together than they did on the board — the price of the clock sharing this margin.
+**Worth a look**: if that reads as crowded, `TrayEdgeGap` is the knob.
 
 Load-bearing constraints a redesign must not break (all verified, all in CLAUDE.md's `%clk`
 section):
