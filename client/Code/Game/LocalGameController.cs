@@ -222,6 +222,11 @@ public sealed class LocalGameController : Component, IBoardGame
 	public ChessSeat? LocalSeat =>
 		ChessStation.Active == Station && Station != null ? ChessStation.ActiveSeat : null;
 
+	/// <summary>Seconds left on the local player's own clock — the seam's copy. Null
+	/// when not seated here, not playing, or untimed.</summary>
+	public float? LocalSeatClock =>
+		Playing && !Tc.IsUnlimited && LocalSeat is { } seat ? ClockFor( seat ) : null;
+
 	/// <summary>It's the local seated player's turn in a live game.</summary>
 	public bool IsMyTurn =>
 		Playing && Game != null && LocalSeat != null
@@ -946,17 +951,23 @@ public sealed class LocalGameController : Component, IBoardGame
 		// through its own refusal would retry every frame for the rest of the game.
 		_premoveUci = null;
 
-		TryMakeLocalMove( uci );
+		// Use the answer. It was discarded here for two milestones, which made a dropped
+		// premove indistinguishable from a played one — see IBoardGame.PremoveDropped.
+		if ( !TryMakeLocalMove( uci ) )
+			_premoveDropped = BoardGame.PremoveDroppedSeconds;
 	}
+
+	RealTimeUntil _premoveDropped;
+
+	/// <summary>The last premove was refused, within the notice window.</summary>
+	public bool PremoveDropped => (float)_premoveDropped > 0f;
 
 	public bool TryMakeLocalMove( string uci )
 	{
 		if ( !IsMyTurn || Game == null ) return false;
 
-		string fenBefore = Game.Fen;
 		if ( !Game.ApplyUci( uci ) ) return false;
 
-		PlayMoveSound( fenBefore, Game.Fen );
 		NetChessMove( GameId, _takebackEpoch, uci, Game.Fen );
 		return true;
 	}
@@ -993,8 +1004,6 @@ public sealed class LocalGameController : Component, IBoardGame
 		// applying again would fail and needlessly resync history away.
 		if ( Game != null && Game.Fen == fenAfter ) return;
 
-		string fenBefore = Game?.Fen;
-
 		if ( Game == null || !Game.ApplyUci( uci ) || Game.Fen != fenAfter )
 		{
 			// Missed context (join race, desync) — the FEN snapshot is authoritative.
@@ -1014,47 +1023,14 @@ public sealed class LocalGameController : Component, IBoardGame
 			else
 				Log.Warning( $"[Gambit] table relay carried an unreadable FEN — board frozen until next move" );
 		}
-
-		if ( fenBefore != null )
-			PlayMoveSound( fenBefore, fenAfter );
 	}
 
-	/// <summary>Tick for White's move, tock for Black's, pop for any capture —
-	/// 2D at the table I'm seated at, positional for everyone else's.</summary>
-	void PlayMoveSound( string fenBefore, string fenAfter )
-	{
-		bool capture = CountPieces( fenBefore ) != CountPieces( fenAfter );
-		// fenAfter's side-to-move is the player who did NOT just move
-		bool whiteMoved = fenAfter != null && fenAfter.Contains( " b " );
-		bool mine = ChessStation.Active == Station;
-
-		if ( capture )
-		{
-			if ( mine ) Audio.SoundPlayer.PlayPop();
-			else Audio.SoundPlayer.PlayPopAt( WorldPosition );
-		}
-		else if ( mine )
-		{
-			if ( whiteMoved ) Audio.SoundPlayer.PlayTick();
-			else Audio.SoundPlayer.PlayTock();
-		}
-		else
-		{
-			Audio.SoundPlayer.PlayTickAt( WorldPosition );
-		}
-	}
-
-	static int CountPieces( string fen )
-	{
-		if ( string.IsNullOrEmpty( fen ) ) return -1;
-		int count = 0;
-		foreach ( var c in fen )
-		{
-			if ( c == ' ' ) break; // placement field only
-			if ( char.IsLetter( c ) ) count++;
-		}
-		return count;
-	}
+	// Sound used to live here — PlayMoveSound/CountPieces, called from
+	// TryMakeLocalMove and ApplyRemoteMove. It moved to Gambit.Audio.TableSounds,
+	// which watches the IBoardGame seam instead, because hanging it off this class
+	// meant it only ever covered LOCAL games: a real lichess game at this table was
+	// silent from M8 to M11. Don't add a Sound.Play back into this file — a new one
+	// here would cover half the tables again, and nothing would look wrong.
 
 	// ── Endings ──
 

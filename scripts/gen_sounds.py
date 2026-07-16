@@ -4,9 +4,26 @@ Generates synthesized WAV sound effects for Gambit.
 Run from the repo root: python scripts/gen_sounds.py
 Requires: numpy
 
-Three sounds:
-  tick  - short high-pitched sine blip for selector movement
-  pop   - ascending C-major arpeggio for group resolve
+The board set — one per moment, all fired through Gambit.Audio.SoundPlayer:
+  tick      - White moved. Short high sine blip.
+  tock      - Black moved. Same envelope, lower.
+  pop       - a capture. Ascending C-major arpeggio.
+  check     - the king is attacked. Rising double pip; deliberately the only
+              two-part sound up here, so it can't be mistaken for a move.
+  gameover  - the game ended, any way it ended. Descending triad; the mirror
+              of pop, which is what makes it read as closing rather than
+              opening.
+  offer     - a draw or takeback was offered. Soft mid knock-knock: someone
+              is asking you a question, not announcing a result.
+  panic     - your clock is under TimeControl.PanicSeconds. Fires once per
+              SECOND, which is why it is the shortest and driest sound here —
+              anything with a tail becomes a drone at 1 Hz.
+
+The cabinet slide set is separate; see SLIDE_VARIANTS below.
+
+A note on the .sound assets these feed: a 3D variant is a .sound file with
+"UI": false pointing at the SAME .vsnd — tick3d/tock3d/pop3d/gameover3d add no
+WAV here. Don't generate a second copy for one.
 """
 import math
 import wave
@@ -59,9 +76,12 @@ def gen_tock():
 
 def gen_pop():
     # Four triangle notes (C-major arpeggio), staggered 70 ms each; each 340 ms long
-    freqs = [523.25, 659.25, 783.99, 1046.50]
-    stagger = 0.070
-    note_dur = 0.340
+    return arpeggio([523.25, 659.25, 783.99, 1046.50], stagger=0.070, note_dur=0.340)
+
+
+def arpeggio(freqs, stagger, note_dur, peak=0.14):
+    """Staggered triangle notes — pop's shape, factored out so gen_gameover can be
+    its mirror rather than a second copy of the same twenty lines."""
     total_n = int(((len(freqs) - 1) * stagger + note_dur) * SR)
     result = np.zeros(total_n)
 
@@ -73,14 +93,14 @@ def gen_pop():
         # Triangle wave via arcsin
         osc = (2 / math.pi) * np.arcsin(np.sin(2 * math.pi * hz * t))
 
-        # Attack: 0 → 0.14 linear over 15 ms; decay: expo → 0.001 by 320 ms
+        # Attack: 0 → peak linear over 15 ms; decay: expo → 0.001 over the rest
         attack = int(0.015 * SR)
-        decay_end = int(0.320 * SR)
+        decay_end = int((note_dur - 0.020) * SR)
         env = np.zeros(n)
-        env[:attack] = np.linspace(0, 0.14, attack)
+        env[:attack] = np.linspace(0, peak, attack)
         if decay_end > attack:
             env[attack:decay_end] = np.exp(
-                np.linspace(math.log(0.14), math.log(0.001), decay_end - attack)
+                np.linspace(math.log(peak), math.log(0.001), decay_end - attack)
             )
         env[decay_end:] = 0.001
 
@@ -89,6 +109,63 @@ def gen_pop():
         result[onset:end] += note[: end - onset]
 
     return result
+
+
+def gen_check():
+    # Two rising sine pips, 1400 → 1900 Hz, 28 ms each, 55 ms apart. Two parts on
+    # purpose: it lands ON TOP of a tick/tock (the move that gave check plays both),
+    # so it has to be separable from one by shape, not just by pitch.
+    pips = [(0.000, 1400), (0.055, 1900)]
+    total_n = int(0.110 * SR)
+    result = np.zeros(total_n)
+    for onset_s, hz in pips:
+        n = int(0.028 * SR)
+        t = np.arange(n) / SR
+        osc = np.sin(2 * math.pi * hz * t)
+        env = exp_ramp(n, 0.0, 0.075, 0.026, 0.001)
+        onset = int(onset_s * SR)
+        end = min(onset + n, total_n)
+        result[onset:end] += (osc * env)[: end - onset]
+    return result
+
+
+def gen_gameover():
+    # pop's arpeggio inverted: C-major descending, slower and longer-tailed. The
+    # game ending is the one moment worth half a second of anyone's attention.
+    return arpeggio([1046.50, 783.99, 659.25, 523.25], stagger=0.105, note_dur=0.520,
+                    peak=0.12)
+
+
+def gen_offer():
+    # Knock-knock: two soft mid sines, 520 Hz, 90 ms apart, with a slow attack so it
+    # reads as a question rather than an event. Quieter than a move — the opponent is
+    # asking, and you may well decline.
+    total_n = int(0.230 * SR)
+    result = np.zeros(total_n)
+    for onset_s in (0.000, 0.090):
+        n = int(0.130 * SR)
+        t = np.arange(n) / SR
+        osc = np.sin(2 * math.pi * 520 * t)
+        attack = int(0.012 * SR)
+        env = np.zeros(n)
+        env[:attack] = np.linspace(0, 0.055, attack)
+        env[attack:] = np.exp(np.linspace(math.log(0.055), math.log(0.001), n - attack))
+        onset = int(onset_s * SR)
+        end = min(onset + n, total_n)
+        result[onset:end] += (osc * env)[: end - onset]
+    return result
+
+
+def gen_panic():
+    # A dry low pulse, 600 Hz, 55 ms. This one fires once a SECOND for the last ten
+    # seconds of your clock, so every property is chosen to survive repetition: no
+    # tail (it would drone), no pitch movement (it would read as melody), and quiet
+    # enough that ten of them in a row is pressure rather than an alarm.
+    n = int(0.055 * SR)
+    t = np.arange(n) / SR
+    osc = np.sin(2 * math.pi * 600 * t)
+    env = exp_ramp(n, 0.0, 0.06, 0.050, 0.001)
+    return osc * env
 
 
 def lowpass(osc, cutoff):
@@ -148,6 +225,10 @@ print("Generating sound effects…")
 write_wav(f"{out}/tick.wav", gen_tick())
 write_wav(f"{out}/tock.wav", gen_tock())
 write_wav(f"{out}/pop.wav", gen_pop())
+write_wav(f"{out}/check.wav", gen_check())
+write_wav(f"{out}/gameover.wav", gen_gameover())
+write_wav(f"{out}/offer.wav", gen_offer())
+write_wav(f"{out}/panic.wav", gen_panic())
 
 # Cabinet slide options — descend + reversed (ascend) for each (issue #54)
 for name, args in SLIDE_VARIANTS.items():

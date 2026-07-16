@@ -437,6 +437,14 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			view.Controller = controller;
 			view.Lichess = lichess;
 
+			// Sound (M11). Beside the view and wired identically, because it resolves
+			// the same seam the same way: what you hear and what you see must be the
+			// same game. Local-only like the view — every client makes its own noise.
+			var sounds = station.AddComponent<Gambit.Audio.TableSounds>();
+			sounds.Station = component;
+			sounds.Controller = controller;
+			sounds.Lichess = lichess;
+
 
 			// Floating occupancy sign over the table (blank while the table is
 			// empty). Billboarded per-viewer, so it reads from anywhere in the room.

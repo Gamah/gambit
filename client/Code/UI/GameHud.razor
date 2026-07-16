@@ -98,6 +98,14 @@
 				<div class="reason premove">Premove armed: @( pre[..2] )→@( pre[2..4] ). Click the board to cancel.</div>
 			}
 
+			@* And when it didn't fire. Without this the highlight just vanishes, which
+			   is precisely what it does on success — so a dropped premove read as a
+			   played one and you'd sit waiting for a move you never made. *@
+			@if ( Source() is { PremoveDropped: true } )
+			{
+				<div class="reason premove">Premove dropped — it wasn't legal any more.</div>
+			}
+
 			@* A lichess game that never started. Lives OUTSIDE the OnLichess() block
 			   above on purpose: the controller disengages when it fails, so this is
 			   the only place the reason can be seen. The table has fallen back to a
@@ -726,11 +734,10 @@
 		return ms / 1000f;
 	}
 
-	/// <summary>Where the ticking clock turns red. Its own threshold, deliberately not
-	/// TimeControl.DecimalBelowSeconds: that one decides when tenths are legible, this one
-	/// decides when you're in trouble. A whole bullet game reads in tenths, and colouring
-	/// all of it red would say nothing.</summary>
-	const float PanicSeconds = 10f;
+	/// <summary>Where the ticking clock turns red — the same threshold the panic sound
+	/// starts at, which is why it lives on TimeControl rather than here. See
+	/// TimeControl.PanicSeconds for why it isn't DecimalBelowSeconds.</summary>
+	const float PanicSeconds = TimeControl.PanicSeconds;
 
 	/// <summary>Accent the side whose clock is running, and redden it near the flag.</summary>
 	static string SeatClass( LocalGameController ctrl, ChessSeat seat )
@@ -842,10 +849,14 @@
 					ctrl?.WhiteLichess, ctrl?.BlackLichess,
 					LichessLinkState.Linked ),
 				// Offers and the premove, off the seam — true for either kind of game.
+				// PremoveDropped self-clears on a timer rather than on an event, so it
+				// is the one value in here that changes with nothing else changing: left
+				// out, the notice would appear (some other repaint would carry it) and
+				// then never go away. 7 of 8 used.
 				System.HashCode.Combine(
 					src?.DrawOffered, src?.DrawPending,
 					src?.TakebackOffered, src?.TakebackPending,
-					src?.CanTakeback, PremoveUci() ),
+					src?.CanTakeback, PremoveUci(), src?.PremoveDropped ),
 				System.HashCode.Combine( _seekRated, _seekColor ) ) );
 	}
 }

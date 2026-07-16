@@ -67,6 +67,34 @@ public sealed class LichessGameController : Component, IBoardGame
 	/// <summary>A lichess game is live at this table right now.</summary>
 	public bool Playing => Engaged && State != null && State.status == "live" && !State.finished;
 
+	/// <summary>lichess says this game is over and we're still showing it.
+	///
+	/// <para>An ABORT is deliberately not a game over: lichess aborts a game nobody
+	/// moved in, scores nothing and rates nothing, and <see cref="Adopt"/> hands the
+	/// board straight back rather than displaying a result. Sounding a fanfare over a
+	/// game that never started would be announcing a non-event — same reasoning as
+	/// <see cref="ResultString"/> refusing to call it a draw.</para></summary>
+	public bool GameOver => Engaged && State is { finished: true } && ResultString != null;
+
+	/// <summary>Seconds left on the local player's own clock, per lichess.
+	///
+	/// <para>An unlimited TABLE game has no clock and lichess sends 0 for it, which
+	/// would read as a permanently flagged clock and beep forever. A SEEK always has
+	/// one — lichess's lobby refuses a clockless real-time seek — so only the table's
+	/// own control can produce that case, and only it is filtered.</para></summary>
+	public float? LocalSeatClock
+	{
+		get
+		{
+			if ( !Playing || State is not { } st || LocalSeat is not { } seat ) return null;
+			if ( !st.seek && ( Local?.Tc.IsUnlimited ?? false ) ) return null;
+
+			// lichess sends milliseconds. 0 is NOT filtered: a genuine flag is real.
+			long ms = seat == ChessSeat.White ? st.white_time_ms : st.black_time_ms;
+			return ms / 1000f;
+		}
+	}
+
 	/// <summary>The side the local player holds in the lichess game, or null.
 	///
 	/// <para>Read from <c>your_color</c>, which gamchess stamps per caller — not by
@@ -182,8 +210,18 @@ public sealed class LichessGameController : Component, IBoardGame
 		// of the game.
 		_premoveUci = null;
 
-		TryMakeMove( uci );
+		// Use the answer — see IBoardGame.PremoveDropped for why throwing it away was
+		// worse than it sounds. This catches a premove our OWN rules refuse (the
+		// opponent didn't play into the position it was aimed at). A premove lichess
+		// refuses after we've sent it surfaces through Error instead, on the next poll.
+		if ( !TryMakeMove( uci ) )
+			_premoveDropped = BoardGame.PremoveDroppedSeconds;
 	}
+
+	RealTimeUntil _premoveDropped;
+
+	/// <summary>The last premove was refused, within the notice window.</summary>
+	public bool PremoveDropped => (float)_premoveDropped > 0f;
 
 	async Task SendMove( string uci )
 	{

@@ -76,6 +76,11 @@ panels do, and nothing fails when they do.**
 - **`woosh` is deleted** (2 dead call sites, 3 unplayed assets, and its generator in
   `gen_sounds.py`), as is **`WallTextPanel.razor`** — a whole component with zero call sites.
 - **Captured pieces now have somewhere to go** — see the next section.
+- **The sound pass is built** — see Sound, below. The headline: a real lichess game at a
+  table had been **completely silent since M8** because sound hung off `LocalGameController`
+  instead of the seam. It is now a watcher on `IBoardGame`, which is what makes that class
+  of bug impossible rather than merely fixed.
+- **A dropped premove says so**, using the bool both controllers were throwing away.
 
 ### Taken pieces, and the table that had to grow to hold them
 
@@ -287,37 +292,39 @@ list — label it "recent moves".** A full list wants the wall or the archive vi
   boards, and every board bottom-anchors, so the tops are ragged by design. **This one needs
   you standing in the room. No recommendation.**
 
-### Sound
+### Sound — done, and it needs listening to
 
-**Correcting this file's own premise**: it said "move sounds already fire per-board
-positionally, so anything new must decide whether it's yours (2D) or the room's (3D)". True
-for **local games only** — **`LichessGameController` contains zero sound calls**, so a real
-lichess game at a table, the M8 headline feature, is **completely silent**. That wasn't on
-the missing list and is arguably the largest gap. It is a **missing call, not a new sound**:
-anything that fires off a move must hang off the `IBoardGame` seam.
+**Built.** Every board sound now goes through `Gambit.Audio.TableSounds`, a watcher on the
+`IBoardGame` seam — so a real lichess game at a table stopped being silent, and a third kind
+of game would get all of it for free. The full map is in CLAUDE.md's Sounds section; the
+decisions were: check 2D-only, game over 2D + quiet 3D, offers 2D-only, panic 1/sec 2D-only,
+`tock3d` added (it was six lines of JSON, not an unmade asset), TV fanfare quiet 3D at the
+wall, no separate flag sound (a flag *is* a game over).
 
-The principle: **your table is 2D, the room's tables are 3D, and the room must not become a
-slot machine with six tables.**
+**Nothing here has been heard.** All four new sounds are synthesized blind
+(`scripts/gen_sounds.py`) and every one is a `gen_*` function away from a retune:
 
-| Moment | Decided | Why |
-|---|---|---|
-| **Lichess moves** | Reuse tick/tock/pop via the seam | Highest value, lowest cost. Not a new sound. |
-| **Check** | New, **2D only** | `ChessGame.IsCheck` is known; the king is already tinted red. Six tables checking in 3D is noise. |
-| **Game over** | New, 2D + **quiet** 3D | A game ending in silence is the biggest gap. |
-| **Draw / takeback offered** | New, **2D only** | M10, easy to miss entirely — it's a text line you may not be looking at. |
-| **Clock panic / flag** | **Yes** — 2D only | The loud one. It is the first per-second sound in the game; keep it to your own table and start it at `PanicSeconds`. |
-| **Premove fires** | Reuse the move sound | It already makes one. The gap is *cancellation* — see below. |
-| **Sit / stand** | Skip | You know you sat. |
-| **TV fanfare** | Open — **ask** | It's a wall, always audible to the whole room. |
+- **`panic` is the risky one** — the first per-second sound in the game. Ten seconds of it
+  is either pressure or an alarm, and which one is not a thing anyone can tell from numpy.
+- **`check` lands ON TOP of tick/tock** (the move that gives check plays both). It's two
+  pips to stay separable from a move by shape; does that work, or is it just clutter?
+- **`gameover3d` at 45%** across the room, and on the TV wall — where UltraBullet ends a
+  game every ~30s. If the wall is annoying, that number is one line in `gameover3d.sound`.
+- **The room with six tables** is the whole gate and can only be judged standing in it.
 
-**`tick`/`tock` are MOVE sounds, not clock sounds** — CLAUDE.md said "tick/tock → clocks (by
-side)", describing a ticking clock that has never existed. Fixed there. **There is no
-`tock3d.sound`**, so remote boards are mono-tick and the by-side distinction is lost at
-everyone else's table: an unmade asset, not a decision. **Decide it** — add it, or document
-why remote boards are mono.
+**Known gap, and it's inherited rather than new: at a LICHESS table the panic beep fires
+about once, not once a second.** lichess only sends a clock when a **move** happens, so
+`LocalSeatClock` is frozen at the opponent's last move for the whole of your think and the
+second never advances. **This is exactly the staleness the HUD's red clock already has
+there** — it isn't a regression, it's the same fact becoming audible. The fix is not a local
+countdown: that is what the TV wall does, and it read **HIGH** for two milestones while three
+places claimed it read low. Beeping at a player who has more time than we think is that
+mistake with worse consequences. If it's worth fixing, it wants the same receipt-stamp shape
+as the TV clock fix (gamchess stamps, client subtracts), and it wants doing once for both.
 
-Sounds are **generated, not sourced** (CC0 — `scripts/gen_sounds.py`, numpy). Gates are
-`MyCabinetSounds` / `RemoteCabinetSounds`, both default true.
+**Still open — a taste call in the same family**: the spectator wall's clocks are green with
+**no panic state at all**, while the HUD reddens under `TimeControl.PanicSeconds` and now
+beeps there too. The wall and the HUD disagree about whether a clock is ever urgent.
 
 ### Chat: delete ours and use the engine's — copy `../terryball`, not `../rotaliate-client`
 
@@ -379,13 +386,12 @@ switched off purely so it can redraw it worse.
 
 ### Premove
 
-- **Nothing shows a premove was dropped — and it's worse than this file used to say.**
-  `FirePremove()` **discards the bool** from `TryMakeMove`/`TryMakeLocalMove`
-  (`LichessGameController.cs:185`, `LocalGameController.cs:949`), which returns false
-  silently. No error, no log, no sound, no HUD line. The only observable is the highlight
-  vanishing — **identical to it having fired successfully**, not to it never arming. You
-  believe you moved. **Decided: use the discarded bool.** One `if` and a status line
-  ("Premove dropped — no longer legal"), reusing the existing `.reason.premove` style.
+- **A dropped premove now says so** — done. Both `FirePremove()`s use the bool they were
+  discarding; `IBoardGame.PremoveDropped` stands for `BoardGame.PremoveDroppedSeconds` (4s)
+  and the HUD prints "Premove dropped — it wasn't legal any more" in the existing
+  `.reason.premove` style. Note it is in `BuildHash` — it self-clears on a timer rather
+  than on an event, so it is the one value there that changes with nothing else changing,
+  and left out the notice would appear and never leave.
 - **"Any click cancels" stays.** It matches click-to-move and **the copy is already
   accurate**: `ChessBoardView.cs:380-383` only clears after `square >= 0`, so a click that
   misses the board does *not* cancel — the HUD's "Click the board to cancel" is true, and
@@ -412,10 +418,10 @@ switched off purely so it can redraw it worse.
 ### Open — needs a decision
 
 - **The east wall** (above): does it still read as a wall? Needs you in the room.
-- **The TV fanfare sound**: it's a wall, always audible.
 - **Wall board title sizes**: three on one wall. Taste.
-- **`tock3d`**: make the asset, or document mono remote boards.
-- **Panic red vs the spectator wall's green-only clocks**: they disagree today.
+- **Panic red vs the spectator wall's green-only clocks**: they disagree today — and now
+  the HUD beeps there too, so the wall is the only place a clock is never urgent.
+- **The four new sounds**, none of which anyone has heard — see Sound above.
 - **One action, two buttons.** `GameHud:262` and `LobbyOverlay:18` both render a resign
   control simultaneously while seated in a live game, both calling
   `LobbyPlayer.Local?.RequestLeave()`, both off the same `LeaveArmed` — with **different
