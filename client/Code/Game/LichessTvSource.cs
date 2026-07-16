@@ -450,12 +450,12 @@ public sealed class LichessTvSource
 	/// <see cref="MaxLagSeconds"/> so a pathological measurement can't blank a clock that
 	/// has real time on it — a wall reading 0:00 on a live game is its own kind of
 	/// lie.</para></summary>
-	float LagOf( LichessTvState st )
+	float LagOf( TvState st )
 	{
 		float age = st.clock_age_ms / 1000f;
 		float hold = st.hold_ms / 1000f;
 		float network = MathF.Max( 0f, _lastRoundTrip - hold );
-		return MathF.Clamp( age + network, 0f, MaxLagSeconds );
+		return Math.Clamp( age + network, 0f, MaxLagSeconds );
 	}
 
 	/// <summary>Our last poll's round trip, seconds. Includes gamchess's hold; LagOf
