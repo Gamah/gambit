@@ -200,9 +200,17 @@ principles.
 
 It is now a **thin low strip beside the board at −Y**, opposite the plaque, with **one** face
 angled up across the board — where a real chess clock goes, and why one face serves both
-seats: neither is square to it, both are looking down at the table. Single row
-(`⬜ 3:00 · bar · ⬛ 2:47`), because the face is tilted out of a 1.4-deep strip and a taller
-one leans over the a-file. `ChessRing.BuildStationClock` + `TableClockPanel`.
+seats: neither is square to it, both are looking down at the table. Single row, because the
+face is tilted out of a 1.4-deep strip and a taller one leans over the a-file.
+`ChessRing.BuildStationClock` + `TableClockPanel`.
+
+**Just the times**: a plate at each END of the strip — pinned to the end nearest that player
+and extending inward — with the material bar between them, all bottom-aligned. No W/B labels:
+they were on the **wrong sides**, because a WorldPanel's content +x maps to world −X here, so
+White-first markup rendered each player their opponent's clock. Reversing the order is the
+fix; the labels are gone, so a future flip would be **invisible** and both players would just
+read the wrong number — hence the comment on the markup. **Player names go above the clock
+later**, which is the label worth the room.
 
 **The HUD no longer has a clock on it at all**, and the repaint hashing moved with it — that
 was the load-bearing part (see below). `SeatClass` also lost its panic red: reddening a *name*

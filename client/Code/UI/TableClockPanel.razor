@@ -21,6 +21,12 @@
 	added here has to fit on one line at a glance from a seat, or it does not belong on
 	this object.
 
+	JUST THE TIMES, one plate per player, pinned to the end of the strip nearest that
+	player and extending inward, with the material bar between them. There are no W/B
+	labels: they were on the wrong sides (see the markup below), and the fix for that was
+	the ordering — a correct label is still noise on an object whose whole job is one
+	number. Player NAMES go above the clock later; that is the label worth the room.
+
 	Everything reads the IBoardGame seam, never LocalGameController. During a lichess game
 	the local controller's clocks are FROZEN by the host on purpose (HostTickClocks
 	early-returns on LichessGame, so it cannot flag a player who is fine on lichess's
@@ -32,10 +38,21 @@
 	   CLAUDE.md's UI gotcha, and every WorldPanel in this repo that renders does exactly
 	   this. Centering on root pins the content top-left. *@
 	<div class="fit">
-		<div class="face @FaceClass( ChessSeat.White )">
-			<div class="who">W</div>
-			<div class="time">@Face( ChessSeat.White )</div>
-		</div>
+		@*
+			BLACK FIRST, and this order is load-bearing — it is not a mistake to tidy up.
+
+			A WorldPanel's content +x maps to the GO's local +Y (engine: the panel plane is
+			built with Rotation.From(0, 90, -90)), and this face is yawed 90° so its local
+			+Y is world −X. So the panel's LEFT edge is the +X end of the table — Black's —
+			and its RIGHT edge is White's. Markup order runs down the board from Black to
+			White.
+
+			Written White-first at first, which rendered each player their OPPONENT's clock:
+			the giveaway was a "B" sitting on White's side. Reversing is the whole fix; the
+			labels are gone now, so if this is ever flipped back the symptom will be
+			invisible and both players will simply read the wrong number.
+		*@
+		<div class="face @FaceClass( ChessSeat.Black )">@Face( ChessSeat.Black )</div>
 
 		@* Material. Only while someone is actually ahead — "level" is the normal state of
 		   a chess game and a permanently zeroed gauge is furniture. If it seems never to
@@ -50,10 +67,7 @@
 			}
 		</div>
 
-		<div class="face @FaceClass( ChessSeat.Black )">
-			<div class="who">B</div>
-			<div class="time">@Face( ChessSeat.Black )</div>
-		</div>
+		<div class="face @FaceClass( ChessSeat.White )">@Face( ChessSeat.White )</div>
 	</div>
 </root>
 
@@ -80,6 +94,16 @@
 		pointer-events: none;
 	}
 
+	/*
+		Bottom-aligned, edge-anchored. align-items: flex-end puts the plates' bottom edges
+		level with the material bar's rather than centring them on it — centred, they
+		floated around the bar's top edge and read as three unrelated things. Bottoms level
+		is what makes them one instrument.
+
+		space-between pins a plate to each END of the strip and lets them extend inward, so
+		each player's clock sits at their own end of the board and the material bar has the
+		middle. Nothing is centred as a group: the strip's ends ARE the layout.
+	*/
 	.fit {
 		position: absolute;
 		left: 0;
@@ -87,9 +111,9 @@
 		width: 100%;
 		height: 100%;
 		flex-direction: row;
-		align-items: center;
-		justify-content: center;
-		gap: 30px;
+		align-items: flex-end;
+		justify-content: space-between;
+		padding-bottom: 8px;
 		font-family: $wall-font;
 	}
 
@@ -110,61 +134,49 @@
 		data was never wrong — gambit_clock printed W=168.1s the whole time.
 	*/
 	.fit > div { flex-shrink: 0; }
-	.face > div { flex-shrink: 0; }
-
-	/* Big: read from a seat across a table, not from a HUD a foot from your face. */
-	.face {
-		flex-direction: row;
-		align-items: center;
-		gap: 12px;
-		padding: 4px 20px;
-		border-radius: 10px;
-		background-color: rgba(12, 12, 16, 0.5);
-		white-space: nowrap;
-	}
+	.mid > div { flex-shrink: 0; }
 
 	/*
-		"W" / "B" as TEXT, not ⬜ / ⬛ as glyphs. The glyphs are what this panel had, and
-		they are emoji: CLAUDE.md's rule is that panel-rendered glyphs paint as colour
-		emoji, which at this size made two big square blocks and shoved the actual clock
-		off the face. GameHud gets away with them because it renders at 13px in a HUD;
-		this does not.
-	*/
-	.who {
-		white-space: nowrap;
-		font-size: 34px;
-		font-weight: bold;
-		letter-spacing: 2px;
-		color: rgba(255, 255, 255, 0.4);
-	}
+		A plate is now nothing but the time — no W/B label. They were on the WRONG SIDES
+		(see the markup), and the fix for that is the ordering, not the label; a correct
+		label on a correct side is still noise on an object whose whole job is one number.
+		Player NAMES go above the clock later, which is the label that earns its place.
 
-	.time {
+		Sized and centred like MarqueeNumberPanel's .num — explicit width/height with the
+		text centred inside — rather than left to hug its content. Content-hugging is what
+		made these two small plates adrift at the ends of a long strip.
+	*/
+	.face {
+		width: 340px;
+		height: 92px;
+		align-items: center;
+		justify-content: center;
+		text-align: center;
 		white-space: nowrap;
+		border-radius: 12px;
+		background-color: rgba(12, 12, 16, 0.5);
 		font-size: 76px;
 		font-weight: bold;
 		color: rgba(255, 255, 255, 0.45);
 	}
 
 	/* The running side is the only one worth looking at. */
-	.face.on { background-color: rgba(20, 22, 28, 0.92); }
-	.face.on .time { color: #e8e6df; }
-	.face.on .who { color: rgba(255, 255, 255, 0.7); }
+	.face.on { background-color: rgba(20, 22, 28, 0.92); color: #e8e6df; }
 
 	/* Under TimeControl.PanicSeconds — the same threshold the panic beep starts at,
 	   which is why it is a shared constant and not a 10f typed in two files. */
-	.face.on.panic .time { color: #ff5f5f; }
+	.face.on.panic { color: #ff5f5f; }
 
 	/* Fixed width so the middle column doesn't shove the clocks around as the bar
-	   appears and disappears mid-game. */
+	   appears and disappears mid-game — the plates are edge-pinned, but a middle that
+	   changed width would still slide them. */
 	.mid {
 		width: 300px;
 		flex-direction: column;
 		align-items: center;
-		justify-content: center;
+		justify-content: flex-end;
 		gap: 6px;
 	}
-
-	.mid > div { flex-shrink: 0; }
 
 	.lead { white-space: nowrap; font-size: 40px; font-weight: bold; }
 	.lead.white { color: #e8e6df; }
