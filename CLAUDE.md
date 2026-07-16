@@ -10,6 +10,19 @@ This file is the durable reference: how the game is built and the s&box lore tha
 biting. **`PLAN.md` is only upcoming work and open issues** — read it for what's left,
 not for how things work.
 
+**`PLAN.md` is one flat table of things that need doing, ranked 1–100, highest first.** It
+carries no milestone structure and no history: a milestone that shipped leaves nothing behind
+in it, because the reasoning that outlives the work belongs *here* and everything else belongs
+in git. Two consequences worth knowing before editing either file:
+
+- **The rank is a priority, not a schedule, and rows are not branches.** Group rows into
+  branches when you pick them up — several small rows on one wall or one panel are usually one
+  branch; one big row (chat, voice, the viewer) is usually its own. The table is flat so it can
+  be regrouped freely.
+- **A shipped row is deleted, not ticked.** So the way work reaches this file is by hand and on
+  purpose: when you close a row, ask what a future session would get wrong without it, and put
+  *that* here. Nothing copies itself across.
+
 ### Lichess: real games, and gamchess holds the token
 
 Gambit plays **real lichess games** from a table (M8): link your lichess account, and a game
