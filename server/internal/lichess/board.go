@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -209,11 +210,27 @@ func StreamGame(ctx context.Context, token, gameID string, fn func(GameEvent)) e
 // need it would hand their credential to an endpoint that never asked for it, on
 // a stream we hold open for hours. TV must stay anonymous.
 func stream(ctx context.Context, token, u string, onLine func([]byte) error) error {
+	return streamReq(ctx, token, http.MethodGet, u, nil, onLine)
+}
+
+// streamReq is stream() with a method and an optional form body, for the one
+// ndjson stream lichess opens in answer to a POST (a keep-alive challenge).
+//
+// A non-2xx here returns an *APIError carrying lichess's own body, not a bare
+// status: the challenge endpoint says useful things ("No such user: bob", "You
+// cannot challenge yourself") that a player needs to read, and a status alone
+// would throw them away.
+func streamReq(ctx context.Context, token, method, u string, form url.Values, onLine func([]byte) error) error {
 	if err := guard(ctx); err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	var body io.Reader
+	if form != nil {
+		body = strings.NewReader(form.Encode())
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, u, body)
 	if err != nil {
 		return fmt.Errorf("lichess: build stream request: %w", err)
 	}
@@ -221,6 +238,9 @@ func stream(ctx context.Context, token, u string, onLine func([]byte) error) err
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	req.Header.Set("Accept", "application/x-ndjson")
+	if form != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
 
 	resp, err := streamClient.Do(req)
 	if err != nil {
@@ -228,7 +248,8 @@ func stream(ctx context.Context, token, u string, onLine func([]byte) error) err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("lichess: stream status %d", resp.StatusCode)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
+		return &APIError{Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
 	}
 
 	sc := bufio.NewScanner(resp.Body)
@@ -340,6 +361,80 @@ func CancelChallenge(ctx context.Context, token, challengeID string) error {
 	return post(ctx, token, "/api/challenge/"+url.PathEscape(challengeID)+"/cancel", nil)
 }
 
+// OpenChallengeResult is the subset of lichess's ChallengeOpenJson we surface.
+//
+// URL is the neutral link — whoever opens it first takes an open seat, colour
+// random. URLWhite/URLBlack are the SAME game with a forced colour (they are
+// literally URL + "?color=white"/"?color=black"), so handing a specific one out
+// is how a creator says "you play this side". id is what cancels it.
+type OpenChallengeResult struct {
+	ID       string `json:"id"`
+	URL      string `json:"url"`
+	URLWhite string `json:"urlWhite"`
+	URLBlack string `json:"urlBlack"`
+}
+
+// OpenChallenge creates a lichess OPEN challenge — a game any two people can join
+// by opening its link. It is a different animal from every other flow here, and
+// the differences are the whole point:
+//
+//   - It is NOT relayed and NOT rendered on the Gambit board. Both sides are
+//     anonymous to us (lichess returns challenger:null, destUser:null); the game
+//     is played in whatever browsers open the links, on lichess.org. gamchess
+//     cannot stream it as a player because NEITHER player is our token's account —
+//     there is no API to make an authenticated account a participant in an open
+//     challenge. So this returns a link and steps back; it never holds a stream.
+//   - It has NO board-API speed floor. The floors on ChallengeUserByName and
+//     SeekRealtime gate games our TOKEN plays through the Board API; an open
+//     challenge is played on the web, so BULLET is fine here where it can reach
+//     lichess by no other path. Only lichess's clock DOMAIN still applies.
+//   - The token is for ATTRIBUTION AND CANCELLATION, not participation. Open
+//     challenge is `security: []` — it needs no auth — but an anonymous one cannot
+//     be cancelled (lichess ties the cancel right to the creating OAuth token) and
+//     carries no User-Agent attribution to us. Creating it with the player's token
+//     via our RoundTripper fixes both. It does NOT put the game on their record or
+//     their account: they are still not a player.
+//
+// Because our player is never a participant, an abandoned open challenge is
+// harmless in a way a named challenge is not — nobody can start a game on our
+// player's account by accepting it. It simply expires (24h) if unused. Cancelling
+// is tidiness, not safety.
+func OpenChallenge(ctx context.Context, token string, p ChallengeParams) (OpenChallengeResult, error) {
+	// Only the clock DOMAIN matters here — no board-compatibility floor (see the
+	// doc comment: this game is web-played, not played by our token).
+	if !p.Unlimited {
+		if !ValidClockLimit(p.LimitSeconds) {
+			return OpenChallengeResult{}, fmt.Errorf("lichess: clock.limit %d is not a legal value", p.LimitSeconds)
+		}
+		if p.IncrementSeconds < 0 || p.IncrementSeconds > 60 {
+			return OpenChallengeResult{}, fmt.Errorf("lichess: clock.increment %d is outside 0..60", p.IncrementSeconds)
+		}
+	}
+
+	form := url.Values{}
+	// Omitting both clock fields asks for a correspondence (unlimited) game, the
+	// same rule as a challenge. Colour is NOT a request field on an open challenge —
+	// it is carried by which of URLWhite/URLBlack the creator hands out.
+	if !p.Unlimited {
+		form.Set("clock.limit", fmt.Sprint(p.LimitSeconds))
+		form.Set("clock.increment", fmt.Sprint(p.IncrementSeconds))
+	}
+	form.Set("rated", fmt.Sprint(p.Rated))
+
+	body, err := postBody(ctx, token, "/api/challenge/open", form)
+	if err != nil {
+		return OpenChallengeResult{}, err
+	}
+	var out OpenChallengeResult
+	if err := json.Unmarshal(body, &out); err != nil {
+		return OpenChallengeResult{}, fmt.Errorf("lichess: decode open challenge: %w", err)
+	}
+	if out.ID == "" || out.URL == "" {
+		return OpenChallengeResult{}, fmt.Errorf("lichess: open challenge response carried no link")
+	}
+	return out, nil
+}
+
 // ChallengeParams describes the game to propose. A zero LimitSeconds with
 // Unlimited=false is not "no clock" — set Unlimited explicitly, because omitting
 // the clock fields is how lichess is told to make an unlimited game and a
@@ -401,6 +496,126 @@ func ChallengeUserByName(ctx context.Context, token, username string, p Challeng
 		return ChallengeResult{}, fmt.Errorf("lichess: challenge response carried no id")
 	}
 	return out, nil
+}
+
+// errChallengeDone stops the keep-alive reader once lichess has answered. A
+// sentinel rather than a real failure: reaching it is the SUCCESS path.
+var errChallengeDone = errors.New("challenge resolved")
+
+// Challenge outcomes, verbatim from lila's ChallengeKeepAliveStream.
+const (
+	ChallengeAccepted = "accepted"
+	ChallengeDeclined = "declined"
+	ChallengeCanceled = "canceled"
+)
+
+// ChallengeKeepAlive challenges a username and HOLDS THE CHALLENGE ALIVE until
+// the opponent answers, calling onOpen with the challenge as soon as lichess
+// mints it. Returns the outcome: "accepted", "declined" or "canceled".
+//
+// # Why this exists next to ChallengeUserByName
+//
+// The buffered call is right for the PAIRED flow, where gamchess holds both
+// tokens and accepts in well under a second. It is useless for challenging a
+// REAL PERSON: a real-time challenge is swept 20 seconds after it was last seen,
+// and no human reads a notification and clicks Accept that fast.
+//
+// keepAliveStream is lichess's answer. Read from lila (not the docs) on
+// 2026-07-16, because the two disagree and the difference is load-bearing:
+//
+//   - The stream does NOT hold anything open by magic. lila schedules
+//     `api.ping(challenge.id)` every 15s for as long as we read it, and ping is
+//     `repo.setSeen` — it just keeps bumping seenAt ahead of the sweeper.
+//   - lila emits {"done": "accepted"|"declined"|"canceled"} and closes. Those
+//     three strings are the whole vocabulary.
+//   - CLOSING THE STREAM DOES NOT CANCEL THE CHALLENGE. The OpenAPI description
+//     ("Challenge is kept alive until the connection is closed") reads like it
+//     does. It doesn't: ChallengeKeepAliveStream's completion handler only
+//     cancels the ping timer and unsubscribes. The challenge is then swept to
+//     Status.Offline — which lingers for THREE HOURS and is still acceptable
+//     (a later ping calls setSeenAgain and revives it outright).
+//
+// That last point is why relay.Cancel POSTs an explicit /cancel and does not
+// merely hang up. Hanging up alone would leave a challenge a stranger could
+// accept hours after the player stood up and walked away, starting a real game
+// on their account at a board nobody is sitting at — which is exactly the harm
+// the two-intent rule exists to prevent, self-inflicted.
+func ChallengeKeepAlive(ctx context.Context, token, username string, p ChallengeParams, onOpen func(ChallengeResult)) (string, error) {
+	if err := p.validate(); err != nil {
+		return "", err
+	}
+
+	form := url.Values{}
+	// Omitting BOTH clock fields is what asks for an unlimited game — see
+	// ChallengeUserByName.
+	if !p.Unlimited {
+		form.Set("clock.limit", fmt.Sprint(p.LimitSeconds))
+		form.Set("clock.increment", fmt.Sprint(p.IncrementSeconds))
+	}
+	form.Set("rated", fmt.Sprint(p.Rated))
+	if p.Color != "" {
+		form.Set("color", p.Color)
+	}
+	form.Set("keepAliveStream", "true")
+
+	u := apiBase + "/api/challenge/" + url.PathEscape(username)
+
+	var done string
+	err := streamReq(ctx, token, http.MethodPost, u, form, func(line []byte) error {
+		// Two shapes on one stream: the challenge itself, then the verdict.
+		var msg struct {
+			Done   string `json:"done"`
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			URL    string `json:"url"`
+		}
+		if err := json.Unmarshal(line, &msg); err != nil {
+			return nil
+		}
+		if msg.Done != "" {
+			done = msg.Done
+			return errChallengeDone
+		}
+		if msg.ID != "" && onOpen != nil {
+			onOpen(ChallengeResult{ID: msg.ID, Status: msg.Status, URL: msg.URL})
+		}
+		return nil
+	})
+
+	if errors.Is(err, errChallengeDone) {
+		return done, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	// lichess closed the stream without a verdict. Not an error we can name, and
+	// guessing "accepted" would start streaming a game that may not exist.
+	if done == "" {
+		return "", fmt.Errorf("lichess closed the challenge without answering")
+	}
+	return done, nil
+}
+
+// ValidUsername reports whether s could be a lichess username, so a typo costs
+// no request. lila's own rule: 2-30 chars of letters, digits, underscore and
+// hyphen, starting with a letter or digit.
+//
+// A GATE, not decoration: the value is typed by a player and becomes a URL path
+// segment. url.PathEscape already stops it forging a path, so this is about
+// spending our shared per-IP challenge budget on something that cannot work.
+func ValidUsername(s string) bool {
+	if len(s) < 2 || len(s) > 30 {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case (r == '_' || r == '-') && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validate enforces lichess's documented clock domain before we spend a request

@@ -59,6 +59,22 @@ public sealed class LichessLink
 ///
 /// <para>SteamIDs are STRINGS, as everywhere in this API: a SteamID64 is past
 /// JavaScript's 2^53 and the web viewer reads the same contract.</para></summary>
+/// <summary>The three URLs a shareable open-challenge link resolves to, plus the
+/// id that cancels it.
+///
+/// <para>Not a game state and never polled: an open challenge is played on
+/// lichess.org by whoever opens the links, so this is the whole transaction. The
+/// colour a player wants decides which url they hand out — <c>url_black</c> to the
+/// opponent means the creator plays white, and vice versa; <c>url</c> is
+/// first-come.</para></summary>
+public sealed class LichessOpenLink
+{
+	public string id { get; set; }
+	public string url { get; set; }
+	public string url_white { get; set; }
+	public string url_black { get; set; }
+}
+
 public sealed class LichessPlayState
 {
 	/// <summary>"waiting" (the other seat hasn't asked yet) · "challenging" ·

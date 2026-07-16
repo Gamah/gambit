@@ -1,5 +1,6 @@
 @using System;
 @using System.Collections.Generic;
+@using System.Threading.Tasks;
 @using Sandbox;
 @using Sandbox.UI;
 @using Gambit.World;
@@ -190,6 +191,64 @@
 					{
 						<div class="setup-hint">@LichessTable.WhySeekNot( ctrl.Tc )</div>
 					}
+
+					@* Or challenge a SPECIFIC lichess player by name. Same speed floor as
+					   playing the person opposite (blitz), NOT the seek's (rapid) — so it
+					   shares CanMirror, and only needs a seat (for the colour it plays).
+
+					   The header is outside the CanMirror check for the same reason the
+					   seek's is outside CanSeek: a control that can't be offered still has
+					   to say so where it would have been, or its absence reads as a bug.
+					   Gated on holding a seat, though — with no seat there is no side to
+					   challenge with, and nothing useful to say about that. *@
+					@if ( LichessSeatColor( ctrl ) is string seatColor )
+					{
+						<div class="setup-label">OR CHALLENGE A LICHESS PLAYER</div>
+						@if ( LichessTable.CanMirror( ctrl.Tc ) )
+						{
+							<div class="seek-row">
+								<div class="chip @( _challengeRated ? "on" : "" )" onclick="@( () => ToggleChallengeRated() )">@( _challengeRated ? "Rated" : "Casual" )</div>
+								<div class="chip">You play @seatColor</div>
+							</div>
+							<TextEntry @ref="_challengeEntry" placeholder="lichess username" class="challenge-entry" maxlength="30" />
+							<div class="button lichess" onclick="@( () => StartChallenge() )">♞ Send the challenge</div>
+							<div class="setup-hint">@ChallengeHint()</div>
+						}
+						else
+						{
+							<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
+						}
+					}
+
+					@* Or hand out a link. Different from every option above: the game is
+					   played on lichess.org by whoever opens the link, NOT on this board, and
+					   needs no account or Gambit their side. So it works at ANY table (bullet
+					   included — a web game has no board-API speed floor), and the colour chip
+					   picks WHICH link we copy rather than a lichess field. *@
+					<div class="setup-label">OR GET A SHAREABLE LINK</div>
+					<div class="seek-row">
+						<div class="chip @( _openRated ? "on" : "" )" onclick="@( () => ToggleOpenRated() )">@( _openRated ? "Rated" : "Casual" )</div>
+						<div class="chip @( _openColor != "random" ? "on" : "" )" onclick="@( () => CycleOpenColor() )">@OpenColorText()</div>
+					</div>
+					@if ( _openLink != null )
+					{
+						<div class="link-url" onclick="@( () => CopyOpenLink() )">@OpenLinkToShare()</div>
+						<div class="button lichess" onclick="@( () => CopyOpenLink() )">@OpenLinkButtonText()</div>
+						<div class="button" onclick="@( () => ClearOpenLink() )">New link / cancel this one</div>
+						<div class="setup-hint">Send it to anyone — they open it and play you on lichess.org. It expires in 24h.</div>
+					}
+					else
+					{
+						<div class="button lichess" onclick="@( () => StartOpenLink( ctrl ) )">@OpenLinkButtonText()</div>
+						@if ( _openError is string oerr )
+						{
+							<div class="reason lichess-err">♞ @oerr</div>
+						}
+						else
+						{
+							<div class="setup-hint">A link anyone can open to play you on lichess — works at this table too.</div>
+						}
+					}
 				}
 
 				@if ( BothSeated() )
@@ -212,11 +271,15 @@
 				</div>
 			}
 
-			@* Waiting for a stranger. Cancelling is what actually withdraws us from
-			   lichess's lobby — without it we stay pairable after walking away. *@
-			@if ( Lichess() is { Seeking: true } )
+			@* Waiting on an opponent who isn't in this lobby — a lobby seek, or a
+			   named user who hasn't accepted our challenge yet. Cancelling is what
+			   actually withdraws the request (a seek's held connection, a challenge's
+			   explicit /cancel) — without it we stay pairable after walking away. *@
+			@if ( Lichess() is { AwaitingOpponent: true } )
 			{
-				<div class="button" onclick="@( () => Lichess()?.CancelSeek() )">Cancel — stop looking</div>
+				<div class="button" onclick="@( () => Lichess()?.CancelWaiting() )">
+					@( Lichess() is { Challenging: true } ? "Cancel the challenge" : "Cancel — stop looking" )
+				</div>
 			}
 
 			@* Draw offers and takebacks. Read off the seam, so they work at a lichess
@@ -389,6 +452,30 @@
 	}
 	.chip:hover { background-color: rgba(255, 255, 255, 0.16); }
 	.chip.on { background-color: rgba(255, 255, 255, 0.2); color: white; }
+
+	.challenge-entry {
+		pointer-events: all;
+		font-size: 13px;
+		padding: 5px 7px;
+		border-radius: 5px;
+		background-color: rgba(0, 0, 0, 0.3);
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		color: white;
+	}
+
+	/* The shareable link itself: monospace so it reads as a URL, click-to-copy. */
+	.link-url {
+		pointer-events: all;
+		cursor: pointer;
+		font-family: monospace;
+		font-size: 12px;
+		word-break: break-all;
+		padding: 5px 7px;
+		border-radius: 5px;
+		background-color: rgba(0, 0, 0, 0.3);
+		color: rgba(255, 255, 255, 0.85);
+	}
+	.link-url:hover { background-color: rgba(0, 0, 0, 0.45); }
 
 	.button.draw { background-color: rgba(255, 214, 10, 0.18); }
 	.button.draw:hover { background-color: rgba(255, 214, 10, 0.34); }
@@ -565,6 +652,138 @@
 	bool _seekRated;
 	string _seekColor = "random";
 
+	// The username the player is challenging, and whether that game is rated. A
+	// challenge takes the SEAT's colour (a physical board has sides), so there is no
+	// colour chip here — unlike a seek.
+	TextEntry _challengeEntry;
+	bool _challengeRated;
+
+	void ToggleChallengeRated() { _challengeRated = !_challengeRated; StateHasChanged(); }
+
+	void StartChallenge()
+	{
+		string name = _challengeEntry?.Text?.Trim();
+		if ( string.IsNullOrWhiteSpace( name ) ) return;
+		Lichess()?.RequestChallenge( name, _challengeRated );
+		if ( _challengeEntry != null ) _challengeEntry.Text = "";
+		StateHasChanged();
+	}
+
+	/// <summary>The colour the local player would challenge with — their seat's side
+	/// — or null if they hold no seat at this table (so the challenge UI is hidden,
+	/// because we'd have no colour to ask lichess for). "white"/"black" as a display
+	/// string; the controller re-derives the seat itself rather than trusting this.</summary>
+	static string LichessSeatColor( LocalGameController ctrl )
+	{
+		if ( ctrl?.LocalSeat is not { } seat ) return null;
+		return seat == ChessSeat.White ? "White" : "Black";
+	}
+
+	string ChallengeHint()
+	{
+		if ( _challengeRated ) return "Rated: this will move your real lichess rating.";
+		return "They'll get a challenge on lichess to accept or decline.";
+	}
+
+	// ── Shareable open-challenge link ──
+	//
+	// A link anyone can open to play, on lichess.org — no account, no Gambit needed
+	// their side, and no board floor (bullet works). It is NOT relayed and does not
+	// show on this board: the game is played wherever the link is opened. Colour is
+	// carried by WHICH url we copy, so the chip picks the copied link rather than a
+	// request field. See LichessApi.OpenLink.
+
+	LichessOpenLink _openLink;
+	bool _openRated;
+	string _openColor = "random";
+	bool _creatingLink;
+	string _openError;
+	RealTimeSince _linkCopied = 999f;
+	// The station the current link was made at. The HUD is one scene-wide instance,
+	// so without this a link made at one table would follow the player to the next.
+	ChessStation _openLinkStation;
+
+	void ToggleOpenRated() { _openRated = !_openRated; StateHasChanged(); }
+
+	void CycleOpenColor()
+	{
+		_openColor = _openColor switch { "random" => "white", "white" => "black", _ => "random" };
+		StateHasChanged();
+	}
+
+	string OpenColorText() => _openColor switch
+	{
+		"white" => "You play White",
+		"black" => "You play Black",
+		_ => "Either colour",
+	};
+
+	void StartOpenLink( LocalGameController ctrl ) => _ = CreateOpenLink( ctrl );
+
+	async Task CreateOpenLink( LocalGameController ctrl )
+	{
+		if ( _creatingLink || ctrl == null ) return;
+
+		// Cancel a link we already made before minting another — tidiness, so a
+		// player who changes clock/colour doesn't leave a trail of live links.
+		if ( _openLink?.id is string old )
+			_ = LichessApi.CancelOpenLink( old );
+
+		_openLink = null;
+		_openError = null;
+		_creatingLink = true;
+		StateHasChanged();
+
+		var res = await LichessApi.OpenLink( ctrl.Tc, _openRated );
+		_creatingLink = false;
+		if ( res.Ok )
+			_openLink = GamchessApi.Deserialize<LichessOpenLink>( res.Body );
+		else
+			_openError = ReadError( res );
+		StateHasChanged();
+	}
+
+	/// <summary>The link to hand your opponent, per the colour chip: give them the
+	/// OPPOSITE colour's url so you get the side you picked. "Either colour" hands
+	/// out the neutral url (first to open it gets a random side).</summary>
+	string OpenLinkToShare() => _openColor switch
+	{
+		"white" => _openLink?.url_black,
+		"black" => _openLink?.url_white,
+		_ => _openLink?.url,
+	};
+
+	void CopyOpenLink()
+	{
+		if ( OpenLinkToShare() is not string link ) return;
+		Clipboard.SetText( link );
+		_linkCopied = 0f;
+		StateHasChanged();
+	}
+
+	void ClearOpenLink()
+	{
+		if ( _openLink?.id is string id )
+			_ = LichessApi.CancelOpenLink( id );
+		_openLink = null;
+		_openError = null;
+		StateHasChanged();
+	}
+
+	string OpenLinkButtonText()
+	{
+		if ( _creatingLink ) return "Creating a link…";
+		if ( _openLink == null ) return "♞ Get a shareable link";
+		return _linkCopied < 2f ? "Copied ✓" : "Copy the link to send";
+	}
+
+	static string ReadError( GamchessApi.Result res )
+	{
+		var body = GamchessApi.Deserialize<GamchessError>( res.Body );
+		return !string.IsNullOrEmpty( body?.error ) ? body.error
+			: res.Error ?? "Something went wrong.";
+	}
+
 	void ToggleSeekRated() { _seekRated = !_seekRated; StateHasChanged(); }
 
 	void CycleSeekColor()
@@ -649,14 +868,19 @@
 		if ( lc.Error is string e ) return e;
 
 		if ( lc.Seeking ) return "Looking for an opponent on lichess…";
+		if ( lc.Challenging ) return $"Waiting for {lc.ChallengeOpponent} to accept on lichess…";
 
 		return lc.State?.status switch
 		{
-			// A seek needs nobody else's client; only the paired flow waits.
-			"waiting" => lc.IsSeek ? "Looking for an opponent on lichess…"
+			// A seek or challenge needs nobody in THIS lobby; only the paired flow
+			// waits on the other seat's Gambit client.
+			"waiting" => lc.IsSeek ? "Waiting for a lichess opponent…"
 				: "Waiting for your opponent's client…",
-			"challenging" => lc.IsSeek ? "Looking for an opponent on lichess…"
-				: "Starting the game on lichess…",
+			// A named opponent hasn't answered yet — say who we're waiting on. A seek
+			// is still just looking. The paired flow is mid-handshake with lichess.
+			"challenging" => !lc.IsSeek ? "Starting the game on lichess…"
+				: lc.ChallengeOpponent is string who ? $"Waiting for {who} to accept on lichess…"
+				: "Looking for an opponent on lichess…",
 			_ => null,
 		};
 	}
@@ -718,7 +942,7 @@
 		{
 			string lichessName = seat == ChessSeat.White ? st.white_name : st.black_name;
 			if ( !string.IsNullOrEmpty( lichessName ) ) return lichessName;
-			if ( Lichess().Seeking || st.seek ) return "…";  // nobody yet
+			if ( Lichess().AwaitingOpponent || st.seek ) return "…";  // nobody yet
 		}
 
 		string name = Station()?.SeatName( seat );
@@ -765,6 +989,15 @@
 	{
 		if ( ChessStation.Active != null )
 			LichessLinkState.Poll();
+
+		// Drop (and cancel) a shareable link when the player moves to a different
+		// table, or stands up. One HUD instance serves every station, so a link left
+		// in these fields would otherwise reappear at the next board they sit at.
+		if ( ChessStation.Active != _openLinkStation )
+		{
+			if ( _openLink != null ) ClearOpenLink();
+			_openLinkStation = ChessStation.Active;
+		}
 	}
 
 	static bool BothSeated() =>
@@ -844,6 +1077,16 @@
 					src?.DrawOffered, src?.DrawPending,
 					src?.TakebackOffered, src?.TakebackPending,
 					src?.CanTakeback, PremoveUci(), src?.PremoveDropped ),
-				System.HashCode.Combine( _seekRated, _seekColor ) ) );
+				// Seek/challenge setup prefs, plus the challenge-waiting state: the
+				// "waiting for X to accept" line and the cancel button both hang off
+				// Challenging, and ChallengeOpponent names who (stable while it's set).
+				System.HashCode.Combine( _seekRated, _seekColor, _challengeRated,
+					Lichess()?.Challenging, Lichess()?.ChallengeOpponent ),
+				// The shareable-link section: the created link, the chips that choose
+				// which url to copy, the in-flight and error states, and the "Copied ✓"
+				// feedback (which self-clears on a timer, so it must be hashed or it
+				// would stick). id, not the object, since only identity matters here.
+				System.HashCode.Combine( _openRated, _openColor, _openLink?.id,
+					_creatingLink, _openError, _linkCopied < 2f ) ) );
 	}
 }

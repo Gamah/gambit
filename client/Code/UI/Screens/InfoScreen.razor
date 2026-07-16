@@ -37,7 +37,10 @@
 			{
 				<div class="linked-row">✓  linked as @LichessLinkState.Username</div>
 				<div class="body" style="color:@WallTheme.TextDim;">Sit at a table with another linked player. When you both choose "play on lichess", a real game runs on lichess between your accounts and shows up in your lichess history.</div>
-				<div class="body" style="color:@WallTheme.TextDim;">Bullet tables can't do this — lichess won't play anything faster than blitz.</div>
+				<div class="body" style="color:@WallTheme.TextDim;">Or sit alone and play a stranger: challenge a lichess player by name, or take a random opponent from lichess's lobby.</div>
+				<div class="body" style="color:@WallTheme.TextDim;">Or get a shareable link and send it to anyone — they open it and play you on lichess.org, no account or Gambit needed.</div>
+				<div class="body" style="color:@WallTheme.TextFaint;">None of this happens on its own. Two linked players sitting down together just play a local game — nothing reaches lichess and no account is touched unless you pick one of these.</div>
+				<div class="body" style="color:@WallTheme.TextDim;">Bullet tables can't play the on-board games — lichess won't play a real game faster than blitz — but a shareable link works at any speed.</div>
 
 				<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
@@ -115,7 +118,15 @@
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 			<div class="section-header" style="color:@WallTheme.AccentCss;">PLAY ON LICHESS FOR REAL</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Link a lichess account at the board next door and a game here can be a real game there, in your real lichess history — against the person opposite you, or a stranger from lichess's lobby.</div>
+			<div class="body" style="color:@WallTheme.TextDim;">Link a lichess account at the board next door and a game here can be a real game there, in your real lichess history — against the person opposite you, a lichess player you name, or a random stranger from lichess's lobby.</div>
+			@* The shareable link is the one flow that ISN'T played on the Gambit board:
+			   an open lichess challenge, played in a browser by whoever opens it. It's
+			   also the answer to "two linked players who DON'T want it on lichess" — a
+			   game here is local and private by default; lichess only ever hears about
+			   it when you pick one of these. Keep that sentence: it is the whole
+			   consent model in one line, and it read as ambiguous until it was said. *@
+			<div class="body" style="color:@WallTheme.TextDim;">Or skip the board entirely: get a shareable link and send it to anyone — they open it and play you on lichess.org, no account or Gambit needed.</div>
+			<div class="body" style="color:@WallTheme.TextFaint;">Sitting down together doesn't put your game on lichess. A game here is local and touches no lichess account unless you choose one of the options above — so two linked players who just want a quiet game get exactly that.</div>
 			@* Named because they're the controls a lichess player expects to find and
 			   would otherwise assume are missing. Premove is deliberately described
 			   by what it does, not by its name: it is the only one of the three that
@@ -125,11 +136,14 @@
 
 			@* THE question players actually ask, and the one that read as a bug: why
 			   is there no "find a random opponent" button at a blitz table? The answer
-			   is lichess's, not ours — two different speed floors for the two flows —
-			   and a player has no way to know that. Say it here rather than let the
-			   missing button speak for itself. If these floors ever change, the truth
-			   is LichessTable.CanMirror/CanSeek; this is copy, not the rule. *@
-			<div class="body" style="color:@WallTheme.TextDim;">The person opposite you: any control from Blitz 3+0 up, Unlimited included. A stranger from lichess's lobby: Rapid 10+0 or Classical 30+0 only — lichess won't put faster games in its lobby, an Unlimited game has no clock to match on, and Bullet can't reach lichess at all. Those are lichess's rules, not ours.</div>
+			   is lichess's, not ours — the LOBBY floor is higher than the CHALLENGE
+			   floor — and a player has no way to know that. The distinction that makes
+			   the copy true: naming an opponent (either the seat opposite or a lichess
+			   username) is a challenge and reaches blitz; only the random-lobby seek is
+			   rapid+. If these floors ever change, the truth is
+			   LichessTable.CanMirror/CanSeek; this is copy, not the rule. *@
+			<div class="body" style="color:@WallTheme.TextDim;">Naming your opponent — the person opposite you, or a lichess player by username — works from Blitz 3+0 up, Unlimited included. A random stranger from lichess's lobby is Rapid 10+0 or Classical 30+0 only: lichess won't put faster games in its lobby, an Unlimited game has no clock to match on, and Bullet can't reach lichess at all. Those are lichess's rules, not ours.</div>
+			<div class="body" style="color:@WallTheme.TextDim;">The shareable link is the exception to all of that: it's played in a browser, not through the board, so no floor applies — even a Bullet table can hand one out.</div>
 
 			@* There is no rating control here, and that is deliberate — see CLAUDE.md's
 			   ratingRange trap. lichess matches a seek to a band around your real

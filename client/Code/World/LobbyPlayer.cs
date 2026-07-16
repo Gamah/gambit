@@ -467,16 +467,17 @@ public sealed class LobbyPlayer : Component
 
 		_leaveArm = 999f;
 
-		// Walking away while still looking for an opponent WITHDRAWS the seek — the
-		// held connection is the seek, so without this we stay pairable and get
-		// dropped into a game nobody is sitting at.
+		// Walking away while still waiting on an opponent WITHDRAWS the request —
+		// whether that's a lobby seek (its held connection IS the seek) or a direct
+		// challenge (which gamchess must explicitly /cancel, or it stays acceptable
+		// for hours). Without this we get dropped into a game nobody is sitting at.
 		//
 		// Below the arm gate, not above it: a press that only arms the confirm must
-		// not silently bin the player's seek while they read "Sure? This resigns"
-		// and then decline. (Seeking and Playing are mutually exclusive — Adopt
-		// drops Seeking the moment a game goes live — so this never races a resign.)
-		if ( lichess is { Seeking: true } )
-			lichess.CancelSeek();
+		// not silently bin the player's request while they read "Sure? This resigns"
+		// and then decline. (Waiting and Playing are mutually exclusive — Adopt drops
+		// both the moment a game goes live — so this never races a resign.)
+		if ( lichess is { AwaitingOpponent: true } )
+			lichess.CancelWaiting();
 
 		if ( lichessForfeits )
 			lichess.ResignLocal();

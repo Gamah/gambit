@@ -2,6 +2,7 @@ package lichess
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -636,5 +637,191 @@ func TestStreamCancellation(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("stream did not stop on cancellation")
+	}
+}
+
+// ── Keep-alive challenge (a named human opponent) ──
+
+// The keep-alive challenge posts to /api/challenge/{name}, sets keepAliveStream,
+// hands back the challenge id the moment lichess mints it, and reports the
+// verdict lichess sends before closing the stream.
+func TestChallengeKeepAliveAccepted(t *testing.T) {
+	var got url.Values
+	var path string
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		got, _ = url.ParseQuery(string(body))
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		// The challenge, then the verdict, one line each — exactly as lila does.
+		io.WriteString(w, `{"id":"g4me","status":"created","url":"https://lichess.org/g4me"}`+"\n")
+		io.WriteString(w, `{"done":"accepted"}`+"\n")
+	})
+
+	var opened string
+	done, err := ChallengeKeepAlive(context.Background(), "tok", "MaryChess",
+		ChallengeParams{LimitSeconds: 180, IncrementSeconds: 2, Color: "white"},
+		func(res ChallengeResult) { opened = res.ID })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done != ChallengeAccepted {
+		t.Fatalf("verdict: got %q want accepted", done)
+	}
+	if opened != "g4me" {
+		t.Fatalf("onOpen id: got %q — Cancel would have nothing to withdraw", opened)
+	}
+	if path != "/api/challenge/MaryChess" {
+		t.Fatalf("path: got %q", path)
+	}
+	if got.Get("keepAliveStream") != "true" {
+		t.Fatalf("keepAliveStream must be set, sent %v", got)
+	}
+	for k, want := range map[string]string{"clock.limit": "180", "clock.increment": "2", "color": "white"} {
+		if g := got.Get(k); g != want {
+			t.Errorf("form %s: got %q want %q", k, g, want)
+		}
+	}
+}
+
+// A declined or cancelled challenge is reported as such, not as an error — the
+// caller turns it into a readable "Mary declined" rather than a stack of noise.
+func TestChallengeKeepAliveDeclined(t *testing.T) {
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		io.WriteString(w, `{"id":"g4me","status":"created"}`+"\n")
+		io.WriteString(w, `{"done":"declined"}`+"\n")
+	})
+	done, err := ChallengeKeepAlive(context.Background(), "tok", "Mary",
+		ChallengeParams{LimitSeconds: 180, IncrementSeconds: 2}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done != ChallengeDeclined {
+		t.Fatalf("verdict: got %q want declined", done)
+	}
+}
+
+// lichess's own words on a bad challenge ("No such user") must survive as an
+// APIError, not be flattened to a status — the player needs to read them.
+func TestChallengeKeepAliveSurfacesLichessError(t *testing.T) {
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":"No such user: nobody"}`)
+	})
+	_, err := ChallengeKeepAlive(context.Background(), "tok", "nobody",
+		ChallengeParams{LimitSeconds: 180, IncrementSeconds: 2}, nil)
+	if err == nil {
+		t.Fatal("expected an error on a 400")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("want *APIError, got %T: %v", err, err)
+	}
+	if apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Body, "No such user") {
+		t.Fatalf("lichess's message was lost: %+v", apiErr)
+	}
+}
+
+// Bullet can never reach lichess — the floor is checked before a request is spent.
+func TestChallengeKeepAliveRefusesBulletLocally(t *testing.T) {
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("a bullet challenge must be refused locally, not sent")
+	})
+	if _, err := ChallengeKeepAlive(context.Background(), "tok", "Mary",
+		ChallengeParams{LimitSeconds: 60, IncrementSeconds: 0}, nil); err == nil {
+		t.Fatal("expected a bullet challenge to be refused")
+	}
+}
+
+func TestValidUsername(t *testing.T) {
+	for _, ok := range []string{"Mary", "a1", "thibault", "chess-Nerd_99", "AbCdEfGhIjKlMnOpQrStUvWxYz1234"} {
+		if !ValidUsername(ok) {
+			t.Errorf("%q should be valid", ok)
+		}
+	}
+	for _, bad := range []string{"", "a", "-nope", "_nope", "has space", "guy@lichess",
+		"way-too-long-a-name-for-lichess-to-allow", "üni"} {
+		if ValidUsername(bad) {
+			t.Errorf("%q should be rejected", bad)
+		}
+	}
+}
+
+// ── Open challenge (a shareable link anyone can join) ──
+
+func TestOpenChallengeForm(t *testing.T) {
+	var got url.Values
+	var path string
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		got, _ = url.ParseQuery(string(body))
+		io.WriteString(w, `{"id":"Ceofnzd3","url":"https://lichess.org/Ceofnzd3",`+
+			`"urlWhite":"https://lichess.org/Ceofnzd3?color=white",`+
+			`"urlBlack":"https://lichess.org/Ceofnzd3?color=black"}`)
+	})
+
+	res, err := OpenChallenge(context.Background(), "tok",
+		ChallengeParams{LimitSeconds: 180, IncrementSeconds: 2, Rated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/api/challenge/open" {
+		t.Fatalf("path: got %q", path)
+	}
+	if res.ID != "Ceofnzd3" || res.URLWhite == "" || res.URLBlack == "" {
+		t.Fatalf("result missing links: %+v", res)
+	}
+	// Colour is carried by the URLs, NOT a request field — sending one would be a
+	// no-op lichess ignores, and it would imply the creator is a player.
+	if got.Has("color") {
+		t.Fatalf("an open challenge takes no color field, sent %v", got)
+	}
+	for k, want := range map[string]string{"clock.limit": "180", "clock.increment": "2", "rated": "true"} {
+		if g := got.Get(k); g != want {
+			t.Errorf("form %s: got %q want %q", k, g, want)
+		}
+	}
+}
+
+// Bullet has no path to lichess through the Board API, but an open challenge is
+// web-played and has NO board floor — so a bullet link is allowed where a bullet
+// challenge/seek is refused.
+func TestOpenChallengeAllowsBullet(t *testing.T) {
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"id":"b1","url":"https://lichess.org/b1",`+
+			`"urlWhite":"https://lichess.org/b1?color=white","urlBlack":"https://lichess.org/b1?color=black"}`)
+	})
+	if _, err := OpenChallenge(context.Background(), "tok",
+		ChallengeParams{LimitSeconds: 60, IncrementSeconds: 0}); err != nil {
+		t.Fatalf("a bullet open challenge should be allowed: %v", err)
+	}
+}
+
+// The clock DOMAIN still applies — an off-domain limit is refused before a request.
+func TestOpenChallengeRejectsOffDomainClock(t *testing.T) {
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("an off-domain clock must be refused locally, not sent")
+	})
+	if _, err := OpenChallenge(context.Background(), "tok",
+		ChallengeParams{LimitSeconds: 200, IncrementSeconds: 0}); err == nil {
+		t.Fatal("expected 200s (not a legal clock.limit) to be refused")
+	}
+}
+
+func TestOpenChallengeUnlimitedOmitsClock(t *testing.T) {
+	var got url.Values
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got, _ = url.ParseQuery(string(body))
+		io.WriteString(w, `{"id":"u1","url":"https://lichess.org/u1",`+
+			`"urlWhite":"https://lichess.org/u1?color=white","urlBlack":"https://lichess.org/u1?color=black"}`)
+	})
+	if _, err := OpenChallenge(context.Background(), "tok", ChallengeParams{Unlimited: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got.Has("clock.limit") || got.Has("clock.increment") {
+		t.Fatalf("unlimited must omit both clock fields, sent %v", got)
 	}
 }

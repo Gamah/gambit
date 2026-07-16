@@ -111,6 +111,36 @@ public static class LichessApi
 			color = color ?? "",
 		} ) );
 
+	/// <summary>
+	/// Challenge a SPECIFIC lichess user by name.
+	///
+	/// <para>One caller, like <see cref="Seek"/> and unlike <see cref="Play"/>: you
+	/// spend your own grant to invite a stranger who accepts in their own client, by
+	/// their own choice. Nobody in this lobby is committed to anything.</para>
+	///
+	/// <para><b>Reaches blitz</b>, where a seek cannot — lichess gates a challenge at
+	/// blitz and a seek at rapid. And it spends the per-user challenge budget rather
+	/// than the shared 5/min-per-IP lobby budget, so it is the kinder of the two on
+	/// the playerbase. <paramref name="tc"/> is the table's own control, in seconds
+	/// (a seek's unit is minutes — the asymmetry is lichess's).</para>
+	///
+	/// <para><paramref name="color"/> is the side the CHALLENGER wants; leaving it
+	/// empty lets gamchess default to the seat they hold at the table, so the lichess
+	/// game mirrors the board they're sitting at.</para>
+	/// </summary>
+	public static Task<GamchessApi.Result> Challenge( string clientGameId, string opponent,
+		TimeControl tc, bool rated, string color = null ) =>
+		GamchessApi.SendAuthed( "/api/v1/lichess/challenge", "POST", GamchessApi.Json( new
+		{
+			client_game_id = clientGameId,
+			opponent,
+			limit_seconds = tc.InitialSeconds,
+			increment_seconds = tc.IncrementSeconds,
+			unlimited = tc.IsUnlimited,
+			rated,
+			color = color ?? "",
+		} ) );
+
 	/// <summary>Withdraw a seek, or drop a pairing that hasn't started.
 	///
 	/// <para>Not politeness — the held connection IS the seek, so this is what
@@ -119,6 +149,35 @@ public static class LichessApi
 	public static Task<GamchessApi.Result> Cancel( string clientGameId ) =>
 		GamchessApi.SendAuthed(
 			$"/api/v1/lichess/play/{Uri.EscapeDataString( clientGameId )}", "DELETE", null );
+
+	/// <summary>
+	/// Mint a SHAREABLE open-challenge link — a URL anyone can open to play, no
+	/// account and no Gambit needed on their side.
+	///
+	/// <para>Unlike every other flow this starts no relayed game: lichess hands back
+	/// three URLs and the game is played on lichess.org by whoever opens them. So
+	/// there is no polling and nothing renders on the Gambit board — it is a link,
+	/// not a game at this table. It works at ANY table (bullet included): the
+	/// board-API speed floors don't apply to a web-played game.</para>
+	///
+	/// <para>Colour is not sent — it's carried by WHICH url you hand out
+	/// (url_white / url_black are the same game with a forced side). The neutral
+	/// url is first-come, random colour.</para>
+	/// </summary>
+	public static Task<GamchessApi.Result> OpenLink( TimeControl tc, bool rated ) =>
+		GamchessApi.SendAuthed( "/api/v1/lichess/open", "POST", GamchessApi.Json( new
+		{
+			limit_seconds = tc.InitialSeconds,
+			increment_seconds = tc.IncrementSeconds,
+			unlimited = tc.IsUnlimited,
+			rated,
+		} ) );
+
+	/// <summary>Withdraw a shareable link you made. Tidiness, not safety — an unused
+	/// open challenge commits nobody's account and expires on its own in 24h.</summary>
+	public static Task<GamchessApi.Result> CancelOpenLink( string challengeId ) =>
+		GamchessApi.SendAuthed(
+			$"/api/v1/lichess/open/{Uri.EscapeDataString( challengeId )}", "DELETE", null );
 
 	/// <summary>
 	/// The game-state transport: a long poll. gamchess holds this open for ~5s

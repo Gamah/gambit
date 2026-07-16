@@ -181,9 +181,12 @@ key switches lichess off entirely rather than storing plaintext.
 | `DELETE /api/v1/lichess` | session **or** FP | revoke at lichess (best-effort), then delete the row |
 | `POST /api/v1/lichess/play` | FP | play the person opposite you. `{client_game_id, white_steam_id, black_steam_id, limit_seconds, increment_seconds, unlimited}` — **both seats must POST** |
 | `POST /api/v1/lichess/seek` | FP | play a random opponent. `{client_game_id, time_minutes, increment_seconds, rated, rating_range, color}` — one caller |
+| `POST /api/v1/lichess/challenge` | FP | challenge a named user. `{client_game_id, opponent, limit_seconds, increment_seconds, unlimited, rated, color}` — one caller; reaches blitz (a seek can't) |
+| `POST /api/v1/lichess/open` | FP | mint a shareable open-challenge link. `{limit_seconds, increment_seconds, unlimited, rated}` → `{id, url, url_white, url_black}`. NOT relayed — the game is played on lichess.org by whoever opens the link. No board floor (bullet works) |
+| `DELETE /api/v1/lichess/open/{id}` | FP | withdraw a shareable link (tidiness; it also expires in 24h) |
 | `GET /api/v1/lichess/play/{id}?since=N` | FP | **long poll** (held ~5s) for game state; 404 if you aren't in it |
 | `POST /api/v1/lichess/play/{id}/{action}` | FP | `move` (body `{uci}`) · `resign` · `draw` · `draw-decline` · `takeback` · `takeback-decline` · `abort` |
-| `DELETE /api/v1/lichess/play/{id}` | FP | withdraw a seek / drop a pending pairing |
+| `DELETE /api/v1/lichess/play/{id}` | FP | withdraw a seek/challenge / drop a pending pairing |
 | `POST /api/v1/lichess/audit` | `LICHESS_AUDIT_KEY` | sweep our token store against lichess. 404 when unconfigured |
 
 **Starting a game against the person opposite needs BOTH seats to POST** `/play` with the same
