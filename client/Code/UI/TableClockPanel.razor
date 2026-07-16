@@ -154,7 +154,10 @@
 		text-align: center;
 		white-space: nowrap;
 		border-radius: 16px;
-		background-color: rgba(12, 12, 16, 0.75);
+		/* Opaque. Hex rather than rgba(...,1) so nobody reads the alpha as a knob: the
+		   plate reads as a physical face on a physical clock, and seeing the tabletop
+		   through it undid that. */
+		background-color: #0c0c10;
 		/*
 			76px is calibrated and stays put — the plate around it is what changed size.
 			The panel's WIDTH is what fixes its world scale (1024px spans the clock body),
@@ -167,8 +170,10 @@
 		color: rgba(255, 255, 255, 0.45);
 	}
 
-	/* The running side is the only one worth looking at. */
-	.face.on { background-color: rgba(20, 22, 28, 0.98); color: #e8e6df; }
+	/* The running side is the only one worth looking at. Both plates are opaque now, so
+	   the ticking one is told apart by its TEXT going bright rather than by the plate
+	   getting less see-through — which is the stronger signal anyway. */
+	.face.on { background-color: #14161c; color: #e8e6df; }
 
 	/* Under TimeControl.PanicSeconds — the same threshold the panic beep starts at,
 	   which is why it is a shared constant and not a 10f typed in two files. */
