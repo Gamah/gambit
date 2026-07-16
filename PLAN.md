@@ -177,7 +177,7 @@ been compiled**, and nothing has been deployed. Everything below needs the user.
 2. Walk to the lichess board on the east wall, copy, paste in a browser: Steam sign-in →
    the disclosure page → lichess consent naming **`board:play`** → success page → the panel
    flips to "linked as <username>" within ~3s.
-3. Two linked players at a **Blitz 3+2** table both press "play on lichess", both ready up:
+3. Two linked players at a **Blitz 3+0** table both press "play on lichess", both ready up:
    a real blitz game runs on lichess between their accounts, mirrors to the board, and lands
    in both players' lichess history. Moves/resign/draw round-trip.
 4. One linked player at a **Rapid 10+0** table presses "find a game": a real opponent from
@@ -238,7 +238,7 @@ from their side. Outcome is discretionary; there is no registration or blessing 
   single line of prose saying pools are off-limits, and lila's `conf/routes` has no pool
   endpoint at all. `POST /api/board/seek` is the only random-opponent mechanism the Board API
   offers, it is already built ("♞ Find a game on lichess"), and it is **Rapid or slower** —
-  so the default Blitz 3+2 table can never find a stranger, and no amount of client work
+  so the default Blitz 3+0 table can never find a stranger, and no amount of client work
   changes that. Playing a stranger in blitz would need lichess to expose the pools. **Don't
   re-open this without new facts from their side.**
 - **No correspondence.** `SeekCorrespondence` exists in the lichess package and has no route:

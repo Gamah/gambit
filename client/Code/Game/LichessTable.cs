@@ -68,7 +68,7 @@ public static class LichessTable
 	/// Can this control be played against a RANDOM lichess opponent?
 	///
 	/// <para>Stricter than <see cref="CanMirror"/>, and that gap is why a direct
-	/// challenge is the primary flow: the default table is Blitz 3+2, which lichess
+	/// challenge is the primary flow: the default table is Blitz 3+0, which lichess
 	/// will happily let you challenge someone with, but will not put in its lobby.
 	/// Unlimited can't be seeked either — a real-time seek needs a clock.</para>
 	/// </summary>

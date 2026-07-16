@@ -94,7 +94,7 @@ token and must be signed by *that* token. So:
   `lila.core.game.isBoardCompatible` is `Speed(clock) >= Rapid` (≥ 480s) and gates **seeks**
   (via `SetupForm.boardApiHook`). Same name, different files, different answers. `Speed` comes
   from scalachess's `byTime(limit + 40*increment)`. **[SOURCE]**
-  → **Bullet never reaches lichess by any path.** The default table (Blitz 3+2, estimate 260)
+  → **Bullet never reaches lichess by any path.** The default table (Blitz 3+0, estimate 180)
   is challengeable but **not** seekable — which is why a direct challenge is the primary flow.
   Unlimited *is* challengeable (no clock → Correspondence speed) but not seekable.
 - **A seek's `time` is MINUTES; a challenge's `clock.limit` is SECONDS.** An easy way to ask

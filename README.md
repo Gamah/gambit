@@ -199,11 +199,11 @@ is nobody to get consent from: you spend your own grant on a stranger who opted 
 
 | Flow | Floor | Which presets |
 |---|---|---|
-| direct challenge | blitz — estimate ≥ 180s | Blitz 3+2, Rapid 10+0, Classical 30+0, Unlimited |
+| direct challenge | blitz — estimate ≥ 180s | Blitz 3+0, Rapid 10+0, Classical 30+0, Unlimited |
 | lobby seek | rapid — estimate ≥ 480s | Rapid 10+0, Classical 30+0 |
 
 (estimate = `limit + 40×increment`.) **Bullet can never reach lichess from any path.** The
-default table is Blitz 3+2, which is challengeable but *not* seekable — which is exactly why a
+default table is Blitz 3+0, which is challengeable but *not* seekable — which is exactly why a
 direct challenge is the primary flow. Note also that a seek's `time` is in **minutes** while a
 challenge's `clock.limit` is in **seconds**.
 

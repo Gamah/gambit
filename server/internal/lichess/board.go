@@ -365,7 +365,7 @@ type ChallengeResult struct {
 //
 // This is Gambit's PRIMARY path into a game, for one reason: it reaches BLITZ.
 // A lobby seek cannot (real-time seeks are Rapid/Classical only), and Gambit's
-// default table is Blitz 3+2. It also dodges the seek's 5/min-per-IP cap, which
+// default table is Blitz 3+0. It also dodges the seek's 5/min-per-IP cap, which
 // is shared across the whole playerbase and is the one real relay bottleneck.
 //
 // A real-time challenge EXPIRES AFTER 20 SECONDS if not accepted. We don't set
@@ -473,8 +473,8 @@ func ChallengeCompatible(limitSeconds, incrementSeconds int) bool {
 // seek (rapid or slower).
 //
 // Stricter than ChallengeCompatible, and that difference is the whole reason a
-// direct challenge is Gambit's primary path: the default table is Blitz 3+2,
-// which estimates at 260 — fine to challenge with, refused as a seek.
+// direct challenge is Gambit's primary path: the default table is Blitz 3+0,
+// which estimates at 180 — fine to challenge with, refused as a seek.
 func SeekCompatible(limitSeconds, incrementSeconds int) bool {
 	return EstimateTotalSeconds(limitSeconds, incrementSeconds) >= SeekFloorSeconds
 }
