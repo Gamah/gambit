@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Gambit.Game;
 using Sandbox;
 using Sandbox.Network;
 
@@ -41,6 +42,17 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 	/// holds every permission, so it is always included; a dedicated server excludes its own
 	/// headless connection (not a player). Host-authoritative; rebuilt in OnActive/OnDisconnected.</summary>
 	[Sync( SyncFlags.FromHost )] public string AdminSteamIds { get; set; }
+
+	/// <summary>The lichess TV channel this lobby SUGGESTS for the north wall (M9).
+	///
+	/// <para>A suggestion, not a setting: a client that has picked its own channel keeps
+	/// it, and a client with TV off ignores this entirely. Per-client choice is
+	/// affordable because gamchess holds one upstream stream per channel — the cost is
+	/// bounded by the channel count, not the player count.</para>
+	///
+	/// <para>Blank means the default (blitz). Host-authoritative and admin-gated like
+	/// the station count; see <see cref="RequestSetSuggestedTvChannel"/>.</para></summary>
+	[Sync( SyncFlags.FromHost )] public string SuggestedTvChannel { get; set; } = LichessTv.DefaultChannel;
 
 	public static LobbyNetworkManager Instance { get; private set; }
 
@@ -88,6 +100,20 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 		if ( !CanChangeHostSettings( Rpc.Caller ) ) return;
 		foreach ( var ring in Scene.GetAllComponents<ChessRing>() )
 			ring.HostSetStationCount( count );
+	}
+
+	/// <summary>Set the lobby's suggested TV channel (M9). Admin-gated, and the check
+	/// runs HOST-side for the same reason the station count's does: permissions can only
+	/// be read on the host, and the admin may not be the network host on a dedi. The
+	/// client-side <see cref="LocalIsAdmin"/> gate is UI only and is never authority.</summary>
+	[Rpc.Host]
+	public void RequestSetSuggestedTvChannel( string channel )
+	{
+		if ( !CanChangeHostSettings( Rpc.Caller ) ) return;
+		// Coerce rather than trust: this arrives from a client and is [Sync]ed to every
+		// peer, so a junk value would put every wall in the lobby on a dead channel.
+		// gamchess validates independently — this just keeps the lobby coherent.
+		SuggestedTvChannel = LichessTv.Coerce( channel );
 	}
 
 	/// <summary>Host-side authority check for host-settings actions. Permissions can only be

@@ -9,11 +9,20 @@
 @inherits PanelComponent
 
 @*
-	Walk-up control board (M5) at walk-up height on the north wall, under the giant
-	floating spectator board (SpectatorWall). It shows what the board is watching — channel,
-	players, time control + move number, and a live/latency status line — and prompts "Press E
-	to spectate", which opens the interactive channel picker (SpectatorScreen) via the
-	co-located SpectatorStation.
+	Walk-up control board (M5) at walk-up height under the giant floating spectator board
+	(SpectatorWall). It says what the board is showing — channel, both players, where the
+	game is up to, and whether it's live — and prompts "Press E to spectate", which opens
+	the controls (SpectatorScreen) via the co-located SpectatorStation.
+
+	It has to speak about BOTH sources now (M9). A table game is two Steam names and the
+	host's own clock; a lichess TV game is two strangers with titles and ratings, and the
+	channel matters more than the table number ever did. The copy said "Sit at a table to
+	start a game" whenever nothing was up, which stopped being the whole truth the moment
+	the wall could also show lichess.
+
+	One player per line, with title and rating, mirroring the seat plaques on the board
+	above — "FM DiazVelandia (2954)" beside a Steam name is the same field, and a single
+	"A vs B" line couldn't hold both at this board's font size.
 
 	Sized and floor-anchored to match the east-wall info board exactly (WallBoardGeometry) so
 	every wall sign reads as one size — hence the small info-board font scale (more info, smaller
@@ -29,7 +38,20 @@
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 		<div class="channel" style="color:@WallTheme.AccentCss;">@Channel()</div>
-		<div class="players" style="color:@WallTheme.Text;">@Players()</div>
+
+		@if ( HasGame() )
+		{
+			@* One div per line — a div's auto height doesn't grow for wrapped text, and
+			   inline spans inside a text div become separate flex items (CLAUDE.md). *@
+			<div class="players" style="color:@WallTheme.Text;">@PlayerLine( white: true )</div>
+			<div class="vs" style="color:@WallTheme.TextFaint;">vs</div>
+			<div class="players" style="color:@WallTheme.Text;">@PlayerLine( white: false )</div>
+		}
+		else
+		{
+			<div class="players" style="color:@WallTheme.TextDim;">@Idle()</div>
+		}
+
 		<div class="meta" style="color:@WallTheme.TextDim;">@Meta()</div>
 		<div class="status" style="color:@LiveColor();">@LiveText()</div>
 
@@ -91,6 +113,13 @@
 		white-space: nowrap;
 	}
 
+	/* The "vs" between the two player lines — a separator, not a label. */
+	.vs {
+		font-size: 5px;
+		letter-spacing: 1px;
+		text-align: center;
+	}
+
 	.meta {
 		font-size: 5px;
 		letter-spacing: 0.75px;
@@ -127,48 +156,88 @@
 		return c == null ? "LIVE TABLES" : c.ChannelLabel;
 	}
 
-	/// <summary>The two players when a game is up, else a short invite.</summary>
-	string Players()
+	bool HasGame() => C is { HasPosition: true };
+
+	/// <summary>One player, with title and rating when there are any — mirroring the seat
+	/// plaques above. A table game has neither (Gambit has no titles and no rating), so
+	/// this quietly degrades to the bare Steam name.</summary>
+	string PlayerLine( bool white )
 	{
 		var c = C;
-		if ( c == null || !c.HasPosition ) return "Live tables";
-		return $"{c.WhiteName}  vs  {c.BlackName}";
+		if ( c == null ) return "";
+
+		var name = white ? c.WhiteName : c.BlackName;
+		if ( string.IsNullOrEmpty( name ) ) name = white ? "White" : "Black";
+
+		var title = white ? c.WhiteTitle : c.BlackTitle;
+		if ( !string.IsNullOrEmpty( title ) ) name = $"{title} {name}";
+
+		int rating = white ? c.WhiteRating : c.BlackRating;
+		return rating > 0 ? $"{name}  ({rating})" : name;
 	}
 
-	/// <summary>Time control and move number, when a game is up. One line, built as a
-	/// single string — inline spans would become separate flex items (CLAUDE.md).</summary>
+	/// <summary>What to say when nothing is on the board. It must account for TV, because
+	/// "sit at a table" stopped being the only way to get a game on this wall.</summary>
+	string Idle() => SpectatorController.TvEnabled
+		? "Sit at a table, or watch lichess"
+		: "Sit at a table to start a game";
+
+	/// <summary>Where the game is up to. One line, built as a single string — inline spans
+	/// would become separate flex items (CLAUDE.md).
+	///
+	/// <para>A table game has a real time control ("Blitz 3+2") because we set it. A TV
+	/// game's is the CHANNEL, which the line above already says — so repeating it here
+	/// would just be the same word twice, and the move number is the only news.</para></summary>
 	string Meta()
 	{
 		var c = C;
-		if ( c == null || !c.HasPosition ) return "Sit at a table to start a game";
+		if ( c == null || !c.HasPosition ) return "";
 
 		string move = c.MoveNumber > 0 ? $"move {c.MoveNumber}" : "";
-		string tc = c.TimeControlLabel ?? "";
+		string tc = c.IsTvSource ? "" : c.TimeControlLabel ?? "";
 		if ( tc.Length == 0 ) return move;
 		return move.Length == 0 ? tc : $"{tc} · {move}";
 	}
 
-	/// <summary>Liveness line. The wall's only source is the host-folded FEN from a
-	/// table, so it is always genuinely real-time — there are no DELAYED/BUFFERING
-	/// states to report.</summary>
+	/// <summary>Liveness line.
+	///
+	/// <para>A table game is the host-folded FEN, so it is genuinely real-time. lichess TV
+	/// is polled, and it is a different claim — saying "table game" over a game from
+	/// lichess was simply wrong, and it said it because this line predates TV.</para>
+	///
+	/// <para>A finished game is not live at all: the result takes the line, because
+	/// claiming LIVE over a board we are deliberately holding on a dead position is the
+	/// one thing this line must never do.</para></summary>
 	string LiveText()
 	{
 		var c = C;
 		if ( c == null ) return "";
 		if ( !c.HasPosition ) return string.IsNullOrEmpty( c.StatusText ) ? "" : c.StatusText;
-		return "LIVE · table game";
+		if ( !string.IsNullOrEmpty( c.FanfareText ) ) return c.FanfareText;
+		return c.IsTvSource ? "LIVE · lichess TV" : "LIVE · table game";
 	}
 
 	string LiveColor()
 	{
 		var c = C;
 		if ( c == null || !c.HasPosition ) return WallTheme.TextFaint;
+		// A finished game reads as ended, not as live.
+		if ( !string.IsNullOrEmpty( c.FanfareText ) ) return WallTheme.Text;
 		return WallTheme.AccentCss;
 	}
 
+	/// <summary>Hashes what is DRAWN, not what it's drawn from — every string this panel
+	/// renders, and nothing else.
+	///
+	/// <para>The old version listed the controller fields instead, and had gone stale
+	/// exactly as that always does: it never learned about the fanfare. During a fanfare
+	/// the position is frozen ON PURPOSE, so the label, the names, the move number and
+	/// HasPosition are all unchanged — nothing in the hash moved, and the board would have
+	/// sat there saying LIVE over a finished game forever. Hashing the output can't drift
+	/// from the markup, because it IS the markup.</para></summary>
 	protected override int BuildHash() => HashCode.Combine(
-		C?.ChannelLabel, C?.WhiteName, C?.BlackName, C?.HasPosition,
-		C?.MoveNumber, C?.StatusText, C?.TimeControlLabel, SettingsModel.SettingsVersion );
+		Channel(), PlayerLine( white: true ), PlayerLine( white: false ),
+		Idle(), Meta(), LiveText(), LiveColor(), SettingsModel.SettingsVersion );
 
 	protected override void OnUpdate()
 	{

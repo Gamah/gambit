@@ -58,11 +58,13 @@ game ending. Lichess is likewise never required: unlinked, refused or offline al
 
 ### Auth
 
-There are **two ways to prove the same SteamID64**, and every private route accepts either:
+There are **three ways to prove the same SteamID64**, and every private route accepts any of
+them. All three attest identity and nothing else:
 
 | Where | How |
 |---|---|
 | in-game (s&box client) | a **Facepunch auth token**, verified at `public.facepunch.com/sbox/auth/token` |
+| in-game, on the hot path | a **gamchess session** (`gcs_…`), traded for an FP token once and then verified locally (M9) |
 | on the web (archive viewer) | **Steam OpenID 2.0** at `steamcommunity.com/openid/login`, then a signed session cookie |
 
 Steam's browser login is **OpenID 2.0, not OAuth2** — there is no Steam OAuth2 endpoint,
@@ -80,6 +82,38 @@ only the echoed SteamId; a mismatch or any error denies (fail closed). **A Steam
 header, body, or query string never authorises anything** — which is why the archive has no
 `?steam_id=` parameter.
 
+#### The game session (M9)
+
+**Every FP-gated request costs a live HTTP round-trip to Facepunch.** That is one per player
+per poll on a relayed lichess game (~5s), and TV multiplies it by everyone standing at a
+wall. `POST /api/v1/session` trades an FP token for a bearer that gamchess verifies with a
+**local HMAC and no I/O at all**:
+
+```
+Authorization: Bearer gcs_<session>    // no X-Steam-Id — the MAC carries it
+```
+
+- **Nothing about it is user-visible.** It is minted from the Facepunch token the client
+  already holds. No web sign-in, no lichess link, no prompt — those are unrelated.
+- **FP-gated only**, and that is load-bearing: a session may not mint a session, or a client
+  would renew itself forever and the TTL below would be a fiction.
+- **One hour**, not the web cookie's 30 days. A game session authorises everything that
+  SteamID can do (including playing lichess games as them), and sessions are stateless, so
+  **there is no way to revoke one** short of rotating `SESSION_SECRET` — which signs every
+  player and every browser out at once.
+- **The audience is inside the MAC** (`aud|steamID|expiry|MAC`). Without that a web cookie
+  and a game bearer would be the same bytes under the same key, so a leaked 30-day cookie
+  replayed as `gcs_<value>` would authorise the game API for its full month and the 1-hour
+  TTL would be decoration.
+- **Memory only on the client**, never `FileSystem.Data` — the same rule the FP token lives
+  under, and for the same reason ("can a rogue lobby host read another client's
+  `FileSystem.Data`?" is still an open spike).
+- **Never required.** A mint failure falls back to the FP token, which works identically and
+  just costs a Facepunch round-trip per request. It degrades performance, never function.
+
+> Changing the payload format invalidated existing web cookies once, at the M9 deploy —
+> everyone signed in on the web signs in again. There is no migration and none is wanted.
+
 **SteamIDs cross the wire as strings, always.** A SteamID64 (~7.6e16) exceeds JavaScript's
 2^53 safe-integer range, so a bare JSON number is silently corrupted by `JSON.parse`.
 `"0"` and `""` both mean *empty seat*.
@@ -93,6 +127,7 @@ header, body, or query string never authorises anything** — which is why the a
 | `GET /auth/steam/return` | — | Steam lands the browser here; verifies, burns the nonce, sets the session cookie |
 | `POST /auth/steam/logout` | session | clears the cookie (POST so a stray link can't sign you out) |
 | `GET /api/v1/me` | session | `{steam_id}`; 401 when signed out |
+| `POST /api/v1/session` | **FP only** | `{token: "gcs_…", expires_at}` — a 1h bearer verified with no I/O. A session may not mint one (see above) |
 | `POST /api/v1/games` | FP | `{client_game_id, pgn, white_steam_id, black_steam_id, result}`. Idempotent on `client_game_id`; **403 unless you sat in the game** |
 | `GET /api/v1/games?limit=&offset=` | session **or** FP | **your games only**; `{games:[…]}`, newest first, limit ≤ 200 |
 | `GET /api/v1/games/{id}` | session **or** FP | one of your games; **404 (not 403) if you didn't play in it**, so ids aren't probeable |
@@ -186,4 +221,96 @@ UCI move list from the start, so the client rebuilds rather than reconciles and 
 duplicated poll costs nothing.
 
 **gamchess is never required.** If it is unreachable, the client degrades to archive-off and
-lichess-off; local play and spectating never touch it.
+lichess-off; local play and spectating tables never touch it.
+
+### Lichess TV (M9)
+
+Real lichess games on the west spectator wall. **This is the one lichess feature with no
+security surface upstream**: `GET /api/tv/{channel}/feed` is `security: []` — anonymous. No
+token, no scope, no custody question, nothing to encrypt, revoke, or audit. **None of M8's
+hard part applies, and none of it may creep in — TV must keep working for a player who has
+never linked a lichess account and never will.**
+
+| Route | Auth | Notes |
+|---|---|---|
+| `GET /api/v1/tv/channels` | session/FP | `{default, channels:[{key,label}]}` — what we'll actually serve |
+| `GET /api/v1/tv/{channel}?since=N` | session/FP | **long poll** (held ~5s) for the channel's featured game |
+
+**One upstream stream per CHANNEL, however many are watching.** 100 players on blitz cost
+lichess exactly one stream. That invariant is the entire reason TV is proxied rather than hit
+from each client (lichess advocates precisely this), and it is what makes per-client channel
+choice affordable: the cost is bounded by the channel count (6), not the player count. The
+stream opens on the first watcher and is dropped ~45s after the last one stops polling —
+ref-counted by **pollers**, via a last-polled timestamp rather than a counter, because a
+counter needs a decrement on every exit path including the ones a dropped connection never
+gives us, and one missed decrement leaks a stream to lichess forever.
+
+**It is session-gated even though it's anonymous upstream**, and the reason is not cost:
+
+1. An open `/api/v1/tv/{channel}` is a **free CDN for someone else's content**, pointable by
+   any script.
+2. lichess sees **our IP and our User-Agent** — we went out of our way to make that traffic
+   attributable so they *can* attribute it. Anything done through an open relay is done *as
+   Gambit*, against the one IP whose limits every real player shares. Being identifiable and
+   being an open relay is a bad combination.
+
+**Channels: all 16 of them**, default `best` ("Top Rated" — the best game in progress on
+lichess at any moment, whatever the speed, which is what a wall wants). The six speeds (`best`,
+`bullet`, `blitz`, `rapid`, `classical`, `ultraBullet`), the eight variants (`chess960`,
+`crazyhouse`, `kingOfTheHill`, `threeCheck`, `antichess`, `atomic`, `horde`, `racingKings`)
+and `bot`/`computer`.
+
+This shipped as six, on the reasoning that the vendored rules are standard-only so a variant
+FEN can't be drawn. **That was wrong.** The standard-only rule governs *playing* — where
+`ChessGame` parses the FEN and validates moves — and the wall does neither: `SpectatorBoard3D`
+reads the piece-placement field alone and walks its characters under a `file < 8 && rank >= 0`
+guard. So Chess960's X-FEN castling (`HDhd`) is never read, Crazyhouse's pockets
+(`…/RNBQKBNR[Pp]`) fall off the guard, Three-check's counters ride at the end of the FEN, and
+the rest are plain standard placement. Verified against every variant's real starting FEN.
+
+Two channels keep state the 64 squares can't hold — Crazyhouse's pockets, Three-check's
+counts — and the spectator board says so rather than let a viewer think the board is broken.
+
+The **channel allowlist is a security boundary, not a menu**: the key arrives off the wire and
+becomes a lichess URL, so nothing may build one from a key that didn't come out of
+`ValidChannel`. Holding every channel lichess offers doesn't make it decoration — the point is
+that the set is closed and ours. The client mirrors it by hand, and a Go test reads
+`LichessTv.cs` to hold the two lists together.
+
+**Wire shape** (read off the live feed 2026-07-15, not recalled — the envelope is `{"t":…,
+"d":…}`, *not* the `{"type":…}` the Board API stream uses):
+
+```
+{"t":"featured","d":{"id":…,"orientation":…,"players":[{"color":"white","user":{"name":…,"title":…},"rating":…,"seconds":…}],"fen":…}}
+{"t":"fen","d":{"fen":…,"lm":"d7f6","wc":56,"bc":51}}
+```
+
+Note `players[]` nests name/title under `user` (absent for anon/AI) with rating/seconds as
+siblings, and **`wc`/`bc` are SECONDS** — where the Board API sends the same idea in
+milliseconds. Two endpoints, two units.
+
+**A clock only arrives on a move**, so the client counts the side-to-move's down locally from
+the last frame and snaps both to the next one — gated on the version advancing, since a
+timed-out long poll re-delivers the same state every ~5s and re-snapping on that makes the
+clock sawtooth *upward*. It only ever spends time, never invents it, which keeps a live clock
+from reading higher than what's actually left. lichess remains the only authority.
+
+**The feed never says a game ended** — it just swaps to a new `featured`. So on a swap
+gamchess fetches the old game's result from `GET /game/export/{id}` (anonymous; `status` +
+`winner`, a missing winner meaning a draw) and publishes it atomically with the new game as
+`last_game_id/last_status/last_winner`. The client matches that id against the game on its own
+board and holds the finished position for 3s with a result line, because lichess TV cuts to
+the next game instantly. One request per game *end* per channel, through the same governor.
+No buffer accumulates: the relay keeps only the latest state, so the hold drops everything in
+between by construction.
+
+**TV is per-client and off-able.** It's one more entry in the north wall's existing cycle
+(which was already per-client), with no priority over real tables. Turn TV off, or kill
+gamchess, and the wall mirrors real tables exactly as it did before M9 — which was its
+original job.
+
+**Every TV control is on the spectator board itself** (walk up, press E) — channel,
+follow-the-lobby, on/off. Not the settings board: picking a channel on one wall for a board
+on another is what the first attempt did, and it was wrong. The lobby admin **suggests** a
+channel using that same picker, so a client that has picked its own keeps it, and the admin's
+own follow-the-lobby is meaningless (their pick *is* the lobby's) and isn't shown.

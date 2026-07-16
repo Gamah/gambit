@@ -79,6 +79,12 @@ public static class SettingsModel
 			v => Mutate( d => d.MyCabinetSounds = v ) ) );
 		rows.Add( ToggleRow( "OTHER BOARD SOUNDS", data.RemoteCabinetSounds,
 			v => Mutate( d => d.RemoteCabinetSounds = v ) ) );
+
+		// NOTE: lichess TV (M9) is deliberately NOT here — not the on/off, not the
+		// channel, not the lobby's suggestion. It all lives on the spectator board,
+		// which is the thing it controls and the thing you are looking at when you
+		// care. Splitting it across two walls was the first attempt and it was wrong:
+		// you picked a channel on the south wall for a board on the north one.
 		return rows;
 	}
 
@@ -126,6 +132,10 @@ public static class SettingsModel
 		else if ( ring?.Rebuilding ?? false )
 			rows.Add( new SettingRow { Label = "Rebuilding the ring…" } );
 
+		// NOTE: the lobby's TV channel is NOT here either. The admin sets it on the
+		// spectator board, using the same picker everyone else uses — see
+		// SpectatorScreen. A host row here would have been a second place to set one
+		// thing, on a wall away from the board it changes.
 		return rows;
 	}
 

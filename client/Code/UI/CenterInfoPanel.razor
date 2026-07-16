@@ -6,7 +6,15 @@
 @namespace Gambit.UI
 @inherits PanelComponent
 
-@* Display-only info board mounted on the east wall (see InfoWall). No pointer events. *@
+@*
+	Display-only info board mounted on the east wall (see InfoWall). No pointer events.
+	The short version of InfoScreen's Welcome page — walk up and press E for that.
+
+	THIS BOARD IS THE GAME'S FRONT DOOR, and it is the first thing to go stale: it
+	described a lobby where the first sitter was usually White and where saved games were
+	"coming soon", long after neither was true. If you change how the world behaves, this
+	board and InfoScreen's Welcome branch are part of the change — see CLAUDE.md.
+*@
 
 <root>
 	<div class="board" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
@@ -16,12 +24,12 @@
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 		<div class="section-header" style="color:@WallTheme.AccentCss;">HOW TO PLAY</div>
-		<div class="body-text" style="color:@WallTheme.TextDim;">Walk up to either side of a chess table and press E to take that seat — first sitter is usually White. A friend can take the other side of the same board. Press Escape to stand up.</div>
+		<div class="body-text" style="color:@WallTheme.TextDim;">Walk up to either side of a chess table and press E to take that seat — you play the colour you walked up to. A friend takes the other side. Pick a time control before you start. Escape stands you up.</div>
 
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
-		<div class="section-header" style="color:@WallTheme.AccentCss;">COMING SOON</div>
-		<div class="body-text" style="color:@WallTheme.TextDim;">Sit at any table · Play a friend across the board · Your games are saved to chess.gamah.net</div>
+		<div class="section-header" style="color:@WallTheme.AccentCss;">ALSO HERE</div>
+		<div class="body-text" style="color:@WallTheme.TextDim;">Your games are saved to chess.gamah.net · Link lichess and play there for real · The north wall shows a live table, or lichess TV</div>
 
 		<div class="discord-btn">Check out the Discord: @Gambit.World.DiscordButton.InviteCode. Press E to view &amp; copy</div>
 	</div>

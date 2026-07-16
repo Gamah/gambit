@@ -94,10 +94,14 @@ public static class GamchessAuth
 		}
 	}
 
-	/// <summary>Drop the cached token (sign-out, or an explicit retry).</summary>
+	/// <summary>Drop the cached token (sign-out, or an explicit retry). Drops the
+	/// gamchess session with it — the session was minted from this token and proves
+	/// the same identity, so forgetting one while keeping the other would leave the
+	/// client authenticated by a credential it no longer holds the basis for.</summary>
 	public static void Forget()
 	{
 		_token = null;
 		_tokenExpires = 0f;
+		GamchessApi.ForgetSession();
 	}
 }

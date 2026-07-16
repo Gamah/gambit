@@ -1,0 +1,123 @@
+@using System
+@using Sandbox
+@using Sandbox.UI
+@using Gambit.Game
+@using Gambit.World
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	The end-of-game banner, floating in front of the giant spectator board.
+
+	lichess TV cuts to the next game the instant one ends — the result never appears, the
+	pieces just jump. So when the game on the wall finishes we hold the final position
+	(SpectatorController.FanfareHeadline is non-null for exactly that window) and put the
+	result over the middle of it: the headline big, the reason under it.
+
+	Two lines rather than one string with an em-dash. "White wins — out of time" reads as a
+	sentence; a banner glanced at from across a room wants a result and then a detail.
+
+	IN FRONT OF THE BOARD, not beside it, and that is the whole point of a separate panel.
+	The first attempt folded the result into SpectatorController.StatusText, which was
+	invisible in both places that render it: the engaged screen only draws while you're at
+	the station, and the info board's LiveText() only shows StatusText when there is NO
+	position — and a fanfare is precisely a held position. The result belongs where the
+	eye already is.
+
+	Display-only WorldPanel, no pointer input. Coplanar with the board and offset out of
+	its face, so it tilts with it (see SpectatorWall.AddFanfare). Empty markup when there
+	is nothing to announce — the panel is always present and simply draws nothing, which
+	is cheaper and less fragile than creating and destroying a GameObject every game.
+*@
+
+<root>
+	@if ( !string.IsNullOrEmpty( Headline() ) )
+	{
+		<div class="banner">
+			@* One div per line, always — a div's auto height does not grow for wrapped
+			   text, and the reason is a separate field rather than a suffix precisely so
+			   this can be two lines. The second is dropped entirely when there's no
+			   reason to give ("Game aborted", or a result we couldn't fetch), rather than
+			   left as an empty gap under the headline. *@
+			<div class="headline">@Headline()</div>
+			@if ( !string.IsNullOrEmpty( Reason() ) )
+			{
+				<div class="reason">@Reason()</div>
+			}
+		</div>
+	}
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		align-items: center;
+		justify-content: center;
+	}
+
+	/* Dark and solid rather than tinted: it sits over a board of light squares and
+	   3D pieces, and a translucent panel against that is unreadable from across the
+	   room — which is the only place it's ever read from.
+
+	   Content-sized, and that's what makes the oversized PanelSize free: this box is
+	   only ever as wide as its text, so the panel's spare bounds stay transparent. A
+	   short result ("Draw / stalemate") gets a small banner and a long one a wide one,
+	   which is right — the box should fit the news. */
+	.banner {
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 54px 96px;
+		background-color: rgba(8, 8, 12, 0.9);
+		border: 8px solid rgba(255, 255, 255, 0.85);
+		border-radius: 32px;
+	}
+
+	/* Sized against the BOARD, not against the panel — px here is meaningless on its own.
+	   The wall renders this at the seat tags' fit scale (~3.53) and a WorldPanel px is
+	   0.05 world units, so 1px ≈ 0.18 units. The board is 448 units across and a king
+	   stands 110 tall; at the 64px this started at, the headline was ~11 units — smaller
+	   than a pawn, on a board built to be read from across the room.
+
+	   160px ≈ 28 units tall, and the longest headline spans ~330 of the board's 448. That
+	   is a banner. Change these and you are changing world size — check them against the
+	   board, not against a screenshot of the panel. */
+	.headline {
+		white-space: nowrap;
+		font-family: $wall-font;
+		font-size: 160px;
+		font-weight: bold;
+		letter-spacing: 2px;
+		color: #ffffff;
+	}
+
+	/* The detail, not the result: dimmer and well under the headline so the two never
+	   compete. Longest is "insufficient material" (21 chars) — longer than any headline,
+	   which is why it's sized down rather than matched. */
+	.reason {
+		white-space: nowrap;
+		font-family: $wall-font;
+		font-size: 96px;
+		letter-spacing: 2px;
+		color: rgba(255, 255, 255, 0.72);
+		margin-top: 14px;
+	}
+</style>
+
+@code
+{
+	SpectatorController C => SpectatorController.Instance;
+
+	/// <summary>"White wins", or null/empty when no game has just ended. The headline is
+	/// what gates the whole banner — a result always has one, a reason is optional.</summary>
+	string Headline() => C?.FanfareHeadline;
+
+	/// <summary>"out of time", or null when there's no reason to give.</summary>
+	string Reason() => C?.FanfareReason;
+
+	protected override int BuildHash() => HashCode.Combine( Headline(), Reason() );
+}

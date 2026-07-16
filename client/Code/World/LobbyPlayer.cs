@@ -392,10 +392,15 @@ public sealed class LobbyPlayer : Component
 	}
 
 	/// <summary>Nearest free seat within InteractRange: each table offers two seat
-	/// spots (ChessStation.SeatWorldPosition), and the closest free one wins. You
-	/// take the side you actually walk up to — the
-	/// you by that side, so we no longer override the first sitter to White (the old
-	/// CLAUDE.md D1 convention). White still moves first regardless of who sat first.</summary>
+	/// spots (ChessStation.SeatWorldPosition), and the closest free one wins.
+	///
+	/// <para>You take the side you actually walk up to — the board is already oriented
+	/// with that side toward you, so seating you anywhere else would put you behind the
+	/// wrong pieces. That is why we no longer override the first sitter to White (the old
+	/// CLAUDE.md D1 convention). White still moves first regardless of who sat first.</para>
+	///
+	/// <para>This sentence is what the info boards' "you play the colour you walked up to"
+	/// is checked against, so keep it true.</para></summary>
 	void FindNearbySeat()
 	{
 		NearbyStation = null;
@@ -518,7 +523,7 @@ public sealed class LobbyPlayer : Component
 		BeginBoardEngage();
 	}
 
-	/// <summary>Open the west-wall spectator board's channel picker — screen-space UI,
+	/// <summary>Open the north-wall spectator board's channel picker — screen-space UI,
 	/// same as EngageBoard (camera stays put; cursor freed).</summary>
 	public void EngageSpectator( SpectatorStation station )
 	{

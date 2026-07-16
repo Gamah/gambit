@@ -44,6 +44,28 @@ public sealed class PlayerData
 	/// (0.25–3×; higher = pops change faster).</summary>
 	public float FloorPopRate { get; set; } = 1f;
 
+	// ── Lichess TV on the north wall (M9) ──
+	/// <summary>Is lichess TV one of the sources the north wall cycles through?
+	/// <para><b>Default on.</b> TV needs no lichess account and no linking — the feed
+	/// is anonymous — so there is nothing to opt into. Someone who doesn't want it
+	/// turns it off and it stays off; the wall keeps mirroring real tables either way,
+	/// because that was its job before TV existed.</para>
+	/// <para>Named …Enabled, not …Tv: a property called <c>LichessTv</c> would shadow
+	/// the <see cref="LichessTv"/> class inside this type.</para></summary>
+	public bool LichessTvEnabled { get; set; } = true;
+
+	/// <summary>Follow the lobby admin's suggested channel (default), or use
+	/// <see cref="LichessTvChannel"/>.
+	/// <para>The host SUGGESTS; it never dictates. A player who has picked a channel
+	/// keeps it when the admin changes theirs.</para></summary>
+	public bool LichessTvFollowHost { get; set; } = true;
+
+	/// <summary>This client's own channel pick, used when
+	/// <see cref="LichessTvFollowHost"/> is false. Coerced through
+	/// <see cref="LichessTv.Coerce"/> on read — a stored value can outlive the list
+	/// that produced it.</summary>
+	public string LichessTvChannel { get; set; } = LichessTv.DefaultChannel;
+
 	/// <summary>Keyboard rebinds: game action → keyboard key override.</summary>
 	public Dictionary<string, string> Bindings { get; set; } = new();
 
@@ -74,21 +96,48 @@ public sealed class PlayerData
 	// enumerate a dictionary that another thread is mutating ("Collection was modified").
 	static readonly object _io = new();
 
+	// Defaults for a player who has never saved anything. Held rather than rebuilt
+	// because Load() returns null (not a default) when there's no file, and Current is
+	// read every frame by the spectator wall — a `?? new PlayerData()` there would
+	// allocate 60 times a second forever.
+	static PlayerData _defaults;
+
+	// Load() memoizes only on SUCCESS, so without this a player who has never saved
+	// re-enters the lock and stats the filesystem on every call — and Current is read
+	// per-frame. Sticky: once we know there's nothing to read, only a Save (which sets
+	// _cache directly) changes the answer.
+	static bool _loadFailed;
+
+	/// <summary>Settings as they currently apply: the saved file, or the defaults.
+	/// <para>Never null, and genuinely safe to read per-frame — no allocation and no
+	/// I/O after the first call. Use <see cref="Load"/> instead when you need to know
+	/// whether anything was actually saved.</para></summary>
+	public static PlayerData Current => Load() ?? ( _defaults ??= new PlayerData() );
+
 	public static PlayerData Load()
 	{
 		if ( _cache != null ) return _cache;
+		if ( _loadFailed ) return null;
 		lock ( _io )
 		{
 			if ( _cache != null ) return _cache;
+			if ( _loadFailed ) return null;
 			try
 			{
-				if ( !FileSystem.Data.FileExists( FileName ) ) return null;
+				if ( !FileSystem.Data.FileExists( FileName ) )
+				{
+					_loadFailed = true;
+					return null;
+				}
 				var json = FileSystem.Data.ReadAllText( FileName );
 				_cache = JsonSerializer.Deserialize<PlayerData>( json );
+				// Deserialize returns null for a file containing literal "null".
+				_loadFailed = _cache == null;
 				return _cache;
 			}
 			catch
 			{
+				_loadFailed = true;
 				return null;
 			}
 		}
@@ -99,6 +148,9 @@ public sealed class PlayerData
 		lock ( _io )
 		{
 			_cache = this;
+			// There is now something to read, so clear the sticky "nothing to read".
+			// _cache short-circuits Load() anyway; this keeps the two from disagreeing.
+			_loadFailed = false;
 			var json = JsonSerializer.Serialize( this );
 			FileSystem.Data.WriteAllText( FileName, json );
 		}

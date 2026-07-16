@@ -26,12 +26,25 @@ namespace Gambit.World;
 /// </summary>
 public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 {
-	/// <summary>Intrinsic pixel size of a SpectatorSeatPanel's &lt;root&gt; (name over
-	/// name). FIXED, sized to hold a long Steam persona name — a title plus a
-	/// 20-char username (~24 monospace chars at the name font) — plus the chip and a padding buffer,
-	/// so a max-length name never clips or presses the edge. The uniform scale is then chosen to fit
-	/// this fixed-width tag into the space beside the board (so the world size adapts to the room).</summary>
-	const float SeatPxWidth = 640f;
+	/// <summary>Intrinsic pixel size of a SpectatorSeatPanel's &lt;root&gt; — name on line 1,
+	/// rating+clock on line 2.
+	///
+	/// <para>FIXED, and sized against the WORST name either source can produce, because
+	/// the name is the one field whose length we don't control and
+	/// <c>white-space: nowrap</c> means an over-long one clips rather than wraps:</para>
+	/// <list type="bullet">
+	/// <item><b>Steam</b> — a persona name is up to <b>32 chars</b>, with no title. This is
+	/// the binding case.</item>
+	/// <item><b>lichess</b> — a username is up to 20 chars, plus a title of up to 3
+	/// ("WGM"/"WCM"/"BOT") and its gap: ~24 equivalent.</item>
+	/// </list>
+	/// <para>32 chars of 30px bold ≈ 18px/char ≈ 576px, plus the 22px chip and its 14px
+	/// gap, plus 40px padding each side = ~692. Rounded up to 760 for headroom — the old
+	/// 640 was sized for the lichess case only and would have clipped a long Steam name.
+	/// The uniform scale is then chosen to fit this fixed-width tag into the space beside
+	/// the board, so a wider tag means a slightly smaller one in a tight room (text stays
+	/// proportional and readable) rather than a clipped one.</para></summary>
+	const float SeatPxWidth = 760f;
 	const float SeatPxHeight = 200f;
 
 	/// <summary>WorldPanel px→world-unit factor (Sandbox ScreenToWorldScale) — a panel of P px
@@ -40,6 +53,41 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 
 	/// <summary>Keep a seat tag this far off the side wall when fitting it beside the board.</summary>
 	const float SeatWallMargin = 10f;
+
+	/// <summary>Intrinsic pixel size of the end-of-game banner (SpectatorFanfarePanel).
+	///
+	/// <para><b>Deliberately far larger than the text needs, and that is the design.</b>
+	/// Unlike <see cref="SeatPxWidth"/>, this panel's bounds are INVISIBLE: its
+	/// <c>root</c> is transparent and the banner box sizes to its own content, so the
+	/// only thing an oversized panel costs is empty transparent area nobody can see. What
+	/// a too-small one costs is a clipped result, because <c>white-space: nowrap</c>
+	/// clips rather than wraps.</para>
+	///
+	/// <para>Sizing it exactly was tried twice and was wrong twice — the estimate turns on
+	/// a per-character width that depends on which font actually resolves ($wall-font is
+	/// Consolas → Roboto Mono → generic monospace, and those differ). Given a free choice
+	/// between "precise" and "cannot clip", take the second: the widest banner is ~1970px
+	/// at these sizes and ~2700px even if every character came out a third wider than
+	/// expected, so 4096 swallows the question whole and nobody has to do this arithmetic
+	/// again.</para>
+	///
+	/// <para>The bounds land at ~720 world units against a 448-unit board — bigger than
+	/// the board and completely invisible, which is the point. Only the banner box inside
+	/// is drawn, and it is exactly as wide as the result it carries.</para></summary>
+	const float FanfarePxWidth = 4096f;
+	const float FanfarePxHeight = 1024f;
+
+	/// <summary>How far the banner floats out of the board's FACE, in world units.
+	///
+	/// <para>The pieces stand UP out of that face, so this has to clear the tallest of
+	/// them or the banner renders inside a king. Worked from the real numbers rather than
+	/// eyeballed: <c>SpectatorBoard3D.PieceScale</c> is <c>BoardSize / 26</c> = (56×8)/26
+	/// = 17.2, and <c>ChessSetBuilder.PieceHeight(King)</c> is 6.4 base units — so a king
+	/// stands ~110 units proud of the board. 140 clears it with room to spare.</para>
+	///
+	/// <para>Tied to <see cref="BoardCellSize"/>, so a bigger board wants a bigger number:
+	/// clearance ≈ <c>BoardCellSize × 8 / 26 × 6.4 × 1.3</c>.</para></summary>
+	const float FanfareFaceClearance = 140f;
 
 	/// <summary>World units the board sits in front of the wall's inner face
 	/// (RoomSize / 2), toward the room.</summary>
@@ -188,6 +236,21 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 
 		AddSeatTag( "SpectatorWhiteTag", boardCentre + boardRot * WhiteOffset, inPlane, fitScale, white: true );
 		AddSeatTag( "SpectatorBlackTag", boardCentre + boardRot * BlackOffset, inPlane, fitScale, white: false );
+
+		// The end-of-game banner, floating just off the board's FACE and centred on it.
+		// Placed in the board's own frame and transformed through its rotation, so it
+		// tilts with the board exactly as the seat tags do — and offset along the board's
+		// local +Z (out of the face, toward the room) so it clears the standing pieces
+		// rather than intersecting them.
+		var fanfare = new GameObject( true, "SpectatorFanfare" );
+		fanfare.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
+		fanfare.Parent = _root;
+		fanfare.LocalPosition = boardCentre + boardRot * new Vector3( 0f, 0f, FanfareFaceClearance );
+		fanfare.LocalRotation = inPlane;
+		fanfare.LocalScale = new Vector3( 1f, 1f, 1f ) * fitScale;
+		var fanfarePanel = fanfare.AddComponent<WorldPanel>();
+		fanfarePanel.PanelSize = new Vector2( FanfarePxWidth, FanfarePxHeight );
+		fanfare.AddComponent<Gambit.UI.SpectatorFanfarePanel>();
 
 		// Walk-up control board at walk-up height, directly under the floating board: shows the
 		// current source, players, time control/move, and live status, and invites "Press E to
