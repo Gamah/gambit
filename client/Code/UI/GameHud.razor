@@ -708,6 +708,27 @@
 	static bool Visible() =>
 		ChessStation.Active != null && ( LobbyPlayer.Local?.CameraSettled ?? false );
 
+	/// <summary>Ask whether we're linked, while sitting at a table.
+	///
+	/// <para>Load-bearing, not housekeeping. Every lichess control here — the opt-in,
+	/// the seek, and so the draw and takeback that follow from a game existing — is
+	/// behind <c>LichessLinkState.Linked</c>, which starts false and only becomes
+	/// true when someone ASKS. Until this existed the only caller was the east-wall
+	/// board's own screen, so a linked player who sat down without visiting that wall
+	/// first was told to go and link an account they already had, and the table
+	/// offered nothing but a local game. It looked exactly like the feature hadn't
+	/// shipped.</para>
+	///
+	/// <para>This keeps the rule that made the old caller narrow — never poll in the
+	/// background — by asking only while a station is engaged. LichessLinkState
+	/// single-flights, rate-limits to 3s, and early-returns forever once linked, so
+	/// per-frame here is its intended use.</para></summary>
+	protected override void OnUpdate()
+	{
+		if ( ChessStation.Active != null )
+			LichessLinkState.Poll();
+	}
+
 	static bool BothSeated() =>
 		Station() is { } s && s.WhiteSteamId != 0 && s.BlackSteamId != 0;
 
