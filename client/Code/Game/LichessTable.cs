@@ -75,13 +75,50 @@ public static class LichessTable
 	public static bool CanSeek( TimeControl tc ) =>
 		!tc.IsUnlimited && EstimateTotalSeconds( tc ) >= SeekFloorSeconds;
 
-	/// <summary>Why a control can't be seeked, for the HUD. Null when it can.</summary>
+	/// <summary>The fastest control lichess's lobby will actually take, for copy that
+	/// tells the player what to pick instead of only what's wrong.
+	///
+	/// <para>Computed, not written down: both the menu and lichess's floor have moved
+	/// before, and a hardcoded "Rapid 10+0" would go quietly wrong the next time
+	/// either does.</para>
+	///
+	/// <para>Takes the first entry <see cref="CanSeek"/> accepts, which is the fastest
+	/// only because the menu is ordered fastest-first for the entries that HAVE a
+	/// clock. Unlimited sits last with an initial of 0, so <c>All</c> is not
+	/// numerically ascending and this would pick it if <c>CanSeek</c> didn't rule it
+	/// out first. Reorder the menu and this needs re-reading.</para></summary>
+	public static string FastestSeekableName()
+	{
+		foreach ( var tc in TimeControl.All )
+			if ( CanSeek( tc ) ) return tc.Name;
+		return null;
+	}
+
+	/// <summary>Why a control can't be seeked, for the HUD. Null when it can.
+	///
+	/// <para>Says what to do, not just what's refused. The rule is lichess's and the
+	/// player has no way to know that, so an unexplained missing button reads as our
+	/// bug — which is exactly how it read the first time.</para></summary>
 	public static string WhySeekNot( TimeControl tc )
 	{
 		if ( CanSeek( tc ) ) return null;
+
+		string pick = FastestSeekableName();
+		string instead = pick == null ? "" : $" Pick {pick} to play a stranger.";
+
+		// Bullet reaches lichess by NO route, so it must not be offered the
+		// consolation the other two get. "You can still play the person opposite you"
+		// is true for every control here except this one, and CanMirror is the only
+		// thing that knows the difference.
+		if ( !CanMirror( tc ) )
+			return $"lichess won't take {tc.Name} by any route — it's faster than its Board API allows." + instead;
+
 		if ( tc.IsUnlimited )
-			return "lichess's lobby needs a clock — an unlimited game can only be played against the person opposite you.";
-		return $"lichess's lobby only takes rapid or slower — {tc.Name} can only be played against the person opposite you.";
+			return "lichess's lobby needs a clock, so an unlimited game can't be matched with a stranger — "
+				+ "you can still play the person opposite you." + instead;
+
+		return $"lichess only puts rapid and slower games in its lobby, so {tc.Name} can't be matched with a "
+			+ "stranger — you can still play the person opposite you." + instead;
 	}
 
 	/// <summary>A seek's clock in MINUTES, which is lichess's unit for a seek

@@ -119,8 +119,17 @@
 			@* Named because they're the controls a lichess player expects to find and
 			   would otherwise assume are missing. Premove is deliberately described
 			   by what it does, not by its name: it is the only one of the three that
-			   isn't a request to the opponent. *@
-			<div class="body" style="color:@WallTheme.TextDim;">Offer a draw or ask for a takeback from the game panel — your opponent has to agree. On their turn you can click out your reply in advance: it plays the moment they move.</div>
+			   isn't a request to the opponent, and it works at every table, not just
+			   a lichess one. *@
+			<div class="body" style="color:@WallTheme.TextDim;">Offer a draw or ask for a takeback from the game panel — your opponent has to agree. And on their turn, at any table, you can click out your reply in advance: it plays the moment they move, costing you no clock.</div>
+
+			@* THE question players actually ask, and the one that read as a bug: why
+			   is there no "find a random opponent" button at a blitz table? The answer
+			   is lichess's, not ours — two different speed floors for the two flows —
+			   and a player has no way to know that. Say it here rather than let the
+			   missing button speak for itself. If these floors ever change, the truth
+			   is LichessTable.CanMirror/CanSeek; this is copy, not the rule. *@
+			<div class="body" style="color:@WallTheme.TextDim;">The person opposite you: any control from Blitz 3+0 up, Unlimited included. A stranger from lichess's lobby: Rapid 10+0 or Classical 30+0 only — lichess won't put faster games in its lobby, an Unlimited game has no clock to match on, and Bullet can't reach lichess at all. Those are lichess's rules, not ours.</div>
 
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 

@@ -64,13 +64,6 @@
 				{
 					<div class="reason">Takeback offered — waiting for your opponent.</div>
 				}
-				@* A premove is the one thing on this HUD the player can't see on the
-				   board from their seat if they've looked away: say it in words too,
-				   because it will play itself the moment they're back on move. *@
-				@if ( lc.HasPremove )
-				{
-					<div class="reason premove">Premove armed: @lc.PremoveFrom→@lc.PremoveTo. Click the board to cancel.</div>
-				}
 			}
 			else if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
 			{
@@ -84,6 +77,17 @@
 			else
 			{
 				<div class="status turn">@TurnText( Source() )</div>
+			}
+
+			@* A premove is the one thing on this HUD the player can't see on the board
+			   from their seat if they've looked away: say it in words too, because it
+			   will play itself the moment they're back on move.
+
+			   OUTSIDE the OnLichess() block: premove works at any table with a clock,
+			   not just a lichess one — see IBoardGame.PremoveUci. *@
+			@if ( PremoveUci() is string pre )
+			{
+				<div class="reason premove">Premove armed: @( pre[..2] )→@( pre[2..4] ). Click the board to cancel.</div>
 			}
 
 			@* A lichess game that never started. Lives OUTSIDE the OnLichess() block
@@ -141,10 +145,17 @@
 
 					@* Or play a stranger. Needs nobody's agreement but yours: you're
 					   spending your own grant on an opponent who opted in on lichess,
-					   in their own client, by their own choice. Works alone at a table. *@
+					   in their own client, by their own choice. Works alone at a table.
+
+					   The HEADER is outside the CanSeek check on purpose. It used to be
+					   inside, so picking Blitz made the whole section vanish and the only
+					   trace was a hint the player had no reason to read — the feature
+					   looked missing rather than unavailable, and that cost a round of
+					   "the board only supports two people in sbox". A control that can't
+					   be offered still has to say so where it would have been. *@
+					<div class="setup-label">OR PLAY A RANDOM OPPONENT</div>
 					@if ( LichessTable.CanSeek( ctrl.Tc ) )
 					{
-						<div class="setup-label">OR PLAY A RANDOM OPPONENT</div>
 						<div class="seek-row">
 							<div class="chip @( _seekRated ? "on" : "" )" onclick="@( () => ToggleSeekRated() )">@( _seekRated ? "Rated" : "Casual" )</div>
 							<div class="chip @( _seekColor != "random" ? "on" : "" )" onclick="@( () => CycleSeekColor() )">@SeekColorText()</div>
@@ -508,6 +519,12 @@
 	/// lichess's state instead of the local table's.</summary>
 	static bool OnLichess() => Lichess() is { Engaged: true };
 
+	/// <summary>The armed premove on whichever game owns this board, or null. Read
+	/// off the seam, not off the lichess controller: a premove at a local table is
+	/// just as real, and costs the same clock.</summary>
+	static string PremoveUci() =>
+		Source()?.PremoveUci is { Length: >= 4 } u ? u : null;
+
 	static bool LocalLichess( LocalGameController ctrl ) =>
 		ctrl?.LocalSeat is { } seat && ctrl.LichessFor( seat );
 
@@ -793,6 +810,6 @@
 					System.HashCode.Combine(
 						LichessLinkState.Linked, _seekRated, _seekColor, _seekNarrow,
 						Lichess()?.TakebackOffered, Lichess()?.TakebackPending,
-						Lichess()?.CanTakeback, Lichess()?.PremoveUci ) ) ) );
+						Lichess()?.CanTakeback, PremoveUci() ) ) ) );
 	}
 }

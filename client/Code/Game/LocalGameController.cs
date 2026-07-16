@@ -201,6 +201,10 @@ public sealed class LocalGameController : Component, IBoardGame
 		SyncLocalGame();
 		TryArchive();
 
+		// After SyncLocalGame, so a premove is judged against the position we
+		// actually hold rather than one we're about to throw away.
+		FirePremove();
+
 		if ( Networking.IsHost )
 			HostUpdate();
 	}
@@ -219,6 +223,7 @@ public sealed class LocalGameController : Component, IBoardGame
 			{
 				Game = null;
 				_localGameId = 0;
+				_premoveUci = null;
 			}
 			return;
 		}
@@ -227,6 +232,7 @@ public sealed class LocalGameController : Component, IBoardGame
 
 		_localGameId = GameId;
 		Game = new ChessGame();
+		_premoveUci = null;   // a premove must never outlive the game it was armed in
 		_historyIntact = true;
 		_clockLog.Clear();
 
@@ -570,6 +576,52 @@ public sealed class LocalGameController : Component, IBoardGame
 	/// <summary><see cref="IBoardGame"/> entry point — the board view calls this
 	/// without caring which controller owns the board.</summary>
 	public bool TryMakeMove( string uci ) => TryMakeLocalMove( uci );
+
+	// ── Premove ──
+
+	string _premoveUci;
+
+	/// <inheritdoc/>
+	public string PremoveUci => _premoveUci;
+
+	/// <inheritdoc/>
+	public void SetPremove( string uci )
+	{
+		if ( !Playing || LocalSeat == null ) return;
+		if ( uci is not { Length: >= 4 } ) return;
+		_premoveUci = uci;
+	}
+
+	/// <inheritdoc/>
+	public void ClearPremove() => _premoveUci = null;
+
+	/// <summary>Play the armed premove once the opponent's move has landed.
+	///
+	/// <para>Driven from <see cref="OnUpdate"/> rather than from the end of
+	/// <see cref="ApplyRemoteMove"/>, which is where the opponent's move actually
+	/// arrives. Firing there would raise a broadcast (NetChessMove) from inside a
+	/// broadcast handler — the same shape as the NetClockStamp call this file already
+	/// flags as worth an eye on. A premove is worth a frame (~16ms) to avoid nesting
+	/// one relay inside another; it is not worth a networking mystery.</para>
+	///
+	/// <para>An illegal premove is DROPPED, not held: it was aimed at a position the
+	/// opponent didn't play into, and firing it later at a position it was never meant
+	/// for is how a premove hangs a queen two moves after you forgot about it.</para></summary>
+	void FirePremove()
+	{
+		if ( _premoveUci == null ) return;
+
+		if ( !Playing || LocalSeat == null ) { _premoveUci = null; return; }
+		if ( !IsMyTurn ) return;
+
+		string uci = _premoveUci;
+
+		// Disarm BEFORE playing: TryMakeLocalMove can refuse, and a premove left armed
+		// through its own refusal would retry every frame for the rest of the game.
+		_premoveUci = null;
+
+		TryMakeLocalMove( uci );
+	}
 
 	public bool TryMakeLocalMove( string uci )
 	{

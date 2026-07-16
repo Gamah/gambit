@@ -146,8 +146,23 @@ than shown-and-dead: a button that always looks like it worked is worse than no 
 7. **Premove promotion is always a queen**, chosen without the picker (the picker is a modal
    on a board it isn't your turn to touch). Underpromotion by premove is not possible; if
    that ever matters, the picker would have to learn to run out of turn.
-8. Premove must not exist in a local table game — it's lichess-only, and `ChessBoardView`
-   reaches past `IBoardGame` for it deliberately. Check a local game still can't arm one.
+8. **Premove works at a LOCAL table too**, not just a lichess one. It shipped lichess-only
+   on the reasoning that a premove buys back network latency and the local opponent is
+   sitting across the table — which mistook the point: a premove's real payment is your own
+   clock, and that's worth the same in a 3+0 game here. The symptom was "I can't select any
+   of my pieces when it isn't my turn", which is what a deliberate gate looks like from a
+   seat. It's on `IBoardGame` now, so both controllers have it and the view has no special
+   case. Check both.
+
+9. **"OR PLAY A RANDOM OPPONENT" must always be PRESENT at a linked table**, even at Blitz
+   where it can't be offered — with a reason naming what to pick instead ("Pick Rapid 10+0").
+   The header used to live inside the `CanSeek` check, so choosing Blitz made the section
+   vanish and the feature read as missing rather than unavailable. Bullet is the one control
+   that must NOT be told "you can still play the person opposite you" — it reaches lichess by
+   no route at all.
+10. **The east-wall info board is now a signpost**: title, tagline, and a big
+    "PRESS E FOR HELP / INFO". It's short — that's the point, not a layout bug. The Discord
+    invite moved behind E with everything else.
 
 ### Open questions
 

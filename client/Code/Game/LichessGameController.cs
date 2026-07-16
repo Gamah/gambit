@@ -138,18 +138,15 @@ public sealed class LichessGameController : Component, IBoardGame
 	/// room to spend two slots on halves of the same thing.</summary>
 	public string PremoveUci => _premoveUci;
 
-	/// <summary>The armed premove's from/to squares, for the board's highlight.
-	/// Null when nothing is armed.</summary>
-	public string PremoveFrom => _premoveUci is { Length: >= 4 } u ? u[..2] : null;
-	public string PremoveTo => _premoveUci is { Length: >= 4 } u ? u[2..4] : null;
-
-	public bool HasPremove => _premoveUci != null;
-
-	/// <summary>Arm a premove. Only while a lichess game is live, we're seated, and
-	/// it is NOT our turn — on our own turn the move is simply played.</summary>
+	/// <summary>Arm a premove. The view decides the moment; this only sanity-checks.
+	///
+	/// <para>Deliberately NOT guarded on <c>IsMyTurn</c>: that also goes false while
+	/// our own move is in flight, which is a real window in which the board still
+	/// shows the pre-move position. The view gates on the board's own turn instead —
+	/// see ChessBoardView.CanPremove.</para></summary>
 	public void SetPremove( string uci )
 	{
-		if ( !Playing || LocalSeat == null || IsMyTurn ) return;
+		if ( !Playing || LocalSeat == null ) return;
 		if ( uci is not { Length: >= 4 } ) return;
 		_premoveUci = uci;
 	}
