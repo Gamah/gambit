@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using Gambit.World;   // ChessSeat / ChessStation — gambit_clock reads the table you're at
 using Sandbox;
 
 namespace Gambit.Api;
@@ -201,5 +202,74 @@ public static class GamchessCommands
 			? "[Gambit] gamchess reports NO last-game result — either no game has ended yet, "
 				+ "or this gamchess predates the fanfare (deploy the server half)."
 			: $"[Gambit] gamchess last game: {st.last_game_id} status={st.last_status} winner={st.last_winner}" );
+	}
+
+	/// <summary>
+	/// Why is the table clock showing that?
+	///
+	/// <para>Exists for the same reason <c>gambit_tv</c> does, and it was earned the same
+	/// way: none of this chain is visible from outside, so "the clock isn't displaying
+	/// anything" got diagnosed twice from a screenshot and both times wrongly — once as a
+	/// panel that wasn't rendering (it was, at 1/18th scale), once as an untimed table (it
+	/// wasn't). A dash on a clock face can mean the panel is broken, the controller isn't
+	/// wired, the game isn't running, or the table genuinely has no clock, and all four
+	/// look identical from a chair.</para>
+	///
+	/// <para>Prints the whole thing for the table you are sitting at: which controller owns
+	/// the board, what it thinks the game is doing, and what the seam actually answers for
+	/// each seat. Whatever the clock is showing, one of these lines explains it.</para>
+	/// </summary>
+	[ConCmd( "gambit_clock" )]
+	public static void ClockStatus()
+	{
+		var station = Gambit.World.ChessStation.Active;
+		if ( station == null )
+		{
+			Log.Warning( "[Gambit] not seated at a table — sit down first (this reads the table you're at)." );
+			return;
+		}
+
+		var ctrl = station.Components.Get<Gambit.Game.LocalGameController>();
+		var lichess = Gambit.Game.LichessGameController.For( station );
+		if ( ctrl == null )
+		{
+			Log.Warning( "[Gambit] this station has NO LocalGameController — the clock cannot show anything." );
+			return;
+		}
+
+		var src = Gambit.Game.BoardGame.Source( ctrl, lichess );
+		bool onLichess = lichess is { Engaged: true };
+
+		Log.Info( $"[Gambit] clock @ {station.GameObject.Name}" );
+		Log.Info( $"[Gambit]   source      : {( onLichess ? "LICHESS" : "local table" )}" );
+		Log.Info( $"[Gambit]   time control: {ctrl.Tc.Name} (index {ctrl.TimeControlIndex},"
+			+ $" {ctrl.Tc.InitialSeconds}s +{ctrl.Tc.IncrementSeconds}, unlimited={ctrl.Tc.IsUnlimited})" );
+		Log.Info( $"[Gambit]   phase       : playing={ctrl.Playing} over={ctrl.GameOver} hasGame={ctrl.HasGame}" );
+		Log.Info( $"[Gambit]   host clocks : W={ctrl.WhiteClock:0.0} B={ctrl.BlackClock:0.0} (synced from the host)" );
+
+		// The seam's answer — this is literally what the clock face renders.
+		Log.Info( $"[Gambit]   SEAM        : W={Describe( src?.SeatClock( ChessSeat.White ) )}"
+			+ $" B={Describe( src?.SeatClock( ChessSeat.Black ) )}" );
+
+		if ( src?.SeatClock( ChessSeat.White ) == null )
+		{
+			Log.Warning( "[Gambit]   -> the seam says NO CLOCK, so the face shows the idle bank (or ∞ if untimed)."
+				+ " SeatClock is null unless the game is PLAYING and the control is not Unlimited —"
+				+ " the two lines above say which of those it is." );
+		}
+
+		Log.Info( $"[Gambit]   material    : {Gambit.Chess.CapturedMaterial.Advantage( Squares( src ) )} (+ = White ahead)" );
+	}
+
+	static string Describe( float? v ) => v is { } f ? $"{f:0.0}s" : "null";
+
+	static char[] Squares( Gambit.Game.IBoardGame src )
+	{
+		var sq = new char[64];
+		if ( src?.Game is not { } g ) return sq;
+		for ( int rank = 0; rank < 8; rank++ )
+			for ( int file = 0; file < 8; file++ )
+				sq[rank * 8 + file] = g.PieceAt( file, rank );
+		return sq;
 	}
 }

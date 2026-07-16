@@ -187,7 +187,13 @@
 	/// there is no source to disagree with. Once a game IS live, the seam answers and this
 	/// branch never runs.</para>
 	///
-	/// <para>Unlimited stays a dash, because that is true — there is no clock.</para>
+	/// <para><b>An UNLIMITED game says so — "∞", not a dash.</b> There is genuinely no
+	/// clock, so the honest thing is to say there is no clock; a dash says nothing and
+	/// reads as a clock that failed. This one has already cost a round of "the clock isn't
+	/// displaying anything" on a table that was working perfectly and simply had no time
+	/// control. **A blank-looking readout and a broken readout must not look the same** —
+	/// it is the TV fanfare's lesson (a feature that never fires looks exactly like one
+	/// that isn't wired up) arriving on a different wall.</para>
 	/// </summary>
 	string Face( ChessSeat seat )
 	{
@@ -196,10 +202,12 @@
 		// actually left. "{seconds:0.0}" would render 59.96 as "60.0".
 		if ( Source?.SeatClock( seat ) is float left ) return TimeControl.Format( left );
 
+		// No live clock. Either the table is idle (advertise the bank the next game
+		// starts with, like a real clock does) or the game is untimed (say so).
 		var tc = Controller?.Tc;
-		if ( tc is { IsUnlimited: false } ) return TimeControl.Format( tc.Value.InitialSeconds );
-
-		return "—";
+		if ( tc is null ) return "—";                       // no table at all: nothing to claim
+		if ( tc.Value.IsUnlimited ) return "∞";
+		return TimeControl.Format( tc.Value.InitialSeconds );
 	}
 
 	/// <summary>Whose clock is running, off the seam. Not LocalGameController.TickingSeat:
