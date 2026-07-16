@@ -117,9 +117,16 @@
 		align-items: center;
 	}
 
-	/* Wider than the 420 this was: the channel grid is 16 cells over three rows, and
-	   at 420 the longer labels ("King of the Hill", "UltraBullet") wrapped to one
-	   button per line and the panel became a column of sixteen. */
+	/* Wider than the 420 this was: the channel grid wraps to a few rows, and at 420 the
+	   longer labels ("King of the Hill", "UltraBullet") wrapped to one button per line
+	   and the panel became a single tall column.
+
+	   No count here on purpose. This comment said "16 cells over three rows" and the
+	   one below said "there are sixteen"; there are FIFTEEN, and both had been wrong
+	   since the channel list last changed. A CSS comment cannot be held to
+	   LichessTv.All by any test — the Go test that pins the client list to gamchess's
+	   allowlist reads the entries, not the prose — so the only safe number here is no
+	   number. The markup counts the list itself. */
 	.spectate {
 		flex-direction: column;
 		width: 560px;
@@ -142,8 +149,8 @@
 	.row { flex-direction: row; gap: 8px; }
 	.row.wrap { flex-wrap: wrap; }
 
-	/* Channel buttons sit tighter than the actions above them — there are sixteen,
-	   and they're a menu rather than a decision. */
+	/* Channel buttons sit tighter than the actions above them — there are a lot of
+	   them, and they're a menu rather than a decision. */
 	.button.chan { padding: 6px 10px; font-size: 13px; }
 
 	.button {

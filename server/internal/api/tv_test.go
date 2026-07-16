@@ -881,3 +881,191 @@ func TestTvFenFramesNeverFetchAResult(t *testing.T) {
 		t.Fatalf("%d result fetches for plain moves — that is one lichess request per MOVE", n)
 	}
 }
+
+// ── The clock's age and hold (M11) ──
+//
+// The wall's clock read HIGH — above the time actually left, which is the one
+// direction the house rule forbids. These two fields are what let the client
+// subtract the staleness, so they are worth pinning hard: silently zero, and the
+// clock is wrong again with nothing failing.
+
+// ClockAgeMs must measure from when LICHESS's value reached us, not from when the
+// request did. Getting this backwards yields ~0 forever and looks like it works.
+func TestTvClockAgeMeasuresFromTheFrameNotTheRequest(t *testing.T) {
+	h := tvHandler(t)
+	frames := make(chan lichess.TvEvent)
+	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
+		for {
+			select {
+			case ev := <-frames:
+				fn(ev)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+
+	ch := h.tv.watch(lichess.ChannelBlitz)
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	waitForVersion(t, ch, 1) // past the seed state watch() publishes, to the featured frame
+
+	// Let the value go stale on our side before anyone asks for it.
+	time.Sleep(60 * time.Millisecond)
+
+	r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/blitz?since=0", nil))
+	r.SetPathValue("channel", "blitz")
+	w := httptest.NewRecorder()
+	h.tvState(w, r)
+
+	var st TvState
+	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if st.ClockAgeMs < 50 {
+		t.Errorf("clock_age_ms = %d, want >= 50 — it is measuring the request, not the frame", st.ClockAgeMs)
+	}
+	if st.ClockAgeMs > 5000 {
+		t.Errorf("clock_age_ms = %d, implausible", st.ClockAgeMs)
+	}
+	// This request did not wait: it had a newer version to hand.
+	if st.HoldMs > 50 {
+		t.Errorf("hold_ms = %d, want ~0 — nothing was held", st.HoldMs)
+	}
+}
+
+// A poll that finds nothing new sits for pollHold and then answers. That wait is
+// OURS and must be reported as hold, not left for the client to read as network
+// latency — it would subtract up to 5s from the clock.
+func TestTvHoldIsReportedSoTheClientCantReadItAsLatency(t *testing.T) {
+	h := tvHandler(t)
+	frames := make(chan lichess.TvEvent)
+	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
+		for {
+			select {
+			case ev := <-frames:
+				fn(ev)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+
+	ch := h.tv.watch(lichess.ChannelBlitz)
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	st0 := waitForVersion(t, ch, 1) // past the seed state watch() publishes, to the featured frame
+
+	// Ask for the version we already have, so the handler has nothing to say and
+	// holds — then land a frame to release it, well short of pollHold.
+	//
+	// `polling` is closed immediately before the handler runs. Without it this test
+	// races its own goroutine: if the frame lands first the handler takes the
+	// early-return path, reports hold=0 honestly, and the test reads that as the bug
+	// it is looking for. It did exactly that.
+	polling := make(chan struct{})
+	done := make(chan TvState, 1)
+	go func() {
+		r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/blitz?since="+strconv.FormatUint(st0.Version, 10), nil))
+		r.SetPathValue("channel", "blitz")
+		w := httptest.NewRecorder()
+		close(polling)
+		h.tvState(w, r)
+		var st TvState
+		if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+			t.Errorf("decode: %v (status %d)", err, w.Code)
+		}
+		done <- st
+	}()
+
+	<-polling
+	time.Sleep(150 * time.Millisecond)
+	frames <- decodeTvFrame(t, tvFenFrame)
+
+	select {
+	case st := <-done:
+		if st.Version <= st0.Version {
+			t.Fatalf("poll returned version %d, want past %d — it never waited", st.Version, st0.Version)
+		}
+		if st.HoldMs < 100 {
+			t.Errorf("hold_ms = %d, want >= 100 — the client will read our wait as latency", st.HoldMs)
+		}
+		// The frame that woke us is fresh, even though we held a while. Age and hold
+		// are different quantities and this is the case that proves it.
+		if st.ClockAgeMs > 60 {
+			t.Errorf("clock_age_ms = %d, want ~0 — the frame just landed", st.ClockAgeMs)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("poll never returned")
+	}
+}
+
+// ageAt writes to the response copy only. If it ever touched the shared state,
+// two clients polling one channel would overwrite each other's timings — and the
+// stored value would age cumulatively, so the clock would drift further wrong the
+// longer the channel stayed up.
+func TestTvAgeAtDoesNotMutateSharedState(t *testing.T) {
+	h := tvHandler(t)
+	frames := make(chan lichess.TvEvent)
+	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
+		for {
+			select {
+			case ev := <-frames:
+				fn(ev)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+
+	ch := h.tv.watch(lichess.ChannelBlitz)
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	waitForVersion(t, ch, 1) // past the seed state watch() publishes, to the featured frame
+
+	for i := 0; i < 3; i++ {
+		r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/blitz?since=0", nil))
+		r.SetPathValue("channel", "blitz")
+		h.tvState(httptest.NewRecorder(), r)
+	}
+
+	stored, _ := ch.snapshot()
+	if stored.ClockAgeMs != 0 || stored.HoldMs != 0 {
+		t.Errorf("serving a poll wrote timings back into the channel: age=%d hold=%d — these are per-response",
+			stored.ClockAgeMs, stored.HoldMs)
+	}
+}
+
+// The clock stamp must not ride on the FEN alone: a fen frame carries new clocks
+// and must re-stamp, or every move after the first would report the FIRST frame's
+// age and the correction would grow without bound.
+func TestTvFenFrameRestampsTheClock(t *testing.T) {
+	h := tvHandler(t)
+	frames := make(chan lichess.TvEvent)
+	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
+		for {
+			select {
+			case ev := <-frames:
+				fn(ev)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+
+	ch := h.tv.watch(lichess.ChannelBlitz)
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	st0 := waitForVersion(t, ch, 1) // past the seed state watch() publishes, to the featured frame
+
+	time.Sleep(60 * time.Millisecond)
+	frames <- decodeTvFrame(t, tvFenFrame)
+	waitForVersion(t, ch, st0.Version)
+
+	r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/blitz?since=0", nil))
+	r.SetPathValue("channel", "blitz")
+	w := httptest.NewRecorder()
+	h.tvState(w, r)
+
+	var st TvState
+	json.Unmarshal(w.Body.Bytes(), &st)
+	if st.ClockAgeMs > 50 {
+		t.Errorf("clock_age_ms = %d after a fresh fen frame — the stamp is stuck on the featured frame", st.ClockAgeMs)
+	}
+}

@@ -103,6 +103,45 @@ type TvState struct {
 	WhiteClock int `json:"white_clock"`
 	BlackClock int `json:"black_clock"`
 
+	// ── What makes the wall's clock legal (M11) ──
+	//
+	// The house rule is that a live clock must never read HIGHER than the time
+	// actually left. The wall broke it, and the reasoning that said otherwise was
+	// written in three places: "counting down from a known-good value can only read
+	// low" fails at its first step, because the value is already STALE when it
+	// arrives. lichess stamps the clock at the move instant T0; by the time the
+	// client has it, the player has burned the whole lichess -> gamchess -> client
+	// chain, and the client was zeroing its age on arrival. It read HIGH by that
+	// chain until the next move.
+	//
+	// These two let the client subtract it. Both are computed AT SEND, not stored.
+
+	// ClockAgeMs is how long ago WE received the clock values in this state from
+	// lichess — the gamchess-side staleness.
+	//
+	// An absolute timestamp would be useless here and it is worth saying why, since
+	// "stamp receipt time and let the client subtract the elapsed" was the obvious
+	// design and does not work: we do not share a wall clock with the client, and a
+	// clock-skewed client would correct by minutes in either direction — including
+	// UP, which is the one direction the house rule forbids. An age is a duration,
+	// and durations survive skew.
+	//
+	// Usually ~0, and that is not a reason to drop it: the long poll wakes on the
+	// frame, so the common path really is fresh. It is the path where a client's
+	// poll arrives late — reconnect, backoff, a slow frame — that this covers, and
+	// that is exactly when the clock is most wrong.
+	ClockAgeMs int64 `json:"clock_age_ms,omitempty"`
+
+	// HoldMs is how long we sat on this request before answering.
+	//
+	// Load-bearing, not diagnostics. The client measures its own poll round trip to
+	// estimate the network leg, and a long poll's round trip is mostly US WAITING —
+	// up to pollHold (5s). Without this the client would read a 5s hold as 5s of
+	// network latency and subtract it from the clock, which is a far bigger lie than
+	// the one being fixed, in the safe direction rather than the unsafe one but still
+	// nonsense. Network time = round trip - HoldMs.
+	HoldMs int64 `json:"hold_ms,omitempty"`
+
 	// TickingSeat is "white"/"black" — whose clock is running, derived from the
 	// FEN's side-to-move. lichess doesn't send it; the FEN already says it.
 	TickingSeat string `json:"ticking_seat,omitempty"`
@@ -132,6 +171,23 @@ type TvState struct {
 	// having to have kept them.
 	LastWhiteName string `json:"last_white_name,omitempty"`
 	LastBlackName string `json:"last_black_name,omitempty"`
+
+	// clockAt is when WhiteClock/BlackClock were received from lichess. Unexported,
+	// so it never reaches the wire and cannot be mistaken for something a client may
+	// read: it is in OUR clock's frame of reference and means nothing in theirs.
+	// ClockAgeMs is derived from it at send time.
+	clockAt time.Time
+}
+
+// ageAt fills in the two send-time fields on a COPY of the state. Called on the
+// snapshot the handler is about to write, never on the shared state — these are
+// per-response values, not channel state, and storing them would mean every waiter
+// on one channel got whichever request's timings happened to be written last.
+func (s *TvState) ageAt(now time.Time, reqStart time.Time) {
+	if !s.clockAt.IsZero() {
+		s.ClockAgeMs = now.Sub(s.clockAt).Milliseconds()
+	}
+	s.HoldMs = now.Sub(reqStart).Milliseconds()
 }
 
 // tvChannel is one channel's fanned-out upstream.
@@ -301,6 +357,7 @@ func (t *tv) run(ctx context.Context, c lichess.Channel, ch *tvChannel) {
 					// featured carries the STARTING clock per side; fen frames correct it
 					// on the very next move. Without this the wall shows 0:00 until then.
 					s.WhiteClock, s.BlackClock = w.Seconds, b.Seconds
+					s.clockAt = time.Now()
 					s.TickingSeat = sideToMove(f.Fen)
 				})
 			case ev.Fen != nil:
@@ -310,6 +367,10 @@ func (t *tv) run(ctx context.Context, c lichess.Channel, ch *tvChannel) {
 					s.Fen = f.Fen
 					s.LastMoveUci = f.LM
 					s.WhiteClock, s.BlackClock = f.WC, f.BC
+					// The stamp that makes the clock legal: this is the closest we will
+					// ever get to lichess's T0. The lichess -> gamchess leg is already
+					// spent and nothing downstream can recover it — see the client.
+					s.clockAt = time.Now()
 					s.TickingSeat = sideToMove(f.Fen)
 				})
 			}
@@ -408,8 +469,13 @@ func (h *handler) tvState(w http.ResponseWriter, r *http.Request) {
 	ch := h.tv.watch(c)
 	since, _ := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
 
+	// When the request landed — the baseline for HoldMs. Taken before the poll can
+	// block, so it measures OUR wait and not the client's.
+	reqStart := time.Now()
+
 	state, changed := ch.snapshot()
 	if state.Version > since {
+		state.ageAt(time.Now(), reqStart)
 		writeJSON(w, http.StatusOK, state)
 		return
 	}
@@ -424,6 +490,7 @@ func (h *handler) tvState(w http.ResponseWriter, r *http.Request) {
 	case <-r.Context().Done():
 		return
 	}
+	state.ageAt(time.Now(), reqStart)
 	writeJSON(w, http.StatusOK, state)
 }
 

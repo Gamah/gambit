@@ -201,7 +201,7 @@ never asked for it, on a stream held open for hours, would be a real leak.
 **The invariant that pays for the proxy: one upstream stream per CHANNEL.** 100 players on
 blitz cost lichess one stream. That is why TV goes through gamchess rather than each client
 hitting lichess (lichess advocates precisely this), and why per-client channel choice is
-affordable — the cost is bounded by the channel count (6), not the player count. Ref-counted
+affordable — the cost is bounded by the channel count (15), not the player count. Ref-counted
 by **pollers via a last-polled timestamp, not a counter**: a counter needs a decrement on
 every exit path including the ones a dropped HTTP connection never gives us, and one missed
 decrement leaks a stream forever. A timestamp cannot leak.
@@ -240,13 +240,34 @@ outlive one move.
 > "Counting down from a known-good value can only read low" is the step that fails: **the value
 > is already stale on arrival**, so the countdown starts late, not early.
 >
-> **This is still true in the code as it stands** — the fix is decided but unbuilt (PLAN.md's
-> M11). The agreed shape: gamchess stamps receipt time into the state and the client subtracts
-> the elapsed since, which removes the gamchess→client leg. **It cannot remove the
-> lichess→gamchess leg** — no client-side fix can, because nothing downstream knows T₀ — so a
-> small residual high bias will survive by construction and must be documented rather than
-> denied. Anything that re-derives a TV clock must reason from *when the value was stamped*,
-> never from *when we received it*.
+> **Fixed in M11** — and the fix is not the one this file specified, which is worth keeping.
+> The agreed shape was "gamchess stamps receipt time into the state and the client subtracts the
+> elapsed since". **That does not work, for two reasons found on building it:**
+>
+> 1. **We do not share a wall clock with gamchess.** An absolute stamp is meaningless to a
+>    client, and a skewed one corrects by the skew — *including upwards*, the one direction the
+>    house rule forbids. The correction has to travel as a **duration**, not a timestamp.
+> 2. **The stamp alone is a no-op on the common path.** The long poll wakes on the frame, so
+>    gamchess sends it instantly and its own staleness is ~0. The bias that actually exists is
+>    the **network leg**, and no server-side stamp can express it.
+>
+> So `TvState` carries **two** durations, both computed at send: `clock_age_ms` (how long the
+> value sat with gamchess — ~0 normally, and it earns its keep only on a late or reconnecting
+> poll) and `hold_ms` (how long gamchess sat on the request). The client measures its own round
+> trip and takes **network = round trip − hold_ms**; without `hold_ms` a 5s long-poll hold reads
+> as 5s of latency and the clock runs five seconds fast-forward of the truth — a *bigger* lie
+> than the one being fixed. It subtracts the **full** remaining round trip rather than halving
+> it for the downstream leg: the house rule is one-directional, so a deliberate undershoot is
+> free where a fair estimate is a coin-flip on the forbidden outcome.
+>
+> **The lichess→gamchess leg survives by construction** — nothing downstream knows T₀ — so a
+> small residual high bias remains, documented rather than denied. Its magnitude has never been
+> measured; only its direction is certain.
+>
+> **The lag applies to the TICKING seat only.** The idle side's clock isn't running, so however
+> stale the frame is their bank is still exactly right; subtracting from both would invent a
+> loss of time that never happened. Anything that re-derives a TV clock must reason from *when
+> the value was stamped*, never from *when we received it*.
 
 **The house rule: a live clock must never read HIGHER than the time actually left** — the same
 rule that makes `TimeControl.Format` truncate where the PGN writer rounds. Reading low is
@@ -291,7 +312,7 @@ and its replacement land in one state so the client can never show the new game 
 (one slot, overwritten), so "hold for 3s, then take whatever is current" abandons all but the
 latest by construction — no queue, no catch-up, no speed-up logic.
 
-**All 16 channels, variants included** (default `best` — "Top Rated", the best game in
+**All 15 channels, variants included** (default `best` — "Top Rated", the best game in
 progress whatever the speed; a wall wants something worth looking up at, and blitz is a fine
 game but an arbitrary one). This was **six** at first, excluded on the reasoning that the
 vendored rules are standard-only so a variant FEN can't be drawn —

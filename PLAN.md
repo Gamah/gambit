@@ -144,11 +144,21 @@ lichess stamps the clock at the move instant T₀; the frame reaches us at T₀+
 the bank and zeroes its age, so we display T₀'s value while the player has burned L. It reads
 **high by L** until the next move corrects it.
 
-**Decided: gamchess stamps receipt time into the state, and the client subtracts the elapsed
-since.** That removes the gamchess→client leg. **It cannot remove the lichess→gamchess leg** —
-nothing downstream knows T₀ — so a small residual high bias survives by construction and gets
-documented rather than denied. Not yet built. The magnitude has never been measured; the
-*direction* is certain from the code.
+**Built — and the design in this file was wrong, which is the interesting part.** "gamchess
+stamps receipt time and the client subtracts the elapsed since" fails twice: we don't share a
+wall clock with gamchess (an absolute stamp is unreadable, and a skewed one corrects *upwards*
+— the forbidden direction), and the stamp alone is a **no-op on the common path**, because the
+long poll wakes on the frame so gamchess's own staleness is ~0. The bias that actually exists
+is the **network leg**, which no server-side stamp can express.
+
+`TvState` now carries two **durations**, computed at send: `clock_age_ms` and `hold_ms`. The
+client measures its own round trip and takes network = round trip − hold. Without `hold_ms` a
+5s long-poll hold reads as 5s of latency — a bigger lie than the one being fixed. Full round
+trip, not half: the rule is one-directional, so an undershoot is free. Lag applies to the
+**ticking seat only** — the idle side's bank is exact however stale the frame is. Residual
+lichess→gamchess bias survives by construction and is documented. Magnitude still unmeasured;
+direction still certain. Four Go tests pin it, including that serving a poll must not write the
+timings back into shared channel state.
 
 The version-advance guard at `LichessTvSource.cs:375-378` is **correct and unaffected** —
 re-snapping on a non-advanced poll would sawtooth the clock upward by ~5s, a much larger
