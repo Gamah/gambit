@@ -101,17 +101,29 @@ always meant.
 
 ---
 
-## Takeback, draw-decline and premove — the Go half is proven, the client isn't
+## Draw, takeback and premove — at BOTH kinds of table
 
 The Go half compiles and `go test ./... -race` passes, including the new writer paths and
-a test that pins the offer flags' omitted-when-false encoding. `ChessGame.PremoveTargets`
-is proven by a dotnet scratch harness (12 cases against the real vendored rules, including
-castling, sliders through blockers, and the pawn-recapture-onto-an-empty-square case the
-feature exists for). **Nothing under `client/` has been compiled.**
+a test pinning the offer flags' omitted-when-false encoding. `ChessGame.PremoveTargets` and
+`ChessGame.TruncateToPly` are proven by a dotnet scratch harness against the real vendored
+rules (premove geometry including the recapture; truncation keeping history, restoring a
+captured piece, and staying archivable). **Nothing under `client/` has been compiled.**
 
-**Draws were already built end-to-end in M8** — offer, accept, and the `DrawOffered`
-notice. What was missing was the *decline* button: `LichessApi.DeclineDraw` and the
-server's `draw-decline` action had both shipped and neither was reachable. It is wired now.
+**Draws were already built for lichess in M8** — offer, accept, and the `DrawOffered`
+notice; only the *decline* was unreachable (`LichessApi.DeclineDraw` and the server's
+`draw-decline` had both shipped and nothing called them).
+
+**The real work turned out to be the LOCAL table**, and the lesson repeated three times in
+one branch: premove, draw and takeback each shipped lichess-only, and from a seat a gate
+looks exactly like a broken feature ("I can't select my pieces when it isn't my turn", "I
+don't see draw/takeback"). All three are on `IBoardGame` now, so both controllers answer
+for their own game and the HUD has no per-source branch left to forget.
+
+**Premove's rules were wrong in the way that mattered most.** They excluded destination
+squares holding your OWN piece — which is precisely the recapture, the commonest premove
+there is: during the opponent's turn your pieces never move, so such a square can only free
+up by being captured. `PremoveTargets` is pure geometry now, blockers and friendly
+occupancy included.
 
 ### The rule that shapes all of this: a 200 from lichess means nothing
 
@@ -126,16 +138,36 @@ than shown-and-dead: a button that always looks like it worked is worse than no 
 
 ### First-run verification
 
-1. Two linked players, a real lichess game. **Draw:** one offers, the other sees "Your
-   opponent offers a draw" and gets a **No** button beside the accept. Decline → the offer
-   clears on both sides. Then accept one → the game ends as a draw on lichess.
+1. **Draw and takeback now work at a LOCAL table too, not just a lichess one** — that is
+   most of this change. At a plain two-seat table: offer a draw, the other seat sees it and
+   gets a **No**; accept → the game ends **1/2-1/2** and archives as a draw. Until now
+   there was no way to record a draw at a table at all ("they can just say so" was the
+   reasoning, and saying so doesn't end the game).
+   Both are host-authoritative: the offers are `[Sync]`, and the host derives the caller's
+   seat from `Rpc.Caller` via `IsSeatedCaller`, so a client can't agree a draw for the
+   other player. Neither may appear during a **lichess** game at that table — the local
+   controller is a shell there (`OffersLive`), and a draw agreed on it would end a table
+   game that isn't happening while the real one plays on.
+2. Then the same at a real lichess table, with two linked players. **Draw:** one offers, the
+   other sees "Your opponent offers a draw" and a **No** beside the accept. Decline → the
+   offer clears on both sides. Accept → the game ends as a draw on lichess.
 2. **Draw before move 2 does nothing, silently** — that's lichess, not us. Expect the button
    to appear to work and no offer to arrive. If that reads badly, the fix is to hide it
    before ply 2 the way the takeback button already is.
 3. **Takeback:** the button must not exist until both sides have moved. After that: ask →
    "Takeback offered…" here, "Your opponent wants to take back a move" there, with a **No**.
-   Accept → **the board rewinds**. It rewinds for free: `Rebuild` reconstructs from lichess's
-   move list every poll, so a shorter list is just another position.
+   Accept → **the board rewinds**, and it rewinds far enough to hand the move back to
+   whoever ASKED (one ply if they just moved, two if the opponent already replied — never
+   a fixed one, which would hand it to the wrong player half the time).
+   **Then check the move list and archive the game**: the SAN list must keep every
+   surviving move, and the PGN must not come out as `[Variant "From Position"]`. That is
+   the whole risk here — `TryFromPgnAtPly` rebuilds a CLEAN game from a FEN, so a takeback
+   built on it looks perfect on the board and silently ships a stub PGN forever (the upload
+   is idempotent on `client_game_id`, so it can't be corrected). `ChessGame.TruncateToPly`
+   exists for this and rewinds in place.
+   **Also check the clocks**, before and after a takeback, and the `{[%clk]}` of the moves
+   either side of it: `_clockLog` is keyed on ABSOLUTE plies and only lines up because the
+   rewind keeps `MoveCount` absolute too.
 4. **Premove:** on the opponent's turn, click a piece — the greens are *premove* targets, not
    legal moves, so a pawn will offer both diagonals onto empty squares. Arm one; both squares
    go purple and the HUD says so. When the opponent moves, it plays instantly.
@@ -163,6 +195,19 @@ than shown-and-dead: a button that always looks like it worked is worse than no 
 10. **The east-wall info board is now a signpost**: title, tagline, and a big
     "PRESS E FOR HELP / INFO". It's short — that's the point, not a layout bug. The Discord
     invite moved behind E with everything else.
+
+### Watch these on first run in the editor
+
+- **`NetAgreeDraw` / `NetTakeback` are `[Rpc.Broadcast]` raised from inside an `[Rpc.Host]`
+  handler.** This file already flags one broadcast-inside-a-broadcast (`NetClockStamp`, from
+  `HostFold`) as worth an eye; these are a new shape of the same thing. If they misbehave,
+  the fix is to set a flag and fire from `HostUpdate` — which is exactly what the local
+  premove does, and why.
+- **A move crossing a takeback on the wire.** Moves carry a takeback epoch and one from a
+  dead epoch is dropped, because ply numbers can't tell "you are stale" from "I am behind"
+  once a rewind makes plies repeat. Guessing wrong either freezes the board (drops a real
+  move) or silently undoes the rewind and takes the history with it. Try it: propose a
+  takeback, have the opponent accept, and click a move at the same moment.
 
 ### Open questions
 

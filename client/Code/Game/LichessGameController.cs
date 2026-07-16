@@ -628,6 +628,11 @@ public sealed class LichessGameController : Component, IBoardGame
 		State != null && LocalSeat is { } seat
 		&& ( seat == ChessSeat.White ? State.black_draw : State.white_draw );
 
+	/// <summary>True when WE have a draw offer standing.</summary>
+	public bool DrawPending =>
+		State != null && LocalSeat is { } seat
+		&& ( seat == ChessSeat.White ? State.white_draw : State.black_draw );
+
 	/// <summary>Decline the draw the opponent is offering.</summary>
 	public void DeclineDraw()
 	{

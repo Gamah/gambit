@@ -51,4 +51,47 @@ public interface IBoardGame
 	void SetPremove( string uci );
 
 	void ClearPremove();
+
+	// ── Offers ──
+	//
+	// A draw and a takeback are the two things you ask the OPPONENT for, and both
+	// have the same three-state shape: they're offering, we're offering, or nobody
+	// is. On the seam for the same reason as premove — they belong to any game you
+	// can play at, and a HUD that branches per source is how a feature ends up
+	// rendering for one kind of game and invisibly not for the other.
+	//
+	// Offering when one is already standing IS accepting, on both sides: that's
+	// lichess's own shape (draw/yes and takeback/yes are one call each), and the
+	// local game copies it rather than inventing a second vocabulary for the same
+	// gesture at the next table along.
+
+	/// <summary>The OTHER side has a draw offer standing.</summary>
+	bool DrawOffered { get; }
+
+	/// <summary>WE have a draw offer standing — the button waits rather than re-asking.</summary>
+	bool DrawPending { get; }
+
+	/// <summary>Offer a draw, or accept the one already offered.</summary>
+	void OfferDraw();
+
+	/// <summary>Decline the draw the opponent is offering.</summary>
+	void DeclineDraw();
+
+	/// <summary>A takeback is possible at all right now. False before both sides have
+	/// moved: lichess drops such a proposal while still answering 200, so the control
+	/// is hidden rather than shown dead — and the local game keeps the same rule so
+	/// the two tables behave alike.</summary>
+	bool CanTakeback { get; }
+
+	/// <summary>The OTHER side is proposing a takeback.</summary>
+	bool TakebackOffered { get; }
+
+	/// <summary>WE are proposing a takeback.</summary>
+	bool TakebackPending { get; }
+
+	/// <summary>Propose a takeback, or accept the one already proposed.</summary>
+	void OfferTakeback();
+
+	/// <summary>Decline the takeback the opponent is proposing.</summary>
+	void DeclineTakeback();
 }

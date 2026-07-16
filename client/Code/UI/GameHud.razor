@@ -52,18 +52,6 @@
 					<div class="status turn">@TurnText( Source() )</div>
 				}
 
-				@if ( lc.DrawOffered )
-				{
-					<div class="reason">Your opponent offers a draw.</div>
-				}
-				@if ( lc.TakebackOffered )
-				{
-					<div class="reason">Your opponent wants to take back a move.</div>
-				}
-				@if ( lc.TakebackPending )
-				{
-					<div class="reason">Takeback offered — waiting for your opponent.</div>
-				}
 			}
 			else if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
 			{
@@ -77,6 +65,26 @@
 			else
 			{
 				<div class="status turn">@TurnText( Source() )</div>
+			}
+
+			@* Standing offers, read off the seam. OUTSIDE the OnLichess() block: a draw
+			   and a takeback mean the same thing at either kind of table, and the
+			   controller that owns the board answers for its own. *@
+			@if ( Source() is { DrawOffered: true } )
+			{
+				<div class="reason">Your opponent offers a draw.</div>
+			}
+			@if ( Source() is { TakebackOffered: true } )
+			{
+				<div class="reason">Your opponent wants to take back a move.</div>
+			}
+			@if ( Source() is { DrawPending: true } )
+			{
+				<div class="reason">Draw offered — waiting for your opponent.</div>
+			}
+			@if ( Source() is { TakebackPending: true } )
+			{
+				<div class="reason">Takeback offered — waiting for your opponent.</div>
 			}
 
 			@* A premove is the one thing on this HUD the player can't see on the board
@@ -199,37 +207,51 @@
 				<div class="button" onclick="@( () => Lichess()?.CancelSeek() )">Cancel — stop looking</div>
 			}
 
-			@* Draw offers and takebacks, lichess only: the local two-seat game has
-			   never had them (there's a table between the players — they can just
-			   say so, and take the move back themselves). *@
-			@if ( OnLichess() && ( Lichess()?.Playing ?? false ) )
+			@* Draw offers and takebacks. Read off the seam, so they work at a lichess
+			   table AND a local one.
+
+			   The local game had neither until now, on the reasoning that two players
+			   at a table can just say so. That was wrong about the draw in a way worth
+			   remembering: saying so doesn't END the game — there was no way to record
+			   a 1/2-1/2 at all, so agreeing meant someone resigning a drawn position.
+			   And the clocks are real, so a misclick in a 3+0 game had no way back. *@
+			@if ( Source() is { Playing: true, LocalSeat: not null } )
 			{
-				<div class="offer-row">
-					<div class="button draw" onclick="@( () => Lichess()?.OfferDraw() )">@DrawText()</div>
-					@* Only offer a decline when there's something to decline — a
-					   standing "no" button would be a way to decline nothing. *@
-					@if ( Lichess()?.DrawOffered ?? false )
-					{
-						<div class="button decline" onclick="@( () => Lichess()?.DeclineDraw() )">No</div>
-					}
-				</div>
+				@* Nothing while OUR offer is standing and there's nothing to answer:
+				   re-offering is a no-op, and the waiting state is already said once
+				   above. Same rule as the takeback below. *@
+				@if ( ShowOfferButton( Source()?.DrawPending, Source()?.DrawOffered ) )
+				{
+					<div class="offer-row">
+						<div class="button draw" onclick="@( () => Source()?.OfferDraw() )">@DrawText()</div>
+						@* Only offer a decline when there's something to decline — a
+						   standing "no" button would be a way to decline nothing. *@
+						@if ( Source() is { DrawOffered: true } )
+						{
+							<div class="button decline" onclick="@( () => Source()?.DeclineDraw() )">No</div>
+						}
+					</div>
+				}
 
 				@* Hidden, not disabled, before both sides have moved: lichess drops
 				   a takeback proposed that early and still answers 200, so a button
-				   there would look like it worked and do nothing.
+				   there would look like it worked and do nothing. The local table
+				   keeps the same rule rather than being subtly more permissive at
+				   the next board along.
 
 				   Nothing here while OUR proposal is standing, either: re-offering is
-				   a no-op on lichess's side, and the waiting state is already said
-				   once as a status line above. A button whose only effect is to
-				   re-send a request the opponent has already been asked is a button
-				   that lies about doing something. *@
-				@if ( ( Lichess()?.CanTakeback ?? false ) && !( Lichess()?.TakebackPending ?? false ) )
+				   a no-op, and the waiting state is already said once as a status line
+				   above. A button whose only effect is to re-send a request the
+				   opponent has already been asked is a button that lies about doing
+				   something. *@
+				@if ( Source() is { CanTakeback: true }
+					&& ShowOfferButton( Source()?.TakebackPending, Source()?.TakebackOffered ) )
 				{
 					<div class="offer-row">
-						<div class="button takeback" onclick="@( () => Lichess()?.OfferTakeback() )">@TakebackText()</div>
-						@if ( Lichess()?.TakebackOffered ?? false )
+						<div class="button takeback" onclick="@( () => Source()?.OfferTakeback() )">@TakebackText()</div>
+						@if ( Source() is { TakebackOffered: true } )
 						{
-							<div class="button decline" onclick="@( () => Lichess()?.DeclineTakeback() )">No</div>
+							<div class="button decline" onclick="@( () => Source()?.DeclineTakeback() )">No</div>
 						}
 					</div>
 				}
@@ -588,17 +610,30 @@
 		return "Waiting for your opponent to opt in too. They need a linked lichess account.";
 	}
 
+	/// <summary>Should an offer button render at all?
+	///
+	/// <para>Hidden only while we're purely WAITING: our own offer stands and there's
+	/// nothing of theirs to answer. Re-sending an offer the opponent has already been
+	/// asked does nothing, and a button whose click does nothing is a lie.</para>
+	///
+	/// <para>The <c>offered</c> half is what stops that hiding too much: if both sides
+	/// have an offer standing at once, ours pending must NOT hide the button that
+	/// accepts theirs — that would be a game neither player could agree.</para></summary>
+	static bool ShowOfferButton( bool? pending, bool? offered ) =>
+		!( pending ?? false ) || ( offered ?? false );
+
 	/// <summary>The draw button doubles as accept, because lichess's draw/yes does:
-	/// offering when one is pending IS accepting it.</summary>
+	/// offering when one is pending IS accepting it. The local table copies that rather
+	/// than inventing a second vocabulary for the same gesture.</summary>
 	static string DrawText() =>
-		( Lichess()?.DrawOffered ?? false ) ? "Accept draw" : "Offer draw";
+		Source() is { DrawOffered: true } ? "Accept draw" : "Offer draw";
 
 	/// <summary>Two states, like the draw button, because lichess's takeback/yes is
 	/// the same call for proposing and accepting. There is no third "waiting" state
 	/// here: while our own proposal stands the button isn't rendered at all, and the
 	/// status line says so instead.</summary>
 	static string TakebackText() =>
-		( Lichess()?.TakebackOffered ?? false ) ? "Accept takeback" : "Ask for takeback";
+		Source() is { TakebackOffered: true } ? "Accept takeback" : "Ask for takeback";
 
 	/// <summary>Status line while a lichess game is being set up or run, or null
 	/// when there is nothing to say and the turn indicator should show.</summary>
@@ -784,6 +819,12 @@
 	/// <summary>Repaint triggers. The seat lines are hashed as their rendered strings
 	/// rather than as raw clock floats: that is what drives the ticking display, and it
 	/// repaints exactly when the visible text changes instead of every frame.
+	///
+	/// <para>Anything the markup reads has to be in here. The offers are hashed off
+	/// SOURCE(), not off the lichess controller: they render for a local game too now,
+	/// and Lichess() is null at a local table — so hashing it would have left a draw
+	/// offer sitting there unpainted until something else happened to change.</para>
+	///
 	/// <para>Nested because HashCode.Combine tops out at eight arguments.</para></summary>
 	protected override int BuildHash()
 	{
@@ -798,18 +839,18 @@
 					BothSeated(), ctrl?.TimeControlIndex, ctrl?.WhiteReady, ctrl?.BlackReady,
 					ctrl?.TickingSeat,
 					SeatLine( ctrl, ChessSeat.White ), SeatLine( ctrl, ChessSeat.Black ) ),
-				// Lichess: the seat lines already cover its clocks and names (they
-				// hash as rendered text), so this is the rest — status, result, draw
-				// and takeback offers, the armed premove, whether it owns the board,
-				// and the seek controls.
+				// Lichess-only: status, result, whether it owns the board, the link.
+				// Its clocks and names ride in the seat lines above (hashed as text).
 				System.HashCode.Combine(
-					System.HashCode.Combine(
-						OnLichess(), Lichess()?.State?.status, Lichess()?.State?.finished,
-						Lichess()?.DrawOffered, Lichess()?.Error, Lichess()?.Seeking,
-						ctrl?.WhiteLichess, ctrl?.BlackLichess ),
-					System.HashCode.Combine(
-						LichessLinkState.Linked, _seekRated, _seekColor, _seekNarrow,
-						Lichess()?.TakebackOffered, Lichess()?.TakebackPending,
-						Lichess()?.CanTakeback, PremoveUci() ) ) ) );
+					OnLichess(), Lichess()?.State?.status, Lichess()?.State?.finished,
+					Lichess()?.Error, Lichess()?.Seeking,
+					ctrl?.WhiteLichess, ctrl?.BlackLichess,
+					LichessLinkState.Linked ),
+				// Offers and the premove, off the seam — true for either kind of game.
+				System.HashCode.Combine(
+					src?.DrawOffered, src?.DrawPending,
+					src?.TakebackOffered, src?.TakebackPending,
+					src?.CanTakeback, PremoveUci() ),
+				System.HashCode.Combine( _seekRated, _seekColor, _seekNarrow ) ) );
 	}
 }
