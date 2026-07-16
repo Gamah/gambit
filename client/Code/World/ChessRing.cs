@@ -654,6 +654,30 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// of it rather than z-fighting it. BuildStationPlaque's PlaqueOutset, same job.</summary>
 	const float ClockTextOutset = 0.05f;
 
+	/// <summary>Z at which everything in the tilted plane is CENTRED — the plates and the bar
+	/// alike, which is what keeps their bottom edges level with each other for free.
+	///
+	/// <para><b>It is the body's top surface PLUS half a plate's height projected onto Z</b>,
+	/// because a box is centred on its origin: put the origin on the surface and half the
+	/// plate is inside the body. That is exactly what happened — the plates were buried to
+	/// their waists and the bar, being shorter, was <b>entirely</b> inside the body and could
+	/// never have been visible at all.</para>
+	///
+	/// <para><b>This is BuildStationPlaque's lesson arriving a second time</b>, and it is worth
+	/// naming: <i>a tilted plate's edge is not half its height away from its centre.</i> The
+	/// plaque's first version dropped by <c>h·cos(tilt)</c> and forgot the <c>h·sin(tilt)</c>
+	/// the tilt swings sideways; this forgot the projection entirely and used the raw surface
+	/// height. Both times the arithmetic looked obviously right and the room disagreed. The
+	/// rule: <b>derive an edge from the centre through the rotation — never place a tilted
+	/// object by the number that would be correct if it were flat.</b></para>
+	///
+	/// <para>cos, not sin, and the tilt's sign does not matter (cos is even): the plate leans
+	/// BACK from vertical, so its own +Z carries <c>cos(tilt)</c> of itself up the world Z and
+	/// <c>sin(tilt)</c> of itself back through Y — which is the Y footprint ClockFaceTilt is
+	/// coupled to.</para></summary>
+	static float ClockPlaneOriginZ =>
+		ClockHeight + ClockPlateHeight * 0.5f * MathF.Cos( ClockFaceTilt * ( MathF.PI / 180f ) );
+
 	// The plate face's pixel space. Width is arbitrary (it only fixes how many px a base
 	// unit is worth); HEIGHT IS DERIVED from the plate's aspect, so the panel's pixel space
 	// and the mesh it sits on cannot drift out of proportion. Typing both by hand is how a
@@ -773,9 +797,10 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 		var plate = new GameObject( true, white ? "Plate White" : "Plate Black" );
 		plate.Parent = clock;
-		// Standing on the body, at its own player's end. See ClockPlateOffsetX: White is −X.
+		// Standing ON the body — see ClockPlaneOriginZ, which is why this is not ClockHeight —
+		// at its own player's end. See ClockPlateOffsetX: White is −X.
 		plate.LocalPosition = new Vector3(
-			( white ? -ClockPlateOffsetX : ClockPlateOffsetX ), 0f, ClockHeight ) * s;
+			( white ? -ClockPlateOffsetX : ClockPlateOffsetX ), 0f, ClockPlaneOriginZ ) * s;
 		// Tipped up and facing +Y across the board. Both plates share this one facing rather
 		// than each aiming at its own seat: neither player is square to it, both are looking
 		// down at the table anyway, and that is how a real chess clock's two dials work.
@@ -817,13 +842,15 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 		var bar = new GameObject( true, "Bar" );
 		bar.Parent = clock;
-		bar.LocalPosition = new Vector3( 0f, 0f, ClockHeight ) * s;
-		// The plates' rotation, so all three lie in one plane.
+		// The plates' origin AND their rotation — so all three lie in one plane, and the bar
+		// rests on the body exactly as they do rather than sinking into it.
+		bar.LocalPosition = new Vector3( 0f, 0f, ClockPlaneOriginZ ) * s;
 		bar.LocalRotation = Rotation.From( ClockFaceTilt, 90f, 0f );
 
 		// Bottoms level: the plate spans ±ClockPlateHeight/2 about its centre and both are
 		// centred at the same height, so dropping the bar by the difference of the half-heights
-		// puts its lower edge exactly on the plates'.
+		// puts its lower edge exactly on the plates'. Sharing ClockPlaneOriginZ is what makes
+		// that true for free — level with each other, and both level with the body's top.
 		float dropZ = ( ClockPlateHeight - ClockBarHeight ) * 0.5f;
 
 		AddBox( bar, "Track", new Vector3( 0f, 0f, -dropZ ) * s,

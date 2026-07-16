@@ -249,6 +249,18 @@ What the rebuild bought, concretely:
 **Player names go above the clock later**, which is the label worth the room — and that is now
 a third plate, not a third div.
 
+**A sixth bug, and it was arithmetic — which is the point.** The plates and the bar were
+centred on the body's top *surface*, so half of every plate was buried in the body and the
+material bar, being shorter, was **entirely** inside it and could never have rendered at all.
+Fixed by one shared derived origin (`ChessRing.ClockPlaneOriginZ` = surface + `h/2·cos(tilt)`),
+which also keeps the three bottoms level for free.
+
+Worth being honest about: the rebuild did not prevent this one — it was in the very first 3D
+version. What it did was make the bug **the kind you can settle in one step**. It is
+`BuildStationPlaque`'s lesson a second time (*a tilted object's edge is not half its size from
+its centre*), it is now a rule in CLAUDE.md, and unlike the five before it, it was diagnosed
+and proven before touching the editor. The five CSS rounds could not be checked here at all.
+
 **The HUD no longer has a clock on it at all**, and the repaint hashing moved with it — that
 was the load-bearing part (see below). `SeatClass` also lost its panic red: reddening a *name*
 on a HUD with no clock on it is an alarm about a number that isn't on the same screen.

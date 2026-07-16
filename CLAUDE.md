@@ -942,6 +942,18 @@ doubt check `https://sbox.game/api/` or file a false-positive at
   `LocalScale = S / Model.Bounds.Size` per axis — use/copy `ChessRing.AddBox`.
 - Never put a `BoxCollider` on a non-uniformly scaled GO — it silently freezes physics.
   Colliders on uniformly-scaled parents, visuals on scaled children.
+- **A tilted object's EDGE is not half its size from its centre — derive the edge through
+  the rotation, never place it by the number that would be right if it were flat.** This has
+  now cost two rounds on two different objects. The table plaque dropped its centre by
+  `h·cos(tilt)` and forgot the `h·sin(tilt)` the same tilt swings sideways, so its top edge
+  was at the right height but tucked under the tabletop. The clock then centred its plates on
+  the body's top *surface* — so a box centred on its origin buried half of every plate in the
+  body, and buried the shorter material bar **entirely**, where it could never have rendered
+  at all. Both times the arithmetic looked obviously right on the page and the room disagreed.
+  `ChessRing.ClockPlaneOriginZ` is the worked example: surface + `h/2·cos(tilt)`, derived once
+  and shared by everything in the plane, which is also what keeps their bottom edges level for
+  free. **Nothing on this host can render, so a placement bug ships unless the edge is computed
+  — check where the EDGES land, not where the centre does.**
 - A WorldPanel GO's scale is a multiplier on the panel's intrinsic pixel size, not world
   units; the panel plane is local **Y (width) / Z (height)**. World-size and text size
   are coupled — to grow a board without growing text, scale the GO up and divide
