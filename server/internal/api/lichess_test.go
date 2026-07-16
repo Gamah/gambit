@@ -851,3 +851,37 @@ func TestChallengeStateShape(t *testing.T) {
 		t.Fatalf("a solo flow fills no seat up front: %+v", st)
 	}
 }
+
+// ── Shareable open-challenge link ──
+
+func TestLichessOpenNeedsSteam(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/lichess/open",
+		strings.NewReader(`{"limit_seconds":180,"increment_seconds":2}`))
+	lichessHandler(t).lichessOpen(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401 with no credentials, got %d", w.Code)
+	}
+}
+
+func TestLichessOpenMalformedBody(t *testing.T) {
+	okVerifier(t)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/lichess/open", strings.NewReader("{"))
+	r.Header.Set(steamIDHeader, testSteamID)
+	r.Header.Set("Authorization", "Bearer good")
+	lichessHandler(t).lichessOpen(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 on malformed body, got %d", w.Code)
+	}
+}
+
+func TestLichessOpenCancelNeedsSteam(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/api/v1/lichess/open/abcd", nil)
+	r.SetPathValue("id", "abcd")
+	lichessHandler(t).lichessOpenCancel(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401 with no credentials, got %d", w.Code)
+	}
+}

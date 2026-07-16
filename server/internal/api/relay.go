@@ -508,6 +508,34 @@ func (r *relay) cancelChallenge(steamID int64, challengeID string) {
 	}
 }
 
+// CreateOpenLink mints a shareable open-challenge link on the player's behalf.
+//
+// Deliberately NOT a *play: an open challenge is never relayed or streamed (see
+// lichess.OpenChallenge), so it has no state to hold, no long poll, and no entry
+// in r.plays. It is a one-shot HTTP round trip whose whole product is three URLs.
+// The player's token is used only to attribute and later cancel it — the game is
+// played by whoever opens the links, never as this player's account.
+func (r *relay) CreateOpenLink(ctx context.Context, steamID int64, p lichess.ChallengeParams) (lichess.OpenChallengeResult, error) {
+	token, _, err := r.credentials(ctx, steamID)
+	if err != nil {
+		return lichess.OpenChallengeResult{}, err
+	}
+	return lichess.OpenChallenge(ctx, token, p)
+}
+
+// CancelOpenLink withdraws a link the player made. Best-effort tidiness, not
+// safety: an abandoned open challenge commits nobody's account and expires on its
+// own (see lichess.OpenChallenge). lichess only honours a cancel signed by the
+// creating token, so a player can only ever cancel their OWN link — passing a
+// stranger's id just fails, which is why this needs no ownership bookkeeping.
+func (r *relay) CancelOpenLink(ctx context.Context, steamID int64, challengeID string) error {
+	token, _, err := r.credentials(ctx, steamID)
+	if err != nil {
+		return err
+	}
+	return lichess.CancelChallenge(ctx, token, challengeID)
+}
+
 // Enabled reports whether lichess is CONFIGURED. No key ⇒ no tokens can be
 // decrypted ⇒ no lichess. Feature-off, never fatal, never plaintext.
 //

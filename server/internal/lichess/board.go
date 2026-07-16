@@ -361,6 +361,80 @@ func CancelChallenge(ctx context.Context, token, challengeID string) error {
 	return post(ctx, token, "/api/challenge/"+url.PathEscape(challengeID)+"/cancel", nil)
 }
 
+// OpenChallengeResult is the subset of lichess's ChallengeOpenJson we surface.
+//
+// URL is the neutral link — whoever opens it first takes an open seat, colour
+// random. URLWhite/URLBlack are the SAME game with a forced colour (they are
+// literally URL + "?color=white"/"?color=black"), so handing a specific one out
+// is how a creator says "you play this side". id is what cancels it.
+type OpenChallengeResult struct {
+	ID       string `json:"id"`
+	URL      string `json:"url"`
+	URLWhite string `json:"urlWhite"`
+	URLBlack string `json:"urlBlack"`
+}
+
+// OpenChallenge creates a lichess OPEN challenge — a game any two people can join
+// by opening its link. It is a different animal from every other flow here, and
+// the differences are the whole point:
+//
+//   - It is NOT relayed and NOT rendered on the Gambit board. Both sides are
+//     anonymous to us (lichess returns challenger:null, destUser:null); the game
+//     is played in whatever browsers open the links, on lichess.org. gamchess
+//     cannot stream it as a player because NEITHER player is our token's account —
+//     there is no API to make an authenticated account a participant in an open
+//     challenge. So this returns a link and steps back; it never holds a stream.
+//   - It has NO board-API speed floor. The floors on ChallengeUserByName and
+//     SeekRealtime gate games our TOKEN plays through the Board API; an open
+//     challenge is played on the web, so BULLET is fine here where it can reach
+//     lichess by no other path. Only lichess's clock DOMAIN still applies.
+//   - The token is for ATTRIBUTION AND CANCELLATION, not participation. Open
+//     challenge is `security: []` — it needs no auth — but an anonymous one cannot
+//     be cancelled (lichess ties the cancel right to the creating OAuth token) and
+//     carries no User-Agent attribution to us. Creating it with the player's token
+//     via our RoundTripper fixes both. It does NOT put the game on their record or
+//     their account: they are still not a player.
+//
+// Because our player is never a participant, an abandoned open challenge is
+// harmless in a way a named challenge is not — nobody can start a game on our
+// player's account by accepting it. It simply expires (24h) if unused. Cancelling
+// is tidiness, not safety.
+func OpenChallenge(ctx context.Context, token string, p ChallengeParams) (OpenChallengeResult, error) {
+	// Only the clock DOMAIN matters here — no board-compatibility floor (see the
+	// doc comment: this game is web-played, not played by our token).
+	if !p.Unlimited {
+		if !ValidClockLimit(p.LimitSeconds) {
+			return OpenChallengeResult{}, fmt.Errorf("lichess: clock.limit %d is not a legal value", p.LimitSeconds)
+		}
+		if p.IncrementSeconds < 0 || p.IncrementSeconds > 60 {
+			return OpenChallengeResult{}, fmt.Errorf("lichess: clock.increment %d is outside 0..60", p.IncrementSeconds)
+		}
+	}
+
+	form := url.Values{}
+	// Omitting both clock fields asks for a correspondence (unlimited) game, the
+	// same rule as a challenge. Colour is NOT a request field on an open challenge —
+	// it is carried by which of URLWhite/URLBlack the creator hands out.
+	if !p.Unlimited {
+		form.Set("clock.limit", fmt.Sprint(p.LimitSeconds))
+		form.Set("clock.increment", fmt.Sprint(p.IncrementSeconds))
+	}
+	form.Set("rated", fmt.Sprint(p.Rated))
+
+	body, err := postBody(ctx, token, "/api/challenge/open", form)
+	if err != nil {
+		return OpenChallengeResult{}, err
+	}
+	var out OpenChallengeResult
+	if err := json.Unmarshal(body, &out); err != nil {
+		return OpenChallengeResult{}, fmt.Errorf("lichess: decode open challenge: %w", err)
+	}
+	if out.ID == "" || out.URL == "" {
+		return OpenChallengeResult{}, fmt.Errorf("lichess: open challenge response carried no link")
+	}
+	return out, nil
+}
+
 // ChallengeParams describes the game to propose. A zero LimitSeconds with
 // Unlimited=false is not "no clock" — set Unlimited explicitly, because omitting
 // the clock fields is how lichess is told to make an unlimited game and a

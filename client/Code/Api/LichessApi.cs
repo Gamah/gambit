@@ -151,6 +151,35 @@ public static class LichessApi
 			$"/api/v1/lichess/play/{Uri.EscapeDataString( clientGameId )}", "DELETE", null );
 
 	/// <summary>
+	/// Mint a SHAREABLE open-challenge link — a URL anyone can open to play, no
+	/// account and no Gambit needed on their side.
+	///
+	/// <para>Unlike every other flow this starts no relayed game: lichess hands back
+	/// three URLs and the game is played on lichess.org by whoever opens them. So
+	/// there is no polling and nothing renders on the Gambit board — it is a link,
+	/// not a game at this table. It works at ANY table (bullet included): the
+	/// board-API speed floors don't apply to a web-played game.</para>
+	///
+	/// <para>Colour is not sent — it's carried by WHICH url you hand out
+	/// (url_white / url_black are the same game with a forced side). The neutral
+	/// url is first-come, random colour.</para>
+	/// </summary>
+	public static Task<GamchessApi.Result> OpenLink( TimeControl tc, bool rated ) =>
+		GamchessApi.SendAuthed( "/api/v1/lichess/open", "POST", GamchessApi.Json( new
+		{
+			limit_seconds = tc.InitialSeconds,
+			increment_seconds = tc.IncrementSeconds,
+			unlimited = tc.IsUnlimited,
+			rated,
+		} ) );
+
+	/// <summary>Withdraw a shareable link you made. Tidiness, not safety — an unused
+	/// open challenge commits nobody's account and expires on its own in 24h.</summary>
+	public static Task<GamchessApi.Result> CancelOpenLink( string challengeId ) =>
+		GamchessApi.SendAuthed(
+			$"/api/v1/lichess/open/{Uri.EscapeDataString( challengeId )}", "DELETE", null );
+
+	/// <summary>
 	/// The game-state transport: a long poll. gamchess holds this open for ~5s
 	/// waiting for the state to pass <paramref name="since"/>, then answers.
 	///

@@ -99,6 +99,41 @@ token and must be signed by *that* token. So:
   Black's** — it never watches `/api/stream/event` for the paired flow, and so is not bound by
   the one-event-stream-per-token rule there. A seek DOES need the event stream (a seek's own
   response carries no game id), which is why only one seek per user may run.
+- A **direct challenge to a named user** (`ChallengeKeepAlive`, `/api/challenge/{name}` with
+  `keepAliveStream`) is a third relayed flow, one intent like a seek — the named opponent
+  consents on lichess, so nobody here is committed. Its trap is documented, not intuitive:
+  **closing the keep-alive stream does NOT withdraw the challenge.** lila only stops a 15s
+  ping; the challenge then goes Offline and stays acceptable for **hours**, so `relay.Cancel`
+  POSTs an explicit `/cancel` and an unanswered one is bounded by `challengeAnswerTTL`. Read
+  from lila, not the OpenAPI doc, which says the opposite.
+
+#### The shareable link is NOT a relayed game (open challenge)
+
+**`POST /api/challenge/open` is a different animal from every flow above, and the difference is
+the whole design.** It mints a link (`url`, plus `urlWhite`/`urlBlack` = `url?color=…`); the
+first two people to open it are paired and **play on lichess.org**. Load-bearing facts, so a
+future session doesn't try to fold it into the relay:
+
+- **It is never relayed, streamed, or drawn on the Gambit board.** Both sides are anonymous to
+  us (`challenger:null`, `destUser:null`) — there is **no API to make our linked account a
+  participant** in an open challenge, so gamchess cannot stream it as a player and there is
+  nothing to render. The endpoint returns a link and steps back. This is why it holds no `play`,
+  no long poll, no state (`relay.CreateOpenLink`/`CancelOpenLink` are one-shot, stateless).
+- **No board-API speed floor.** The blitz/rapid floors gate games our *token* plays through the
+  Board API; an open challenge is web-played, so **bullet is fine** — it is the one path that
+  reaches lichess from a Bullet table.
+- **The token is for attribution + cancellation, not play.** `security: []` — it needs no auth —
+  but an anonymous one can't be cancelled (lichess ties the cancel right to the creating token)
+  and carries no User-Agent. So we create it with the player's token via our RoundTripper; it
+  does **not** put the game on their record or make them a player.
+- **Abandonment is harmless, unlike a named challenge.** Nobody can start a game on our player's
+  account by opening the link (they're not in it), so an unused link just expires (24h).
+  Cancelling is tidiness. The colour chip picks **which url we copy** (opponent gets the opposite
+  side), never a request field.
+- **This is also the answer to "two linked players who DON'T want it on lichess":** a game at a
+  table is local and touches no lichess account unless a player picks one of the four options.
+  That sentence is load-bearing consent copy — it lives in `InfoScreen`'s Welcome + Lichess
+  branches, and read as ambiguous until it was said outright. If the flows change, say it again.
 
 #### The traps
 
