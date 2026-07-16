@@ -1,0 +1,93 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	ONE STRING ON ONE PLATE. That is the entire contract, and it is not modesty — it is the
+	only WorldPanel shape this repo has ever got to render.
+
+	Five rounds of bugs on the clock were ALL layout, and none were data: the world scale,
+	the `root` rule, nowrap/flex-shrink, plate-vs-text centring, and the absolute-positioning
+	ancestor. The seam was correct throughout — gambit_clock printed the right seconds while
+	the face showed a dot. The common cause: the working shape (MarqueeNumberPanel, the table
+	plaque) is `root` at 100% plus ONE absolutely-positioned 100% child, and it CANNOT BE
+	COMPOSED. Put a box between root and the text div and `position: absolute` retargets to
+	it, so every centring rule silently means something else.
+
+	So the clock composes in 3D instead: two of these on two mesh plates, with a mesh bar
+	between them (ChessRing.BuildStationClock, driven by World/TableClock.cs). Each panel
+	here has one text div and no siblings, so there is nothing left to compose wrongly.
+
+	This is byte-for-byte MarqueeNumberPanel's structure. The ONLY additions are Text (vs a
+	fixed Number) and the State class, and State only ever sets `color` — it adds no box, no
+	sibling, and no layout. Keep it that way: the moment a second element lands in here, this
+	is TableClockPanel again and the five rounds start over. A second string is a second
+	plate.
+*@
+
+<root>
+	<div class="t @State">@Text</div>
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	/*
+		nowrap AND flex-shrink: 0 — one rule, two halves, and the most expensive line in
+		CLAUDE.md. A flex item's default is to shrink; a shrunk text div does not
+		ellipsize, it WRAPS; and a div's auto height does not grow for wrapped text, so
+		the text is clipped to a sliver of its first line. That is how "2:48" rendered as
+		a single dot while "W" (one char, cannot wrap) rendered fine beside it.
+
+		They are belt-and-braces here — this div has no siblings to be squeezed by — and
+		they stay anyway. They cost nothing and they are exactly what was missing.
+	*/
+	.t {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+		height: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		text-align: center;
+		white-space: nowrap;
+		flex-shrink: 0;
+		font-family: $wall-font;
+		font-size: 130px;
+		font-weight: bold;
+		color: rgba(255, 255, 255, 0.45);
+	}
+
+	/* The running side is the only one worth looking at. Its PLATE also lightens (a mesh
+	   tint, set by TableClock) — this is the text half of that pair. */
+	.t.on { color: #e8e6df; }
+
+	/* Under TimeControl.PanicSeconds — the same threshold the panic beep starts at, which
+	   is why it is a shared constant and not a 10f typed in two files. */
+	.t.panic { color: #ff5f5f; }
+</style>
+
+@code {
+	/// <summary>The one string. Set per-frame by <see cref="Gambit.World.TableClock"/>;
+	/// the hash below means "per-frame" costs a repaint only when a digit changes.</summary>
+	[Property] public string Text { get; set; } = "";
+
+	/// <summary>"" (idle), "on" (this seat is ticking) or "panic". Colour only — see the
+	/// note above about what may not go in here.</summary>
+	[Property] public string State { get; set; } = "";
+
+	/// <summary>Hashed as the RENDERED STRING, never the raw float behind it. Hashing
+	/// seconds would repaint every face of every live table in the ring every frame;
+	/// hashing the text repaints exactly when a digit changes.</summary>
+	protected override int BuildHash() => System.HashCode.Combine( Text, State );
+}

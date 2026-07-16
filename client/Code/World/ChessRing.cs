@@ -89,12 +89,13 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	// Tabletop footprint in base units. The board frame is BoardSize + 3 = 29
 	// square, so these two numbers ARE the margins, and each margin has a job:
 	//
-	//   X (40 → 5.5 per side): −X is the walk-up side (kept clear — it is where
-	//     White's seat camera looks down the board from); +X carries the table clock
-	//     (BuildStationClock).
-	//   Y (44 → 7.5 per side): the two captured-piece trays, one per player. The
-	//     table plaque hangs off the +Y edge, below the tabletop, clear of the tray
-	//     that sits on it.
+	//   X (40 → 5.5 per side): BOTH are kept clear — they are the seat cameras'
+	//     sightlines. −X is where White's camera looks down the board from and +X is
+	//     Black's, so anything mid-edge there is in a player's foreground. The clock
+	//     stood at +X once and read as a wall in Black's face.
+	//   Y (44 → 7.5 per side): −Y is the clock strip (BuildStationClock) and then
+	//     White's tray; +Y is Black's tray, with the number plaque hanging below its
+	//     edge, clear of the tray that sits on it.
 	//
 	// Both were 34 (a 2.5 margin) until M11. ChessRing's own comment had promised
 	// "a healthy margin for clocks/captures later" since M1 — it wasn't; two
@@ -608,19 +609,84 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// than presenting its edge — the same way you read a real chess clock sitting beside a
 	/// board: nobody is square to it, everybody is looking down at it.
 	///
-	/// <para><b>This is coupled to <see cref="ClockPxHeight"/> and cannot be tuned alone.</b>
-	/// The face is tilted up out of a 1.4-deep strip, so its height projects sin(tilt) of
-	/// itself straight back into Y — a tall face at a steep tilt leans out over the board
-	/// and clips the a-file. The two trade off exactly: this was 128px at 55°, and the face
-	/// was made twice as tall (208px) by dropping the tilt to 30°, which lands on the SAME
-	/// Y footprint (0.12 base units over the board frame, inside the 0.2 gap). Raise one
-	/// and lower the other, or the clock grows into the board.</para></summary>
+	/// <para><b>This is coupled to <see cref="ClockPlateHeight"/> and <see cref="ClockDepth"/>
+	/// and cannot be tuned alone.</b> The plates are tilted up out of a 1.4-deep strip, so a
+	/// plate's height projects sin(tilt) of itself straight back into Y — a tall plate at a
+	/// steep tilt leans out over the board and clips the a-file. At 2.4 high and 30° that is
+	/// 1.2 of Y (±0.6), inside the strip's own ±0.7, so the plates stay over their own body.
+	/// Raise one and lower the other, or the clock grows into the board.</para>
+	///
+	/// <para>The bar shares this rotation so the three objects lie in one plane and read as
+	/// one instrument; it is shorter than a plate, so it can never be the binding constraint
+	/// here.</para></summary>
 	const float ClockFaceTilt = -30f;
 
-	// The face's own pixel space. Wide and short, because the clock is. Height is a
-	// geometric constraint, not a style choice — see ClockFaceTilt.
-	const float ClockPxWidth = 1024f;
-	const float ClockPxHeight = 208f;
+	// ── The plates ──
+	//
+	// One per seat, standing on the strip: a mesh plate with a one-string panel flush on its
+	// face. This is BuildStationPlaque's shape, twice — deliberately, and the deliberation is
+	// worth reading. The clock was ONE panel drawing both times and the bar in CSS, and it
+	// cost five rounds of bugs: the world scale, the `root` rule, nowrap/flex-shrink,
+	// plate-vs-text centring, and an absolute-positioning ancestor. All five were layout;
+	// NONE were data (gambit_clock printed the right seconds throughout). The repo has one
+	// WorldPanel shape that renders and it cannot be composed, so the composition is here
+	// instead — in base units, where every number below can be checked by arithmetic.
+	//
+	// Plate-local: X is the facing normal, Y the length, Z up the face.
+	const float ClockPlateThickness = 0.4f;
+	const float ClockPlateLength = 6f;
+	const float ClockPlateHeight = 2.4f;
+
+	/// <summary>Plate centre out from the strip's middle, in base units. ±7 on a strip that
+	/// runs ±10 puts each 6-long plate flush to its own end (spanning 4..10), which is the
+	/// job the old panel's `justify-content: space-between` was doing — each player's clock
+	/// at their own end of the board, the middle left for the bar.
+	///
+	/// <para><b>White is −X and Black is +X</b>, per BuildStationPlaque: +X is Black's side
+	/// (radially inward), −X is White's (the walk-up side). The old panel had to reason about
+	/// a WorldPanel's content-space handedness to work this out and got it backwards first
+	/// try, rendering each player their OPPONENT's clock — the giveaway was a "B" on White's
+	/// side. Here it is a sign on a position in table space, and a wrong one would be visible
+	/// in the diff.</para></summary>
+	const float ClockPlateOffsetX = 7f;
+
+	/// <summary>Lift of the panel off its plate's face, along the plate's own normal — clear
+	/// of it rather than z-fighting it. BuildStationPlaque's PlaqueOutset, same job.</summary>
+	const float ClockTextOutset = 0.05f;
+
+	// The plate face's pixel space. Width is arbitrary (it only fixes how many px a base
+	// unit is worth); HEIGHT IS DERIVED from the plate's aspect, so the panel's pixel space
+	// and the mesh it sits on cannot drift out of proportion. Typing both by hand is how a
+	// stylesheet's px stop meaning what the plate's geometry says they mean.
+	const float ClockPxWidth = 512f;
+	const float ClockPxHeight = ClockPxWidth * ClockPlateHeight / ClockPlateLength;
+
+	// ── The material bar ──
+	//
+	// Mesh, not a div: a fixed track with a fill growing from dead centre toward whoever is
+	// ahead. Centre-out is what lets the bar say WHO as well as by how much, which is what
+	// retires the old "+3" caption — and the caption was the second string, the one thing a
+	// one-string panel cannot hold. Lives in the same tilted plane as the plates so the three
+	// read as one instrument; its bottom edge is level with theirs (see BuildStationClock).
+	const float ClockBarLength = 6f;    // ±3 in the 8 of clear middle the plates leave
+	const float ClockBarHeight = 0.5f;
+	const float ClockBarThickness = 0.3f;
+
+	/// <summary>How far the fill stands proud of its track, along the plate normal.</summary>
+	const float ClockBarProud = 0.16f;
+
+	// Plate tints. The RUNNING side's plate lightens under its (also brightening) text —
+	// TableClock sets this. Both plates are opaque: the ticking one is told apart by going
+	// brighter, not by the tabletop showing through less, which is the stronger signal and
+	// the reason a plate is a mesh with a tint rather than a div with an alpha.
+	internal static readonly Color ClockPlateColor = new( 0.047f, 0.047f, 0.063f );
+	internal static readonly Color ClockPlateOnColor = new( 0.078f, 0.086f, 0.110f );
+
+	// Bar tints. The track is darker than EITHER fill on purpose — Black's fill is dark, and
+	// a track darker still is what keeps it a bar rather than an empty groove.
+	static readonly Color ClockBarTrackColor = new( 0.063f, 0.063f, 0.078f );
+	internal static readonly Color ClockBarWhiteColor = new( 0.910f, 0.902f, 0.874f );
+	internal static readonly Color ClockBarBlackColor = new( 0.169f, 0.169f, 0.200f );
 
 	/// <summary>The engine's WorldPanel pixel→world constant
 	/// (<c>ScenePanelObject.ScreenToWorldScale</c>, read from the shipped engine, not
@@ -635,16 +701,17 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	const float PxToWorld = 0.05f;
 
 	/// <summary>
-	/// The table's clock: a thin, low wedge lying in the −Y margin between the board and
-	/// White's tray, its face angled up and inward across the board.
+	/// The table's clock: a thin, low strip lying in the −Y margin between the board and
+	/// White's tray, carrying two plates and a material bar angled up and inward across the
+	/// board.
 	///
-	/// <para><b>Why −Y and one face, not +X and two.</b> It stood on the +X margin with a
-	/// face at each seat, which put a tower in Black's near foreground — the exact
-	/// objection that moved the plaque off −X, and it looked like a wall. Beside the board
-	/// is where a real chess clock goes: the seats are at ±X, so a face at −Y pointing +Y
-	/// is square to neither of them and readable to both, because both are looking DOWN at
-	/// the table anyway. One face, seen at an angle by two people, is how the real object
-	/// works.</para>
+	/// <para><b>Why −Y and one facing, not +X and one per seat.</b> It stood on the +X margin
+	/// with a face aimed at each seat, which put a tower in Black's near foreground — the
+	/// exact objection that moved the plaque off −X, and it looked like a wall. Beside the
+	/// board is where a real chess clock goes: the seats are at ±X, so a face at −Y pointing
+	/// +Y is square to neither of them and readable to both, because both are looking DOWN at
+	/// the table anyway. Everything here shares that one facing, which is how the real object
+	/// works — two dials on one body, both read at an angle by two people.</para>
 	///
 	/// <para>The margin is shared: ClockDepth comes out of the same budget the tray does
 	/// (see ClockBoardGap and friends), so the tray moves outboard by exactly the strip
@@ -654,6 +721,12 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// renders its own, reading state that is already replicated. Nothing here decides
 	/// anything — the host owns a local game's clock and lichess owns a lichess game's,
 	/// and this shows whichever the seam resolves to.</para>
+	///
+	/// <para><b>Three objects, not one panel.</b> Two plates and a bar, each a mesh, sharing
+	/// one tilted plane. See ClockPlateThickness for why this is not composed in CSS; the
+	/// short version is that the five bugs it cost were all layout and none were data, and
+	/// this repo's one working WorldPanel shape holds one string. <see cref="TableClock"/>
+	/// drives them.</para>
 	/// </summary>
 	void BuildStationClock( GameObject station, Gambit.Game.LocalGameController controller,
 		Gambit.Game.LichessGameController lichess )
@@ -665,29 +738,122 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		// −Y: White's side, opposite the plaque at +Y.
 		clock.LocalPosition = new Vector3( 0f, -ClockCenterY, TableTopZ ) * s;
 
-		// The body: a low strip sitting on the tabletop, centred on its own height.
+		// The body: a low strip sitting on the tabletop, centred on its own height. The
+		// plates stand on it and the bar is inlaid between them.
 		AddBox( clock, "Body", new Vector3( 0f, 0f, ClockHeight * 0.5f ) * s,
 			new Vector3( ClockLength, ClockDepth, ClockHeight ) * s, null, FrameColor );
 
-		var face = new GameObject( true, "Face" );
-		face.Parent = clock;
-		// On top of the strip, tipped up and pointing +Y across the board. Yaw 90 turns
-		// the panel's plane (local Y = width) along the table's X, so the face runs the
-		// length of the strip.
-		face.LocalPosition = new Vector3( 0f, 0f, ClockHeight + 0.05f ) * s;
-		face.LocalRotation = Rotation.From( ClockFaceTilt, 90f, 0f );
+		var driver = clock.AddComponent<TableClock>();
+		driver.Controller = controller;
+		driver.Lichess = lichess;
 
-		// Scale DERIVED so the panel's width spans ClockLength — never guessed. See PxToWorld.
-		face.LocalScale = ( ClockLength * s ) / ( ClockPxWidth * PxToWorld );
+		BuildClockPlate( clock, white: true, out var whiteText, out var whitePlate );
+		BuildClockPlate( clock, white: false, out var blackText, out var blackPlate );
+		driver.WhiteText = whiteText;
+		driver.BlackText = blackText;
+		driver.WhitePlate = whitePlate;
+		driver.BlackPlate = blackPlate;
+
+		BuildClockBar( clock, driver );
+	}
+
+	/// <summary>One seat's plate: a mesh standing on the strip with a one-string panel flush
+	/// on its face. BuildStationPlaque's shape — plate box, panel lifted off its front along
+	/// the plate's own normal, riding the tilt like a real plate rather than billboarded.
+	///
+	/// <para>The plate GO carries the rotation and the boxes are its children, so their
+	/// dimensions are plate-local and the yaw carries them round with it. Same trick, same
+	/// reason.</para></summary>
+	void BuildClockPlate( GameObject clock, bool white,
+		out Gambit.UI.TableClockTextPanel text, out ModelRenderer plateRenderer )
+	{
+		float s = TableScale;
+		text = null;
+		plateRenderer = null;
+
+		var plate = new GameObject( true, white ? "Plate White" : "Plate Black" );
+		plate.Parent = clock;
+		// Standing on the body, at its own player's end. See ClockPlateOffsetX: White is −X.
+		plate.LocalPosition = new Vector3(
+			( white ? -ClockPlateOffsetX : ClockPlateOffsetX ), 0f, ClockHeight ) * s;
+		// Tipped up and facing +Y across the board. Both plates share this one facing rather
+		// than each aiming at its own seat: neither player is square to it, both are looking
+		// down at the table anyway, and that is how a real chess clock's two dials work.
+		plate.LocalRotation = Rotation.From( ClockFaceTilt, 90f, 0f );
+
+		var box = AddBoxGo( plate, "Face", Vector3.Zero,
+			new Vector3( ClockPlateThickness, ClockPlateLength, ClockPlateHeight ) * s,
+			null, ClockPlateColor );
+		if ( box is null ) return;                 // no box model: AddBox has always drawn nothing
+		plateRenderer = box.GetComponent<ModelRenderer>();
+
+		var face = new GameObject( true, "Text" );
+		face.Parent = plate;
+		// Flush on the plate's front (+X), lifted clear of it.
+		face.LocalPosition = new Vector3( ClockPlateThickness * 0.5f + ClockTextOutset, 0f, 0f ) * s;
+
+		// Scale DERIVED so the panel's width spans the plate's length — never guessed. See
+		// PxToWorld: a WorldPanel's scale is not a world size and cannot be eyeballed.
+		face.LocalScale = ( ClockPlateLength * s ) / ( ClockPxWidth * PxToWorld );
 
 		var worldPanel = face.AddComponent<WorldPanel>();
-		// Wide and short, so the stylesheet's px are in an aspect that matches the object.
-		// The default 512-square would letterbox two clock faces into a postage stamp.
+		// Matches the plate's aspect, because ClockPxHeight is derived from it.
 		worldPanel.PanelSize = new Vector2( ClockPxWidth, ClockPxHeight );
 
-		var panel = face.AddComponent<Gambit.UI.TableClockPanel>();
-		panel.Controller = controller;
-		panel.Lichess = lichess;
+		text = face.AddComponent<Gambit.UI.TableClockTextPanel>();
+	}
+
+	/// <summary>The material bar: a fixed track with a fill growing from dead centre toward
+	/// whoever is ahead. <see cref="TableClock"/> moves the fill.
+	///
+	/// <para><b>Bottom edge level with the plates', by arithmetic.</b> The bar is shorter than
+	/// a plate, so centring it in the plane would float it around the plates' middles and read
+	/// as three unrelated things; bottoms level is what makes them one instrument. That was
+	/// `align-items: flex-end` when this was CSS — here it is the plate's half-height minus
+	/// the bar's, which is a number that can be checked.</para></summary>
+	void BuildClockBar( GameObject clock, TableClock driver )
+	{
+		float s = TableScale;
+
+		var bar = new GameObject( true, "Bar" );
+		bar.Parent = clock;
+		bar.LocalPosition = new Vector3( 0f, 0f, ClockHeight ) * s;
+		// The plates' rotation, so all three lie in one plane.
+		bar.LocalRotation = Rotation.From( ClockFaceTilt, 90f, 0f );
+
+		// Bottoms level: the plate spans ±ClockPlateHeight/2 about its centre and both are
+		// centred at the same height, so dropping the bar by the difference of the half-heights
+		// puts its lower edge exactly on the plates'.
+		float dropZ = ( ClockPlateHeight - ClockBarHeight ) * 0.5f;
+
+		AddBox( bar, "Track", new Vector3( 0f, 0f, -dropZ ) * s,
+			new Vector3( ClockBarThickness, ClockBarLength, ClockBarHeight ) * s,
+			null, ClockBarTrackColor );
+
+		// The fill is built at FULL extension — dead centre to one end, half the track — and
+		// the driver scales it down from there. Building it full is what lets TableClock hold
+		// the full scale as a number instead of re-deriving it from Model.Bounds: AddBoxGo did
+		// that arithmetic once already, and doing it twice is how the two come to disagree.
+		float halfLength = ClockBarLength * 0.5f;
+		var fill = AddBoxGo( bar, "Fill",
+			new Vector3( ClockBarProud, 0f, -dropZ ) * s,
+			new Vector3( ClockBarThickness, halfLength, ClockBarHeight ) * s,
+			null, ClockBarWhiteColor );
+		if ( fill is null ) return;
+
+		driver.Bar = bar;
+		driver.BarFill = fill;
+		driver.BarFillRenderer = fill.GetComponent<ModelRenderer>();
+		driver.BarFillFullScale = fill.LocalScale;
+		driver.BarFillBasePosition = fill.LocalPosition;
+		driver.BarFillHalfLength = halfLength * s;
+
+		// Hidden is the bar's NORMAL state: level is how a chess game starts and mostly stays,
+		// and a permanently zeroed gauge is furniture. TableClock shows it when someone goes
+		// ahead. Disabled LAST, after its children exist — and it also spares the EDITOR
+		// preview a permanent full white bar, since TableClock is not ExecuteInEditor and never
+		// runs there to correct one.
+		bar.Enabled = false;
 	}
 
 	/// <summary>Locked-camera anchor for one seat. side −1 = White (outward),
@@ -882,12 +1048,25 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 	void AddBox( GameObject parent, string name, Vector3 localPos, Vector3 size,
 		Rotation? localRot = null, Color? tint = null )
+		=> AddBoxGo( parent, name, localPos, size, localRot, tint );
+
+	/// <summary>As <see cref="AddBox"/>, but hands back the GameObject.
+	///
+	/// <para>Only for boxes something has to find again — the clock's plates (tinted as a
+	/// seat's turn starts) and its material fill (rescaled as the balance moves). Prefer
+	/// <see cref="AddBox"/> everywhere else: a builder that returns nothing cannot be
+	/// quietly turned into a per-frame handle.</para>
+	///
+	/// <para>Returns null if the box model is missing — every caller must cope, because
+	/// AddBox has always been allowed to draw nothing.</para></summary>
+	GameObject AddBoxGo( GameObject parent, string name, Vector3 localPos, Vector3 size,
+		Rotation? localRot = null, Color? tint = null )
 	{
 		var model = Model.Load( "models/dev/box.vmdl" );
 		if ( model == null )
 		{
 			Log.Warning( "[Gambit] models/dev/box.vmdl failed to load — chess tables have colliders but no visuals" );
-			return;
+			return null;
 		}
 
 		var visual = new GameObject( true, name );
@@ -904,6 +1083,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		var renderer = visual.AddComponent<ModelRenderer>();
 		renderer.Model = model;
 		renderer.Tint = tint ?? TableColor;
+		return visual;
 	}
 
 	void Clear()

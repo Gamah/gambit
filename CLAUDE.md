@@ -554,11 +554,14 @@ have been run here at all.
   invisible speck that read as "the panel is broken". Derive it —
   `wanted_world_size / (PanelSize × 0.05)`. `ChessRing.PxToWorld` and `SpectatorSeatPanel`
   each keep a copy of that constant for this reason.
-- **The clock face's ASPECT is a geometric constraint, not a style choice.** It is tilted up
-  out of a 1.4-deep strip, so its height projects `sin(tilt)` of itself back into Y: a tall
-  face leans out over the board and clips the a-file. 1024×128 is what fits, and that is
-  what forces `TableClockPanel`'s single-row layout. Stacked faces do not fit on a clock
-  this thin, and it is thin because it shares the margin with a tray.
+- **The clock plates' HEIGHT is a geometric constraint, not a style choice.** They are tilted
+  up out of a 1.4-deep strip, so a plate's height projects `sin(tilt)` of itself back into Y:
+  a tall plate at a steep tilt leans out over the board and clips the a-file. `ClockPlateHeight`
+  and `ClockFaceTilt` therefore trade off exactly and **neither is tunable alone** — 2.4 at 30°
+  spends ±0.6 of the strip's own ±0.7. Nothing stacks on a clock this thin, and it is thin
+  because it shares the margin with a tray. The plate's **pixel** space is not a second knob:
+  `ClockPxHeight` is *derived* from the plate's aspect, so the panel and the mesh it sits on
+  cannot drift out of proportion.
 - **Each player's captured pieces sit in a tray on their own right** (White faces +X, so
   White's right is −Y — s&box is Y-left). `ChessRing.TraySlotLocalPosition` owns the
   geometry; `ChessBoardView` owns the ordering; **`Code/Chess/CapturedMaterial.cs` owns
@@ -638,11 +641,15 @@ implementations that agree — lichess-org's own **dartchess** (`lib/src/pgn.dar
   Not an inconsistency: a live clock must never read higher than the time actually left,
   whereas the archive should match the reference writers.
 
-**Where a live clock is rendered (M11): on the TABLE, not the HUD.** `TableClockPanel`, on a
-mesh body at each table's +X margin, a face per side. It was text in a 250px column pinned to
-the right of the screen while the board sat in the middle of it — in a 3+0 game, the wrong
-place for the number that ends the game. Two things moved with it and must move back if it ever
-does: **`TimeControl.PanicSeconds`** (where a clock reddens — shared with the panic beep so the
+**Where a live clock is rendered (M11): on the TABLE, not the HUD.** A low strip in each
+table's **−Y** margin (never +X — that is Black's seat camera's sightline, and a clock there
+read as a wall in their face), carrying **two mesh plates and a mesh material bar** that all
+share one upward facing across the board: `ChessRing.BuildStationClock` + `World/TableClock.cs`
++ `UI/TableClockTextPanel.razor`. One facing serves both seats because neither player is square
+to it and both are looking down at the table — two dials on one body, as a real chess clock is.
+It was text in a 250px column pinned to the right of the screen while the board sat in the
+middle of it — in a 3+0 game, the wrong place for the number that ends the game. Two things
+moved with it and must move back if it ever does: **`TimeControl.PanicSeconds`** (where a clock reddens — shared with the panic beep so the
 two can't disagree, which is why it lives on `TimeControl` rather than on a panel), and **the
 string-hashing** — clock faces are hashed as their RENDERED TEXT, so a panel repaints when a
 digit changes rather than every frame. Hash the raw float and every live table in the ring
@@ -961,10 +968,32 @@ doubt check `https://sbox.game/api/` or file a false-positive at
   `root { width: 100%; height: 100%; pointer-events: none; }` and *nothing else*, with an
   absolutely-positioned `left/top: 0; width/height: 100%` child doing the layout.
   `MarqueeNumberPanel`, `SpectatorSeatPanel`, `CenterInfoPanel` and `StationScreenPanel`
-  are all byte-for-byte this. `TableClockPanel` was written with a fixed px size and the
-  centering on `root` and rendered wrong — **copy the working one rather than reasoning
+  are all byte-for-byte this. The old `TableClockPanel` was written with a fixed px size and
+  the centering on `root` and rendered wrong — **copy the working one rather than reasoning
   about what root ought to accept.** Note `root` takes `100%`, not the panel's px size:
   the px space is set by `PanelSize` on the `WorldPanel` component, not in the stylesheet.
+- **…and that shape CANNOT BE COMPOSED. It holds ONE string. A second string is a second
+  panel on a second mesh — build it in 3D, not in CSS.** This is the most expensive lesson
+  in this file, and it was learned five times before it was learned once. The table clock
+  tried to draw two times and a material bar in one WorldPanel and cost **five rounds, five
+  bugs, every one of them layout and not one of them data** — the world scale, the `root`
+  rule, nowrap/flex-shrink, plate-vs-text centring, and finally `position: absolute`
+  retargeting to an ancestor box instead of `root`. `gambit_clock` proved the seam correct
+  the entire time. The mechanism is mechanical, not bad luck: **the moment a box sits between
+  `root` and the text div, `position: absolute` retargets to that box and every centring rule
+  silently means something else.** The working panels have no such box because they have
+  nothing to compose.
+  → So the clock is now **the table-plaque pattern twice** (mesh plate + one-string panel)
+  **plus a mesh bar**: `ChessRing.BuildClockPlate`/`BuildClockBar` + `World/TableClock.cs` +
+  `UI/TableClockTextPanel.razor`. It is the same instinct as the spectator board being real
+  meshes, and the same rule two bullets up — *reach for meshes over panel art*. It also moves
+  the design out of the domain this host cannot test and into **arithmetic**, which is the
+  domain where the M11 pass got the margin budget, the tilt/height tradeoff and the plaque
+  corner right on the first attempt every time.
+  → It buys correctness, not just tidiness: a mesh plate sits at table-local `x = −7` for
+  White, so **a wrong side is visible in the diff**. The panel had to reason about a
+  WorldPanel's content-space handedness for the same fact and got it backwards, rendering
+  each player their opponent's clock.
 - **`⬜`/`⬛` are emoji too.** The "panel glyphs paint as colour emoji" rule is not only
   about chess pieces — the geometric-shape block characters are the same trap. `GameHud`
   uses them safely at 13px in a HUD; at 76px on a world panel they render as two big
@@ -982,7 +1011,7 @@ doubt check `https://sbox.game/api/` or file a false-positive at
   first line. The result is not a missing element or an error — it is a **few visible
   pixels of the middle of your text**, which reads as a rendering bug anywhere but the
   stylesheet. `SpectatorSeatPanel` carries `.tag > div { flex-shrink: 0 }` plus `nowrap`
-  on every text div for exactly this; `TableClockPanel` omitted both and rendered its
+  on every text div for exactly this; the old `TableClockPanel` omitted both and rendered its
   clock as **a single dot** while `gambit_clock` proved the value was `168.1s` the whole
   time. Short strings hide it — "W" cannot wrap, so a one-character label renders fine
   next to a four-character one that doesn't. **If some text on a panel renders and some

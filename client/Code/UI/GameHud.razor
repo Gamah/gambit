@@ -17,7 +17,7 @@
 	uncalibrated, tune in-editor).
 
 	NO CLOCKS (M11). They are on the table now, as a real mesh clock with a face per seat
-	— ChessRing.BuildStationClock and TableClockPanel. Both clocks used to be text in this
+	— ChessRing.BuildStationClock and TableClock. Both clocks used to be text in this
 	column, pinned to the right of the screen while the board sat in the middle of it,
 	which in a 3+0 game is the wrong place for the number that ends the game. If a clock
 	ever comes back here, TimeControl.PanicSeconds and the rendered-string hashing have to
@@ -673,7 +673,7 @@
 	/// <remarks>
 	/// <para><b>The clock is not here any more (M11).</b> It lives on the table, as a real
 	/// mesh clock with a face for each seat — see ChessRing.BuildStationClock and
-	/// TableClockPanel. Both clocks used to be text in this 250px column pinned to the
+	/// TableClock. Both clocks used to be text in this 250px column pinned to the
 	/// right of the screen while the board sat in the middle of it, which in a 3+0 game is
 	/// the wrong place for the number that ends the game.</para>
 	///
@@ -805,7 +805,7 @@
 	/// <summary>Repaint triggers. The seat lines are still hashed as their rendered
 	/// strings — now cheap rather than load-bearing. With the clock moved onto the table
 	/// (M11) they change only when a name or a ready state does, so this HUD no longer
-	/// repaints on a ticking digit at all. TableClockPanel took that job and carries the
+	/// repaints on a ticking digit at all. TableClockTextPanel took that job and carries the
 	/// same string-hashing reasoning; read its BuildHash before putting any per-second
 	/// value back in here.
 	///

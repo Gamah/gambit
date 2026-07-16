@@ -198,19 +198,56 @@ pair. Reading that file once per session is evidently not the same as applying i
 panel misbehaves, diff it against the panel that works rather than reasoning from
 principles.
 
-It is now a **thin low strip beside the board at −Y**, opposite the plaque, with **one** face
-angled up across the board — where a real chess clock goes, and why one face serves both
-seats: neither is square to it, both are looking down at the table. Single row, because the
-face is tilted out of a 1.4-deep strip and a taller one leans over the a-file.
-`ChessRing.BuildStationClock` + `TableClockPanel`.
+It is now a **thin low strip beside the board at −Y**, opposite the plaque, everything on it
+angled up across the board — where a real chess clock goes, and why one facing serves both
+seats: neither is square to it, both are looking down at the table. Nothing is tall, because
+the plates are tilted out of a 1.4-deep strip and a taller one leans over the a-file.
 
-**Just the times**: a plate at each END of the strip — pinned to the end nearest that player
-and extending inward — with the material bar between them, all bottom-aligned. No W/B labels:
-they were on the **wrong sides**, because a WorldPanel's content +x maps to world −X here, so
-White-first markup rendered each player their opponent's clock. Reversing the order is the
-fix; the labels are gone, so a future flip would be **invisible** and both players would just
-read the wrong number — hence the comment on the markup. **Player names go above the clock
-later**, which is the label worth the room.
+### Then a fifth bug, and the rebuild that ended it
+
+A fifth round found a fifth bug — the plate's own text hanging off its bottom edge, because
+`position: absolute` on the text retargeted to the plate div rather than to `root`. At that
+point the pattern was the finding: **five rounds, five bugs, all five WorldPanel CSS layout,
+zero data bugs.** `gambit_clock` proved the seam correct throughout. That is not bad luck, it
+is a mismatch — **this repo has exactly one proven WorldPanel shape** (`MarqueeNumberPanel` /
+the table plaque: `root` at 100% plus ONE absolutely-positioned 100% child) **and it is
+inherently one-string-per-panel. It cannot be composed.** The moment a box sits between `root`
+and the text div, `position: absolute` retargets and every centring rule silently means
+something else.
+
+**So the clock stopped composing in CSS and composes in 3D.** It is the table-plaque pattern
+twice — mesh plate + one-string panel — plus a mesh material bar, all sharing one tilted
+plane. That is also what this file decided originally ("the board is real meshes and the clock
+should be too") and what CLAUDE.md says as a rule (*reach for meshes over panel art*). It
+moves the problem out of the domain that can't be tested on this host and into **arithmetic**,
+where every computation in the whole design pass — the margin budget, the tilt/height
+tradeoff, the plaque corner, the plate ratios — came out right the first time.
+
+`ChessRing.BuildStationClock` / `BuildClockPlate` / `BuildClockBar` build it;
+`World/TableClock.cs` drives it; `UI/TableClockTextPanel.razor` is the one-string panel.
+`TableClockPanel.razor` is **gone** — do not bring it back.
+
+What the rebuild bought, concretely:
+
+- **The sides are checkable in the diff.** White's plate is at table-local `x = −7`, Black's
+  at `+7`, and BuildStationPlaque already fixes −X as White's side. The old panel had to
+  reason about a WorldPanel's *content-space handedness* to work this out, got it backwards
+  first try (rendering each player their **opponent's** clock — the giveaway was a "B" on
+  White's side), and the fix was a comment begging nobody to reorder the markup. A wrong sign
+  is now visible on the page.
+- **The panel's px space cannot drift from the mesh it sits on**: `ClockPxHeight` is *derived*
+  from the plate's aspect, and the panel's world size comes out exactly `9.0 × 3.6` — the
+  plate's own size. The text lands at 1.52 base units against the old 1.48, so the size that
+  was tuned by eye is preserved.
+- **The plates no longer overhang the strip at all** (±0.6 in Y inside its ±0.7). The old face
+  reached ±1.015 and survived only by staying inside the board's 0.2 gap.
+- **The "+3" caption is gone, and the bar replaced it rather than losing it.** The fill now
+  grows **from dead centre** toward whoever is ahead, so direction says *who* and length says
+  *by how much* — one object saying what two used to. The caption was the second string, which
+  is exactly the thing a one-string panel cannot hold.
+
+**Player names go above the clock later**, which is the label worth the room — and that is now
+a third plate, not a third div.
 
 **The HUD no longer has a clock on it at all**, and the repaint hashing moved with it — that
 was the load-bearing part (see below). `SeatClass` also lost its panic red: reddening a *name*
