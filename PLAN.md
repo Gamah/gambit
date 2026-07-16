@@ -172,18 +172,31 @@ repo had already written down and I re-derived from first principles instead:
    30-unit body) instead of derived from `PanelSize × 0.05 × scale`.
 2. **A wall in Black's foreground** at +X — the exact objection that moved the plaque off −X,
    noted in my own comment while building it there anyway because PLAN.md had reserved +X.
-3. **Nothing legible**, which was three things at once and none of them the camera angle:
-   `root` carried a fixed px size and the centering (CLAUDE.md's documented gotcha — content
-   pins top-left; all four working WorldPanels use one identical `root`); `⬜`/`⬛` rendered as
-   big emoji squares (the glyph rule isn't only about chess pieces); and **the faces read
-   "—" because the table was idle** — `SeatClock` is null when nothing is live, and an idle
-   table is the state you find every table in. A real clock shows its bank until you press
-   it, so it does now.
+3. **Nothing legible**, which was four things at once and none of them the camera angle:
+   `root` carried a fixed px size and the centering (CLAUDE.md's documented gotcha —
+   content pins top-left; all four working WorldPanels use one identical `root`); `⬜`/`⬛`
+   rendered as big emoji squares (the glyph rule isn't only about chess pieces); the faces
+   read "—" on an idle table (`SeatClock` is null when nothing is live, and idle is the
+   state you find every table in — it shows the bank now, and "∞" when untimed); and
+   finally **the clock text was wrapping**. No `white-space: nowrap` and no
+   `flex-shrink: 0`, so "2:48" at 76px wrapped in its auto-width div, and "a div's auto
+   height does not grow for wrapped text" clipped it to a sliver — a dot, seen end-on down
+   the strip. "W" and "+19" rendered because they were too short to wrap. **If some text
+   on a panel renders and some doesn't, check the string lengths first.**
 
-**A wrong theory worth recording**: I concluded from the screenshot that a −Y strip could
-never be seat-legible (text baseline down the sightline) and was ready to move it back to
-+X. Wrong — the text wasn't illegible, it wasn't *rendering*. Fix the thing that is broken
-before redesigning around it.
+**Two wrong theories worth recording, both diagnosed off a screenshot.** First: that a −Y
+strip could never be seat-legible (text baseline down the sightline), and it should move
+back to +X — wrong, the text wasn't illegible, it wasn't *rendering*. Second: that the
+table must be Unlimited — wrong, and `gambit_clock` printed `Blitz 3+0 … SEAM W=168.1s`
+to prove it. **Both were redesigns proposed around a bug.** The lesson is the command:
+`gambit_clock` now prints the whole chain, and it settled in one line what two rounds of
+reading pixels got backwards. Reach for it before reasoning about geometry.
+
+**Every one of the four failures was a rule already written in CLAUDE.md.** The
+WorldPanel-scale constant, the one true `root`, the emoji trap, the nowrap/flex-shrink
+pair. Reading that file once per session is evidently not the same as applying it — when a
+panel misbehaves, diff it against the panel that works rather than reasoning from
+principles.
 
 It is now a **thin low strip beside the board at −Y**, opposite the plaque, with **one** face
 angled up across the board — where a real chess clock goes, and why one face serves both

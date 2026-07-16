@@ -975,6 +975,18 @@ doubt check `https://sbox.game/api/` or file a false-positive at
   items; source newlines render as literal whitespace — keep each text div's content on
   one line. A div's auto height does not grow for wrapped text — use one div per line in
   a flex column.
+- **…which means every text div in a flex row needs `white-space: nowrap` AND
+  `flex-shrink: 0`.** These two are one rule, and it is the single most expensive line in
+  this file. A flex item's *default* is to shrink when the row is tight; a shrunk text div
+  doesn't ellipsize, it **wraps**; and the rule above then clips it to a sliver of its
+  first line. The result is not a missing element or an error — it is a **few visible
+  pixels of the middle of your text**, which reads as a rendering bug anywhere but the
+  stylesheet. `SpectatorSeatPanel` carries `.tag > div { flex-shrink: 0 }` plus `nowrap`
+  on every text div for exactly this; `TableClockPanel` omitted both and rendered its
+  clock as **a single dot** while `gambit_clock` proved the value was `168.1s` the whole
+  time. Short strings hide it — "W" cannot wrap, so a one-character label renders fine
+  next to a four-character one that doesn't. **If some text on a panel renders and some
+  doesn't, check the string lengths before you check anything else.**
 - Deriving font sizes from `Panel.Box.Rect` on a WorldPanel doesn't work — use fixed px
   in intrinsic pixel space, calibrated against a known-good panel.
 - Don't make a panel `overflow: scroll` if it has draggable controls — s&box drag-scrolls

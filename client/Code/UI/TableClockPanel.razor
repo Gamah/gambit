@@ -93,6 +93,25 @@
 		font-family: $wall-font;
 	}
 
+	/*
+		THE TWO RULES THAT MAKE TEXT APPEAR AT ALL, both lifted from SpectatorSeatPanel —
+		the other WorldPanel that renders a clock, which carries both for this exact
+		reason. Panels are flex containers and text divs are flex items:
+
+		  flex-shrink: 0   — a flex item's DEFAULT is to shrink when the row is tight. A
+		                     squeezed text div doesn't ellipsize, it just gets narrow.
+		  white-space: nowrap — without it a squeezed div WRAPS, and CLAUDE.md's gotcha
+		                     bites: "a div's auto height does not grow for wrapped text".
+		                     The text is then clipped to a sliver of its first line.
+
+		Between them that is why this panel rendered "W" (one char, can't wrap) and "+19"
+		(short) but showed the clock as a single dot: "2:48" at 76px was the only string
+		long enough to wrap, and a sliver of it seen end-on down the strip is a dot. The
+		data was never wrong — gambit_clock printed W=168.1s the whole time.
+	*/
+	.fit > div { flex-shrink: 0; }
+	.face > div { flex-shrink: 0; }
+
 	/* Big: read from a seat across a table, not from a HUD a foot from your face. */
 	.face {
 		flex-direction: row;
@@ -101,6 +120,7 @@
 		padding: 4px 20px;
 		border-radius: 10px;
 		background-color: rgba(12, 12, 16, 0.5);
+		white-space: nowrap;
 	}
 
 	/*
@@ -111,6 +131,7 @@
 		this does not.
 	*/
 	.who {
+		white-space: nowrap;
 		font-size: 34px;
 		font-weight: bold;
 		letter-spacing: 2px;
@@ -118,6 +139,7 @@
 	}
 
 	.time {
+		white-space: nowrap;
 		font-size: 76px;
 		font-weight: bold;
 		color: rgba(255, 255, 255, 0.45);
@@ -142,7 +164,9 @@
 		gap: 6px;
 	}
 
-	.lead { font-size: 40px; font-weight: bold; }
+	.mid > div { flex-shrink: 0; }
+
+	.lead { white-space: nowrap; font-size: 40px; font-weight: bold; }
 	.lead.white { color: #e8e6df; }
 	.lead.black { color: #9a9aa8; }
 
