@@ -68,6 +68,20 @@ const (
 
 	// A game stream that drops while the game is still live is retried this often.
 	streamRetryDelay = 2 * time.Second
+
+	// How long a direct challenge waits for its opponent to answer.
+	//
+	// This is a HAZARD BOUND, not a UX timeout. A keep-alive challenge does not
+	// expire on its own — lila sweeps an unseen real-time challenge after 20s,
+	// but our stream pings it every 15s precisely to stop that, so it lives for
+	// as long as we hold on. Without a ceiling here, a client that crashes or
+	// drops off without calling DELETE would leave an invitation open
+	// indefinitely, acceptable by a stranger long after the player walked away.
+	//
+	// relay.Cancel covers the player who stands up properly; this covers the one
+	// who doesn't. Two minutes is far longer than a person takes to answer a
+	// challenge they are awake for.
+	challengeAnswerTTL = 2 * time.Minute
 )
 
 // Play status values, as seen by the client.
@@ -110,10 +124,20 @@ type PlayState struct {
 	WhiteIncMs  int64 `json:"white_inc_ms"`
 	BlackIncMs  int64 `json:"black_inc_ms"`
 
-	// Seek marks a game against a random lichess opponent rather than the player
-	// opposite you. The stranger has no SteamID, so one of the seat ids is empty
-	// and the client must read YourColor rather than matching SteamIDs.
+	// Seek marks a game whose opponent is a lichess stranger rather than the
+	// player sitting opposite you — a lobby seek OR a direct challenge to a
+	// username. The stranger has no SteamID, so one of the seat ids is empty and
+	// the client must read YourColor rather than matching SteamIDs.
+	//
+	// It is deliberately the STRANGER-OPPOSITE flag rather than literally "this
+	// was a seek": every client-side use of it asks "is there a Gambit player in
+	// the other seat?", and a challenge answers that the same way a seek does.
+	// Opponent is what tells the two apart.
 	Seek bool `json:"seek"`
+	// Opponent is the lichess username we challenged directly, when that is how
+	// this game started. Empty for a seek (nobody was named) and for the paired
+	// flow (the other seat is a Gambit player, in the *Name fields).
+	Opponent string `json:"opponent,omitempty"`
 	// YourColor is stamped PER CALLER at write time ("white"/"black"/""), because
 	// it is the only per-caller field in an otherwise shared snapshot.
 	YourColor string `json:"your_color,omitempty"`
@@ -130,13 +154,16 @@ type PlayState struct {
 	BlackTakeback bool `json:"black_takeback"`
 }
 
-// PlayRequest is an intent to put a game on lichess. Two shapes:
+// PlayRequest is an intent to put a game on lichess. Three shapes:
 //
-//	Seek == false — the paired flow: two seated players challenge each other.
-//	                Both seats must ask; White and Black are both known up front.
-//	Seek == true  — the lobby flow: ONE player seeks a random opponent. Only
-//	                SeekerSteamID is known, and the opponent is a lichess account
-//	                that has nothing to do with this lobby.
+//	paired    — two seated players challenge each other. Both seats must ask;
+//	            White and Black are both known up front.
+//	Seek      — the lobby flow: ONE player seeks a RANDOM opponent. Only
+//	            SoloSteamID is known, and the opponent is a lichess account that
+//	            has nothing to do with this lobby.
+//	Challenge — ONE player challenges a NAMED lichess user (Opponent). Same
+//	            shape as a seek in every way that matters here: one Gambit
+//	            player, one stranger, one intent.
 type PlayRequest struct {
 	ClientGameID string
 	LimitSeconds int
@@ -147,10 +174,19 @@ type PlayRequest struct {
 	WhiteSteamID int64
 	BlackSteamID int64
 
-	// Seek flow only.
-	Seek          bool
-	SeekerSteamID int64
-	Rated         bool
+	// Solo flows (Seek and Challenge) — see solo().
+	Seek bool
+	// Challenge names a lichess user directly rather than asking the lobby for
+	// anyone. It reaches BLITZ, which a seek cannot, and it spends the per-user
+	// challenge budget rather than the 5/min-per-IP lobby budget the whole
+	// playerbase shares — so it is the cheaper of the two for us.
+	Challenge bool
+	// Opponent is the lichess username to challenge. Challenge flow only.
+	Opponent string
+	// SoloSteamID is the ONE Gambit player in a solo flow — the seeker, or the
+	// challenger. There is no second seat: the opponent is a lichess account.
+	SoloSteamID int64
+	Rated       bool
 	// RatingRange is "1500-1800" (absolute, never a delta). Empty does NOT mean
 	// "any" — lila reads an omitted range as "no preference" and substitutes a
 	// Gaussian band around the seeker's real rating. Gambit always sends empty;
@@ -165,23 +201,39 @@ type PlayRequest struct {
 // Only meaningful for the paired flow — a seek has nobody to agree with.
 func (r PlayRequest) matches(o PlayRequest) bool {
 	return r.Seek == o.Seek &&
+		r.Challenge == o.Challenge &&
+		r.Opponent == o.Opponent &&
 		r.WhiteSteamID == o.WhiteSteamID &&
 		r.BlackSteamID == o.BlackSteamID &&
-		r.SeekerSteamID == o.SeekerSteamID &&
+		r.SoloSteamID == o.SoloSteamID &&
 		r.LimitSeconds == o.LimitSeconds &&
 		r.IncrementSec == o.IncrementSec &&
 		r.Unlimited == o.Unlimited
 }
 
+// solo reports a flow with exactly ONE Gambit player and one lichess stranger:
+// a lobby seek, or a direct challenge to a username. The paired flow is the only
+// one with two.
+func (r PlayRequest) solo() bool { return r.Seek || r.Challenge }
+
 // intentsNeeded is how many independent, separately-authenticated players must
 // ask before a game is started.
 //
 // TWO for the paired flow, and that is the whole authorisation story (see the
-// file header). ONE for a seek, which needs no consent from anyone else: you are
-// spending your own token to play a stranger who opts in on lichess's side, by
-// their own choice, in their own client. Nobody is dragged anywhere.
+// file header). ONE for a solo flow, which needs no consent from anyone else:
+// you are spending your own token to play a stranger who opts in on lichess's
+// side, by their own choice, in their own client. Nobody is dragged anywhere.
+//
+// A direct CHALLENGE is one intent for exactly that reason, and the distinction
+// is worth being precise about, because "challenge" is also the paired flow's
+// mechanism. What makes the paired flow need two intents is that gamchess holds
+// BOTH tokens and would ACCEPT for the other player — so one intent could drag a
+// linked player into a game. Here gamchess holds only the challenger's token and
+// accepts nothing: the named opponent is a lichess user who must click Accept in
+// their own client, which is consent given directly to lichess. If they never
+// do, no game happens.
 func (r PlayRequest) intentsNeeded() int {
-	if r.Seek {
+	if r.solo() {
 		return 1
 	}
 	return 2
@@ -206,11 +258,19 @@ type play struct {
 	finished time.Time
 	cancel   context.CancelFunc
 
-	// seekerColor is which side lichess gave the seeker, learned from gameFull.
+	// soloColor is which side lichess gave our one player, learned from gameFull.
 	// Empty until then — a seek gets 50/50 and we don't get to choose.
-	// seekerLichessID is what we match gameFull's players against. Both mu-guarded.
-	seekerColor     string
-	seekerLichessID string
+	// soloLichessID is what we match gameFull's players against. Both mu-guarded.
+	soloColor     string
+	soloLichessID string
+
+	// challengeID is the lichess challenge we opened and have not yet seen
+	// answered. Held so Cancel can POST /cancel against it.
+	//
+	// Not merely hanging up the keep-alive stream: closing that stream only stops
+	// lila's 15s ping, after which the challenge is swept to Status.Offline —
+	// which survives THREE HOURS and stays acceptable. See lichess.ChallengeKeepAlive.
+	challengeID string
 }
 
 func newPlay(req PlayRequest) *play {
@@ -219,11 +279,11 @@ func newPlay(req PlayRequest) *play {
 		created: time.Now(),
 		intents: map[int64]bool{},
 		changed: make(chan struct{}),
-		state:   PlayState{Status: playWaiting, Seek: req.Seek},
+		state:   PlayState{Status: playWaiting, Seek: req.solo(), Opponent: req.Opponent},
 	}
-	// A seek has one known player and one stranger; which colour they get is
-	// lichess's to decide, so neither seat is filled in until gameFull lands.
-	if !req.Seek {
+	// A solo flow has one known player and one stranger; which colour they get is
+	// lichess's to confirm, so neither seat is filled in until gameFull lands.
+	if !req.solo() {
 		p.state.WhiteSteamID = strconv.FormatInt(req.WhiteSteamID, 10)
 		p.state.BlackSteamID = strconv.FormatInt(req.BlackSteamID, 10)
 	}
@@ -268,20 +328,25 @@ func (p *play) fail(format string, args ...any) {
 // this game. Every write action goes through this — a caller may only act for
 // the seat they hold.
 //
-// For a SEEK there is one Gambit player and one stranger, and we don't know
+// For a SOLO flow there is one Gambit player and one stranger, and we don't know
 // which colour lichess gave us until gameFull arrives — so the colour may be ""
 // while ok is true. Callers must not read the colour as "they're white".
+//
+// A challenge asks for a colour and lichess honours it, but this still waits for
+// gameFull to CONFIRM rather than trusting what we asked for: lichess is the
+// authority on its own game, and a board that assumed would be lying if they
+// ever disagreed.
 func (p *play) seatOf(steamID int64) (string, bool) {
 	if steamID == 0 {
 		return "", false // 0 is "empty seat" everywhere in this codebase
 	}
-	if p.req.Seek {
-		if steamID != p.req.SeekerSteamID {
+	if p.req.solo() {
+		if steamID != p.req.SoloSteamID {
 			return "", false
 		}
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		return p.seekerColor, true
+		return p.soloColor, true
 	}
 	switch steamID {
 	case p.req.WhiteSteamID:
@@ -315,57 +380,83 @@ type relay struct {
 
 	mu    sync.Mutex
 	plays map[string]*play
-	// seeks is steamID → the client_game_id of that player's active seek. One per
-	// user, because a seek needs an event stream and lichess allows one of those
-	// per token.
-	seeks map[int64]string
+	// pending is steamID → the client_game_id of that player's outstanding SOLO
+	// request: a lobby seek, or a direct challenge waiting to be answered. One
+	// per user.
+	//
+	// The two flows land in the same slot for different reasons, and only one of
+	// them is technical:
+	//
+	//   - A SEEK must be alone because it needs an event stream, and lichess
+	//     allows one per token: a second would silently close the first, leaving
+	//     that seek unable to learn its own game had started.
+	//   - A CHALLENGE has no such constraint (its verdict arrives on the
+	//     challenge's own stream, not the event stream). It shares the slot as a
+	//     POLICY: a player sits at ONE board, so a second outstanding request is
+	//     one they cannot be waiting at — and both must be cancelled when they
+	//     stand up. One slot is one thing to cancel.
+	pending map[int64]string
 }
 
 func newRelay(log *zap.Logger, db *pgxpool.Pool, c *lichess.Cipher) *relay {
 	return &relay{
-		log:    log,
-		db:     db,
-		cipher: c,
-		plays:  map[string]*play{},
-		seeks:  map[int64]string{},
+		log:     log,
+		db:      db,
+		cipher:  c,
+		plays:   map[string]*play{},
+		pending: map[int64]string{},
 	}
 }
 
-// claimSeek reserves this player's single seek slot, or explains why not.
-// Re-asking for the SAME seek is fine — that's just the client re-posting.
-func (r *relay) claimSeek(steamID int64, clientGameID string) error {
+// claimPending reserves this player's single solo-request slot, or explains why
+// not. Re-asking for the SAME one is fine — that's just the client re-posting.
+func (r *relay) claimPending(steamID int64, clientGameID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if existing, ok := r.seeks[steamID]; ok && existing != clientGameID {
-		// Is the old one actually still going? A finished/failed seek shouldn't
+	if existing, ok := r.pending[steamID]; ok && existing != clientGameID {
+		// Is the old one actually still going? A finished/failed request shouldn't
 		// block a new one.
 		if p, live := r.plays[existing]; live {
 			if st, _ := p.snapshot(); st.Status != playOver && st.Status != playFailed {
-				return errors.New("you already have a lichess seek waiting — cancel that one first")
+				return errors.New("you already have a lichess game waiting — cancel that one first")
 			}
 		}
 	}
-	r.seeks[steamID] = clientGameID
+	r.pending[steamID] = clientGameID
 	return nil
 }
 
-// releaseSeek frees a player's seek slot.
-func (r *relay) releaseSeek(steamID int64, clientGameID string) {
+// releasePending frees a player's solo-request slot.
+func (r *relay) releasePending(steamID int64, clientGameID string) {
 	r.mu.Lock()
-	if r.seeks[steamID] == clientGameID {
-		delete(r.seeks, steamID)
+	if r.pending[steamID] == clientGameID {
+		delete(r.pending, steamID)
 	}
 	r.mu.Unlock()
 }
 
-// Cancel stops a play the caller owns — a seeker giving up on waiting, or a
-// player standing up. Only a participant may do it.
+// Cancel stops a play the caller owns — a seeker giving up on waiting, a
+// challenger walking away before their opponent answers, or a player standing
+// up. Only a participant may do it.
 //
-// Cancelling a seek matters more than it looks: the seek IS the held connection,
-// so this is what actually withdraws it from lichess's lobby. Without it, a
-// player who walked away would stay pairable and get dropped into a game nobody
-// is sitting at.
+// Cancelling matters more than it looks, and for a DIFFERENT reason per flow:
+//
+//   - A SEEK is the held connection, so dropping our context is itself the
+//     withdrawal. Without it a player who walked away stays pairable and gets
+//     dropped into a game nobody is sitting at.
+//   - A CHALLENGE is NOT withdrawn by hanging up, and this is the trap. Closing
+//     the keep-alive stream only stops lila's 15s ping; the challenge is then
+//     swept to Status.Offline, where it lives for THREE HOURS and is still
+//     acceptable (a ping revives it via setSeenAgain). So a challenge needs an
+//     explicit POST /cancel, or standing up leaves a live invitation a stranger
+//     can accept long after the player has gone — starting a real game on their
+//     account, at a board nobody is sitting at, which then loses on time. That
+//     is the exact harm the two-intent rule exists to prevent, self-inflicted.
+//
+// The POST is best-effort and never fatal: the caller is already leaving, and
+// there is nothing useful to tell them if lichess is unreachable. It runs on a
+// fresh context because p.cancel has just killed this play's own.
 func (r *relay) Cancel(p *play, steamID int64) error {
 	if _, ok := p.seatOf(steamID); !ok {
 		return errors.New("you are not in this game")
@@ -381,14 +472,40 @@ func (r *relay) Cancel(p *play, steamID int64) error {
 	if p.cancel != nil {
 		p.cancel()
 	}
-	if p.req.Seek {
-		r.releaseSeek(p.req.SeekerSteamID, p.req.ClientGameID)
+	if p.req.solo() {
+		r.releasePending(p.req.SoloSteamID, p.req.ClientGameID)
 	}
+
+	p.mu.Lock()
+	challengeID := p.challengeID
+	p.mu.Unlock()
+	if challengeID != "" {
+		go r.cancelChallenge(p.req.SoloSteamID, challengeID)
+	}
+
 	p.update(func(s *PlayState) {
 		s.Status = playFailed
 		s.Error = "cancelled"
 	})
 	return nil
+}
+
+// cancelChallenge withdraws an outstanding lichess challenge. Best-effort: it is
+// tidy-up on a path whose caller has already walked away.
+func (r *relay) cancelChallenge(steamID int64, challengeID string) {
+	ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
+	defer done()
+
+	token, _, err := r.credentials(ctx, steamID)
+	if err != nil {
+		r.log.Warn("could not load credentials to cancel a challenge",
+			zap.String("challenge_id", challengeID), zap.Error(err))
+		return
+	}
+	if err := lichess.CancelChallenge(ctx, token, challengeID); err != nil {
+		r.log.Warn("could not cancel an abandoned lichess challenge",
+			zap.String("challenge_id", challengeID), zap.Error(err))
+	}
 }
 
 // Enabled reports whether lichess is CONFIGURED. No key ⇒ no tokens can be
@@ -427,12 +544,11 @@ func (r *relay) credentials(ctx context.Context, steamID int64) (token, username
 func (r *relay) Join(ctx context.Context, steamID int64, req PlayRequest) (*play, error) {
 	r.sweep()
 
-	// One seek per user, ever. Not a nicety: a seek needs an event stream, and
-	// lichess allows ONE per token — opening a second silently closes the first,
-	// so two concurrent seeks would leave the earlier one unable to learn its own
-	// game started. lichess independently caps concurrent seeks per user too.
-	if req.Seek {
-		if err := r.claimSeek(steamID, req.ClientGameID); err != nil {
+	// One outstanding solo request per user — see relay.pending for why a seek
+	// must be alone (lichess's one-event-stream-per-token rule) and why a
+	// challenge shares the slot anyway (a player sits at one board).
+	if req.solo() {
+		if err := r.claimPending(steamID, req.ClientGameID); err != nil {
 			return nil, err
 		}
 	}
@@ -484,11 +600,135 @@ func (r *relay) Lookup(clientGameID string) (*play, bool) {
 
 // run drives one game start to finish.
 func (r *relay) run(ctx context.Context, p *play) {
-	if p.req.Seek {
+	switch {
+	case p.req.Seek:
 		r.runSeek(ctx, p)
+	case p.req.Challenge:
+		r.runChallenge(ctx, p)
+	default:
+		r.runPaired(ctx, p)
+	}
+}
+
+// runChallenge challenges a named lichess user and relays the game if they
+// accept.
+//
+// Simpler than the seek in the one way that counts: a challenge's id IS its
+// game's id, so there is nothing to learn from /api/stream/event and no race
+// between two streams. The keep-alive stream both holds the challenge open and
+// delivers the verdict.
+//
+// The colour is not random. The player is already sitting on one side of a
+// physical board, and the whole point of the relay is that the lichess game
+// mirrors that board — the same reasoning that makes the paired flow challenge
+// with "white" rather than letting lichess pick.
+func (r *relay) runChallenge(ctx context.Context, p *play) {
+	token, _, err := r.credentials(ctx, p.req.SoloSteamID)
+	if err != nil {
+		p.fail("%s", err)
 		return
 	}
-	r.runPaired(ctx, p)
+
+	// Our own lichess id, so gameFull can confirm which side we were given.
+	link, err := store.LichessLinkBySteamID(ctx, r.db, p.req.SoloSteamID)
+	if err != nil {
+		p.fail("%s", err)
+		return
+	}
+
+	p.mu.Lock()
+	p.soloLichessID = link.LichessID
+	p.mu.Unlock()
+
+	// Blocks until the opponent answers, we hang up, or the answer TTL expires.
+	// onOpen fires as soon as lichess mints the challenge — before anyone has
+	// answered — which is what gives Cancel something to withdraw.
+	waitCtx, stopWaiting := context.WithTimeout(ctx, challengeAnswerTTL)
+	defer stopWaiting()
+
+	done, err := lichess.ChallengeKeepAlive(waitCtx, token, p.req.Opponent, lichess.ChallengeParams{
+		LimitSeconds:     p.req.LimitSeconds,
+		IncrementSeconds: p.req.IncrementSec,
+		Unlimited:        p.req.Unlimited,
+		Rated:            p.req.Rated,
+		Color:            p.req.Color,
+	}, func(res lichess.ChallengeResult) {
+		p.mu.Lock()
+		p.challengeID = res.ID
+		p.mu.Unlock()
+		p.update(func(s *PlayState) {
+			s.Status = playChallenging
+			s.URL = res.URL
+		})
+	})
+
+	if ctx.Err() != nil {
+		return // cancelled: the player stood up, and Cancel has published why
+	}
+	// The answer TTL fired: the opponent never responded. Withdraw the invitation
+	// we're still holding open — hanging up alone leaves it acceptable for hours
+	// (see Cancel) — and say so. waitCtx, not ctx, so this is distinct from the
+	// player standing up (handled above).
+	if waitCtx.Err() != nil {
+		p.mu.Lock()
+		challengeID := p.challengeID
+		p.mu.Unlock()
+		if challengeID != "" {
+			go r.cancelChallenge(p.req.SoloSteamID, challengeID)
+		}
+		p.fail("%s didn't answer the challenge.", p.req.Opponent)
+		return
+	}
+	if err != nil {
+		var apiErr *lichess.APIError
+		if errors.As(err, &apiErr) && apiErr.RateLimited() {
+			p.fail("lichess is rate-limiting challenges right now. Try again in a minute.")
+			return
+		}
+		// lichess's own words are the useful ones here: "No such user: bob",
+		// "You cannot challenge yourself", "bob does not accept challenges".
+		p.fail("lichess wouldn't send the challenge: %s", err)
+		return
+	}
+
+	switch done {
+	case lichess.ChallengeAccepted:
+	case lichess.ChallengeDeclined:
+		p.fail("%s declined the challenge.", p.req.Opponent)
+		return
+	case lichess.ChallengeCanceled:
+		p.fail("the challenge was cancelled.")
+		return
+	default:
+		p.fail("lichess answered the challenge with %q, which we don't understand.", done)
+		return
+	}
+
+	p.mu.Lock()
+	gameID := p.challengeID
+	p.mu.Unlock()
+	if gameID == "" {
+		// Accepted a challenge we never saw an id for. Nothing to stream.
+		p.fail("lichess accepted a challenge we have no id for")
+		return
+	}
+
+	// Answered, so there is nothing left to withdraw — and leaving the id set
+	// would have a later Cancel POST /cancel against a LIVE GAME. lichess honours
+	// that before either side has moved (its cancel doubles as an abort), so this
+	// is not cosmetic: standing up would abort the game instead of resigning it.
+	p.mu.Lock()
+	p.challengeID = ""
+	p.mu.Unlock()
+
+	// The challenge id IS the game id once accepted.
+	p.update(func(s *PlayState) {
+		s.Status = playLive
+		s.GameID = gameID
+		s.URL = "https://lichess.org/" + gameID
+	})
+
+	r.streamGame(ctx, p, token, gameID)
 }
 
 // runSeek finds a random opponent on lichess and then relays the game.
@@ -502,19 +742,19 @@ func (r *relay) run(ctx context.Context, p *play) {
 // The event stream is one-per-token server-side (a second closes the first), so
 // exactly one seek per user may run at a time — enforced by relay.seeks.
 func (r *relay) runSeek(ctx context.Context, p *play) {
-	token, _, err := r.credentials(ctx, p.req.SeekerSteamID)
+	token, _, err := r.credentials(ctx, p.req.SoloSteamID)
 	if err != nil {
 		p.fail("%s", err)
 		return
 	}
 
 	// The seek's own lichess id, so we can tell which colour gameFull gave us.
-	link, err := store.LichessLinkBySteamID(ctx, r.db, p.req.SeekerSteamID)
+	link, err := store.LichessLinkBySteamID(ctx, r.db, p.req.SoloSteamID)
 	if err != nil {
 		p.fail("%s", err)
 		return
 	}
-	seekerLichessID := link.LichessID
+	soloLichessID := link.LichessID
 
 	gameCh := make(chan string, 1)
 	eventCtx, stopEvents := context.WithCancel(ctx)
@@ -599,7 +839,7 @@ func (r *relay) runSeek(ctx context.Context, p *play) {
 	})
 
 	p.mu.Lock()
-	p.seekerLichessID = seekerLichessID
+	p.soloLichessID = soloLichessID
 	p.mu.Unlock()
 
 	r.streamGame(ctx, p, token, gameID)
@@ -671,7 +911,7 @@ func (r *relay) streamGame(ctx context.Context, p *play, token, gameID string) {
 			switch {
 			case e.Full != nil:
 				full := e.Full
-				p.resolveSeekColor(full)
+				p.resolveSoloColor(full)
 				p.update(func(s *PlayState) {
 					s.WhiteName = full.White.Name
 					s.BlackName = full.Black.Name
@@ -706,28 +946,31 @@ func (r *relay) streamGame(ctx context.Context, p *play, token, gameID string) {
 	}
 }
 
-// resolveSeekColor learns which side a seeker was given, by matching their
+// resolveSoloColor learns which side our one player was given, by matching their
 // lichess id against the game's players.
 //
-// A seek is 50/50 and lichess decides, so this is the only way to know. It also
-// fills in the seeker's SteamID on the right seat, which is what makes seatOf —
-// and therefore every write action — work for a seek.
+// A seek is 50/50 and lichess decides, so this is the only way to know there. A
+// challenge asked for a colour, but this confirms it from the game rather than
+// assuming the ask was honoured — lichess is the authority.
+//
+// It also fills in that player's SteamID on the right seat, which is what makes
+// seatOf — and therefore every write action — work for a solo flow.
 //
 // No-op for the paired flow, where both colours were fixed by the challenge.
-func (p *play) resolveSeekColor(full *lichess.GameFull) {
-	if !p.req.Seek || full == nil {
+func (p *play) resolveSoloColor(full *lichess.GameFull) {
+	if !p.req.solo() || full == nil {
 		return
 	}
 
 	p.mu.Lock()
 	color := ""
-	switch p.seekerLichessID {
+	switch p.soloLichessID {
 	case full.White.ID:
 		color = "white"
 	case full.Black.ID:
 		color = "black"
 	}
-	p.seekerColor = color
+	p.soloColor = color
 	p.mu.Unlock()
 
 	if color == "" {
@@ -737,13 +980,13 @@ func (p *play) resolveSeekColor(full *lichess.GameFull) {
 		return
 	}
 
-	seeker := strconv.FormatInt(p.req.SeekerSteamID, 10)
+	solo := strconv.FormatInt(p.req.SoloSteamID, 10)
 	p.update(func(s *PlayState) {
 		if color == "white" {
-			s.WhiteSteamID = seeker
+			s.WhiteSteamID = solo
 			s.BlackSteamID = "" // a stranger: no SteamID exists for them
 		} else {
-			s.BlackSteamID = seeker
+			s.BlackSteamID = solo
 			s.WhiteSteamID = ""
 		}
 	})
@@ -860,10 +1103,10 @@ func (r *relay) sweep() {
 		if p.done(now) {
 			dead = append(dead, p)
 			delete(r.plays, id)
-			// Free the seeker's slot with the play, or one abandoned seek would
-			// lock them out of seeking again forever.
-			if p.req.Seek && r.seeks[p.req.SeekerSteamID] == id {
-				delete(r.seeks, p.req.SeekerSteamID)
+			// Free the player's solo slot with the play, or one abandoned seek or
+			// challenge would lock them out of asking again forever.
+			if p.req.solo() && r.pending[p.req.SoloSteamID] == id {
+				delete(r.pending, p.req.SoloSteamID)
 			}
 		}
 	}

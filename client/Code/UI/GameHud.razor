@@ -190,6 +190,34 @@
 					{
 						<div class="setup-hint">@LichessTable.WhySeekNot( ctrl.Tc )</div>
 					}
+
+					@* Or challenge a SPECIFIC lichess player by name. Same speed floor as
+					   playing the person opposite (blitz), NOT the seek's (rapid) — so it
+					   shares CanMirror, and only needs a seat (for the colour it plays).
+
+					   The header is outside the CanMirror check for the same reason the
+					   seek's is outside CanSeek: a control that can't be offered still has
+					   to say so where it would have been, or its absence reads as a bug.
+					   Gated on holding a seat, though — with no seat there is no side to
+					   challenge with, and nothing useful to say about that. *@
+					@if ( LichessSeatColor( ctrl ) is string seatColor )
+					{
+						<div class="setup-label">OR CHALLENGE A LICHESS PLAYER</div>
+						@if ( LichessTable.CanMirror( ctrl.Tc ) )
+						{
+							<div class="seek-row">
+								<div class="chip @( _challengeRated ? "on" : "" )" onclick="@( () => ToggleChallengeRated() )">@( _challengeRated ? "Rated" : "Casual" )</div>
+								<div class="chip">You play @seatColor</div>
+							</div>
+							<TextEntry @ref="_challengeEntry" placeholder="lichess username" class="challenge-entry" maxlength="30" />
+							<div class="button lichess" onclick="@( () => StartChallenge() )">♞ Send the challenge</div>
+							<div class="setup-hint">@ChallengeHint()</div>
+						}
+						else
+						{
+							<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
+						}
+					}
 				}
 
 				@if ( BothSeated() )
@@ -212,11 +240,15 @@
 				</div>
 			}
 
-			@* Waiting for a stranger. Cancelling is what actually withdraws us from
-			   lichess's lobby — without it we stay pairable after walking away. *@
-			@if ( Lichess() is { Seeking: true } )
+			@* Waiting on an opponent who isn't in this lobby — a lobby seek, or a
+			   named user who hasn't accepted our challenge yet. Cancelling is what
+			   actually withdraws the request (a seek's held connection, a challenge's
+			   explicit /cancel) — without it we stay pairable after walking away. *@
+			@if ( Lichess() is { AwaitingOpponent: true } )
 			{
-				<div class="button" onclick="@( () => Lichess()?.CancelSeek() )">Cancel — stop looking</div>
+				<div class="button" onclick="@( () => Lichess()?.CancelWaiting() )">
+					@( Lichess() is { Challenging: true } ? "Cancel the challenge" : "Cancel — stop looking" )
+				</div>
 			}
 
 			@* Draw offers and takebacks. Read off the seam, so they work at a lichess
@@ -389,6 +421,16 @@
 	}
 	.chip:hover { background-color: rgba(255, 255, 255, 0.16); }
 	.chip.on { background-color: rgba(255, 255, 255, 0.2); color: white; }
+
+	.challenge-entry {
+		pointer-events: all;
+		font-size: 13px;
+		padding: 5px 7px;
+		border-radius: 5px;
+		background-color: rgba(0, 0, 0, 0.3);
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		color: white;
+	}
 
 	.button.draw { background-color: rgba(255, 214, 10, 0.18); }
 	.button.draw:hover { background-color: rgba(255, 214, 10, 0.34); }
@@ -565,6 +607,39 @@
 	bool _seekRated;
 	string _seekColor = "random";
 
+	// The username the player is challenging, and whether that game is rated. A
+	// challenge takes the SEAT's colour (a physical board has sides), so there is no
+	// colour chip here — unlike a seek.
+	TextEntry _challengeEntry;
+	bool _challengeRated;
+
+	void ToggleChallengeRated() { _challengeRated = !_challengeRated; StateHasChanged(); }
+
+	void StartChallenge()
+	{
+		string name = _challengeEntry?.Text?.Trim();
+		if ( string.IsNullOrWhiteSpace( name ) ) return;
+		Lichess()?.RequestChallenge( name, _challengeRated );
+		if ( _challengeEntry != null ) _challengeEntry.Text = "";
+		StateHasChanged();
+	}
+
+	/// <summary>The colour the local player would challenge with — their seat's side
+	/// — or null if they hold no seat at this table (so the challenge UI is hidden,
+	/// because we'd have no colour to ask lichess for). "white"/"black" as a display
+	/// string; the controller re-derives the seat itself rather than trusting this.</summary>
+	static string LichessSeatColor( LocalGameController ctrl )
+	{
+		if ( ctrl?.LocalSeat is not { } seat ) return null;
+		return seat == ChessSeat.White ? "White" : "Black";
+	}
+
+	string ChallengeHint()
+	{
+		if ( _challengeRated ) return "Rated: this will move your real lichess rating.";
+		return "They'll get a challenge on lichess to accept or decline.";
+	}
+
 	void ToggleSeekRated() { _seekRated = !_seekRated; StateHasChanged(); }
 
 	void CycleSeekColor()
@@ -649,14 +724,19 @@
 		if ( lc.Error is string e ) return e;
 
 		if ( lc.Seeking ) return "Looking for an opponent on lichess…";
+		if ( lc.Challenging ) return $"Waiting for {lc.ChallengeOpponent} to accept on lichess…";
 
 		return lc.State?.status switch
 		{
-			// A seek needs nobody else's client; only the paired flow waits.
-			"waiting" => lc.IsSeek ? "Looking for an opponent on lichess…"
+			// A seek or challenge needs nobody in THIS lobby; only the paired flow
+			// waits on the other seat's Gambit client.
+			"waiting" => lc.IsSeek ? "Waiting for a lichess opponent…"
 				: "Waiting for your opponent's client…",
-			"challenging" => lc.IsSeek ? "Looking for an opponent on lichess…"
-				: "Starting the game on lichess…",
+			// A named opponent hasn't answered yet — say who we're waiting on. A seek
+			// is still just looking. The paired flow is mid-handshake with lichess.
+			"challenging" => !lc.IsSeek ? "Starting the game on lichess…"
+				: lc.ChallengeOpponent is string who ? $"Waiting for {who} to accept on lichess…"
+				: "Looking for an opponent on lichess…",
 			_ => null,
 		};
 	}
@@ -718,7 +798,7 @@
 		{
 			string lichessName = seat == ChessSeat.White ? st.white_name : st.black_name;
 			if ( !string.IsNullOrEmpty( lichessName ) ) return lichessName;
-			if ( Lichess().Seeking || st.seek ) return "…";  // nobody yet
+			if ( Lichess().AwaitingOpponent || st.seek ) return "…";  // nobody yet
 		}
 
 		string name = Station()?.SeatName( seat );
@@ -844,6 +924,10 @@
 					src?.DrawOffered, src?.DrawPending,
 					src?.TakebackOffered, src?.TakebackPending,
 					src?.CanTakeback, PremoveUci(), src?.PremoveDropped ),
-				System.HashCode.Combine( _seekRated, _seekColor ) ) );
+				// Seek/challenge setup prefs, plus the challenge-waiting state: the
+				// "waiting for X to accept" line and the cancel button both hang off
+				// Challenging, and ChallengeOpponent names who (stable while it's set).
+				System.HashCode.Combine( _seekRated, _seekColor, _challengeRated,
+					Lichess()?.Challenging, Lichess()?.ChallengeOpponent ) ) );
 	}
 }

@@ -78,10 +78,11 @@ public sealed class LichessGameController : Component, IBoardGame
 
 	/// <summary>Seconds left on a seat's clock, per lichess.
 	///
-	/// <para>An unlimited TABLE game has no clock and lichess sends 0 for it, which
-	/// would read as a permanently flagged clock. A SEEK always has one — lichess's
-	/// lobby refuses a clockless real-time seek — so only the table's own control can
-	/// produce that case, and only it is filtered.</para>
+	/// <para>An unlimited game has no clock and lichess sends 0 for it, which would
+	/// read as a permanently flagged clock. The table's own control is what tells us
+	/// (a seek can never be unlimited — lichess's lobby refuses a clockless real-time
+	/// seek — but a direct CHALLENGE can, so this is not gated on the game being a
+	/// table game).</para>
 	///
 	/// <para><b>lichess only sends a clock when a MOVE happens</b>, so this is frozen at
 	/// the opponent's last move for the whole of a think. That is honest rather than
@@ -91,7 +92,7 @@ public sealed class LichessGameController : Component, IBoardGame
 	public float? SeatClock( ChessSeat seat )
 	{
 		if ( !Playing || State is not { } st ) return null;
-		if ( !st.seek && ( Local?.Tc.IsUnlimited ?? false ) ) return null;
+		if ( Local?.Tc.IsUnlimited ?? false ) return null;
 
 		// lichess sends milliseconds. 0 is NOT filtered: a genuine flag is real.
 		long ms = seat == ChessSeat.White ? st.white_time_ms : st.black_time_ms;
@@ -327,6 +328,71 @@ public sealed class LichessGameController : Component, IBoardGame
 	/// to false once a game exists.</summary>
 	public bool Seeking { get; private set; }
 
+	/// <summary>We challenged a named lichess user and are waiting for them to
+	/// accept. Drops to false once a game exists (or the challenge is declined).</summary>
+	public bool Challenging { get; private set; }
+
+	/// <summary>The named user we're challenging, for the HUD's waiting line. Null
+	/// unless a challenge is in flight.</summary>
+	public string ChallengeOpponent { get; private set; }
+
+	/// <summary>Waiting on an opponent who isn't in this lobby — a lobby seek, or a
+	/// direct challenge someone hasn't accepted yet. Both are cancelled the same way
+	/// (the leave path, the cancel button) and neither is a table game, so the code
+	/// that has to treat them alike reads this rather than either flag.</summary>
+	public bool AwaitingOpponent => Seeking || Challenging;
+
+	/// <summary>
+	/// Challenge a SPECIFIC lichess user by name.
+	///
+	/// <para>Reaches blitz where a seek cannot (lichess gates a challenge at blitz,
+	/// a seek at rapid), and works at a table you're sitting at alone — the opponent
+	/// isn't in this lobby. Like a seek it needs only this player: the named user
+	/// accepts in their own client, so there is nobody here to get consent from.</para>
+	///
+	/// <para>The colour defaults to the SEAT you hold: a physical board has sides,
+	/// and the lichess game should mirror the one you're sitting at. That is also why
+	/// this needs a station seat — without one we'd have no side to ask for.</para>
+	///
+	/// <para>The id is minted here, not taken from the table: a challenge to a
+	/// stranger is not the table's two-seat game, no local game starts, and there is
+	/// nobody to share a rendezvous key with.</para>
+	/// </summary>
+	public void RequestChallenge( string opponent, bool rated )
+	{
+		if ( Engaged || Local == null || Station == null ) return;
+		if ( LocalStationSeat is not { } seat ) return;
+		if ( !LichessTable.CanMirror( Local.Tc ) ) return;
+		if ( string.IsNullOrWhiteSpace( opponent ) ) return;
+
+		Engaged = true;
+		Challenging = true;
+		ChallengeOpponent = opponent.Trim();
+		_clientGameId = GamchessApi.NewClientGameId();
+		_version = 0;
+		Error = null;
+		string color = seat == ChessSeat.White ? "white" : "black";
+		_ = SendChallenge( _clientGameId, ChallengeOpponent, Local.Tc, rated, color );
+	}
+
+	async Task SendChallenge( string id, string opponent, TimeControl tc, bool rated, string color )
+	{
+		var res = await LichessApi.Challenge( id, opponent, tc, rated, color );
+		if ( res.Ok )
+		{
+			Adopt( GamchessApi.Deserialize<LichessPlayState>( res.Body ) );
+			return;
+		}
+
+		// lichess's own words are the useful ones ("No such user", "does not accept
+		// challenges"). Report and stop — never retry, the etiquette rule.
+		Error = ReadError( res );
+		Challenging = false;
+		ChallengeOpponent = null;
+		Engaged = false;
+		Log.Info( $"[Gambit] lichess challenge refused: {Error}" );
+	}
+
 	async Task SendSeek( string id, TimeControl tc, bool rated, string ratingRange, string color )
 	{
 		var res = await LichessApi.Seek( id, LichessTable.SeekTimeMinutes( tc ),
@@ -345,13 +411,16 @@ public sealed class LichessGameController : Component, IBoardGame
 		Log.Info( $"[Gambit] lichess seek refused: {Error}" );
 	}
 
-	/// <summary>Withdraw a seek we're still waiting on.
+	/// <summary>Withdraw an opponent request we're still waiting on — a seek, or a
+	/// challenge a named user hasn't answered.
 	///
-	/// <para>Load-bearing, not politeness: the held connection IS the seek, so this
-	/// is what actually removes us from lichess's lobby. Without it a player who
-	/// walked away stays pairable and gets dropped into a game nobody is sitting
-	/// at.</para></summary>
-	public void CancelSeek()
+	/// <para>Load-bearing for BOTH, in different ways gamchess handles. A seek's held
+	/// connection IS the seek, so dropping it removes us from lichess's lobby. A
+	/// challenge is NOT withdrawn by hanging up — gamchess POSTs an explicit /cancel
+	/// (closing the keep-alive stream only stops lichess's pings, leaving the
+	/// invitation acceptable for hours). Either way, without this a player who walked
+	/// away is dropped into a game nobody is sitting at.</para></summary>
+	public void CancelWaiting()
 	{
 		if ( !Engaged || string.IsNullOrEmpty( _clientGameId ) ) return;
 		if ( Playing ) return;   // too late — that's a resign, not a cancel
@@ -411,11 +480,13 @@ public sealed class LichessGameController : Component, IBoardGame
 	{
 		if ( Local == null ) return;
 
-		// A SEEK is not a table game — it has its own id, it starts from an idle
-		// table, and the local controller knows nothing about it. So none of the
-		// table-following logic below applies: leave it entirely alone or we'd
-		// cancel the player's seek the instant they asked for it.
-		if ( Seeking || IsSeek ) return;
+		// A SEEK or a CHALLENGE is not a table game — it has its own id, it starts
+		// from a table the local controller knows nothing about. So none of the
+		// table-following logic below applies: leave it entirely alone or we'd cancel
+		// the player's seek/challenge the instant they asked for it. IsSeek covers it
+		// once state has landed (a challenge is stranger-opposite too); AwaitingOpponent
+		// covers the window before the first answer.
+		if ( AwaitingOpponent || IsSeek ) return;
 
 		// The table went idle, or the game wasn't a lichess one — hand the board
 		// back to the local controller. (Idle is "neither playing nor showing a
@@ -440,6 +511,8 @@ public sealed class LichessGameController : Component, IBoardGame
 	{
 		Engaged = false;
 		Seeking = false;
+		Challenging = false;
+		ChallengeOpponent = null;
 		_pollBackoff = 0f;   // never let a dead game's backoff gag the next one
 		_reportedResult = false;
 		State = null;
@@ -459,8 +532,8 @@ public sealed class LichessGameController : Component, IBoardGame
 		if ( !Engaged || string.IsNullOrEmpty( _clientGameId ) ) return;
 
 		// The table reset under us (both players stood up) — drop it. Only for a
-		// table game: a seek mints its own id and the table never knows it.
-		if ( !Seeking && !IsSeek && Local != null && Local.ClientGameId != _clientGameId )
+		// table game: a seek or challenge mints its own id and the table never knows it.
+		if ( !AwaitingOpponent && !IsSeek && Local != null && Local.ClientGameId != _clientGameId )
 		{
 			Clear();
 			return;
@@ -566,8 +639,15 @@ public sealed class LichessGameController : Component, IBoardGame
 		// (GameHud reads Error ahead of everything else).
 		Error = string.IsNullOrEmpty( st.error ) ? null : st.error;
 
-		// Once lichess has actually paired us, we're no longer waiting.
-		if ( st.status == "live" || st.finished ) Seeking = false;
+		// Once lichess has actually paired us, we're no longer waiting. A challenge
+		// stays "challenging" until the opponent accepts, so it drops later than a
+		// seek — but both clear the moment a game is live.
+		if ( st.status == "live" || st.finished )
+		{
+			Seeking = false;
+			Challenging = false;
+			ChallengeOpponent = null;
+		}
 
 		// Lichess says it's over. The host's own rules never saw a single move of
 		// this game, so its Phase would sit at Playing forever and the table would

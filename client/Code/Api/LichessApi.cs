@@ -111,6 +111,36 @@ public static class LichessApi
 			color = color ?? "",
 		} ) );
 
+	/// <summary>
+	/// Challenge a SPECIFIC lichess user by name.
+	///
+	/// <para>One caller, like <see cref="Seek"/> and unlike <see cref="Play"/>: you
+	/// spend your own grant to invite a stranger who accepts in their own client, by
+	/// their own choice. Nobody in this lobby is committed to anything.</para>
+	///
+	/// <para><b>Reaches blitz</b>, where a seek cannot — lichess gates a challenge at
+	/// blitz and a seek at rapid. And it spends the per-user challenge budget rather
+	/// than the shared 5/min-per-IP lobby budget, so it is the kinder of the two on
+	/// the playerbase. <paramref name="tc"/> is the table's own control, in seconds
+	/// (a seek's unit is minutes — the asymmetry is lichess's).</para>
+	///
+	/// <para><paramref name="color"/> is the side the CHALLENGER wants; leaving it
+	/// empty lets gamchess default to the seat they hold at the table, so the lichess
+	/// game mirrors the board they're sitting at.</para>
+	/// </summary>
+	public static Task<GamchessApi.Result> Challenge( string clientGameId, string opponent,
+		TimeControl tc, bool rated, string color = null ) =>
+		GamchessApi.SendAuthed( "/api/v1/lichess/challenge", "POST", GamchessApi.Json( new
+		{
+			client_game_id = clientGameId,
+			opponent,
+			limit_seconds = tc.InitialSeconds,
+			increment_seconds = tc.IncrementSeconds,
+			unlimited = tc.IsUnlimited,
+			rated,
+			color = color ?? "",
+		} ) );
+
 	/// <summary>Withdraw a seek, or drop a pairing that hasn't started.
 	///
 	/// <para>Not politeness — the held connection IS the seek, so this is what

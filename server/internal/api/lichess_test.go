@@ -707,3 +707,147 @@ func TestAuditRejectsAWrongKey(t *testing.T) {
 		})
 	}
 }
+
+// ── Direct challenge to a named lichess user ──
+
+func challengeBody(clientGameID, opponent string, limit, inc int) string {
+	b, _ := json.Marshal(challengePost{
+		ClientGameID: clientGameID,
+		Opponent:     opponent,
+		LimitSeconds: limit,
+		IncrementSec: inc,
+	})
+	return string(b)
+}
+
+func challengeReq(body string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/lichess/challenge", strings.NewReader(body))
+	r.Header.Set(steamIDHeader, testSteamID)
+	r.Header.Set("Authorization", "Bearer good")
+	return r
+}
+
+func TestLichessChallengeValidation(t *testing.T) {
+	cases := map[string]string{
+		"not a uuid":       challengeBody("nope", "Mary", 180, 2),
+		"empty opponent":   challengeBody(validUUID, "", 180, 2),
+		"bad opponent":     challengeBody(validUUID, "has space", 180, 2),
+		"bullet is capped": challengeBody(validUUID, "Mary", 60, 0),
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			okVerifier(t)
+			w := httptest.NewRecorder()
+			lichessHandler(t).lichessChallenge(w, challengeReq(body))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("want 400, got %d (%s)", w.Code, w.Body)
+			}
+		})
+	}
+}
+
+func TestLichessChallengeNeedsSteam(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/lichess/challenge",
+		strings.NewReader(challengeBody(validUUID, "Mary", 180, 2)))
+	lichessHandler(t).lichessChallenge(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401 with no credentials, got %d", w.Code)
+	}
+}
+
+// A challenge is a SOLO flow: one intent starts it, the same as a seek and
+// unlike the paired /play. Nobody else is being committed to anything — the
+// named opponent consents on lichess's side, in their own client.
+func TestChallengeStartsOnOneIntent(t *testing.T) {
+	req := PlayRequest{
+		ClientGameID: validUUID,
+		Challenge:    true,
+		Opponent:     "Mary",
+		SoloSteamID:  1001,
+		LimitSeconds: 180,
+		IncrementSec: 2,
+	}
+	if n := req.intentsNeeded(); n != 1 {
+		t.Fatalf("a challenge needs 1 intent, got %d", n)
+	}
+	if !req.solo() {
+		t.Fatal("a challenge is a solo flow")
+	}
+}
+
+// A solo flow reports its one player through your_color once lichess confirms a
+// side — before that the seat is unknown, exactly as for a seek. Until gameFull
+// lands, seatOf returns ("", true): the player is IN the game but their colour
+// is not yet known.
+func TestChallengeSeatUnknownUntilGameFull(t *testing.T) {
+	p := newPlay(PlayRequest{
+		ClientGameID: validUUID, Challenge: true, Opponent: "Mary", SoloSteamID: 1001,
+	})
+
+	color, ok := p.seatOf(1001)
+	if !ok {
+		t.Fatal("the challenger is in the game even before a colour is known")
+	}
+	if color != "" {
+		t.Fatalf("colour should be unknown until gameFull, got %q", color)
+	}
+	// A stranger still holds no seat.
+	if _, ok := p.seatOf(9999); ok {
+		t.Fatal("only the challenger is in a solo game")
+	}
+
+	// gameFull arrives; our player is Black.
+	p.soloLichessID = "mary_lichess" // pretend we linked as this id
+	p.resolveSoloColor(&lichess.GameFull{
+		White: lichess.GamePlayer{ID: "stranger"},
+		Black: lichess.GamePlayer{ID: "mary_lichess"},
+	})
+	if color, ok := p.seatOf(1001); !ok || color != "black" {
+		t.Fatalf("after gameFull the challenger is Black: got (%q,%v)", color, ok)
+	}
+	st, _ := p.snapshot()
+	if st.BlackSteamID != "1001" || st.WhiteSteamID != "" {
+		t.Fatalf("the stranger's seat must stay empty: %+v", st)
+	}
+}
+
+// A challenge shares the one-solo-request-per-player slot with a seek, so a
+// player can't leave two invitations open across two boards.
+func TestChallengeSharesTheSoloSlot(t *testing.T) {
+	r := newRelay(zap.NewNop(), nil, nil)
+	first := PlayRequest{ClientGameID: validUUID, Challenge: true, Opponent: "Mary", SoloSteamID: 1001}
+	if err := r.claimPending(1001, first.ClientGameID); err != nil {
+		t.Fatal(err)
+	}
+	// A second, different request for the same player is refused while the first
+	// is live.
+	r.plays[first.ClientGameID] = newPlay(first)
+	if err := r.claimPending(1001, "another-game-id"); err == nil {
+		t.Fatal("a player may not hold two outstanding solo requests")
+	}
+	// Re-posting the SAME one is fine (the client just retried).
+	if err := r.claimPending(1001, first.ClientGameID); err != nil {
+		t.Fatalf("re-claiming the same request must be allowed: %v", err)
+	}
+}
+
+// A challenge marks the game as stranger-opposite (Seek=true on the wire) and
+// records the opponent's name, which is what the client uses to tell the two
+// apart.
+func TestChallengeStateShape(t *testing.T) {
+	p := newPlay(PlayRequest{
+		ClientGameID: validUUID, Challenge: true, Opponent: "Mary", SoloSteamID: 1001,
+	})
+	st, _ := p.snapshot()
+	if !st.Seek {
+		t.Fatal("a challenge has a stranger opposite, so Seek is set for the client")
+	}
+	if st.Opponent != "Mary" {
+		t.Fatalf("the opponent's name should be carried: %+v", st)
+	}
+	// No seats are filled until lichess confirms a colour.
+	if st.WhiteSteamID != "" || st.BlackSteamID != "" {
+		t.Fatalf("a solo flow fills no seat up front: %+v", st)
+	}
+}

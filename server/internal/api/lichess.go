@@ -616,14 +616,98 @@ func (h *handler) lichessSeek(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p, err := h.relay.Join(r.Context(), steamID, PlayRequest{
-		ClientGameID:  in.ClientGameID,
-		Seek:          true,
-		SeekerSteamID: steamID,
-		LimitSeconds:  limitSeconds,
-		IncrementSec:  in.IncrementSec,
-		Rated:         in.Rated,
-		RatingRange:   in.RatingRange,
-		Color:         in.Color,
+		ClientGameID: in.ClientGameID,
+		Seek:         true,
+		SoloSteamID:  steamID,
+		LimitSeconds: limitSeconds,
+		IncrementSec: in.IncrementSec,
+		Rated:        in.Rated,
+		RatingRange:  in.RatingRange,
+		Color:        in.Color,
+	})
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, h.stamped(p, steamID))
+}
+
+// challengePost challenges a NAMED lichess user directly.
+type challengePost struct {
+	ClientGameID string `json:"client_game_id"`
+	// Opponent is a lichess username. Validated before it costs a request.
+	Opponent string `json:"opponent"`
+	// Clock in SECONDS — lichess's own unit for a challenge (a seek uses minutes;
+	// the asymmetry is theirs). Omit both and set Unlimited for a clockless game.
+	LimitSeconds int  `json:"limit_seconds"`
+	IncrementSec int  `json:"increment_seconds"`
+	Unlimited    bool `json:"unlimited"`
+	Rated        bool `json:"rated"`
+	// Color is which side the CHALLENGER wants. Defaults to the seat they hold at
+	// the table, filled in below — a physical board has sides, and the lichess
+	// game should mirror the one they're sitting at.
+	Color string `json:"color"`
+}
+
+// POST /api/v1/lichess/challenge — play a specific lichess user by name.
+//
+// One caller, like a seek and unlike /play: you spend your own token to invite a
+// stranger who accepts in their own client, by their own choice. Nobody is
+// dragged into anything.
+//
+// It reaches BLITZ where a seek cannot (lila gates challenges at Speed.Blitz and
+// seeks at Speed.Rapid — see the lichess package), and it spends the per-user
+// challenge budget rather than the shared 5/min-per-IP lobby budget, so it is
+// the kinder of the two flows to the playerbase.
+func (h *handler) lichessChallenge(w http.ResponseWriter, r *http.Request) {
+	steamID, ok := h.requireSteam(w, r)
+	if !ok {
+		return
+	}
+	if !h.relay.Enabled() {
+		writeError(w, http.StatusNotImplemented, "lichess play is not configured on this server")
+		return
+	}
+
+	var in challengePost
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed body")
+		return
+	}
+	if _, err := uuid.Parse(in.ClientGameID); err != nil {
+		writeError(w, http.StatusBadRequest, "client_game_id must be a UUID")
+		return
+	}
+	if !lichess.ValidUsername(in.Opponent) {
+		writeError(w, http.StatusBadRequest, "opponent must be a lichess username")
+		return
+	}
+
+	// Bullet can never reach lichess from any path — the Board API refuses
+	// anything faster than blitz. Reject it here rather than spend a request being
+	// told the same thing.
+	if !in.Unlimited && !lichess.ChallengeCompatible(in.LimitSeconds, in.IncrementSec) {
+		writeError(w, http.StatusBadRequest,
+			"lichess's Board API won't play anything faster than blitz")
+		return
+	}
+	switch in.Color {
+	case "", "random", "white", "black":
+	default:
+		writeError(w, http.StatusBadRequest, `color must be white, black or random`)
+		return
+	}
+
+	p, err := h.relay.Join(r.Context(), steamID, PlayRequest{
+		ClientGameID: in.ClientGameID,
+		Challenge:    true,
+		Opponent:     in.Opponent,
+		SoloSteamID:  steamID,
+		LimitSeconds: in.LimitSeconds,
+		IncrementSec: in.IncrementSec,
+		Unlimited:    in.Unlimited,
+		Rated:        in.Rated,
+		Color:        in.Color,
 	})
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
