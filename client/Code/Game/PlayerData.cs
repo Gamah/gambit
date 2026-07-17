@@ -83,9 +83,9 @@ public sealed class PlayerData
 	public float VoiceRangeRoaming { get; set; } = 600f;
 
 	// ── Spoken moves / TTS (M12) ──
-	/// <summary>Read out the moves played on the board you're seated at, via the engine's
-	/// speech synthesiser. Client-local; your own table only (not the TV wall, not other
-	/// boards). Default off. See <see cref="Gambit.Audio.MoveTts"/>.</summary>
+	/// <summary>Read out every move (both sides, not just yours) played on the board you're
+	/// seated at, via the engine's speech synthesiser. Client-local; your own table only (not
+	/// the TV wall, not other boards). Default off. See <see cref="Gambit.Audio.MoveTts"/>.</summary>
 	public bool MoveTtsEnabled { get; set; } = false;
 
 	/// <summary>Full name of the installed voice to speak moves with, or empty for the

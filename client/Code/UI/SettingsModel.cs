@@ -111,9 +111,10 @@ public static class SettingsModel
 			VoiceRangeMin, VoiceRangeMax, PlayerData.ClampVoiceRange( data.VoiceRangeRoaming ),
 			v => Mutate( d => d.VoiceRangeRoaming = v ) ) );
 
-		// Spoken moves / TTS (M12): read out the notation of moves played on the board YOU are
-		// seated at — client-local, your own table only (not the TV wall, not other boards).
-		rows.Add( ToggleRow( "SPEAK MOVES", data.MoveTtsEnabled,
+		// Spoken moves / TTS (M12): read out the notation of EVERY move (both sides) played on
+		// the board you're seated at — not just your own moves. Client-local, your own table
+		// only (not the TV wall, not other boards).
+		rows.Add( ToggleRow( "SPEAK MOVES AT MY TABLE", data.MoveTtsEnabled,
 			v => Mutate( d => d.MoveTtsEnabled = v ) ) );
 		rows.Add( VoiceRow( data.MoveTtsVoice, Gambit.Audio.MoveTts.Voices,
 			v => Mutate( d => d.MoveTtsVoice = v ) ) );
