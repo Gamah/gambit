@@ -716,6 +716,76 @@ func (h *handler) lichessChallenge(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.stamped(p, steamID))
 }
 
+// openPost asks for a shareable-link game: an anonymous browser opponent, our seated
+// player relayed to their board. Carries the clock, the rated flag, and which colour
+// the seated player takes (their opponent gets the other side's url).
+type openPost struct {
+	ClientGameID string `json:"client_game_id"`
+	LimitSeconds int    `json:"limit_seconds"`
+	IncrementSec int    `json:"increment_seconds"`
+	Unlimited    bool   `json:"unlimited"`
+	Rated        bool   `json:"rated"`
+	Color        string `json:"color"` // white | black | random
+}
+
+// POST /api/v1/lichess/open — mint a shareable link and relay the seated player's side.
+//
+// One caller, like a seek/challenge. UNLIKE the M8 version this is a real relayed game,
+// not a one-shot link: gamchess creates the open challenge anonymously, accepts it with
+// the player's token to seat them (see relay.runOpen), and streams their side to the
+// board — the browser opponent opens the returned share_url and plays them for real.
+//
+// The blitz floor DOES apply: our side plays through the Board API, which won't play
+// faster than blitz. (The M8 one-shot allowed bullet because nobody was relayed — here
+// the creator is.)
+func (h *handler) lichessOpen(w http.ResponseWriter, r *http.Request) {
+	steamID, ok := h.requireSteam(w, r)
+	if !ok {
+		return
+	}
+	if !h.relay.Enabled() {
+		writeError(w, http.StatusNotImplemented, "lichess play is not configured on this server")
+		return
+	}
+
+	var in openPost
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed body")
+		return
+	}
+	if _, err := uuid.Parse(in.ClientGameID); err != nil {
+		writeError(w, http.StatusBadRequest, "client_game_id must be a UUID")
+		return
+	}
+	if !in.Unlimited && !lichess.ChallengeCompatible(in.LimitSeconds, in.IncrementSec) {
+		writeError(w, http.StatusBadRequest,
+			"lichess's Board API won't play anything faster than blitz")
+		return
+	}
+	switch in.Color {
+	case "", "random", "white", "black":
+	default:
+		writeError(w, http.StatusBadRequest, `color must be white, black or random`)
+		return
+	}
+
+	p, err := h.relay.Join(r.Context(), steamID, PlayRequest{
+		ClientGameID: in.ClientGameID,
+		Open:         true,
+		SoloSteamID:  steamID,
+		LimitSeconds: in.LimitSeconds,
+		IncrementSec: in.IncrementSec,
+		Unlimited:    in.Unlimited,
+		Rated:        in.Rated,
+		Color:        in.Color,
+	})
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, h.stamped(p, steamID))
+}
+
 // ratingRangeRe matches lichess's "1500-1800" form.
 var ratingRangeRe = regexp.MustCompile(`^[0-9]{3,4}-[0-9]{3,4}$`)
 

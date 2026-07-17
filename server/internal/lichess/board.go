@@ -346,6 +346,20 @@ func AcceptChallenge(ctx context.Context, token, challengeID string) error {
 	return post(ctx, token, "/api/challenge/"+url.PathEscape(challengeID)+"/accept", nil)
 }
 
+// AcceptChallengeColor sits the token holder into an OPEN challenge as a chosen
+// colour — the API way to be a participant in your own open game with no browser.
+// The accept endpoint's `color` query is documented as "only valid if this is an
+// open challenge", and the endpoint accepts board:play, so this needs no extra
+// scope. A blank colour lets lichess assign one (random open challenge). See
+// relay.runOpen for the flow this is half of.
+func AcceptChallengeColor(ctx context.Context, token, challengeID, color string) error {
+	path := "/api/challenge/" + url.PathEscape(challengeID) + "/accept"
+	if color == "white" || color == "black" {
+		path += "?color=" + color
+	}
+	return post(ctx, token, path, nil)
+}
+
 // DeclineChallenge declines an incoming challenge. reason is a lichess reason
 // key ("generic", "later", "tooFast", …); blank sends none.
 func DeclineChallenge(ctx context.Context, token, challengeID, reason string) error {
@@ -380,6 +394,60 @@ type ChallengeResult struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
 	URL    string `json:"url"`
+}
+
+// OpenChallengeResult is the subset of lichess's ChallengeOpenJson we surface.
+// URLWhite/URLBlack are the same game with a forced colour (literally
+// URL + "?color=white"/"?color=black"); id is the challenge id, which becomes the
+// GAME id once two players are in.
+type OpenChallengeResult struct {
+	ID       string `json:"id"`
+	URL      string `json:"url"`
+	URLWhite string `json:"urlWhite"`
+	URLBlack string `json:"urlBlack"`
+}
+
+// OpenChallenge mints an OPEN challenge — a link two people join to start a game.
+//
+// Created ANONYMOUSLY (no token): the endpoint is `security: []` (needs no auth),
+// and if you DO present a board:play token it 403s "Missing scope: challenge:write"
+// (board:play is not accepted here, unlike ChallengeUserByName / AcceptChallenge).
+// So we send no token; our User-Agent still identifies us via the RoundTripper.
+//
+// This is only half the flow. On its own an open challenge is anon-vs-anon and the
+// creator is not a participant — Gambit instead has the seated player ACCEPT it with
+// their own token (AcceptChallengeColor), which seats their real account, and hands
+// the opposite-colour URL to the browser opponent. See relay.runOpen.
+func OpenChallenge(ctx context.Context, p ChallengeParams) (OpenChallengeResult, error) {
+	// Only the clock DOMAIN matters (this is web-joinable, no board-compat floor).
+	if !p.Unlimited {
+		if !ValidClockLimit(p.LimitSeconds) {
+			return OpenChallengeResult{}, fmt.Errorf("lichess: clock.limit %d is not a legal value", p.LimitSeconds)
+		}
+		if p.IncrementSeconds < 0 || p.IncrementSeconds > 60 {
+			return OpenChallengeResult{}, fmt.Errorf("lichess: clock.increment %d is outside 0..60", p.IncrementSeconds)
+		}
+	}
+
+	form := url.Values{}
+	if !p.Unlimited {
+		form.Set("clock.limit", fmt.Sprint(p.LimitSeconds))
+		form.Set("clock.increment", fmt.Sprint(p.IncrementSeconds))
+	}
+	form.Set("rated", fmt.Sprint(p.Rated))
+
+	body, err := postBody(ctx, "", "/api/challenge/open", form) // "" → anonymous
+	if err != nil {
+		return OpenChallengeResult{}, err
+	}
+	var out OpenChallengeResult
+	if err := json.Unmarshal(body, &out); err != nil {
+		return OpenChallengeResult{}, fmt.Errorf("lichess: decode open challenge: %w", err)
+	}
+	if out.ID == "" || out.URL == "" {
+		return OpenChallengeResult{}, fmt.Errorf("lichess: open challenge response carried no link")
+	}
+	return out, nil
 }
 
 // ChallengeUserByName issues a direct challenge to a lichess username.
@@ -789,7 +857,12 @@ func postBody(ctx context.Context, token, path string, form url.Values) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("lichess: build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	// A blank token means ANONYMOUS — no Authorization header. Used by OpenChallenge:
+	// /api/challenge/open is security:[] and rejects a board:play token, so we present
+	// none. An empty "Bearer " would 401; sending nothing is what the endpoint wants.
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Header.Set("Accept", "application/json")
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

@@ -108,6 +108,10 @@ type PlayState struct {
 
 	GameID string `json:"game_id,omitempty"`
 	URL    string `json:"url,omitempty"`
+	// ShareURL is the link the seated player hands to their browser opponent — the
+	// OPPOSITE colour's url of an open-challenge game (Open flow only). Empty for
+	// every other flow.
+	ShareURL string `json:"share_url,omitempty"`
 
 	WhiteSteamID string `json:"white_steam_id"`
 	BlackSteamID string `json:"black_steam_id"`
@@ -211,6 +215,11 @@ type PlayRequest struct {
 	// challenge budget rather than the 5/min-per-IP lobby budget the whole
 	// playerbase shares — so it is the cheaper of the two for us.
 	Challenge bool
+	// Open mints a shareable link an ANONYMOUS browser player joins, and relays the
+	// seated player's side to their board. Distinct from a named challenge: nobody is
+	// named, and the opponent needs no lichess account. See runOpen for the mechanism
+	// (create anonymous → accept?color= with our token → hand out the opposite url).
+	Open bool
 	// Opponent is the lichess username to challenge. Challenge flow only.
 	Opponent string
 	// SoloSteamID is the ONE Gambit player in a solo flow — the seeker, or the
@@ -232,6 +241,7 @@ type PlayRequest struct {
 func (r PlayRequest) matches(o PlayRequest) bool {
 	return r.Seek == o.Seek &&
 		r.Challenge == o.Challenge &&
+		r.Open == o.Open &&
 		r.Opponent == o.Opponent &&
 		r.WhiteSteamID == o.WhiteSteamID &&
 		r.BlackSteamID == o.BlackSteamID &&
@@ -244,7 +254,7 @@ func (r PlayRequest) matches(o PlayRequest) bool {
 // solo reports a flow with exactly ONE Gambit player and one lichess stranger:
 // a lobby seek, or a direct challenge to a username. The paired flow is the only
 // one with two.
-func (r PlayRequest) solo() bool { return r.Seek || r.Challenge }
+func (r PlayRequest) solo() bool { return r.Seek || r.Challenge || r.Open }
 
 // intentsNeeded is how many independent, separately-authenticated players must
 // ask before a game is started.
@@ -635,9 +645,147 @@ func (r *relay) run(ctx context.Context, p *play) {
 		r.runSeek(ctx, p)
 	case p.req.Challenge:
 		r.runChallenge(ctx, p)
+	case p.req.Open:
+		r.runOpen(ctx, p)
 	default:
 		r.runPaired(ctx, p)
 	}
+}
+
+// runOpen mints a shareable open-challenge link, seats OUR player in it with their
+// own token, and relays their side to the board while an anonymous browser opponent
+// takes the other seat.
+//
+// This is the flow that makes "an anon plays my authed account, on my board" real —
+// and it needs no challenge:write, correcting an earlier belief. Three steps stitched
+// from re-derived scopes:
+//
+//  1. Create the open challenge ANONYMOUSLY (lichess.OpenChallenge). The endpoint is
+//     security:[]; a board:play token would 403 it, so we present none.
+//  2. ACCEPT it with our token as the chosen colour (AcceptChallengeColor). The accept
+//     endpoint DOES take board:play, and its color query seats us in the open game —
+//     this is the step the M8 rebuild dropped, which is why the creator's seat was
+//     never filled and the game never started.
+//  3. Hand the OPPOSITE colour's url to the browser opponent (ShareURL). When they
+//     open it the game starts; we learn that from our event stream (as a seek does,
+//     since neither the create nor the accept tells us the opponent has arrived).
+//
+// Colour "" (random) accepts without a forced side; lichess assigns one and we learn
+// it from gameFull (resolveSoloColor), same as a seek.
+func (r *relay) runOpen(ctx context.Context, p *play) {
+	token, _, err := r.credentials(ctx, p.req.SoloSteamID)
+	if err != nil {
+		p.fail("%s", err)
+		return
+	}
+	link, err := store.LichessLinkBySteamID(ctx, r.db, p.req.SoloSteamID)
+	if err != nil {
+		p.fail("%s", err)
+		return
+	}
+	soloLichessID := link.LichessID
+
+	// Watch the event stream for the opponent joining, BEFORE we create/accept, so an
+	// instant join isn't missed — the same ordering runSeek needs and for the same
+	// reason (nothing but gameStart tells us the browser player arrived).
+	gameCh := make(chan string, 1)
+	eventCtx, stopEvents := context.WithCancel(ctx)
+	defer stopEvents()
+	go func() {
+		err := lichess.StreamEvents(eventCtx, token, func(e lichess.Event) {
+			if e.Type == "gameStart" && e.Game != nil && e.Game.GameID != "" {
+				select {
+				case gameCh <- e.Game.GameID:
+				default:
+				}
+			}
+		})
+		if err != nil && eventCtx.Err() == nil {
+			r.log.Warn("lichess event stream ended during an open game", zap.Error(err))
+		}
+	}()
+
+	open, err := lichess.OpenChallenge(ctx, lichess.ChallengeParams{
+		LimitSeconds:     p.req.LimitSeconds,
+		IncrementSeconds: p.req.IncrementSec,
+		Unlimited:        p.req.Unlimited,
+		Rated:            p.req.Rated,
+	})
+	if err != nil {
+		p.fail("lichess wouldn't mint the link: %s", err)
+		return
+	}
+
+	// Seat ourselves. "" (random) → lichess picks and gameFull tells us later.
+	myColor := p.req.Color
+	if myColor != "white" && myColor != "black" {
+		myColor = ""
+	}
+	if err := lichess.AcceptChallengeColor(ctx, token, open.ID, myColor); err != nil {
+		p.fail("couldn't take your seat in the game: %s", err)
+		return
+	}
+
+	// The opponent opens the OPPOSITE colour. Random hands out the neutral url.
+	shareURL := open.URL
+	switch myColor {
+	case "white":
+		shareURL = open.URLBlack
+	case "black":
+		shareURL = open.URLWhite
+	}
+
+	p.mu.Lock()
+	p.soloLichessID = soloLichessID
+	p.soloColor = myColor // "" for random until gameFull; seatOf reads this
+	// Held so Cancel can withdraw the pending challenge if the player stands up before
+	// anyone joins. Best-effort (we created anonymously, so a /cancel may be refused) —
+	// an unjoined open challenge expires on its own in 24h regardless.
+	p.challengeID = open.ID
+	p.mu.Unlock()
+
+	p.update(func(s *PlayState) {
+		s.Status = playChallenging // "waiting on the opponent", exactly like a challenge
+		s.GameID = open.ID
+		s.URL = "https://lichess.org/" + open.ID
+		s.ShareURL = shareURL
+	})
+
+	// Bounded wait, like a direct challenge: gamchess can't hold the relay open for the
+	// link's full 24h life, so if nobody opens it in time we give up and (best-effort)
+	// withdraw so our seat isn't left joinable later. This is the same hazard bound the
+	// keep-alive challenge documents.
+	waitCtx, stopWaiting := context.WithTimeout(ctx, challengeAnswerTTL)
+	defer stopWaiting()
+
+	var gameID string
+	select {
+	case gameID = <-gameCh:
+		stopEvents()
+	case <-waitCtx.Done():
+		if ctx.Err() != nil {
+			return // the player stood up; Cancel has already published why
+		}
+		go r.cancelChallenge(p.req.SoloSteamID, open.ID)
+		p.fail("nobody opened the link in time. Make a new one.")
+		return
+	case <-ctx.Done():
+		return
+	}
+
+	// Answered — leaving challengeID set would have a later Cancel try to /cancel a LIVE
+	// game (its cancel doubles as an abort before either side moves).
+	p.mu.Lock()
+	p.challengeID = ""
+	p.mu.Unlock()
+
+	p.update(func(s *PlayState) {
+		s.Status = playLive
+		s.GameID = gameID
+		s.URL = "https://lichess.org/" + gameID
+	})
+
+	r.streamGame(ctx, p, token, gameID)
 }
 
 // runChallenge challenges a named lichess user and relays the game if they

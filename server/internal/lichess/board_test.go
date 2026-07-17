@@ -747,3 +747,75 @@ func TestValidUsername(t *testing.T) {
 		}
 	}
 }
+
+// ── Open challenge (shareable link) ──
+
+// The open-challenge create is anonymous: /api/challenge/open is security:[] and
+// 403s a board:play token, so NO Authorization header may go out.
+func TestOpenChallengeIsAnonymous(t *testing.T) {
+	var path, auth string
+	var got url.Values
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		auth = r.Header.Get("Authorization")
+		body, _ := io.ReadAll(r.Body)
+		got, _ = url.ParseQuery(string(body))
+		io.WriteString(w, `{"id":"aBcD1234","url":"https://lichess.org/aBcD1234",`+
+			`"urlWhite":"https://lichess.org/aBcD1234?color=white",`+
+			`"urlBlack":"https://lichess.org/aBcD1234?color=black"}`)
+	})
+
+	res, err := OpenChallenge(context.Background(),
+		ChallengeParams{LimitSeconds: 180, IncrementSeconds: 2, Rated: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/api/challenge/open" {
+		t.Fatalf("path: got %q", path)
+	}
+	if auth != "" {
+		t.Fatalf("open challenge must be anonymous, sent Authorization %q", auth)
+	}
+	if res.ID != "aBcD1234" || res.URLWhite == "" || res.URLBlack == "" {
+		t.Fatalf("result missing links: %+v", res)
+	}
+	for k, want := range map[string]string{"clock.limit": "180", "clock.increment": "2", "rated": "false"} {
+		if g := got.Get(k); g != want {
+			t.Errorf("form %s: got %q want %q", k, g, want)
+		}
+	}
+}
+
+// Accepting an open challenge with a colour is how the seated player takes their side;
+// the colour rides the query, and the endpoint takes board:play (auth IS sent here).
+func TestAcceptChallengeColor(t *testing.T) {
+	cases := []struct {
+		color    string
+		wantPath string
+		wantRaw  string
+	}{
+		{"white", "/api/challenge/g4me/accept", "color=white"},
+		{"black", "/api/challenge/g4me/accept", "color=black"},
+		{"", "/api/challenge/g4me/accept", ""}, // random: no color query
+	}
+	for _, c := range cases {
+		t.Run("color="+c.color, func(t *testing.T) {
+			var path, raw, auth string
+			stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+				path = r.URL.Path
+				raw = r.URL.RawQuery
+				auth = r.Header.Get("Authorization")
+				io.WriteString(w, `{"ok":true}`)
+			})
+			if err := AcceptChallengeColor(context.Background(), "tok", "g4me", c.color); err != nil {
+				t.Fatal(err)
+			}
+			if path != c.wantPath || raw != c.wantRaw {
+				t.Fatalf("got %q?%q, want %q?%q", path, raw, c.wantPath, c.wantRaw)
+			}
+			if auth != "Bearer tok" {
+				t.Fatalf("accept must be authed, got %q", auth)
+			}
+		})
+	}
+}
