@@ -121,17 +121,32 @@ public sealed class LobbyPlayer : Component
 
 	}
 
+	/// <summary>The scene-authored UI ScreenPanel (the "UI" GameObject) — the self-attach target
+	/// for the HUD / spectator / voice screens below. It skips runtime-built ScreenPanels: the
+	/// client-local music HUD (LocalMusicSystem) spawns its OWN ScreenPanel on a NotSaved GO, and
+	/// these screens must never land on it. The old code just took the first ScreenPanel and
+	/// trusted "first is the scene root" — true only by luck of enumeration order once a second
+	/// ScreenPanel exists. Filtering on NotSaved makes it true by construction.</summary>
+	ScreenPanel SceneUiScreen()
+	{
+		foreach ( var screen in Scene.GetAllComponents<ScreenPanel>() )
+		{
+			if ( screen.GameObject.Flags.Contains( GameObjectFlags.NotSaved ) )
+				continue; // a runtime client-local panel (e.g. LocalMusic), not the scene root
+			return screen;
+		}
+		return null;
+	}
+
 	/// <summary>Attach the seated-game HUD to the scene's ScreenPanel at runtime
 	/// (local player only) — no scene rewire needed for M2, same self-heal spirit
 	/// as LobbyRoom.EnsureChessRing.</summary>
 	void EnsureGameHud()
 	{
-		foreach ( var screen in Scene.GetAllComponents<ScreenPanel>() )
-		{
-			if ( screen.Components.Get<Gambit.UI.GameHud>() == null )
-				screen.GameObject.AddComponent<Gambit.UI.GameHud>();
-			return; // first ScreenPanel is the scene UI root
-		}
+		var screen = SceneUiScreen();
+		if ( screen == null ) return;
+		if ( screen.Components.Get<Gambit.UI.GameHud>() == null )
+			screen.GameObject.AddComponent<Gambit.UI.GameHud>();
 	}
 
 	/// <summary>Attach the spectator-wall channel picker to the scene ScreenPanel at
@@ -139,12 +154,10 @@ public sealed class LobbyPlayer : Component
 	/// screen draws nothing until the player engages the SpectatorStation.</summary>
 	void EnsureSpectatorScreen()
 	{
-		foreach ( var screen in Scene.GetAllComponents<ScreenPanel>() )
-		{
-			if ( screen.Components.Get<Gambit.UI.Screens.SpectatorScreen>() == null )
-				screen.GameObject.AddComponent<Gambit.UI.Screens.SpectatorScreen>();
-			return; // first ScreenPanel is the scene UI root
-		}
+		var screen = SceneUiScreen();
+		if ( screen == null ) return;
+		if ( screen.Components.Get<Gambit.UI.Screens.SpectatorScreen>() == null )
+			screen.GameObject.AddComponent<Gambit.UI.Screens.SpectatorScreen>();
 	}
 
 	/// <summary>Attach the proximity-voice driver + HUD (M12) to the scene ScreenPanel at runtime
@@ -155,14 +168,12 @@ public sealed class LobbyPlayer : Component
 	/// snapshot (see the HUD-parenting rule in CLAUDE.md).</summary>
 	void EnsureVoiceScreen()
 	{
-		foreach ( var screen in Scene.GetAllComponents<ScreenPanel>() )
-		{
-			if ( screen.Components.Get<VoiceScreen>() == null )
-				screen.GameObject.AddComponent<VoiceScreen>();
-			if ( screen.Components.Get<Gambit.UI.Screens.VoicePanel>() == null )
-				screen.GameObject.AddComponent<Gambit.UI.Screens.VoicePanel>();
-			return; // first ScreenPanel is the scene UI root
-		}
+		var screen = SceneUiScreen();
+		if ( screen == null ) return;
+		if ( screen.Components.Get<VoiceScreen>() == null )
+			screen.GameObject.AddComponent<VoiceScreen>();
+		if ( screen.Components.Get<Gambit.UI.Screens.VoicePanel>() == null )
+			screen.GameObject.AddComponent<Gambit.UI.Screens.VoicePanel>();
 	}
 
 	/// <summary>Teleport back to spawn after falling off the map.

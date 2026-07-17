@@ -25,26 +25,27 @@ public sealed class MusicBoardScreen : Component
 	protected override void OnUpdate()
 	{
 		// The panel starts disabled, so the enabled-only Scene.GetAllComponents won't see it —
-		// search self including disabled (it lives on this same UI ScreenPanel GO).
+		// search self including disabled (it lives on this same LocalMusic GO, built by
+		// LocalMusicSystem).
 		_panel ??= Components.Get<Skafinity.SkafinityMusicPanel>( FindMode.EverythingInSelf );
 		if ( _panel == null ) return;
 
 		// Keep trying to give the panel its player until one exists.
 		//
-		// The library resolves this ITSELF — but only once, in its OnStart, via the
-		// enabled-only Scene.GetAllComponents. If the SkafinityPlayer isn't up at that
-		// exact moment, the panel's Player stays null for the rest of the session, and
-		// every field in it renders `Player?.X ?? default`: seed "—", N 0, empty queue,
-		// dead buttons. A whole board of nothing, which is what a JOINED instance was
-		// showing while the host's was fine.
+		// The library resolves this ITSELF in its own OnStart — but only once, and via the
+		// enabled-only Scene.GetAllComponents. If the SkafinityPlayer isn't up at that exact
+		// moment (a construction-order race, even though both now live on the same LocalMusic
+		// GO), the panel's Player stays null for the rest of the session and every field
+		// renders `Player?.X ?? default`: seed "—", N 0, empty queue, dead buttons — a whole
+		// board of nothing. Retrying costs a scene scan on the frames before it succeeds and
+		// nothing after — the same shape as the _panel lookup directly above.
 		//
-		// The asymmetry is the tell, and it is the one CLAUDE.md already warns about for
-		// voice: /UI and /GameController are both NetworkMode 2 (Snapshot), so a joining
-		// client REBUILDS them from the host's snapshot rather than loading them the way
-		// the first instance does. Different construction order, different answer from a
-		// one-shot lookup on the first frame. Retrying costs a scene scan on the frames
-		// before it succeeds and nothing after — the same shape as the _panel lookup
-		// directly above, which retries for exactly this kind of reason.
+		// This used to fail far worse on a JOINING client, and issue #12 is the record of why:
+		// the panel and player lived on the scene's /UI and /GameController GameObjects, which
+		// were NetworkMode.Snapshot. A joiner rebuilds Snapshot objects from the host's snapshot
+		// (see LocalMusicSystem for the mechanism), so the host's live panel state (Enabled/
+		// IsOpen) rode the snapshot onto the joiner and the board rendered open + unstyled. Both
+		// are now built client-local by LocalMusicSystem, so no host state can reach a joiner.
 		//
 		// Fixed here rather than in the library: Libraries/gamah.skafinity is
 		// source-committed but it is a drop-in, and its one-shot resolve is only wrong

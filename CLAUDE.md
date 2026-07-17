@@ -796,6 +796,12 @@ the channel, what the wall thinks it's showing, and gamchess's raw state. Exists
 "nothing is showing" was twice diagnosed by guesswork and once wrongly — none of the chain
 is visible from outside, and a feature that never fires looks exactly like one that isn't
 wired up.
+`gambit_music` — where does every music component live, and on which GameObject? One line
+per ScreenPanel / SkafinityPlayer / SkafinityMusicPanel / MusicBoardScreen with the GO's
+name, NetworkMode, flags and the panel's Enabled/IsOpen. Run it on a joined client: a music
+component on anything but the `LocalMusic` (Never, NotSaved) GO means that machine is
+running the pre-#12-fix scene or a stale build — the question three screenshot diagnoses
+couldn't answer.
 
 ---
 
@@ -977,6 +983,23 @@ Deviating from them is how un-compilable mistakes get in.
   as an exemplar for a long time; **there is no `SplashScreen`** — no `.cs`, no `.razor`, only an
   orphan scene entry (see the scene-orphan rule below). It was pointing at a file that does not
   exist, in the file every session is told to trust.
+- **A joining client does NOT load the scene from disk — it rebuilds it from the host's
+  snapshot, and that snapshot's `NetworkMode` filter is a real fork in behaviour.** Verified in
+  the engine (issue #12): `SceneNetworkSystem.OnLoadSceneMsg` **destroys** the client's scene and
+  applies the host's snapshot; `GameObject.Serialize.ShouldSave` **drops every `NetworkMode.Never`
+  object** from that snapshot and **rebuilds every `Snapshot` object from the host's LIVE state**.
+  So for anything authored in `lobby.scene`, neither mode is client-local: `Snapshot` leaks the
+  host's runtime state onto joiners (this is exactly how the music board came to render *open and
+  unstyled* — the panel's live `Enabled`/`IsOpen` rode the wire), and `Never` means the object
+  **never reaches the joiner at all** (setting the scene GO to `Never` made the board vanish on
+  clients — the seductive-looking "minimal fix" that cannot work). The **only** way to get a
+  strictly-client-local screen/audio object is to BUILD it in code: either self-attach to the
+  scene ScreenPanel (the pattern above), or — when it needs its own isolated ScreenPanel — spawn
+  it from a **`GameObjectSystem`** onto a runtime `NetworkMode.Never` GO. `LocalMusicSystem` does
+  the latter for the Skafinity trio (player + board + `MusicBoardScreen`), mirroring terryball's
+  `LocalHudSystem`; a `GameObjectSystem` is instantiated locally on every machine independent of
+  the snapshot, which is the whole point. **Never author a client-local screen or audio component
+  in the scene** — put it on a code-built `Never` object.
 
 ## s&box API Whitelist
 
@@ -1202,8 +1225,34 @@ Three facts worth keeping:
 Music is the `gamah.skafinity` library — source-committed under
 `client/Libraries/gamah.skafinity/` (s&box pattern: libraries are source and
 auto-referenced by living there; do NOT add a `PackageReferences` entry — that
-double-registers the compiler). The scene carries a `SkafinityPlayer` +
-`SkafinityMusicPanel`; the panel is enabled only while engaged at the music wall board.
+double-registers the compiler). The player + panel are built client-local by
+`LocalMusicSystem` (never scene-authored — see the #12 rule above); the panel is enabled
+only while engaged at the music wall board.
+
+**A library's `.razor.scss` NEVER reaches a joining client — issue #12's second half.**
+A joiner of an editor-hosted lobby mounts no package: it gets code via the compiled
+CodeArchive (so a library *panel class* always arrives) and loose files only from the
+host's networked-file table, which is built by walking **the game package's `Code/` +
+`Assets/` alone** (auto-including `.scss`/`.ttf`/compiled assets, plus `.sbproj`
+`Resources` globs — which also only filter the game filesystem). Library folders are
+never walked, so a stylesheet living in one styles the host and 404s on every joiner —
+the "open + unstyled splayed board" that survived every NetworkMode fix, because it was
+never a networking bug. Hence the vendor patch: `SkafinityMusicPanel.razor.scss` lives at
+`client/Code/UI/` (the panel resolves it by mounted path, `UI/SkafinityMusicPanel.razor.scss`,
+which both locations map to — keep exactly ONE copy). **The library update ritual must
+re-delete it**: syncing the vendored library from upstream (or an editor install/update from
+sbox.game) brings the scss back beside the razor, where it shadows the game copy at the same
+mounted path — silently, since both parse. The host mounts library content into
+`FileSystem.Mounted` ONLY in the editor (`GameInstanceDll.cs` gates it on
+`Application.IsEditor`), which is exactly why the host always styled while joiners never
+could, and why nothing short of moving the file works. A *published* package was never
+affected — the publish manifest sweeps every library's Code path, scss included; this hole
+is specific to editor-hosted joins. Same mechanism, other victim: a raw
+asset loaded at runtime (`chess_glyphs.png` via `Texture.Load`) ships to joiners only if
+listed in the `.sbproj` `Resources` field — and the editor generates the REAL `.sbproj`,
+so that field must be set in the editor's Project Settings on each dev machine (the repo
+template documents the intent). Diagnose either with the host console:
+`debug_network_files 1` logs every file the host offers joiners.
 
 ## Lobby chat and proximity voice (M12)
 

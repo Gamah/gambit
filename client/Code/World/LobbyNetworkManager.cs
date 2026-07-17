@@ -80,17 +80,11 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 	protected override void OnEnabled() => Instance = this;
 	protected override void OnDisabled() { if ( Instance == this ) Instance = null; }
 
-	protected override void OnStart()
-	{
-		// A dedicated server has no audio device, so the Skafinity music player's SoundStream
-		// is invalid and spams "PushTransition failed: Invalid sound stream" every tick. The
-		// library auto-plays, so disable it on the server (clients keep their own music).
-		if ( Application.IsDedicatedServer )
-		{
-			var music = Scene.GetAllComponents<Skafinity.SkafinityPlayer>().FirstOrDefault();
-			if ( music != null ) music.Enabled = false;
-		}
-	}
+	// The Skafinity music player used to be a scene component that auto-played on a dedicated
+	// server (no audio device → "PushTransition failed: Invalid sound stream" every tick), so
+	// this used to disable it host-side in OnStart. It is now client-local, built by
+	// LocalMusicSystem, which skips dedicated servers outright — so there is nothing to disable
+	// here and the guard is gone (issue #12).
 
 	// Host-validated entry point — host settings are triggered by an admin player, who
 	// is not the network host on a dedicated server, so the writes must run host-side.
