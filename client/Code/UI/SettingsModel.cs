@@ -111,6 +111,16 @@ public static class SettingsModel
 			VoiceRangeMin, VoiceRangeMax, PlayerData.ClampVoiceRange( data.VoiceRangeRoaming ),
 			v => Mutate( d => d.VoiceRangeRoaming = v ) ) );
 
+		// Spoken moves / TTS (M12): read out the notation of moves played on the board YOU are
+		// seated at — client-local, your own table only (not the TV wall, not other boards).
+		rows.Add( ToggleRow( "SPEAK MOVES", data.MoveTtsEnabled,
+			v => Mutate( d => d.MoveTtsEnabled = v ) ) );
+		rows.Add( VoiceRow( data.MoveTtsVoice, Gambit.Audio.MoveTts.Voices,
+			v => Mutate( d => d.MoveTtsVoice = v ) ) );
+		rows.Add( SliderRow( $"MOVE VOICE VOLUME — {(int)MathF.Round( PlayerData.ClampUnit( data.MoveTtsVolume ) * 100 )}%",
+			0f, 1f, PlayerData.ClampUnit( data.MoveTtsVolume ),
+			v => Mutate( d => d.MoveTtsVolume = v ) ) );
+
 		// NOTE: lichess TV (M9) is deliberately NOT here — not the on/off, not the
 		// channel, not the lobby's suggestion. It all lives on the spectator board,
 		// which is the thing it controls and the thing you are looking at when you
@@ -199,6 +209,33 @@ public static class SettingsModel
 			Label = label,
 			Slider = new SliderSpec { Min = min, Max = max, Value = value, OnChange = set },
 		};
+	}
+
+	// The TTS voice picker: one tap-to-cycle pill showing the current voice's short name,
+	// rather than one cell per voice — a machine can have many installed voices and a row of
+	// full names ("Microsoft David Desktop", …) would overflow the panel. Cycling is fixed
+	// width whatever the count. The stored value is the FULL name (TrySetVoice needs it); the
+	// pill shows the short form.
+	static SettingRow VoiceRow( string current, IReadOnlyList<string> voices, Action<string> set )
+	{
+		if ( voices.Count == 0 )
+			return new SettingRow { Label = "TTS VOICE — none installed" };
+
+		// Manual index (IReadOnlyList has no IndexOf): find the stored voice, or fall back to
+		// the first when it isn't installed on this machine.
+		int idx = 0;
+		for ( int k = 0; k < voices.Count; k++ )
+			if ( voices[k] == current ) { idx = k; break; }
+
+		var row = new SettingRow { Label = "TTS VOICE" };
+		row.Cells.Add( new SettingCell
+		{
+			Label = Gambit.Audio.MoveTts.Short( voices[idx] ),
+			Css = "toggle",
+			Selected = true,
+			Activate = () => set( voices[( idx + 1 ) % voices.Count] ),
+		} );
+		return row;
 	}
 
 	static SettingRow ToggleRow( string label, bool current, Action<bool> set )

@@ -1162,6 +1162,27 @@ real games through the vendored rules (en passant, capture-promotion, castling, 
 That extraction is the `CapturedMaterial` lesson again: left as a private method on the
 watcher `Component`, none of it could have been executed on this host.
 
+**Spoken moves / TTS (M12) ride the SAME seam, gated on `Mine`.** An opt-in world setting
+reads out the notation of moves played on the board *you are seated at* — never the TV wall,
+never another player's table. `TableSounds.WatchMove` calls `MoveTts.SpeakLastMove(game)` only
+when `Mine`, so it inherits the move classification for free and covers a lichess game the same
+as a local one (`ChessBoard.Move` fills in SAN on execution, so `SanMoves` is real for both).
+Three facts worth keeping:
+- **`Sandbox.Speech.Synthesizer` is SAPI-backed and Windows-only.** On Mac/Linux/dedicated it
+  has no voices; `MoveTts` catches that and the feature is a silent no-op. It is **never
+  required**, exactly like gamchess — every path fails closed to silence. `Code/Chess/
+  MoveSpeech.cs` (SAN → "knight f 3") is Sandbox-free and dotnet-tested here; the speaking half
+  isn't.
+- **Voices are enumerated once and cached** (`MoveTts.Voices`) because constructing a
+  `Synthesizer` queries the OS, and the settings panel rebuilds its rows every frame it's open.
+  A *speak* still constructs a fresh one (the wrapper accumulates its text and can't be reset)
+  and runs synthesis synchronously — a per-move main-thread cost, paid only when the feature is
+  on and a move is seconds away. If that ever stutters noticeably, a background `GameTask` is
+  the escape hatch, but mind that `SoundStream`/SAPI may not be thread-happy.
+- The picker is a **tap-to-cycle pill**, not one cell per voice: a machine can have many voices
+  and a row of full names would overflow the panel. It stores the full name (`TrySetVoice`
+  needs it) and shows a short one.
+
 Music is the `gamah.skafinity` library — source-committed under
 `client/Libraries/gamah.skafinity/` (s&box pattern: libraries are source and
 auto-referenced by living there; do NOT add a `PackageReferences` entry — that

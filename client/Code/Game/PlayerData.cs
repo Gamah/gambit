@@ -82,6 +82,20 @@ public sealed class PlayerData
 	/// <see cref="VoiceRangeAtTable"/> for why range is a receive-side, per-client value.</summary>
 	public float VoiceRangeRoaming { get; set; } = 600f;
 
+	// ── Spoken moves / TTS (M12) ──
+	/// <summary>Read out the moves played on the board you're seated at, via the engine's
+	/// speech synthesiser. Client-local; your own table only (not the TV wall, not other
+	/// boards). Default off. See <see cref="Gambit.Audio.MoveTts"/>.</summary>
+	public bool MoveTtsEnabled { get; set; } = false;
+
+	/// <summary>Full name of the installed voice to speak moves with, or empty for the
+	/// synthesiser's default. A stored name that isn't installed on this machine falls back
+	/// to the default at speak time.</summary>
+	public string MoveTtsVoice { get; set; } = "";
+
+	/// <summary>Spoken-move volume, 0–1.</summary>
+	public float MoveTtsVolume { get; set; } = 1f;
+
 	/// <summary>Controller rebinds: game action → probe-action name (the per-button
 	/// gamepad action it should listen to, e.g. "MoveUp" → "PadUp"). Empty = the
 	/// default map in <see cref="GamepadBinds"/>. The game actions themselves carry
@@ -102,6 +116,7 @@ public sealed class PlayerData
 	public static float ClampLightScale( float v ) => Math.Clamp( v, 0f, 1.5f );
 	public static float ClampPopRate( float v ) => Math.Clamp( v, 0.25f, 3f );
 	public static float ClampVoiceRange( float v ) => Math.Clamp( v, 150f, 1200f );
+	public static float ClampUnit( float v ) => Math.Clamp( v, 0f, 1f );
 
 	const string FileName = "player.json";
 

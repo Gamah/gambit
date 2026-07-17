@@ -125,6 +125,13 @@ public sealed class TableSounds : Component
 		if ( change != BoardChange.Move ) return;
 
 		SoundPlayer.PlayMove( whiteMoved, capture, game.IsCheck, Mine, WorldPosition );
+
+		// Speak the move's notation, but only on the board I'm SEATED at — never the TV wall
+		// or someone else's table. Client-local and opt-in; SpeakLastMove reads the setting
+		// and no-ops when it's off or no synthesiser is available. On the seam for the same
+		// reason the sounds are: a lichess game gets it too, for free.
+		if ( Mine )
+			MoveTts.SpeakLastMove( game );
 	}
 
 	/// <summary>The game ended — however it ended, and including a flag. There is no
