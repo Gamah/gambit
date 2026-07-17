@@ -239,10 +239,6 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// take a piece: you lift it clear and set it down, you don't post it.</para></summary>
 	[Property, Range( 0f, 1f )] public float HandDiscardReach { get; set; } = 0.6f;
 
-	/// <summary>How far past the body's centre line a target must be before the OTHER hand
-	/// takes over the reach. Without a deadband the hand flickers between two arms every
-	/// time the cursor wanders near the middle of the board.</summary>
-	[Property] public float HandSwapDeadband { get; set; } = 3f;
 
 	/// <summary>Overhead table spot brightness. Strictly neutral white so the piece
 	/// and square tints read true (MarqueeGlow applies the user multiplier in play).</summary>

@@ -213,22 +213,20 @@ public static class TerryCommands
 			return;
 		}
 
-		string ik = avatar.LastHandRight ? "hand_R" : "hand_L";
-		if ( !body.TryGetBoneTransform( ik, out var handTx ) ) return;
+		if ( !body.TryGetBoneTransform( "hand_R", out var handTx ) ) return;
 
 		var hand = station.WorldTransform.PointToLocal( handTx.Position );
 		var miss = hand - target;
 
 		Log.Info( $"── reach: is it aiming wrong, or just not getting there? ──" );
-		Log.Info( $"   asked for   ({target.x,7:0.##}, {target.y,6:0.##}, {target.z,6:0.##})  [{ik}, "
-			+ $"{( avatar.LastHandRight ? "right" : "left" )} hand]" );
+		Log.Info( $"   asked for   ({target.x,7:0.##}, {target.y,6:0.##}, {target.z,6:0.##})  [hand_R]" );
 		Log.Info( $"   achieved    ({hand.x,7:0.##}, {hand.y,6:0.##}, {hand.z,6:0.##})" );
 		Log.Info( $"   MISSED BY   {miss.Length:0.##} units  ({miss.x:+0.##;-0.##}, {miss.y:+0.##;-0.##}, {miss.z:+0.##;-0.##})"
 			+ $" — under ~2 means the IK is landing it; a big miss means the arm ran out." );
 
 		// The arm, off its own skeleton — so its reach is a measurement rather than my
 		// estimate of human proportion, which is what got this wrong the first time.
-		foreach ( var shoulder in new[] { "arm_upper_R", "arm_upper_L", "clavicle_R", "clavicle_L", "spine_2" } )
+		foreach ( var shoulder in new[] { "arm_upper_R", "clavicle_R", "spine_2" } )
 		{
 			if ( !body.TryGetBoneTransform( shoulder, out var sh ) ) continue;
 			var s = station.WorldTransform.PointToLocal( sh.Position );
