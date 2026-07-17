@@ -20,3 +20,15 @@ obj/
 # ARE tracked deliberately (see .gitattributes for the CRLF handling).
 Code/gambit.csproj
 Code/Properties/
+
+# Vendored gamah.skafinity library: source (Code/*.cs|razor|scss, README, .sbproj,
+# skafinity.config.json) is committed; everything the editor regenerates on pull is
+# not. The library goes through the SAME solution generator as the game (verified in
+# sbox-public: Project.Solution.cs routes Type=="library" to Libraries/ and writes
+# its csproj on every regen, with machine-local absolute Steam paths), and s&box's
+# own project template gitignores *.csproj as auto-generated — so, like
+# Code/gambit.csproj above, none of these are tracked.
+Libraries/gamah.skafinity/.bin/
+Libraries/gamah.skafinity/.version
+Libraries/gamah.skafinity/ProjectSettings/
+Libraries/gamah.skafinity/Code/*.csproj
