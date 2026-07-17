@@ -1239,7 +1239,15 @@ never walked, so a stylesheet living in one styles the host and 404s on every jo
 the "open + unstyled splayed board" that survived every NetworkMode fix, because it was
 never a networking bug. Hence the vendor patch: `SkafinityMusicPanel.razor.scss` lives at
 `client/Code/UI/` (the panel resolves it by mounted path, `UI/SkafinityMusicPanel.razor.scss`,
-which both locations map to — keep exactly ONE copy). Same mechanism, other victim: a raw
+which both locations map to — keep exactly ONE copy). **The library update ritual must
+re-delete it**: syncing the vendored library from upstream (or an editor install/update from
+sbox.game) brings the scss back beside the razor, where it shadows the game copy at the same
+mounted path — silently, since both parse. The host mounts library content into
+`FileSystem.Mounted` ONLY in the editor (`GameInstanceDll.cs` gates it on
+`Application.IsEditor`), which is exactly why the host always styled while joiners never
+could, and why nothing short of moving the file works. A *published* package was never
+affected — the publish manifest sweeps every library's Code path, scss included; this hole
+is specific to editor-hosted joins. Same mechanism, other victim: a raw
 asset loaded at runtime (`chess_glyphs.png` via `Texture.Load`) ships to joiners only if
 listed in the `.sbproj` `Resources` field — and the editor generates the REAL `.sbproj`,
 so that field must be set in the editor's Project Settings on each dev machine (the repo
