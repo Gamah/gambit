@@ -227,6 +227,15 @@ public sealed class LobbyPlayer : Component
 				return;
 			}
 
+			// Keep our OWN avatar hidden while seated, re-asserted every frame — a seat
+			// switch re-plants Terry in front of the orbited camera, and the engage-time
+			// snapshot can miss a late/re-enabled renderer. Local only (this whole method
+			// returns early for a proxy), so remote/networked Terries stay drawn — M13
+			// features depend on seeing the other players. Chess seats only; wall boards
+			// leave you standing and visible.
+			if ( ChessStation.Active != null )
+				HideLocalAvatar();
+
 			// Only the chess seat drives the camera; wall boards leave it where it is.
 			// A seat switch orbits (UpdateOrbitCamera) and takes priority until it lands.
 			if ( _orbiting )
@@ -645,14 +654,28 @@ public sealed class LobbyPlayer : Component
 				WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
 		}
 
-		// Hide our avatar so it doesn't stand between the locked camera and the
-		// board — collected here (not OnStart) so dresser-spawned renderers are included
+		// Hide our own avatar so it doesn't stand between the locked camera and the board.
+		// Clear first (a fresh engage): Disengage clears on the way out too, so SwitchSeat
+		// can safely APPEND to this set without wiping what BeginEngage already hid.
 		_hiddenRenderers.Clear();
+		HideLocalAvatar();
+	}
+
+	/// <summary>Stop drawing THIS client's own avatar (never a remote/proxy one — those
+	/// stay visible, which M13 leans on). Collected live rather than at OnStart so
+	/// dresser-spawned clothing renderers are caught, and re-runnable: a seat switch
+	/// re-plants the body in front of the newly-orbited camera, so we re-hide there too.
+	/// Already-disabled renderers are skipped, so calling it twice is safe.</summary>
+	void HideLocalAvatar()
+	{
 		foreach ( var r in Components.GetAll<ModelRenderer>( FindMode.EverythingInSelfAndDescendants ) )
 		{
 			if ( !r.Enabled ) continue;
 			r.Enabled = false;
-			_hiddenRenderers.Add( r );
+			// Contains-guard so a per-frame call can't grow the re-enable list without
+			// bound if something ever flip-flops a renderer back on.
+			if ( !_hiddenRenderers.Contains( r ) )
+				_hiddenRenderers.Add( r );
 		}
 	}
 
@@ -690,6 +713,10 @@ public sealed class LobbyPlayer : Component
 		WorldPosition = seatPos;
 		if ( toBoard.Length > 0.01f )
 			WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
+
+		// Re-hide the local avatar: the re-plant (and any renderer the engage snapshot
+		// missed or that got re-enabled since) must not draw in front of the new camera.
+		HideLocalAvatar();
 
 		// ORBIT the camera around the board to the new side, rather than lerping straight
 		// across (which cuts through the board and reads as a jarring cut). The two seat
