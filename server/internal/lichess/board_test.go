@@ -326,7 +326,7 @@ func TestSeekRealtime(t *testing.T) {
 			// A real seek holds open; closing immediately stands for "matched".
 		})
 
-		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10}); err != nil {
+		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10}, nil); err != nil {
 			t.Fatal(err)
 		}
 		if path != "/api/board/seek" {
@@ -348,7 +348,7 @@ func TestSeekRealtime(t *testing.T) {
 			t.Fatal("a blitz seek must not be sent — lichess refuses it")
 		})
 		// 3+2 = 260 estimated: challengeable, not seekable.
-		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 3, IncrementSeconds: 2}); err == nil {
+		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 3, IncrementSeconds: 2}, nil); err == nil {
 			t.Fatal("expected a blitz seek to be refused")
 		}
 	})
@@ -358,10 +358,10 @@ func TestSeekRealtime(t *testing.T) {
 		stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 			t.Fatal("must not send an out-of-range seek")
 		})
-		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 181}); err == nil {
+		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 181}, nil); err == nil {
 			t.Fatal("181 minutes is outside 0..180")
 		}
-		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10, IncrementSeconds: 181}); err == nil {
+		if err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10, IncrementSeconds: 181}, nil); err == nil {
 			t.Fatal("181s increment is outside 0..180")
 		}
 	})
@@ -373,7 +373,7 @@ func TestSeekRealtime(t *testing.T) {
 		stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusTooManyRequests)
 		})
-		err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10})
+		err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10}, nil)
 		apiErr, ok := err.(*APIError)
 		if !ok || !apiErr.RateLimited() {
 			t.Fatalf("want a rate-limited APIError, got %#v", err)
@@ -391,7 +391,7 @@ func TestSeekRealtime(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- SeekRealtime(ctx, "tok", SeekParams{TimeMinutes: 10}) }()
+		go func() { done <- SeekRealtime(ctx, "tok", SeekParams{TimeMinutes: 10}, nil) }()
 
 		select {
 		case err := <-done:

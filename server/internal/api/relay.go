@@ -960,6 +960,20 @@ func (r *relay) runSeek(ctx context.Context, p *play) {
 	}
 	soloLichessID := link.LichessID
 
+	// Diagnostics: a seek that matches in seconds on the web can sit here for a while,
+	// and without these there is no way to see whether it even reached lichess's lobby.
+	seekMinutes := float64(p.req.LimitSeconds) / 60
+	slog := r.log.With(
+		zap.String("client_game_id", p.req.ClientGameID),
+		zap.Float64("minutes", seekMinutes),
+		zap.Int("increment", p.req.IncrementSec),
+		zap.Bool("rated", p.req.Rated),
+		zap.String("color", p.req.Color),
+		zap.String("rating_range", p.req.RatingRange),
+	)
+	slog.Info("seek: starting")
+	seekStart := time.Now()
+
 	gameCh := make(chan string, 1)
 	eventCtx, stopEvents := context.WithCancel(ctx)
 	defer stopEvents()
@@ -967,6 +981,7 @@ func (r *relay) runSeek(ctx context.Context, p *play) {
 	go func() {
 		err := lichess.StreamEvents(eventCtx, token, func(e lichess.Event) {
 			if e.Type == "gameStart" && e.Game != nil && e.Game.GameID != "" {
+				slog.Info("seek: event stream reported gameStart", zap.String("game_id", e.Game.GameID))
 				select {
 				case gameCh <- e.Game.GameID:
 				default: // already have one
@@ -974,7 +989,7 @@ func (r *relay) runSeek(ctx context.Context, p *play) {
 			}
 		})
 		if err != nil && eventCtx.Err() == nil {
-			r.log.Warn("lichess event stream ended during a seek", zap.Error(err))
+			slog.Warn("seek: event stream ended", zap.Error(err))
 		}
 	}()
 
@@ -987,50 +1002,71 @@ func (r *relay) runSeek(ctx context.Context, p *play) {
 	seekErr := make(chan error, 1)
 	go func() {
 		seekErr <- lichess.SeekRealtime(seekCtx, token, lichess.SeekParams{
-			TimeMinutes:      float64(p.req.LimitSeconds) / 60,
+			TimeMinutes:      seekMinutes,
 			IncrementSeconds: p.req.IncrementSec,
 			Rated:            p.req.Rated,
 			RatingRange:      p.req.RatingRange,
 			Color:            p.req.Color,
-		})
+		}, func() { slog.Info("seek: live in lichess's lobby, holding for a match") })
 	}()
 
-	var gameID string
-	select {
-	case gameID = <-gameCh:
-		// Matched. Drop the seek connection — lichess has probably closed it
-		// already, but we must not leave a second seek pending.
-		stopSeek()
+	// Heartbeat so a stuck seek is visible in the log rather than silent.
+	beat := time.NewTicker(15 * time.Second)
+	defer beat.Stop()
 
-	case err := <-seekErr:
-		// The seek ended without a game. Either lichess refused it (rate limit,
-		// bad clock) or it expired.
-		if err != nil && ctx.Err() == nil {
-			var apiErr *lichess.APIError
-			if errors.As(err, &apiErr) && apiErr.RateLimited() {
-				// The 5/min cap is per IP and shared by every Gambit player, so
-				// this is a real and expected outcome — say so in those terms.
-				p.fail("lichess's lobby is rate-limited right now (it allows only a few seeks a minute across all of Terry's Gambit). Try again in a minute.")
-				return
-			}
-			p.fail("lichess wouldn't post the seek: %s", err)
-			return
-		}
-		// Clean close with no gameStart yet — wait briefly for the event to catch
-		// up before calling it expired; the two streams race by design.
+	var gameID string
+seeking:
+	for {
 		select {
 		case gameID = <-gameCh:
-		case <-time.After(3 * time.Second):
-			if ctx.Err() == nil {
-				p.fail("nobody took the game. Try again.")
+			// Matched. Drop the seek connection — lichess has probably closed it
+			// already, but we must not leave a second seek pending.
+			slog.Info("seek: matched", zap.String("game_id", gameID),
+				zap.Duration("waited", time.Since(seekStart)))
+			stopSeek()
+			break seeking
+
+		case err := <-seekErr:
+			// The seek ended without a game. Either lichess refused it (rate limit,
+			// bad clock) or it expired.
+			if err != nil && ctx.Err() == nil {
+				var apiErr *lichess.APIError
+				if errors.As(err, &apiErr) && apiErr.RateLimited() {
+					// The 5/min cap is per IP and shared by every Gambit player, so
+					// this is a real and expected outcome — say so in those terms.
+					slog.Warn("seek: lichess rate-limited the lobby")
+					p.fail("lichess's lobby is rate-limited right now (it allows only a few seeks a minute across all of Terry's Gambit). Try again in a minute.")
+					return
+				}
+				slog.Warn("seek: lichess refused the seek", zap.Error(err))
+				p.fail("lichess wouldn't post the seek: %s", err)
+				return
 			}
-			return
+			// Clean close with no gameStart yet — wait briefly for the event to catch
+			// up before calling it expired; the two streams race by design.
+			slog.Info("seek: connection closed; waiting briefly for a gameStart",
+				zap.Duration("waited", time.Since(seekStart)))
+			select {
+			case gameID = <-gameCh:
+				stopSeek()
+				break seeking
+			case <-time.After(3 * time.Second):
+				if ctx.Err() == nil {
+					slog.Warn("seek: closed with no game after the grace period",
+						zap.Duration("waited", time.Since(seekStart)))
+					p.fail("nobody took the game. Try again.")
+				}
+				return
+			case <-ctx.Done():
+				return
+			}
+
+		case <-beat.C:
+			slog.Info("seek: still waiting for a match", zap.Duration("elapsed", time.Since(seekStart)))
+
 		case <-ctx.Done():
 			return
 		}
-
-	case <-ctx.Done():
-		return
 	}
 
 	// We know the game; the event stream has done its job.

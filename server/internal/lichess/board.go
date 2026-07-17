@@ -747,7 +747,11 @@ type SeekParams struct {
 	Color string
 }
 
-func SeekRealtime(ctx context.Context, token string, p SeekParams) error {
+// SeekRealtime posts a real-time seek and holds the connection open until matched,
+// cancelled, or lichess closes it. onOpen (may be nil) fires once, the moment lichess
+// accepts the seek with a 200 and we start holding — the signal that our seek is live
+// in the lobby, for logging/diagnostics.
+func SeekRealtime(ctx context.Context, token string, p SeekParams, onOpen func()) error {
 	if p.TimeMinutes < 0 || p.TimeMinutes > 180 {
 		return fmt.Errorf("lichess: seek time %.1f is outside 0..180 minutes", p.TimeMinutes)
 	}
@@ -799,6 +803,9 @@ func SeekRealtime(ctx context.Context, token string, p SeekParams) error {
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 		return &APIError{Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
+	}
+	if onOpen != nil {
+		onOpen() // seek is live in lichess's lobby now, holding for a match
 	}
 
 	// Drain until cancelled or closed. There is nothing to parse — holding the

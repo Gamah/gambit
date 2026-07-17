@@ -153,7 +153,7 @@ func TestSeekBudgetRefusesBeforeSending(t *testing.T) {
 	}
 
 	// The next real seek must not reach lichess at all.
-	err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10})
+	err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10}, nil)
 	if !errors.Is(err, ErrSeekBudget) {
 		t.Fatalf("want ErrSeekBudget, got %v", err)
 	}
