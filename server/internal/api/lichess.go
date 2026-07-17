@@ -845,6 +845,9 @@ func (h *handler) stamped(p *play, steamID int64) PlayState {
 	if color, ok := p.seatOf(steamID); ok {
 		state.YourColor = color
 	}
+	// Nothing was held here (these are the immediate-return paths), so hold is now.
+	now := time.Now()
+	state.ageAt(now, now)
 	return state
 }
 
@@ -876,10 +879,14 @@ func (h *handler) lichessPlayState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	since, _ := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
+	// Before Wait, which hangs up to pollHold: HoldMs is how long we sat here, and
+	// the client reads it back off its own round trip to leave the network leg.
+	reqStart := time.Now()
 	state := p.Wait(r.Context(), since)
 	if color, seated := p.seatOf(steamID); seated {
 		state.YourColor = color
 	}
+	state.ageAt(time.Now(), reqStart)
 	writeJSON(w, http.StatusOK, state)
 }
 

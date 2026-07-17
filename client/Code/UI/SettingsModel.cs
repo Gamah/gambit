@@ -30,6 +30,22 @@ public static class SettingsModel
 	{
 		public string Label;
 		public List<SettingCell> Cells = new();
+
+		/// <summary>When set, this row is a real draggable <c>SliderControl</c> rather
+		/// than a strip of clickable cells (SettingsScreen renders one or the other).
+		/// Used for the continuous world settings — brightness, pop rate, voice range —
+		/// which were stepped tick-bars copied from rotaliate before M12.</summary>
+		public SliderSpec Slider;
+	}
+
+	/// <summary>A continuous setting rendered as a real draggable <c>SliderControl</c>.
+	/// No step — these are smooth (brightness, pop rate, voice range); the old
+	/// rotaliate-style tick bars were the thing M12 replaced. <see cref="OnChange"/>
+	/// persists on every change; the file is tiny, so a drag's worth of writes is fine.</summary>
+	public class SliderSpec
+	{
+		public float Min, Max, Value;
+		public Action<float> OnChange;
 	}
 
 	// Light hue choices; "" = keep the default (scene hue / neutral white)
@@ -46,19 +62,12 @@ public static class SettingsModel
 		("PURPLE", "#B468FF"),
 	};
 
-	// Brightness ticks in percent of the scene-tuned baseline; 0 = off
-	public static readonly int[] Ticks = { 0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150 };
-
-	// Floor pop-frequency steps (× the base interval), matching the brightness slider's
-	// tick count; 1× = the scene-tuned default.
-	public static readonly float[] PopRates =
-		{ 0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.25f, 2.5f, 2.75f, 3f };
-
-	// Proximity-voice hearing range in world units (M12). The room is ~800u across and two
-	// seated opponents sit ~50u apart, so this spans "just my table" to "much of the ring".
-	// Two independent sliders below use it — one for seated, one for roaming.
-	public static readonly float[] VoiceRanges =
-		{ 150f, 300f, 450f, 600f, 750f, 900f, 1050f, 1200f };
+	// Proximity-voice hearing range bounds in world units (M12). The room is ~800u across
+	// and two seated opponents sit ~50u apart, so this spans "just my table" to "much of
+	// the ring". The slider is continuous between these; PlayerData.ClampVoiceRange holds
+	// the same window.
+	public const float VoiceRangeMin = 150f;
+	public const float VoiceRangeMax = 1200f;
 
 	public const int MinBoards = 2;
 	public const int MaxBoards = 16;
@@ -72,14 +81,17 @@ public static class SettingsModel
 		// itself is always white now — only its brightness is tunable.
 		rows.Add( SwatchRow( "ROOM THEME", data.WorldLightColor,
 			hex => Mutate( d => d.WorldLightColor = hex ) ) );
-		rows.Add( TickRow( "ROOM LIGHT BRIGHTNESS", data.WorldLightBrightness,
+		rows.Add( SliderRow( $"ROOM LIGHT BRIGHTNESS — {Pct( data.WorldLightBrightness )}%",
+			0f, 1.5f, PlayerData.ClampLightScale( data.WorldLightBrightness ),
 			v => Mutate( d => d.WorldLightBrightness = v ) ) );
 		// Table light colour is fixed to pure white (MarqueeGlow); only brightness is tunable.
-		rows.Add( TickRow( "TABLE LIGHT BRIGHTNESS", data.MarqueeLightBrightness,
+		rows.Add( SliderRow( $"TABLE LIGHT BRIGHTNESS — {Pct( data.MarqueeLightBrightness )}%",
+			0f, 1.5f, PlayerData.ClampLightScale( data.MarqueeLightBrightness ),
 			v => Mutate( d => d.MarqueeLightBrightness = v ) ) );
 		rows.Add( ToggleRow( "CHECKERBOARD FLOOR", data.CheckerboardFloor,
 			v => Mutate( d => d.CheckerboardFloor = v ) ) );
-		rows.Add( RateRow( "POP FREQUENCY", PlayerData.ClampPopRate( data.FloorPopRate ), PopRates,
+		rows.Add( SliderRow( $"POP FREQUENCY — {PlayerData.ClampPopRate( data.FloorPopRate ):0.##}×",
+			0.25f, 3f, PlayerData.ClampPopRate( data.FloorPopRate ),
 			v => Mutate( d => d.FloorPopRate = v ) ) );
 		rows.Add( ToggleRow( "MY BOARD SOUNDS", data.MyCabinetSounds,
 			v => Mutate( d => d.MyCabinetSounds = v ) ) );
@@ -89,11 +101,11 @@ public static class SettingsModel
 		// Proximity-voice hearing range (M12): how far THIS client hears others, split by whether
 		// you're seated or roaming. Range is a receive-side, per-client value (the falloff is applied
 		// on the receiver), which is why it belongs here on the world board rather than being networked.
-		rows.Add( RangeRow( "VOICE RANGE — SEATED",
-			PlayerData.ClampVoiceRange( data.VoiceRangeAtTable ), VoiceRanges,
+		rows.Add( SliderRow( $"VOICE RANGE — SEATED — {PlayerData.ClampVoiceRange( data.VoiceRangeAtTable ):0}u",
+			VoiceRangeMin, VoiceRangeMax, PlayerData.ClampVoiceRange( data.VoiceRangeAtTable ),
 			v => Mutate( d => d.VoiceRangeAtTable = v ) ) );
-		rows.Add( RangeRow( "VOICE RANGE — ROAMING",
-			PlayerData.ClampVoiceRange( data.VoiceRangeRoaming ), VoiceRanges,
+		rows.Add( SliderRow( $"VOICE RANGE — ROAMING — {PlayerData.ClampVoiceRange( data.VoiceRangeRoaming ):0}u",
+			VoiceRangeMin, VoiceRangeMax, PlayerData.ClampVoiceRange( data.VoiceRangeRoaming ),
 			v => Mutate( d => d.VoiceRangeRoaming = v ) ) );
 
 		// NOTE: lichess TV (M9) is deliberately NOT here — not the on/off, not the
@@ -173,59 +185,17 @@ public static class SettingsModel
 		return row;
 	}
 
-	static SettingRow TickRow( string label, float current, Action<float> set )
+	// A continuous value rendered as a real draggable slider (SettingsScreen turns the
+	// Slider spec into a SliderControl). The label already carries the formatted value,
+	// which recomputes as the slider moves because Mutate bumps SettingsVersion and the
+	// screen rebuilds its rows. Replaces the old rotaliate-style tick bars (M12).
+	static SettingRow SliderRow( string label, float min, float max, float value, Action<float> set )
 	{
-		int pct = Pct( current );
-		var row = new SettingRow { Label = $"{label} — {pct}%" };
-		foreach ( var t in Ticks )
+		return new SettingRow
 		{
-			int v = t;
-			row.Cells.Add( new SettingCell
-			{
-				Css = v <= pct ? "tick filled" : "tick",
-				Selected = Math.Abs( v - pct ) <= 7,
-				Activate = () => set( v / 100f ),
-			} );
-		}
-		return row;
-	}
-
-	// Stepped float "slider" (filled-tick bar like TickRow) for an arbitrary value set,
-	// e.g. the floor pop frequency. Selected = nearest tick; ticks up to current fill.
-	static SettingRow RateRow( string label, float current, float[] steps, Action<float> set )
-	{
-		var row = new SettingRow { Label = $"{label} — {current:0.##}×" };
-		float half = steps.Length > 1 ? ( steps[1] - steps[0] ) * 0.5f : 0.01f;
-		foreach ( var s in steps )
-		{
-			float v = s;
-			row.Cells.Add( new SettingCell
-			{
-				Css = v <= current + 0.001f ? "tick filled" : "tick",
-				Selected = MathF.Abs( v - current ) <= half,
-				Activate = () => set( v ),
-			} );
-		}
-		return row;
-	}
-
-	// Stepped "slider" over an explicit set of world-unit distances (voice range). Same filled-tick
-	// bar as RateRow, but the header reads in units and the nearest tick is the selected one.
-	static SettingRow RangeRow( string label, float current, float[] steps, Action<float> set )
-	{
-		var row = new SettingRow { Label = $"{label} — {current:0}u" };
-		float half = steps.Length > 1 ? ( steps[1] - steps[0] ) * 0.5f : 0.01f;
-		foreach ( var s in steps )
-		{
-			float v = s;
-			row.Cells.Add( new SettingCell
-			{
-				Css = v <= current + 0.001f ? "tick filled" : "tick",
-				Selected = MathF.Abs( v - current ) <= half,
-				Activate = () => set( v ),
-			} );
-		}
-		return row;
+			Label = label,
+			Slider = new SliderSpec { Min = min, Max = max, Value = value, OnChange = set },
+		};
 	}
 
 	static SettingRow ToggleRow( string label, bool current, Action<bool> set )

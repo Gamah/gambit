@@ -727,7 +727,7 @@ construction** — the host freezes that controller's clocks and its `ChessGame`
 | Controller | Networked? | What it does |
 |---|---|---|
 | `LocalGameController` | host-folded `[Sync] BoardFen`/`Phase`/`ClientGameId` | the two-seat game at a table, and the archive upload (**D7**) |
-| `LichessGameController` | **no** — each client polls gamchess for itself | a real lichess game on this table (**M8**). Runs no clock and adjudicates nothing: lichess is the only authority, and the position is rebuilt from the UCI list it sends |
+| `LichessGameController` | **no** — each client polls gamchess for itself | a real lichess game on this table (**M8**). Adjudicates nothing — lichess is the only authority, and the position is rebuilt from the UCI list it sends — but it DOES run the ticking seat's clock down locally between moves (**M12**), because lichess only sends a clock on a move and a frozen clock reads as a stopped game. Same countdown machinery as `LichessTvSource`, house rule and all; a local clock hitting 0 clamps and waits for lichess to call the flag |
 | `SpectatorController` | reads the host-folded FEN; **polls gamchess for TV** | north wall: cycles live tables, then lichess TV (**M9**) |
 
 **While a lichess game runs, the local controller is a shell** holding the seats and the
@@ -1199,6 +1199,14 @@ in `Gambit.Game.VoicePrefs`) never rides a snapshot. **Master voice defaults OFF
   writes `Distance` onto **every** avatar's voice each frame, keyed on the LOCAL player's engage
   state (tighter seated, wider roaming — both tunable). Enabled/muted stay cookie-light in
   `VoicePrefs`; only range is on the board, because range is a room-tuning knob.
+- **The world-settings board uses real `SliderControl`s now (M12), not the rotaliate tick bars.**
+  Every continuous setting — brightness, pop rate, voice range — is a `SettingsModel.SliderSpec`
+  that `SettingsScreen` renders as a `<SliderControl>` (swatches and toggles stay clickable cells).
+  Sliders are **continuous, no `Step`** by request; `OnChange` persists on every change (the file is
+  tiny). The label carries the formatted value and recomputes because `Mutate` bumps
+  `SettingsVersion` and the screen rebuilds — the same reason a `SliderControl` survives the
+  mid-drag rebuild (s&box diffs it, terryball proved this). **`gamah.skafinity` is exempt** — it is
+  a vendored library with its own music sliders; do not "upgrade" those.
 - **Gotchas that were the reason to copy** (all live in the code comments): `Voice.OnUpdate` is
   **sealed** (only the hear/exclude hooks are virtual); the engine's default `Falloff` is savagely
   front-loaded (~4% by 20% of range) so we use a **linear** `Curve` + `Volume = 2f`; the default

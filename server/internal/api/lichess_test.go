@@ -623,7 +623,7 @@ func TestApplyStateMarksFinished(t *testing.T) {
 	applyState(s, &lichess.GameState{
 		Type: "gameState", Moves: "e2e4 e7e5", Wtime: 1000, Btime: 2000,
 		Status: "mate", Winner: "white",
-	})
+	}, time.Now())
 
 	if !s.Finished || s.Status != playOver {
 		t.Fatalf("a mate must close the game: %+v", s)
@@ -633,9 +633,58 @@ func TestApplyStateMarksFinished(t *testing.T) {
 	}
 
 	live := &PlayState{Status: playLive}
-	applyState(live, &lichess.GameState{Status: "started", Moves: "e2e4"})
+	applyState(live, &lichess.GameState{Status: "started", Moves: "e2e4"}, time.Now())
 	if live.Finished || live.Status != playLive {
 		t.Fatalf("a started game must stay live: %+v", live)
+	}
+}
+
+// clockAt tracks when the clocks last CHANGED, so the client can age a frozen
+// clock. A move refreshes it; a draw/takeback gameState (same clocks) must not, or
+// the age reads ~0 for a value that is really a whole think old.
+func TestApplyStateStampsClockOnlyOnChange(t *testing.T) {
+	s := &PlayState{Status: playLive}
+
+	t0 := time.Now()
+	applyState(s, &lichess.GameState{Moves: "e2e4", Wtime: 180000, Btime: 180000}, t0)
+	if !s.clockAt.Equal(t0) {
+		t.Fatalf("first clock frame must stamp clockAt: got %v want %v", s.clockAt, t0)
+	}
+
+	// A draw offer: identical clocks, no move. clockAt must not move forward.
+	t1 := t0.Add(4 * time.Second)
+	applyState(s, &lichess.GameState{Moves: "e2e4", Wtime: 180000, Btime: 180000, Wdraw: true}, t1)
+	if !s.clockAt.Equal(t0) {
+		t.Fatalf("a no-move gameState must leave clockAt alone: got %v want %v", s.clockAt, t0)
+	}
+
+	// A real move: at least one clock changes, so the stamp advances.
+	t2 := t0.Add(9 * time.Second)
+	applyState(s, &lichess.GameState{Moves: "e2e4 e7e5", Wtime: 180000, Btime: 176000}, t2)
+	if !s.clockAt.Equal(t2) {
+		t.Fatalf("a move must refresh clockAt: got %v want %v", s.clockAt, t2)
+	}
+}
+
+// ageAt derives the two send-time staleness fields as DURATIONS (skew-proof), from
+// clockAt and the request-start baseline — the same contract as TvState.ageAt.
+func TestPlayStateAgeAt(t *testing.T) {
+	now := time.Now()
+	s := PlayState{clockAt: now.Add(-2 * time.Second)}
+	s.ageAt(now, now.Add(-5*time.Second))
+
+	if s.ClockAgeMs < 1900 || s.ClockAgeMs > 2100 {
+		t.Errorf("clock_age_ms = %d, want ~2000", s.ClockAgeMs)
+	}
+	if s.HoldMs < 4900 || s.HoldMs > 5100 {
+		t.Errorf("hold_ms = %d, want ~5000", s.HoldMs)
+	}
+
+	// No clock yet ⇒ no age (a zero clockAt must not read as an enormous age).
+	var fresh PlayState
+	fresh.ageAt(now, now)
+	if fresh.ClockAgeMs != 0 {
+		t.Errorf("clock_age_ms = %d with no clock, want 0", fresh.ClockAgeMs)
 	}
 }
 

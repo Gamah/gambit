@@ -116,13 +116,25 @@ type PlayState struct {
 
 	Moves string `json:"moves"`
 
-	// Milliseconds, straight from lichess. The client renders these instead of
-	// running its own clock — the same rule as the local game, where only the
-	// host's tick is authoritative.
+	// Milliseconds, straight from lichess. lichess is the only authority on its own
+	// clocks — but it only SENDS a clock when a move happens, so the client runs the
+	// side-to-move's value down locally between moves and snaps back to these on the
+	// next state. That is the same shape TV uses, and it needs the two staleness
+	// fields below to do it without reading HIGH.
 	WhiteTimeMs int64 `json:"white_time_ms"`
 	BlackTimeMs int64 `json:"black_time_ms"`
 	WhiteIncMs  int64 `json:"white_inc_ms"`
 	BlackIncMs  int64 `json:"black_inc_ms"`
+
+	// ClockAgeMs / HoldMs let the client subtract this frame's staleness before it
+	// runs a clock down — the identical machinery to TvState's, for the identical
+	// reason (a live clock must never read HIGHER than the time actually left). Both
+	// are computed AT SEND on a copy, never stored: ClockAgeMs from clockAt (below),
+	// HoldMs from when the request landed. Omitted (0) means "no correction", so a
+	// client talking to an older gamchess just gets the old frozen-between-moves
+	// behaviour rather than a broken clock.
+	ClockAgeMs int64 `json:"clock_age_ms,omitempty"`
+	HoldMs     int64 `json:"hold_ms,omitempty"`
 
 	// Seek marks a game whose opponent is a lichess stranger rather than the
 	// player sitting opposite you — a lobby seek OR a direct challenge to a
@@ -152,6 +164,24 @@ type PlayState struct {
 	// it always returns 200 whether lichess took it or dropped it.
 	WhiteTakeback bool `json:"white_takeback"`
 	BlackTakeback bool `json:"black_takeback"`
+
+	// clockAt is when WhiteTimeMs/BlackTimeMs last CHANGED — i.e. when the move that
+	// produced them reached us from lichess. Unexported so it never hits the wire:
+	// it is in OUR clock's frame of reference and means nothing in a client's.
+	// ClockAgeMs is derived from it at send time. Only set on a real clock change so
+	// a draw offer or takeback (a gameState with no move, hence the same clocks)
+	// doesn't wrongly refresh it and understate the age.
+	clockAt time.Time
+}
+
+// ageAt fills the two send-time staleness fields on a COPY of the state — never on
+// the shared state, since these are per-response values (one request's timings must
+// not leak onto another waiter's answer). Mirrors TvState.ageAt exactly.
+func (s *PlayState) ageAt(now, reqStart time.Time) {
+	if !s.clockAt.IsZero() {
+		s.ClockAgeMs = now.Sub(s.clockAt).Milliseconds()
+	}
+	s.HoldMs = now.Sub(reqStart).Milliseconds()
 }
 
 // PlayRequest is an intent to put a game on lichess. Three shapes:
@@ -940,14 +970,16 @@ func (r *relay) streamGame(ctx context.Context, p *play, token, gameID string) {
 			case e.Full != nil:
 				full := e.Full
 				p.resolveSoloColor(full)
+				now := time.Now()
 				p.update(func(s *PlayState) {
 					s.WhiteName = full.White.Name
 					s.BlackName = full.Black.Name
-					applyState(s, &full.State)
+					applyState(s, &full.State, now)
 				})
 			case e.State != nil:
 				st := e.State
-				p.update(func(s *PlayState) { applyState(s, st) })
+				now := time.Now()
+				p.update(func(s *PlayState) { applyState(s, st, now) })
 			}
 			// chatLine / opponentGone are ignored: Gambit has voice and a table.
 		})
@@ -1020,8 +1052,18 @@ func (p *play) resolveSoloColor(full *lichess.GameFull) {
 	})
 }
 
-// applyState folds a lichess gameState into the client-facing snapshot.
-func applyState(s *PlayState, st *lichess.GameState) {
+// applyState folds a lichess gameState into the client-facing snapshot. now is
+// when this frame reached us, stamped onto clockAt whenever the clocks actually
+// change so the client can age them — passed in rather than read here so a test
+// can pin it.
+func applyState(s *PlayState, st *lichess.GameState, now time.Time) {
+	// Stamp BEFORE overwriting the old values: a real move changes at least one
+	// clock (think time out, increment in), while a draw/takeback gameState carries
+	// the same clocks and must leave clockAt where it was, or the age reads ~0 for a
+	// value that is really as old as the current think.
+	if st.Wtime != s.WhiteTimeMs || st.Btime != s.BlackTimeMs {
+		s.clockAt = now
+	}
 	s.Moves = st.Moves
 	s.WhiteTimeMs = st.Wtime
 	s.BlackTimeMs = st.Btime

@@ -93,13 +93,25 @@ public sealed class LichessPlayState
 
 	public string moves { get; set; }
 
-	// Milliseconds, straight from lichess. Rendered, never run locally — lichess
-	// is the only authority on its own clocks, exactly as the host is on a local
-	// table's.
+	// Milliseconds, straight from lichess. lichess is the only authority on its own
+	// clocks — but it only SENDS one when a move happens, so the client runs the
+	// side-to-move's value down locally between moves and snaps back to these on the
+	// next state (see LichessGameController's countdown). The two staleness fields
+	// below are what let it do that without reading HIGH.
 	public long white_time_ms { get; set; }
 	public long black_time_ms { get; set; }
 	public long white_inc_ms { get; set; }
 	public long black_inc_ms { get; set; }
+
+	/// <summary>How long ago gamchess received these clocks from lichess, and how long
+	/// it held our request — both in ms, both computed at send. The client subtracts
+	/// this frame's staleness (age + measured network, where network = round trip −
+	/// hold) before running a clock down, so a stale frame never reads HIGHER than the
+	/// time actually left. Identical machinery and reasoning to <see cref="TvState"/>'s
+	/// two fields. 0 (omitted) from an older gamchess ⇒ no correction ⇒ the old
+	/// frozen-between-moves behaviour, never a broken clock.</summary>
+	public long clock_age_ms { get; set; }
+	public long hold_ms { get; set; }
 
 	/// <summary>A game against a RANDOM lichess opponent rather than the player
 	/// sitting opposite. The stranger has no SteamID, so one seat id is empty and

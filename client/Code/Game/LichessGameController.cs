@@ -76,7 +76,8 @@ public sealed class LichessGameController : Component, IBoardGame
 	/// <see cref="ResultString"/> refusing to call it a draw.</para></summary>
 	public bool GameOver => Engaged && State is { finished: true } && ResultString != null;
 
-	/// <summary>Seconds left on a seat's clock, per lichess.
+	/// <summary>Seconds left on a seat's clock, per lichess, counted down locally
+	/// between moves.
 	///
 	/// <para>An unlimited game has no clock and lichess sends 0 for it, which would
 	/// read as a permanently flagged clock. The table's own control is what tells us
@@ -84,19 +85,64 @@ public sealed class LichessGameController : Component, IBoardGame
 	/// seek — but a direct CHALLENGE can, so this is not gated on the game being a
 	/// table game).</para>
 	///
-	/// <para><b>lichess only sends a clock when a MOVE happens</b>, so this is frozen at
-	/// the opponent's last move for the whole of a think. That is honest rather than
-	/// ideal, and it is deliberately NOT run down locally: the TV wall does that, and it
-	/// is why the TV clock read HIGH for two milestones (see LichessTvSource). Doing it
-	/// here would need the same receipt-stamp machinery the relay does not carry.</para></summary>
+	/// <para><b>lichess only sends a clock when a MOVE happens</b>, so a raw value is
+	/// frozen for the whole of a think — which reads as a stopped clock, not a thinking
+	/// player. The freeze here was an MVP; a real game needs a ticking clock. So we bank
+	/// the value lichess sent, and run the SIDE TO MOVE's clock down from it, snapping
+	/// both back on the next state. This is exactly <see cref="LichessTvSource"/>'s
+	/// machinery, including the correction that keeps it honest.</para>
+	///
+	/// <para><b>The house rule: a live clock must never read HIGHER than the time
+	/// actually left.</b> A banked value is already stale on arrival by the lichess →
+	/// gamchess → client latency, so counting down from it raw reads HIGH. We subtract
+	/// that staleness (<see cref="_bankLag"/>, from the relay's clock_age_ms/hold_ms plus
+	/// our measured round trip) and err deliberately LOW. We never adjudicate: a local
+	/// clock reaching 0 clamps at 0 and waits for lichess to call the flag.</para></summary>
 	public float? SeatClock( ChessSeat seat )
 	{
-		if ( !Playing || State is not { } st ) return null;
+		if ( !Playing || State is null ) return null;
 		if ( Local?.Tc.IsUnlimited ?? false ) return null;
 
-		// lichess sends milliseconds. 0 is NOT filtered: a genuine flag is real.
-		long ms = seat == ChessSeat.White ? st.white_time_ms : st.black_time_ms;
-		return ms / 1000f;
+		float bank = seat == ChessSeat.White ? _whiteBank : _blackBank;
+		// Only the side to move is spending time. The idle side's bank is exact
+		// however stale the frame is, so the lag applies to the ticking seat alone —
+		// subtracting it from both would invent a loss of time that never happened.
+		if ( TickingSeat != seat ) return MathF.Max( 0f, bank );
+		return MathF.Max( 0f, bank - _bankLag - (float)_sinceBank );
+	}
+
+	/// <summary>Whose clock is running: the side to move in the position lichess last
+	/// sent. Null when no game is live. Drives the countdown in <see cref="SeatClock"/>.</summary>
+	public ChessSeat? TickingSeat =>
+		Playing && Game != null ? ( Game.WhiteToMove ? ChessSeat.White : ChessSeat.Black ) : null;
+
+	// ── Local clock countdown (see SeatClock) ──
+	// Banked clocks in SECONDS, when they landed, and how stale they were on arrival.
+	// Snapped only on real news (a version advance) so a timed-out long poll can't
+	// re-snap to an already-stale value and make the clock jump back UP — the sawtooth
+	// that reads HIGH, the one thing the house rule forbids.
+	float _whiteBank, _blackBank;
+	RealTimeSince _sinceBank;
+	float _bankLag;
+	float _lastRoundTrip;
+
+	/// <summary>Ceiling on the staleness correction — a backstop against a nonsense
+	/// measurement, not a tuning knob. Eating a player's whole clock because one poll
+	/// took a minute would be worse than the small bias it corrects.</summary>
+	const float MaxClockLagSeconds = 10f;
+
+	/// <summary>How stale this frame's clocks were on arrival: gamchess's own staleness
+	/// (clock_age_ms) plus our network time (round trip − hold). Uses the FULL remaining
+	/// round trip rather than halving it — the house rule is one-directional, so an
+	/// undershoot is free where a fair estimate is a coin-flip on the forbidden outcome.
+	/// Zero when the relay sends nothing (older gamchess), which keeps the old behaviour
+	/// rather than breaking. Same as LichessTvSource.LagOf.</summary>
+	float ClockLag( LichessPlayState st )
+	{
+		float age = st.clock_age_ms / 1000f;
+		float hold = st.hold_ms / 1000f;
+		float network = MathF.Max( 0f, _lastRoundTrip - hold );
+		return Math.Clamp( age + network, 0f, MaxClockLagSeconds );
 	}
 
 	/// <summary>Seconds left on the local player's own clock. Null when we hold no seat
@@ -523,6 +569,9 @@ public sealed class LichessGameController : Component, IBoardGame
 		_renderedMoves = null;
 		_lastMoveUci = null;
 		_premoveUci = null;   // a premove must never outlive the game it was armed in
+		_whiteBank = 0f;      // banked clocks belong to the game that's ending
+		_blackBank = 0f;
+		_bankLag = 0f;
 	}
 
 	protected override void OnUpdate()
@@ -564,7 +613,12 @@ public sealed class LichessGameController : Component, IBoardGame
 
 	async Task Poll()
 	{
+		// Time our own round trip so ClockLag can take the network leg off the frame's
+		// age. Most of a long poll's round trip is gamchess WAITING, not the network —
+		// hold_ms in the answer is what lets us subtract that back out.
+		RealTimeSince sent = 0f;
 		var res = await LichessApi.PollState( _clientGameId, _version );
+		_lastRoundTrip = (float)sent;
 		_pollInFlight = false;
 
 		if ( !res.Ok )
@@ -631,8 +685,27 @@ public sealed class LichessGameController : Component, IBoardGame
 			return;
 		}
 
+		// Is this real news, or a timed-out long poll answering with the same state?
+		// Only real news re-snaps the clocks (see the snap below) — computed before
+		// _version moves. `!=`, not `>`: a relay that restarted would reset the version.
+		bool clockNews = st.version != _version;
+
 		State = st;
 		_version = st.version;
+
+		// Snap the banked clocks to lichess's values, but only on real news. Re-snapping
+		// on a timed-out poll would reset the countdown to an already-stale value, so the
+		// clock would tick down then jump back UP — the sawtooth that reads HIGH. Placed
+		// before Rebuild so nothing reads a half-updated board; the banks don't depend on
+		// it. A finished game doesn't tick (SeatClock returns null once !Playing), so
+		// snapping through the game-over branch below is harmless.
+		if ( clockNews )
+		{
+			_whiteBank = st.white_time_ms / 1000f;
+			_blackBank = st.black_time_ms / 1000f;
+			_bankLag = ClockLag( st );
+			_sinceBank = 0f;
+		}
 
 		// A fresh answer supersedes whatever went wrong last time — otherwise one
 		// refused move would replace the turn indicator for the rest of the game
