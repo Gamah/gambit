@@ -640,6 +640,15 @@ func (r *relay) Lookup(clientGameID string) (*play, bool) {
 
 // run drives one game start to finish.
 func (r *relay) run(ctx context.Context, p *play) {
+	// Free the one-solo-request-per-user slot the moment this game's run ends — whether
+	// it finished, failed, or was cancelled. Without this a NORMALLY-finished solo game
+	// (a seek, a challenge, a shareable-link game) holds the slot until the 10-minute
+	// sweep, and the next seek/link is refused with "you already have a lichess game
+	// waiting". releasePending only deletes the slot if it still points at THIS game, so
+	// a fresh request that has already claimed it is never clobbered.
+	if p.req.solo() {
+		defer r.releasePending(p.req.SoloSteamID, p.req.ClientGameID)
+	}
 	switch {
 	case p.req.Seek:
 		r.runSeek(ctx, p)

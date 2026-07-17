@@ -651,11 +651,19 @@ public sealed class LichessGameController : Component, IBoardGame
 			return;
 		}
 
+		// Don't poll until the request POST (SendPlay/SendSeek/SendChallenge/SendOpen)
+		// has come back and Adopted the first state. Engaged + _clientGameId are set
+		// synchronously in RequestX, but the play doesn't exist on gamchess until the
+		// POST lands — so a poll fired in that window 404s ("gamchess has no record"),
+		// Clear()s us, and abandons the request client-side while the server keeps its
+		// pending slot. State != null means the POST landed and the play exists.
+		if ( State == null ) return;
+
 		// One poll at a time. The request hangs server-side for ~5s, so this is a
 		// long poll and not a busy loop: it re-issues as each answer lands.
 		if ( _pollInFlight ) return;
 		if ( (float)_pollBackoff > 0f ) return;
-		if ( State != null && State.finished ) return; // nothing more to hear
+		if ( State.finished ) return; // nothing more to hear
 
 		_pollInFlight = true;
 		_ = Poll();
