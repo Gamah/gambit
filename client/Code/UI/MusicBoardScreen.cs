@@ -38,13 +38,19 @@ public sealed class MusicBoardScreen : Component
 		// dead buttons. A whole board of nothing, which is what a JOINED instance was
 		// showing while the host's was fine.
 		//
-		// The asymmetry is the tell, and it is the one CLAUDE.md already warns about for
-		// voice: /UI and /GameController are both NetworkMode 2 (Snapshot), so a joining
-		// client REBUILDS them from the host's snapshot rather than loading them the way
-		// the first instance does. Different construction order, different answer from a
-		// one-shot lookup on the first frame. Retrying costs a scene scan on the frames
-		// before it succeeds and nothing after — the same shape as the _panel lookup
-		// directly above, which retries for exactly this kind of reason.
+		// The panel (on /UI) and the player (on /GameController) are separate GameObjects,
+		// so their OnStart order isn't guaranteed even on the host: if the panel's one-shot
+		// resolve runs first, its Player stays null forever. Retrying costs a scene scan on
+		// the frames before it succeeds and nothing after — the same shape as the _panel
+		// lookup directly above, which retries for exactly this kind of reason.
+		//
+		// This USED TO fail worse on a joining client, when /UI and /GameController were
+		// NetworkMode 2 (Snapshot): the joiner rebuilt them from the host's snapshot rather
+		// than constructing them locally, so a different construction order gave the one-shot
+		// resolve a different answer — and the host's live panel state (Enabled/IsOpen) rode
+		// the snapshot too, rendering the board open + unstyled (issue #12). Both GOs are now
+		// NetworkMode.Never so each client builds its own UI/audio locally; this retry stays
+		// as the cross-GameObject-ordering guard it always also was.
 		//
 		// Fixed here rather than in the library: Libraries/gamah.skafinity is
 		// source-committed but it is a drop-in, and its one-shot resolve is only wrong
