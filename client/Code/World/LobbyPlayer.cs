@@ -204,7 +204,11 @@ public sealed class LobbyPlayer : Component
 
 	protected override void OnUpdate()
 	{
-		if ( IsProxy ) return;
+		if ( IsProxy )
+		{
+			RestoreProxyVisibility();
+			return;
+		}
 
 		// Fell off the map: only possible while roaming (the controller is off while
 		// engaged), so catch it before the engage/leave handling below.
@@ -238,14 +242,18 @@ public sealed class LobbyPlayer : Component
 				return;
 			}
 
-			// Keep our OWN avatar hidden while seated, re-asserted every frame — a seat
+			// Keep our OWN avatar trimmed while seated, re-asserted every frame — a seat
 			// switch re-plants Terry in front of the orbited camera, and the engage-time
-			// snapshot can miss a late/re-enabled renderer. Local only (this whole method
-			// returns early for a proxy), so remote/networked Terries stay drawn — M13
-			// features depend on seeing the other players. Chess seats only; wall boards
-			// leave you standing and visible.
+			// snapshot can miss a late/re-enabled renderer or a cosmetic that finished
+			// downloading after we sat (ApplyAsync is async, and workshop items really do
+			// land seconds late). Local only (this whole method returns early for a proxy),
+			// so remote/networked Terries stay drawn — M13 depends on seeing the other
+			// player. Chess seats only; wall boards leave you standing and visible.
 			if ( ChessStation.Active != null )
+			{
 				HideLocalAvatar();
+				ApplySitPose();
+			}
 
 			// Only the chess seat drives the camera; wall boards leave it where it is.
 			// A seat switch schwoops the avatar (UpdateSeatSwitch) and the child camera
@@ -294,6 +302,45 @@ public sealed class LobbyPlayer : Component
 			EngageInfo( NearbyInfo );
 		else if ( NearbySpectator != null && Input.Pressed( "use" ) )
 			EngageSpectator( NearbySpectator );
+	}
+
+	/// <summary>
+	/// Force a REMOTE player's avatar back to fully drawn, every frame (M13).
+	///
+	/// <para><b>This exists because of the snapshot trap, and it will bite without it.</b>
+	/// <c>GameObject.Serialize</c> serialises Tags, and <c>ModelRenderer.BodyGroups</c> is a
+	/// plain serialised [Property]. Per CLAUDE.md's issue-#12 rule, a joining client
+	/// REBUILDS every <c>NetworkMode.Snapshot</c> object from the host's LIVE state — and
+	/// the PlayerTemplate's Body child is NetworkMode 2. So if the HOST is sitting at a
+	/// table with its head bodygroup off and a "viewer" tag on, a joiner rebuilds the host's
+	/// avatar HEADLESS and nothing ever corrects it, because this method's own early-return
+	/// is what stops it. Same mechanism as the music board rendering open and unstyled;
+	/// different victim.</para>
+	///
+	/// <para><b>Only the BODYGROUP actually needs us, and that is worth being precise
+	/// about.</b> The engine already handles the tag: <c>UpdateBodyVisibility()</c>
+	/// (PlayerController.Animation.cs) ends in <c>if (IsProxy) viewer = false;</c> then
+	/// <c>(Renderer?.GameObject ?? GameObject).Tags.Set("viewer", viewer)</c> — and it runs
+	/// on proxies, because we only ever disable our OWN controller. So a leaked "viewer"
+	/// tag is scrubbed one frame later by the engine itself. Nothing scrubs BodyGroups.
+	/// The tag line below is kept anyway as belt-and-braces (the engine's pass is gated on
+	/// UseCameraControls and a live Scene.Camera) and is written to the same GameObject the
+	/// engine picks, so the two cannot disagree.</para>
+	///
+	/// <para>Deliberately unconditional: it WRITES two values that are almost always
+	/// already correct, and the alternative — tracking whether this particular proxy might
+	/// have arrived tainted — is state that can itself be wrong. A proxy's clothing is left
+	/// alone: those GOs are created locally by each client's own ApplyAsync and are in
+	/// nobody's snapshot, which is exactly why TrimSeatedAvatar prefers them.</para>
+	/// </summary>
+	void RestoreProxyVisibility()
+	{
+		// Never our own doing — but the host's live state may have ridden the snapshot here.
+		var bodyGo = _bodyRenderer?.GameObject ?? GameObject;
+		if ( bodyGo.IsValid() )
+			bodyGo.Tags.Set( ViewerTag, false );
+
+		_bodyRenderer?.SetBodyGroup( HeadGroup, BodyGroupOn );
 	}
 
 	SpectatorStation FindNearbySpectator()
@@ -639,31 +686,26 @@ public sealed class LobbyPlayer : Component
 			_bodyRenderer.Set( "move_z", 0f );
 		}
 
-		// Physically plant our avatar at our side of the board. We only ever see the
-		// locked overhead camera with our own avatar hidden, so this is invisible to
-		// *us* — but the transform is networked from us (the owner), so every OTHER
-		// client's copy of our avatar snaps to the seat instead of standing wherever we
-		// walked up. And because the body then stops moving, their PlayerController
-		// derives zero speed and drops it out of the walk cycle into a plain idle — no
-		// more sliding/strafing across the room (the parent-project bug). We keep our
-		// own standing height and only slide horizontally to the seat, then face the
-		// board so we read as sitting down to it.
+		// Physically plant our avatar ON THE CHAIR at our side of the board. The transform
+		// is networked from us (the owner), so every OTHER client's copy of our avatar
+		// lands on the seat instead of standing wherever we walked up. And because the
+		// body then stops moving, their PlayerController derives zero speed and drops it
+		// out of the walk cycle into a plain idle — no more sliding/strafing across the
+		// room (the parent-project bug).
+		//
+		// M13: this used to plant at SeatWorldPosition — the WALK-UP spot — keeping our
+		// own standing z, so a "seated" player was a citizen standing bolt upright against
+		// the table edge, and had been since the fork. Nobody noticed because
+		// HideLocalAvatar meant you never saw yourself and the person opposite you was
+		// standing the whole time. SeatSitWorldPosition is the chair; the two are
+		// different questions.
 		if ( ChessStation.Active is { } seatStation )
 		{
 			_seatReturnPos = WorldPosition;
 			_seatReturnRot = WorldRotation;
 			_movedForSeat = true;
 
-			var seatPos = seatStation.SeatWorldPosition( ChessStation.ActiveSeat );
-			seatPos.z = WorldPosition.z; // slide to the seat side only; keep our own height
-
-			var boardFlat = seatStation.WorldPosition;
-			boardFlat.z = seatPos.z;
-			var toBoard = boardFlat - seatPos;
-
-			WorldPosition = seatPos;
-			if ( toBoard.Length > 0.01f )
-				WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
+			PlantOnSeat( seatStation, ChessStation.ActiveSeat );
 		}
 
 		// Hide our own avatar so it doesn't stand between the locked camera and the board.
@@ -673,12 +715,51 @@ public sealed class LobbyPlayer : Component
 		HideLocalAvatar();
 	}
 
-	/// <summary>Stop drawing THIS client's own avatar (never a remote/proxy one — those
-	/// stay visible, which M13 leans on). Collected live rather than at OnStart so
-	/// dresser-spawned clothing renderers are caught, and re-runnable: a seat switch
-	/// re-plants the body in front of the newly-orbited camera, so we re-hide there too.
-	/// Already-disabled renderers are skipped, so calling it twice is safe.</summary>
+	/// <summary>
+	/// Keep our own seated avatar out of our own camera (never a remote/proxy one — those
+	/// stay visible, which M13 leans on).
+	///
+	/// <para><b>Since M13 this trims rather than deletes.</b> The whole point of the
+	/// milestone is that you can see your own forearms reach onto the board, so the body
+	/// stays drawn and only the things that would fill the frame come off. What makes that
+	/// affordable is arithmetic, not a mechanism: at the default anchor the frame's bottom
+	/// edge lands at x ≈ −29.5, essentially the tabletop's edge — so the shot is already
+	/// forearms-and-hands and nothing else, for free. Only the head is marginal (out by
+	/// ~0.4, well inside the error bars on a guessed sit pose), so it is the one trim
+	/// worth making.</para>
+	///
+	/// <para><b>Arms-only cannot be done any other way, and this is the record of it.</b>
+	/// The citizen has no arms mesh: <c>citizen_bodygrouplist.vmdl_prefab</c> defines
+	/// exactly five groups — Head, Chest, Legs, Hands, Feet — and the arms live inside
+	/// <c>Torso_LOD0..3</c>, i.e. Chest. So <c>SetBodyGroup("Chest", 1)</c> takes the arms
+	/// with it, and bone-zeroing can't help either (the arms hang off the spine chain, so
+	/// collapsing the torso collapses them). As SeatEyeBlend descends, more torso enters
+	/// frame and there is NOTHING to remove it with. That is the limit, not a TODO.</para>
+	///
+	/// <para>Collected live rather than at OnStart so dresser-spawned clothing renderers
+	/// are caught, and re-runnable: a seat switch re-plants the body in front of the newly
+	/// orbited camera. Already-handled renderers are skipped, so a per-frame call is safe.</para>
+	/// </summary>
 	void HideLocalAvatar()
+	{
+		if ( ChessRing.Instance is { TerrySeated: false } )
+		{
+			HideEveryRenderer();
+			return;
+		}
+
+		TrimSeatedAvatar();
+	}
+
+	/// <summary>The pre-M13 behaviour, kept behind ChessRing.TerrySeated: don't draw our
+	/// avatar at all while seated.
+	///
+	/// <para>Non-negotiable, per git history. 0f68c91 — "Don't draw the local avatar while
+	/// seated (fixes Terry filling the camera after a seat switch)". A standing avatar
+	/// planted at the walk-up spot puts its head's front face around x = −27, well inside
+	/// the frame's bottom edge at −30.1. If the seated rig is wrong in the editor, this is
+	/// the switch that makes the game playable again.</para></summary>
+	void HideEveryRenderer()
 	{
 		foreach ( var r in Components.GetAll<ModelRenderer>( FindMode.EverythingInSelfAndDescendants ) )
 		{
@@ -688,6 +769,153 @@ public sealed class LobbyPlayer : Component
 			// bound if something ever flip-flops a renderer back on.
 			if ( !_hiddenRenderers.Contains( r ) )
 				_hiddenRenderers.Add( r );
+		}
+	}
+
+	/// <summary>
+	/// Take the head and our cosmetics out of OUR camera only, leaving the body — and the
+	/// arms on it — drawn.
+	///
+	/// <para><b>Tag the GameObjects, never the class.</b> The engine already does the hard
+	/// part: <c>ClothingContainer.Dressing</c> puts a <c>"clothing"</c> tag on every
+	/// spawned cosmetic GO. It would be one line to
+	/// <c>RenderExcludeTags.Add("clothing")</c> — and it would strip the OPPONENT's clothes
+	/// too, because the exclude list is per-camera, not per-object. Remote viewers must keep
+	/// seeing our swag; we tag our own GOs instead.</para>
+	///
+	/// <para><c>"viewer"</c> is the engine's own first-person tag
+	/// (PlayerController.Camera.cs adds it to RenderExcludeTags). We add it explicitly
+	/// anyway: while seated the controller is DISABLED, so its ModifyCamera isn't running
+	/// to re-add it for us.</para>
+	///
+	/// <para><b>Per GameObject, with no inheritance to children.</b> The engine's check is
+	/// <c>if (RenderExcludeTags.HasAny(c.GameObject.Tags)) continue;</c> — one GameObject at
+	/// a time. That the engine tags each clothing GO separately rather than relying on Body
+	/// is the corroboration, not an accident.</para>
+	/// </summary>
+	void TrimSeatedAvatar()
+	{
+		// Has(), not Contains(): ITagSet's API is Has/Set/Add — Contains would only bind
+		// through LINQ's IEnumerable extension, which isn't imported here and would be an
+		// O(n) walk of a HashSet-backed set if it were.
+		var cam = Scene?.Camera;
+		if ( cam != null && !cam.RenderExcludeTags.Has( ViewerTag ) )
+			cam.RenderExcludeTags.Add( ViewerTag );
+
+		// Cosmetics: created LOCALLY by DressFromAvatar's ApplyAsync on each client, so
+		// they are in nobody's network snapshot and tagging them cannot leak. Prefer them
+		// for exactly that reason — see the bodygroup below, which does not have this
+		// luxury.
+		foreach ( var r in Components.GetAll<ModelRenderer>( FindMode.EverythingInSelfAndDescendants ) )
+		{
+			if ( r == _bodyRenderer ) continue;                     // the body IS the point
+			if ( !r.GameObject.Tags.Has( ClothingTag ) ) continue;  // not a cosmetic
+			r.GameObject.Tags.Set( ViewerTag, true );
+			if ( !_viewerTagged.Contains( r.GameObject ) )
+				_viewerTagged.Add( r.GameObject );
+		}
+
+		// The head. SetBodyGroup(string, INT) — the string overload silently matches
+		// nothing on four of the five groups, because only Head's choices carry
+		// name = "on"/"off"; the other four BodyGroupChoice nodes have no name field at
+		// all. It would work here and fail the moment it was copied to Chest.
+		_bodyRenderer?.SetBodyGroup( HeadGroup, BodyGroupOff );
+		_headHidden = true;
+	}
+
+	// The engine's own first-person exclude tag, and the tag its dresser puts on every
+	// cosmetic GameObject (ClothingContainer.Dressing).
+	const string ViewerTag = "viewer";
+	const string ClothingTag = "clothing";
+	const string HeadGroup = "Head";
+	const int BodyGroupOn = 0;
+	const int BodyGroupOff = 1;
+
+	readonly List<GameObject> _viewerTagged = new();
+	bool _headHidden;
+
+	/// <summary>
+	/// Sit our own citizen down, by writing the animgraph parameters ourselves.
+	///
+	/// <para><b>Why not the engine's chair.</b> BaseChair / SitMoveMode need a LIVE
+	/// PlayerController and ours is disabled the moment we sit — that is the whole seat
+	/// design. So we do what <c>BaseChair.UpdatePlayerAnimator</c> does anyway, which is
+	/// exactly this list of Set() calls. <b>And not CitizenAnimationHelper either</b>: it is
+	/// a thin Target.Set(...) wrapper that doesn't expose the finger parameter M13 needs,
+	/// and it would fight PlayerController while roaming. Writing _bodyRenderer directly is
+	/// the API BeginEngage already uses two methods up.</para>
+	///
+	/// <para><b>Every frame, not once at engage.</b> Nothing else writes these while the
+	/// controller is off, but a hotload, a re-dress or a seat switch can all land between
+	/// engaging and standing, and a pose that is asserted once is a pose that quietly
+	/// reverts. Same reasoning as re-asserting the trim above.</para>
+	///
+	/// <para><b>"sit" is an int, not a bool, and "b_sit" DOES NOT EXIST.</b> citizen.vanmgrph
+	/// declares <c>sit</c> as a CEnumAnimParameter — not_sitting, sitting_01..03,
+	/// sitting_ground_01..04 — so 1 is BaseChair's AnimatorSitPose.Chair1 (≡ the helper's
+	/// SittingStyle.Chair). There is no <c>b_sit</c> parameter anywhere in the graph: the
+	/// only thing in all of sbox-public that writes it is CitizenAnimationHelper.Sitting,
+	/// and BaseChair — the engine's own working chair — never touches it. Setting it is a
+	/// silent no-op, which is the worst kind of wrong.</para>
+	/// </summary>
+	void ApplySitPose()
+	{
+		var r = _bodyRenderer;
+		if ( r == null ) return;
+
+		// The kill switch reverts the POSE too, not just our own view of it — see
+		// PlantOnSeat. Remote players see a standing citizen at the walk-up spot, exactly
+		// as they have since the fork.
+		if ( ChessRing.Instance is { TerrySeated: false } )
+		{
+			ClearSitPose();
+			return;
+		}
+
+		r.Set( "sit", SitPoseChair );
+
+		// INCHES, hard-clamped to ±12 by the graph. The pose carries its own seat height
+		// above the avatar's origin (which is at the FEET — see SeatSitWorldPosition); this
+		// only trims it. citizen_sit.vsubgrph's own comment: "30 units at the source, 12
+		// after scaling to inches."
+		r.Set( "sit_offset_height", ChessRing.Instance?.SitOffsetHeight ?? 0f );
+
+		// The same grounding stomps BaseChair makes, for the same reason: with the
+		// controller off nothing else writes them, and a stale airborne/ducked flag would
+		// fight the sit pose.
+		r.Set( "b_grounded", true );
+		r.Set( "b_climbing", false );
+		r.Set( "b_swim", false );
+		r.Set( "duck", false );
+	}
+
+	/// <summary>Stand the citizen back up. Pairs with <see cref="ApplySitPose"/>; the
+	/// controller takes the rest back over the moment it is re-enabled.</summary>
+	void ClearSitPose()
+	{
+		_bodyRenderer?.Set( "sit", SitPoseStanding );
+		_bodyRenderer?.Set( "sit_offset_height", 0f );
+	}
+
+	/// <summary>citizen.vanmgrph's <c>sit</c> enum: 0 = not_sitting, 1 = sitting_01.
+	/// BaseChair spells these AnimatorSitPose.None / .Chair1, which are the better
+	/// names for identical values.</summary>
+	const int SitPoseStanding = 0;
+	const int SitPoseChair = 1;
+
+	/// <summary>Undo <see cref="TrimSeatedAvatar"/>: put the head back and stop excluding
+	/// our cosmetics. Idempotent, and safe to call when nothing was ever trimmed.</summary>
+	void RestoreSeatedAvatar()
+	{
+		foreach ( var go in _viewerTagged )
+			if ( go.IsValid() )
+				go.Tags.Set( ViewerTag, false );
+		_viewerTagged.Clear();
+
+		if ( _headHidden )
+		{
+			_bodyRenderer?.SetBodyGroup( HeadGroup, BodyGroupOn );
+			_headHidden = false;
 		}
 	}
 
@@ -751,18 +979,43 @@ public sealed class LobbyPlayer : Component
 	ChessSeat _switchTargetSeat;
 	const float SeatSwitchTime = 0.6f; // a touch slower than the engage swoop — it's a bigger sweep
 
+	/// <summary>
+	/// Put the avatar on a seat's chair, facing the board. The one place that answers
+	/// "where does a seated body go", so the three callers that plant it —
+	/// <see cref="BeginEngage"/>, <see cref="InstantReseat"/> and the seat switch's
+	/// end-snap — cannot disagree.
+	///
+	/// <para><b>They used to, in a way that was invisible.</b> Each hand-rolled the same
+	/// five lines, and the switch's end-snap wrote <c>seatPos.z = _switchAvatarFrom.z</c> —
+	/// correct only by accident, and only for as long as the seated z happened to equal the
+	/// standing z. The day SeatSitZ moves, that one pops and the other two don't.</para></summary>
+	void PlantOnSeat( ChessStation station, ChessSeat seat )
+	{
+		// TerrySeated false is a full revert to the pre-M13 world, not just "don't draw
+		// me": with no sit pose applied, the citizen is STANDING, and a standing citizen
+		// belongs at the walk-up spot rather than planted on a chair it isn't sitting in.
+		// A kill switch that only reverts half of a feature is one you can't trust in the
+		// moment you need it.
+		var seatPos = ChessRing.Instance is { TerrySeated: false }
+			? station.SeatWorldPosition( seat )
+			: station.SeatSitWorldPosition( seat );
+
+		// Yaw at the board, level — a flat look, so the pitch of the line from the chair up
+		// to the board can't tip the whole body forward.
+		var boardFlat = station.WorldPosition;
+		boardFlat.z = seatPos.z;
+		var toBoard = boardFlat - seatPos;
+
+		WorldPosition = seatPos;
+		if ( toBoard.Length > 0.01f )
+			WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
+	}
+
 	/// <summary>Instant seat change (fallback when anchors aren't built): teleport the
 	/// avatar to the new seat and re-blend the camera, the pre-schwoop behaviour.</summary>
 	void InstantReseat( ChessStation station, ChessSeat seat )
 	{
-		var seatPos = station.SeatWorldPosition( seat );
-		seatPos.z = WorldPosition.z;
-		var boardFlat = station.WorldPosition;
-		boardFlat.z = seatPos.z;
-		var toBoard = boardFlat - seatPos;
-		WorldPosition = seatPos;
-		if ( toBoard.Length > 0.01f )
-			WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
+		PlantOnSeat( station, seat );
 		HideLocalAvatar();
 		if ( _cameraObject != null )
 		{
@@ -792,18 +1045,13 @@ public sealed class LobbyPlayer : Component
 			_switching = false;
 			// Snap the avatar to the exact new seat pose (symmetry lands it here already;
 			// this removes any float drift), and mark the camera settled at the new anchor.
+			//
+			// M13: this hand-rolled the plant and took its z from _switchAvatarFrom — which
+			// was correct ONLY by accident, because the seated z happened to be the standing
+			// z. Through PlantOnSeat it is correct on purpose.
 			var station = ChessStation.Active;
 			if ( station != null )
-			{
-				var seatPos = station.SeatWorldPosition( _switchTargetSeat );
-				seatPos.z = _switchAvatarFrom.z;
-				var boardFlat = station.WorldPosition;
-				boardFlat.z = seatPos.z;
-				var toBoard = boardFlat - seatPos;
-				WorldPosition = seatPos;
-				if ( toBoard.Length > 0.01f )
-					WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
-			}
+				PlantOnSeat( station, _switchTargetSeat );
 			// The camera rode to the new anchor; let UpdateLockedCamera hold it there.
 			if ( _cameraObject != null )
 			{
@@ -844,12 +1092,17 @@ public sealed class LobbyPlayer : Component
 		SettingsStation.Active?.Leave();
 		InfoStation.Active?.Leave();
 
+		// Undo everything the seat did to our own body, in either direction: the wholesale
+		// hide (TerrySeated false) and the M13 trim can BOTH have run this session if the
+		// switch was flipped mid-game, so neither undo is conditional on it.
 		foreach ( var r in _hiddenRenderers )
 		{
 			if ( r.IsValid() )
 				r.Enabled = true;
 		}
 		_hiddenRenderers.Clear();
+		RestoreSeatedAvatar();
+		ClearSitPose();
 
 		// Reverse of the engage blend: ease the camera from the anchor back to
 		// where it was when we engaged, then hand control back to the controller

@@ -59,7 +59,14 @@ public sealed class ChessStation : Component
 		seat == ChessSeat.White ? WhiteAnchor : BlackAnchor;
 
 	/// <summary>Where a player stands to claim this seat — used for the "Press E"
-	/// proximity pick. The camera anchor's ground position is exactly that spot.</summary>
+	/// proximity pick. The camera anchor's ground position is exactly that spot.
+	///
+	/// <para><b>This is the WALK-UP spot and nothing else.</b> It is not where a seated
+	/// player's body goes — see <see cref="SeatSitWorldPosition"/>. Two different
+	/// questions, two methods: this one answers "am I close enough to sit here", which
+	/// <see cref="LobbyPlayer.FindNearbySeat"/> asks against InteractRange and which the
+	/// info board's "walk up to either side and press E" is checked against. Moving it to
+	/// suit the seated pose would quietly change how close you must stand to a table.</para></summary>
 	public Vector3 SeatWorldPosition( ChessSeat seat )
 	{
 		var anchor = SeatAnchor( seat );
@@ -67,6 +74,36 @@ public sealed class ChessStation : Component
 		var pos = anchor.WorldPosition;
 		pos.z = WorldPosition.z;
 		return pos;
+	}
+
+	/// <summary>
+	/// Where a SEATED player's avatar is planted (M13) — on the chair, not at the walk-up
+	/// spot they arrived from.
+	///
+	/// <para><b>Why it is further back than the walk-up spot.</b> The walk-up spot (|x| =
+	/// 32.12) is the chair's centre, and hips at a chair's centre put the citizen's belly
+	/// about 3.4 units INSIDE the tabletop slab. Sitting back of centre is how a chair
+	/// actually works, and <c>SeatSitBack</c> = 36 is the middle of the only band that
+	/// works at all: much further back and the elbows-on-table idle becomes physically
+	/// impossible (at |x| = 42 the elbow reach is 32.0, already off the table's 30 edge).
+	/// It is pinned from both ends, which is why it is a knob rather than a constant.</para>
+	///
+	/// <para><b>The Z is the FLOOR, and that is not an oversight.</b> The citizen's origin
+	/// is at its FEET, not its hips: the sit pose carries its own seat height above the
+	/// origin, and <c>sit_offset_height</c> trims it by ±12 inches. (citizen.vanmgrph's own
+	/// comment — "30 units at the source, 12 after scaling to inches. Feet IK disables
+	/// through tag on +12 node" — only makes sense if the feet reach the floor at offset 0;
+	/// dangling feet on a high stool is exactly what that tag turns IK off for.) Planting
+	/// the origin on the pad's top surface would float the terry a whole seat-height into
+	/// the air. Both numbers are [Property] on ChessRing and the editor settles them.</para>
+	/// </summary>
+	public Vector3 SeatSitWorldPosition( ChessSeat seat )
+	{
+		var ring = ChessRing.Instance;
+		float back = ring?.SeatSitBack ?? 36f;
+		float z = ring?.SeatSitZ ?? 0f;
+		float side = seat == ChessSeat.White ? -1f : +1f;
+		return WorldTransform.PointToWorld( new Vector3( side * back, 0f, z ) );
 	}
 
 	/// <summary>Take a seat at this table. Local half of the claim: optimistic —

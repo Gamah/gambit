@@ -126,7 +126,14 @@ public sealed class StationChair : Component
 
 		// Clamped against the foot plate rather than trusted: ChairTuckInset is a
 		// [Property], and a chair tucked past the table's foot is inside the table.
-		float inset = Math.Clamp( ring.ChairTuckInset, 0f, ring.ChairMaxTuck );
+		//
+		// MathF.Max on the ceiling, because a clamp is not automatically safe: Math.Clamp
+		// THROWS when min > max, and ChairMaxTuck is derived from SeatPitch — itself a
+		// [Property, Range(15, 85)]. Past ~75° the seat spot is so close to the table that
+		// the max tuck goes NEGATIVE, and this line would throw every frame on every chair.
+		// A degenerate chair at a degenerate camera angle is survivable; 32 exceptions a
+		// frame is not.
+		float inset = Math.Clamp( ring.ChairTuckInset, 0f, MathF.Max( ring.ChairMaxTuck, 0f ) );
 		float side = Seat == ChessSeat.White ? -1f : +1f;
 
 		// Smoothstep: a chair being pushed in accelerates and decelerates. Linear reads as

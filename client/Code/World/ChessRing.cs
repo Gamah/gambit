@@ -71,6 +71,104 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// nudge until engaged UI lines up with the board on screen.</summary>
 	[Property] public float UiFit { get; set; } = 1f;
 
+	// ══ Seated terries (M13) ══
+	//
+	// EVERY knob in this block is a code default and can only be retuned by editing and
+	// hotloading — ChessRing is NOT in lobby.scene (LobbyRoom self-provisions it), exactly
+	// as CLAUDE.md warns for SpectatorWall. Not a bug; a real ergonomic cost. gambit_terry
+	// prints the whole chain so the loop is at least legible.
+
+	/// <summary>
+	/// The kill switch, and it is not optional. False restores <c>HideLocalAvatar</c>'s
+	/// wholesale behaviour: your own avatar simply isn't drawn while seated, as it hasn't
+	/// been since the fork.
+	///
+	/// <para><b>Git history demands this.</b> Commit <c>0f68c91</c> — "Don't draw the local
+	/// avatar while seated (fixes Terry filling the camera after a seat switch)". The
+	/// arithmetic explains that bug rather than excusing it: a STANDING avatar planted at
+	/// the walk-up spot puts its head's front face around x = −27, well inside the frame's
+	/// bottom edge at −30.1. A broken rig must not be able to re-ship it.</para></summary>
+	[Property] public bool TerrySeated { get; set; } = true;
+
+	/// <summary>
+	/// How far back of the board a seated avatar's origin is planted, as |x|.
+	///
+	/// <para>Pinned from BOTH ends, which is why it is a knob and not a constant. Forward
+	/// of ~34 the citizen's belly is inside the tabletop slab (the walk-up spot at 32.12
+	/// puts it ~3.4 units in). Back of ~38 the elbows-on-table idle stops being physically
+	/// possible — at 42 the elbow reach is 32.0 against a table edge of 30. 36 is the
+	/// middle of the only band that works.</para>
+	///
+	/// <para>The belly figure rests on an ESTIMATED torso half-depth of ~5.5 scaled to a
+	/// 72-unit citizen, which could easily be ±2. That is the tightest guess in M13 and the
+	/// reason this must stay tunable.</para></summary>
+	[Property] public float SeatSitBack { get; set; } = 36f;
+
+	/// <summary>
+	/// Height a seated avatar's ORIGIN is planted at, station-local. The FLOOR, by default.
+	///
+	/// <para><b>The citizen's origin is its feet, not its hips</b> — the sit pose carries
+	/// its own seat height above the origin and <see cref="SitOffsetHeight"/> trims it.
+	/// citizen.vanmgrph's comment on that parameter ("30 units at the source, 12 after
+	/// scaling to inches. Feet IK disables through tag on +12 node") only makes sense if
+	/// the feet reach the floor at offset 0 — dangling feet on a high stool is what the tag
+	/// turns IK off for. Planting the origin on the chair's pad would float the terry a
+	/// whole seat-height into the air.</para></summary>
+	[Property] public float SeatSitZ { get; set; } = 0f;
+
+	/// <summary>
+	/// Trim on the sit pose's own seat height, in INCHES — the animgraph's
+	/// <c>sit_offset_height</c>, domain ±12 (a hard clamp in the graph, not a suggestion).
+	///
+	/// <para><b>This is the number the whole eye-height chain rests on, and it cannot be
+	/// known on this host.</b> Dial it (or <see cref="ChairSeatTopZ"/>; they meet in the
+	/// middle) until the hips land on the pad. Everything downstream — what is in frame,
+	/// where the elbows reach — is measured from wherever this puts them.</para></summary>
+	[Property, Range( -12f, 12f )] public float SitOffsetHeight { get; set; } = 0f;
+
+	/// <summary>
+	/// Blends the seat camera from the seated player's EYES (0) to today's orbit anchor (1).
+	///
+	/// <para><b>The default is 1 and reproduces today's anchor bit-for-bit</b>, not "near
+	/// enough": <c>Vector3.Lerp(eye, orbit, 1)</c> delegates to System.Numerics, which is
+	/// <c>a·(1−t) + b·t</c>, so at t = 1 it is <c>a·0 + b·1</c> = exactly <c>b</c> — checked
+	/// against the real implementation, and true for any eye position at all. The rotation
+	/// line below is then character-for-character the one that was already there. So
+	/// shipping this changes nothing until someone turns it.</para>
+	///
+	/// <para><b>Turning it down costs the board, and there is a floor.</b> An eye-level
+	/// camera is only 13.6° to the far rank, where a king hides EIGHT squares behind it and
+	/// near/far foreshortening goes from today's 1.9× to 5.1×. The current anchor is
+	/// playable precisely because it is 44° to the far rank. Picking does not break at any
+	/// value (SquareUnderCursor is exact ray-plane math) — readability does.</para>
+	///
+	/// <para><b>And it cannot reach 0 while keeping arms-only.</b> As it descends, more of
+	/// your own torso enters frame and there is NO clean mechanism to remove it: the citizen
+	/// has no arms mesh (they live in Torso_LOD*, i.e. the Chest bodygroup) and bone-zeroing
+	/// takes the arms with the spine. Usable band is roughly 0.6–1.0. Stated as a limit
+	/// rather than discovered as a disappointment.</para>
+	///
+	/// <para>It blends the POSITION only, never the rotation — which is what buys all of the
+	/// above: the camera keeps aiming at the board at every value, and there is one formula
+	/// rather than two. It also leaves SeatOrbitRadius/SeatPitch alone, so the walk-up spot,
+	/// the ring's radius clamp and the (dead) UI rect are untouched at every value. That is
+	/// the point of the knob.</para></summary>
+	[Property, Range( 0f, 1f )] public float SeatEyeBlend { get; set; } = 1f;
+
+	/// <summary>Where the seated eye IS, as |x| back of the board and height — the blend's
+	/// far end. <b>[GUESS]</b>: both rest on "seated eye ≈ 31 above the pad", an estimate
+	/// from human proportion scaled to a 72-unit citizen, not a measurement. The skeleton
+	/// lives in the compiled model, which is in neither repo.
+	///
+	/// <para><b>Deliberately NOT read from the eye bone.</b> Two reasons, the second
+	/// decisive: bone transforms resolve during the animation update so an OnUpdate read can
+	/// be a frame stale — and a camera welded to a breathing, blinking head bone makes the
+	/// board swim. Static constants have no ordering hazard and no jitter. If true
+	/// head-tracking is ever wanted, the path is TryGetBoneTransformAnimation in a late
+	/// update.</para></summary>
+	[Property] public float SeatEyeBack { get; set; } = 36f;
+	[Property] public float SeatEyeHeight { get; set; } = 49f;
+
 	/// <summary>Overhead table spot brightness. Strictly neutral white so the piece
 	/// and square tints read true (MarqueeGlow applies the user multiplier in play).</summary>
 	[Property] public float MarqueeBrightness { get; set; } = 3.3f;
@@ -1373,7 +1471,11 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 	/// <summary>Locked-camera anchor for one seat. side −1 = White (outward),
 	/// +1 = Black (inward). Positioned above and behind the board edge, pre-aimed
-	/// down at the board center so LobbyPlayer can lerp straight to it.</summary>
+	/// down at the board center so LobbyPlayer can lerp straight to it.
+	///
+	/// <para>Since M13 the position is a blend between the seated player's eyes and that
+	/// orbit point — see <see cref="SeatEyeBlend"/>, whose default of 1 makes this method
+	/// return exactly what it always did.</para></summary>
 	GameObject BuildSeatAnchor( GameObject station, string name, float side )
 	{
 		// Spherical orbit around the board center: SeatOrbitRadius sets the range,
@@ -1381,16 +1483,26 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		// seat's own axis (no sideways slew) facing straight down the board.
 		var center = new Vector3( 0, 0, BoardSurfaceZ + 2f );
 		float pitch = SeatPitch * (MathF.PI / 180f);
-		var offset = new Vector3(
+		var orbit = center + new Vector3(
 			side * SeatOrbitRadius * MathF.Cos( pitch ),
 			0,
 			SeatOrbitRadius * MathF.Sin( pitch ) );
 
+		// Where the player's own eyes are, roughly (see SeatEyeBack/SeatEyeHeight — both
+		// [GUESS], both knobs). At SeatEyeBlend 1 this value is multiplied by zero.
+		var eye = new Vector3( side * SeatEyeBack, 0, SeatEyeHeight );
+		var pos = Vector3.Lerp( eye, orbit, SeatEyeBlend );
+
 		var anchor = new GameObject( true, name );
 		anchor.Parent = station;
-		anchor.LocalPosition = center + offset;
+		anchor.LocalPosition = pos;
 		// Aim at the board center, then pitch the aim down by SeatLookDownAngle —
 		// a pure rotation of the view, position unchanged (positive = look lower).
+		//
+		// Derived from the BLENDED position and never itself blended: that is what keeps
+		// the camera aimed at the board at every value of SeatEyeBlend with one formula
+		// instead of two, and it is why this line is unchanged from before M13 — which is
+		// half of the bit-for-bit proof (the other half being Lerp(eye, orbit, 1) === orbit).
 		anchor.LocalRotation = Rotation.LookAt( center - anchor.LocalPosition, Vector3.Up )
 			* Rotation.FromPitch( SeatLookDownAngle );
 		return anchor;
