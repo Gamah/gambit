@@ -228,7 +228,10 @@ public sealed class LobbyPlayer : Component
 			}
 
 			// Only the chess seat drives the camera; wall boards leave it where it is.
-			if ( ChessStation.Active != null )
+			// A seat switch orbits (UpdateOrbitCamera) and takes priority until it lands.
+			if ( _orbiting )
+				UpdateOrbitCamera();
+			else if ( ChessStation.Active != null )
 				UpdateLockedCamera();
 			return;
 		}
@@ -508,6 +511,15 @@ public sealed class LobbyPlayer : Component
 			lichess.ResignLocal();
 		else if ( localForfeits )
 			controller.ResignLocal();
+
+		// Safety: standing up always drops any lichess game state so the board doesn't
+		// keep showing it. The other paths above already handle the withdrawing/resigning/
+		// dismissing; this just guarantees the controller is cleared no matter which case
+		// we came through (ResignLocal, notably, keeps polling to show the result — we
+		// don't want that once we've left). The local table resets on its own as the seat
+		// empties. Idempotent.
+		lichess?.Clear();
+
 		Disengage();
 	}
 
@@ -569,6 +581,7 @@ public sealed class LobbyPlayer : Component
 
 	void BeginEngage()
 	{
+		_orbiting = false; // a fresh engage cancels any in-flight seat-switch orbit
 		if ( _cameraObject != null )
 		{
 			_camFromPos = _cameraObject.WorldPosition;
@@ -678,19 +691,79 @@ public sealed class LobbyPlayer : Component
 		if ( toBoard.Length > 0.01f )
 			WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
 
-		// Re-blend the camera from where it is now to the new seat's anchor — the exact
-		// mechanism BeginEngage uses, just re-triggered: UpdateLockedCamera eases from
-		// _camFrom to SeatAnchor(ActiveSeat) over CamBlendTime once _engageTime resets.
+		// ORBIT the camera around the board to the new side, rather than lerping straight
+		// across (which cuts through the board and reads as a jarring cut). The two seat
+		// anchors are diametrically opposite on a horizontal orbit circle whose centre is
+		// their midpoint, so a yaw about that centre sweeps cleanly from one to the other.
+		// UpdateOrbitCamera drives it; a plain re-blend is the fallback when the anchors
+		// aren't both present.
 		if ( _cameraObject != null )
 		{
+			var a = station.SeatAnchor( ChessSeat.White );
+			var b = station.SeatAnchor( ChessSeat.Black );
+			if ( a != null && b != null )
+			{
+				_orbitCenter = ( a.WorldPosition + b.WorldPosition ) * 0.5f;
+				_orbitFromPos = _cameraObject.WorldPosition;
+				_orbitFromRot = _cameraObject.WorldRotation;
+				_orbitTime = 0;
+				_orbiting = true;
+			}
+			else
+			{
+				_camFromPos = _cameraObject.WorldPosition;
+				_camFromRot = _cameraObject.WorldRotation;
+				_engageTime = 0;
+			}
+		}
+	}
+
+	// ── Seat-switch orbit (SwitchSeat) ──
+	bool _orbiting;
+	TimeSince _orbitTime;
+	Vector3 _orbitFromPos;
+	Rotation _orbitFromRot;
+	Vector3 _orbitCenter;
+	const float SeatSwitchTime = 0.6f; // a touch slower than the engage swoop — it's a bigger sweep
+
+	/// <summary>Arc the camera around the board centre to the new seat, clockwise, keeping
+	/// it looking at the board throughout. Both the position offset and the view rotate by
+	/// the same yaw, so a 180° sweep lands exactly on the opposite anchor (its rotation is
+	/// this one yawed 180°). Snaps to the anchor and hands back to the locked camera at the
+	/// end.</summary>
+	void UpdateOrbitCamera()
+	{
+		if ( _cameraObject == null ) { _orbiting = false; return; }
+
+		float t = Math.Clamp( (float)_orbitTime / SeatSwitchTime, 0f, 1f );
+		t = 1f - MathF.Pow( 1f - t, 3f ); // ease-out cubic, same feel as the engage blend
+
+		// Negative yaw about world up = clockwise seen from above.
+		var spin = Rotation.FromAxis( Vector3.Up, -180f * t );
+		_cameraObject.WorldPosition = _orbitCenter + spin * ( _orbitFromPos - _orbitCenter );
+		_cameraObject.WorldRotation = spin * _orbitFromRot;
+
+		if ( _orbitTime >= SeatSwitchTime )
+		{
+			_orbiting = false;
+			// Land exactly on the new anchor and mark the engage blend settled so the
+			// locked camera holds there without a second re-blend.
+			var anchor = ChessStation.Active?.SeatAnchor( ChessStation.ActiveSeat );
+			if ( anchor != null )
+			{
+				_cameraObject.WorldPosition = anchor.WorldPosition;
+				_cameraObject.WorldRotation = anchor.WorldRotation;
+			}
 			_camFromPos = _cameraObject.WorldPosition;
 			_camFromRot = _cameraObject.WorldRotation;
-			_engageTime = 0;
+			_engageTime = CamBlendTime;
 		}
 	}
 
 	public void Disengage()
 	{
+		_orbiting = false; // standing up cancels any in-flight seat-switch orbit
+
 		// Wall boards never moved the camera — just re-enable look and close the panel.
 		if ( ChessStation.Active == null && BoardEngaged )
 		{

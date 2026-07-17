@@ -671,6 +671,9 @@
 		string name = _challengeEntry?.Text?.Trim();
 		if ( string.IsNullOrWhiteSpace( name ) ) return;
 		Lichess()?.RequestChallenge( name, _challengeRated );
+		// A challenge plays the seat's colour, so this is normally a no-op — but harmless,
+		// and keeps every lichess-start path aligning the seat the same way.
+		_seatAlignPending = true;
 		if ( _challengeEntry != null ) _challengeEntry.Text = "";
 		StateHasChanged();
 	}
@@ -730,16 +733,19 @@
 	void StartSeek()
 	{
 		Lichess()?.RequestSeek( _seekRated, color: _seekColor );
+		// lichess assigns the side when matched — align the seat to it at game start.
+		_seatAlignPending = true;
 		StateHasChanged();
 	}
 
 	// ── Shareable link (an anonymous browser opponent plays this player on the board) ──
 	// Colour is which side WE take; the opponent's link is the opposite side. Picking a
-	// side moves our seat to it (MoveSeatToColor); "random" is settled when the game
-	// starts and moved then (_openSeatPending, resolved in OnUpdate).
+	// side moves our seat to it (MoveSeatToColor); a colour lichess ASSIGNS (a random link,
+	// or ANY seek) is settled when the game starts and moved then (_seatAlignPending,
+	// resolved in OnUpdate) — that is why sitting White and being matched Black rotates you.
 	bool _openRated;
 	string _openColor = "random";
-	bool _openSeatPending;
+	bool _seatAlignPending;
 	RealTimeSince _shareCopied = 999f;
 
 	void ToggleOpenRated() { _openRated = !_openRated; StateHasChanged(); }
@@ -761,7 +767,7 @@
 	void StartOpenLink()
 	{
 		Lichess()?.RequestOpenLink( _openRated, _openColor );
-		_openSeatPending = true; // move to the assigned side once the game starts (random)
+		_seatAlignPending = true; // move to the assigned side once the game starts (random)
 		StateHasChanged();
 	}
 
@@ -979,19 +985,21 @@
 		if ( ChessStation.Active != null )
 			LichessLinkState.Poll();
 
-		// Shareable link with a random colour: lichess assigns our side when the game
-		// starts, so move our seat to match once we know it (white/black were already
-		// moved when picked). One-shot; also cleared if the request never became a game.
-		if ( _openSeatPending && Lichess() is { } lc )
+		// Any lichess game where lichess ASSIGNS the side (a seek, a random link) can put
+		// us on the opposite colour from the seat we sat at — sit White, matched Black.
+		// Move our seat to the assigned side once the game starts and we know it. One-shot;
+		// also cleared if the request never became a game. (A picked colour was already
+		// moved at pick time; this then no-ops.)
+		if ( _seatAlignPending && Lichess() is { } lc )
 		{
 			if ( lc is { Playing: true, LocalSeat: { } seat } )
 			{
 				LobbyPlayer.Local?.SwitchSeat( seat );
-				_openSeatPending = false;
+				_seatAlignPending = false;
 			}
 			else if ( !lc.Engaged )
 			{
-				_openSeatPending = false;
+				_seatAlignPending = false;
 			}
 		}
 	}
