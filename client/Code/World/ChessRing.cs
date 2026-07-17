@@ -169,6 +169,23 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	[Property] public float SeatEyeBack { get; set; } = 36f;
 	[Property] public float SeatEyeHeight { get; set; } = 49f;
 
+	/// <summary>
+	/// Where a seated player's hand rests with nothing to do: elbows on the table.
+	///
+	/// <para><b>X spends a margin this file says is spent, and that is deliberate.</b> The
+	/// tabletop-margin comment above states both X margins are "kept clear — they are the
+	/// seat cameras' sightlines". The hands go there anyway, because the hands ARE the
+	/// sightline's subject: that margin is the only part of the table a seat camera looks
+	/// down over, which is exactly where you would put your elbows. The board frame's
+	/// half-extent is 21.75 and the tabletop's is 30, so 26 lands squarely in the 8.25-wide
+	/// margin — on the table, clear of the board.</para>
+	///
+	/// <para>Y is the offset toward the player's own outside; Z is the tabletop's surface
+	/// plus a little, so a wrist rests ON it rather than in it.</para></summary>
+	[Property] public float HandIdleX { get; set; } = 26f;
+	[Property] public float HandIdleY { get; set; } = 10f;
+	[Property] public float HandIdleZ { get; set; } = 31f;
+
 	/// <summary>Overhead table spot brightness. Strictly neutral white so the piece
 	/// and square tints read true (MarqueeGlow applies the user multiplier in play).</summary>
 	[Property] public float MarqueeBrightness { get; set; } = 3.3f;
@@ -621,6 +638,15 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			sounds.Station = component;
 			sounds.Controller = controller;
 			sounds.Lichess = lichess;
+
+			// The seated players' hands (M13). Beside the sounds and wired identically, for
+			// the identical reason: it resolves the same seam the same way, so what you see,
+			// what you hear and what the hands do are the same game — and a third kind of
+			// game gets hands by existing.
+			var terry = station.AddComponent<SeatedTerry>();
+			terry.Station = component;
+			terry.Controller = controller;
+			terry.Lichess = lichess;
 
 
 			// Floating occupancy sign over the table (blank while the table is
@@ -1216,6 +1242,17 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// <summary>Tube radius. Thin — this is a bent-tube frame, not a plank.</summary>
 	const float ChairTubeRadius = 0.75f;
 
+	/// <summary>
+	/// Radius of the frame's corners. A real cantilever chair is ONE bent tube, so its
+	/// corners are bends, not mitres — 2.5 against a 0.75 tube is about 3.3× the tube's own
+	/// radius, which is roughly what a tube bender will give you before it kinks.
+	///
+	/// <para>Bounded by the shortest leg it sits on, and BuildTubePath clamps rather than
+	/// trusting: a corner may not eat more than half of either leg or two bends meet in the
+	/// middle and the tube folds through itself. The chair's shortest leg is the back riser
+	/// (ChairArmrestZ − ChairSeatRailZ = 7.35), so the clamp only bites past ~3.6.</para></summary>
+	const float ChairBendRadius = 2.5f;
+
 	/// <summary>Pad depth, along the board axis. Also the frame's span: the floor rail,
 	/// the seat rail and the armrest all run this far.</summary>
 	const float ChairSeatDepth = 18f;
@@ -1244,13 +1281,16 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// ChairArmrestZ — this is the input, the height is the output.</summary>
 	const float ChairArmrestTableGap = 1.5f;
 
-	/// <summary>Back panel: bottom, top, and how far the L's return reaches forward.
-	/// ChairBackTopZ is the chair's overall height and what a D5 chair model would be
-	/// scaled to.</summary>
+	/// <summary>Back panel: bottom and top. ChairBackTopZ is the chair's overall height and
+	/// what a D5 chair model would be scaled to.
+	///
+	/// <para><b>One flat rect, and no L.</b> M13 specified an L-shaped back with a return
+	/// curling forward at the top — but that was an interpretation, not a derivation (the
+	/// file says so itself), and in the room it read as the back curving inward at you. The
+	/// panel is the coloured surface of the chair and it wants to be one plane.</para></summary>
 	const float ChairBackBottomZ = 22f;
 	const float ChairBackTopZ = 34f;
 	const float ChairBackThickness = 1.2f;
-	const float ChairBackReturn = 3f;
 
 	/// <summary>How far an EMPTY chair tucks toward the table. The seated position is the
 	/// geometry itself — that IS the pulled-out state, and pulling out any further would
@@ -1343,20 +1383,61 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// </summary>
 	void BuildStationChair( GameObject station, ChessStation component, ChessSeat seat )
 	{
+		// The driver lives on the STATION, not on the chair — because the chair is
+		// client-local and the station is what every client actually receives. See
+		// BuildChairView.
+		var driver = station.AddComponent<StationChair>();
+		driver.Station = component;
+		driver.Seat = seat;
+
+		// The EDITOR's preview chair. At runtime nothing is built here: StationChair builds
+		// a client-local copy on every machine instead, because a lathed tube has no asset
+		// path and cannot cross the wire (BuildChairView says why at length). _runtimeBuilt
+		// is false in the editor and on a joining client — whose preview OnStart throws away
+		// anyway — and true only on the host's authoritative build.
+		if ( !_runtimeBuilt )
+			BuildChairView( station, seat, null );
+	}
+
+	/// <summary>Name of a seat's chair GameObject. One place, because StationChair has to
+	/// find and replace whatever the ring's preview left behind.</summary>
+	public static string ChairName( ChessSeat seat ) =>
+		seat == ChessSeat.White ? "Chair White" : "Chair Black";
+
+	/// <summary>
+	/// Build one chair's geometry under <paramref name="station"/>, and hand its panels to
+	/// <paramref name="driver"/> (null for the editor preview, which has no driver).
+	///
+	/// <para><b>NotSaved | NotNetworked, and that is load-bearing rather than tidy.</b> The
+	/// tube is a runtime <c>Model.Builder</c> mesh, and a runtime model HAS NO ASSET PATH —
+	/// a ModelRenderer serialises its Model as a path, so the moment a chair rides the
+	/// host's snapshot to a joining client, every tube on it resolves to the engine's ERROR
+	/// model, stretched by that tube's own (radius, radius, length) scale. Which is exactly
+	/// what shipping it networked looked like: a joiner's whole room full of stretched error
+	/// models, while the host — holding the real Model object in memory — saw nothing
+	/// wrong.</para>
+	///
+	/// <para><b>This is why ChessBoardView destroys the ring's "Pieces" and rebuilds
+	/// "PiecesView" as NotSaved|NotNetworked</b>, and it is the same constraint: the lathed
+	/// PIECES cannot cross the wire either. They get away with it only because EnsureBoard
+	/// destroys the broken set within a frame of the station arriving — so the bug has
+	/// always been there and has never been visible. A chair with nothing to destroy it
+	/// just sits there. <b>Anything built from Model.Builder must be built per client, on a
+	/// NotNetworked object.</b></para>
+	/// </summary>
+	public GameObject BuildChairView( GameObject station, ChessSeat seat, StationChair driver )
+	{
 		bool white = seat == ChessSeat.White;
 		float side = white ? -1f : +1f;
 
-		var chair = new GameObject( true, white ? "Chair White" : "Chair Black" );
+		var chair = new GameObject( true, ChairName( seat ) );
+		chair.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
 		chair.Parent = station;
 		// AT the seat spot, facing the board — so chair-local +X is "toward the board" on
 		// both sides and everything below is written once, unsigned. StationChair slides
 		// this x for the tuck.
 		chair.LocalPosition = new Vector3( side * ChairCenterX, 0f, 0f );
 		chair.LocalRotation = Rotation.FromYaw( white ? 0f : 180f );
-
-		var driver = chair.AddComponent<StationChair>();
-		driver.Station = component;
-		driver.Seat = seat;
 
 		// ── D5 fallback hook, mirroring BuildPiece/PieceHeight's convention: a real model
 		// scaled to the same overall height, so an import keeps the room's proportions.
@@ -1370,10 +1451,11 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			mr.Tint = ChairFrameTint( white );
 			float h = model.Bounds.Size.z;
 			if ( h > 0.01f ) go.LocalScale = ChairBackTopZ / h;
-			return;
+			return chair;
 		}
 
 		BuildChairFrame( chair, ChairFrameTint( white ), driver );
+		return chair;
 	}
 
 	/// <summary>75% of the way from a metal grey toward this seat's piece colour.
@@ -1405,41 +1487,33 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	void BuildChairFrame( GameObject chair, Color frame, StationChair driver )
 	{
 		float r = ChairTubeRadius;
+		float b = ChairBendRadius;
 
+		// ── The side frames, as ONE continuous bent tube each ──
+		//
+		// Read it as the polyline it is: along the floor, up at the front, back along under
+		// the seat, up at the back, and forward again as the arm. The arm's front end is
+		// free — that IS the cantilever, and it is what makes the legs' U open backwards
+		// while the arms' opens forwards.
+		//
+		// One tube, not five with spheres over the mitres: a bent-tube chair is its bends.
 		for ( int i = 0; i < 2; i++ )
 		{
 			float y = i == 0 ? -ChairSideY : +ChairSideY;
-			string tag = i == 0 ? "R" : "L";
-
-			// The 5-segment polyline, back to front then up and forward again: an S on
-			// its side. Points shared by two segments get a joint sphere over the mitre.
-			var floorBack = new Vector3( ChairBackX, y, ChairFloorRailZ );
-			var floorFront = new Vector3( ChairFrontX, y, ChairFloorRailZ );
-			var railFront = new Vector3( ChairFrontX, y, ChairSeatRailZ );
-			var railBack = new Vector3( ChairBackX, y, ChairSeatRailZ );
-			var armBack = new Vector3( ChairBackX, y, ChairArmrestZ );
-			var armFront = new Vector3( ChairFrontX, y, ChairArmrestZ );
-
-			ChessSetBuilder.BuildTube( chair, $"FloorRail {tag}", floorBack, floorFront, r, frame );
-			ChessSetBuilder.BuildTube( chair, $"FrontRiser {tag}", floorFront, railFront, r, frame );
-			ChessSetBuilder.BuildTube( chair, $"SeatRail {tag}", railFront, railBack, r, frame );
-			ChessSetBuilder.BuildTube( chair, $"BackRiser {tag}", railBack, armBack, r, frame );
-			ChessSetBuilder.BuildTube( chair, $"Armrest {tag}", armBack, armFront, r, frame );
-
-			// Joints at the four bends. Not at floorBack or armFront: those are the sled's
-			// heel and the arm's open end, which are ends, not corners.
-			ChessSetBuilder.BuildJoint( chair, $"Bend {tag}0", floorFront, r, frame );
-			ChessSetBuilder.BuildJoint( chair, $"Bend {tag}1", railFront, r, frame );
-			ChessSetBuilder.BuildJoint( chair, $"Bend {tag}2", railBack, r, frame );
-			ChessSetBuilder.BuildJoint( chair, $"Bend {tag}3", armBack, r, frame );
-			// Rounded ends, so a tube doesn't present a flat cap to the room.
-			ChessSetBuilder.BuildJoint( chair, $"End {tag}0", floorBack, r, frame );
-			ChessSetBuilder.BuildJoint( chair, $"End {tag}1", armFront, r, frame );
+			ChessSetBuilder.BuildTubePath( chair, i == 0 ? "Frame R" : "Frame L", new[]
+			{
+				new Vector3( ChairBackX, y, ChairFloorRailZ ),   // sled, heel
+				new Vector3( ChairFrontX, y, ChairFloorRailZ ),  // sled, toe
+				new Vector3( ChairFrontX, y, ChairSeatRailZ ),   // front riser, top
+				new Vector3( ChairBackX, y, ChairSeatRailZ ),    // seat rail, back
+				new Vector3( ChairBackX, y, ChairArmrestZ ),     // back riser, top
+				new Vector3( ChairFrontX, y, ChairArmrestZ ),    // armrest, free end
+			}, r, b, frame );
 		}
 
 		// The two cross-tubes that make the side frames one object rather than two: the
 		// sled closes at the FRONT, the seat rails at the BACK. Opposite ends on purpose —
-		// that is what leaves the legs' U opening backwards and the arms' forwards.
+		// same reason the polyline above doubles back on itself.
 		ChessSetBuilder.BuildTube( chair, "FloorCross",
 			new Vector3( ChairFrontX, -ChairSideY, ChairFloorRailZ ),
 			new Vector3( ChairFrontX, +ChairSideY, ChairFloorRailZ ), r, frame );
@@ -1454,19 +1528,16 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			new Vector3( ChairSeatDepth, ChairSeatWidth, ChairPadThickness ),
 			null, ChairFrameBase );
 
-		// The L: an upright at the back riser's own x, and a return forward at the top.
+		// One flat upright at the back riser's own x. No return curling forward — see
+		// ChairBackTopZ.
 		var back = AddBoxGo( chair, "BackPanel",
 			new Vector3( ChairBackX, 0f, ( ChairBackBottomZ + ChairBackTopZ ) * 0.5f ),
 			new Vector3( ChairBackThickness, ChairSeatWidth, ChairBackTopZ - ChairBackBottomZ ),
 			null, ChairFrameBase );
 
-		var ret = AddBoxGo( chair, "BackReturn",
-			new Vector3( ChairBackX + ChairBackReturn * 0.5f, 0f,
-				ChairBackTopZ - ChairBackThickness * 0.5f ),
-			new Vector3( ChairBackReturn, ChairSeatWidth, ChairBackThickness ),
-			null, ChairFrameBase );
-
-		driver.SetPanels( pad, back, ret );
+		// Null for the editor preview, which has no driver and keeps the static tint —
+		// MarqueeGlow's precedent exactly.
+		driver?.SetPanels( pad, back );
 	}
 
 	/// <summary>Locked-camera anchor for one seat. side −1 = White (outward),

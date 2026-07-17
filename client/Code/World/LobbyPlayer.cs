@@ -33,6 +33,53 @@ public sealed class LobbyPlayer : Component
 	/// local FileSystem.Data.</summary>
 	[Sync] public string GambitName { get; set; }
 
+	/// <summary>
+	/// This player's hovered and selected board square, packed into one int and published
+	/// by the OWNER. −1 = neither (the resting value, and what an unseated player carries).
+	///
+	/// <para><b>The only thing M13 puts on the wire, and the smallest thing that could
+	/// be.</b> Everything else a seated terry does — the pose, the pickup animation, the
+	/// chair's tuck, the tint — is derived locally from state that already replicates. Hover
+	/// and selection are the exception because they have NO other evidence: nothing else in
+	/// the game knows which square you are thinking about. A move, by contrast, is already
+	/// relayed, so every client can drive the same pickup off LastMoveUci without being
+	/// told.</para>
+	///
+	/// <para><b>Owner-synced, not host-authoritative</b>, unlike ChessStation's occupancy: a
+	/// hover is the CLIENT's own truth and the host has no opinion on it.
+	/// <see cref="GambitName"/> is the precedent — a bare [Sync] on a networked,
+	/// player-owned component, published behind an explicit change gate.</para>
+	///
+	/// <para>Bandwidth is a handful of int writes per second per seated player: it changes
+	/// only when the cursor crosses a square boundary, and NOTHING is sent while the cursor
+	/// sits still or nobody is seated. [Sync] diffs anyway; the change gate in
+	/// ChessBoardView is belt-and-braces and matches the house style.</para>
+	///
+	/// <para><b>It survives the lichess seam for free.</b> The payload is a raw square index
+	/// — no game-source knowledge crosses the wire. An observer only needs to know which
+	/// square to float a hand over, and the hovering player derives their own hover from
+	/// their own source. Which is also why a third kind of game gets this by existing.</para></summary>
+	[Sync] public int HandState { get; set; } = -1;
+
+	/// <summary>Pack hover + selection into one int. 7 bits each — 0..64 after the +1 bias,
+	/// so −1 (none) packs cleanly and the whole thing is one comparison to change-gate.</summary>
+	public static int PackHand( int hover, int selected ) =>
+		( hover + 1 ) | ( ( selected + 1 ) << 7 );
+
+	/// <summary>Inverse of <see cref="PackHand"/>. −1 out for "none".</summary>
+	public static void UnpackHand( int packed, out int hover, out int selected )
+	{
+		if ( packed < 0 )
+		{
+			hover = -1;
+			selected = -1;
+			return;
+		}
+
+		hover = ( packed & 0x7F ) - 1;
+		selected = ( ( packed >> 7 ) & 0x7F ) - 1;
+	}
+
 	/// <summary>Name tag height above the player origin (the avatar is ~72 tall).</summary>
 	[Property] public float NameTagHeight { get; set; } = 82f;
 
@@ -204,9 +251,12 @@ public sealed class LobbyPlayer : Component
 
 	protected override void OnUpdate()
 	{
+		UpdateSeatedAt();
+
 		if ( IsProxy )
 		{
 			RestoreProxyVisibility();
+			UpdateProxySeating();
 			return;
 		}
 
@@ -302,6 +352,84 @@ public sealed class LobbyPlayer : Component
 			EngageInfo( NearbyInfo );
 		else if ( NearbySpectator != null && Input.Pressed( "use" ) )
 			EngageSpectator( NearbySpectator );
+	}
+
+	/// <summary>Which station and seat this avatar occupies, or null. Derived from the
+	/// <c>[Sync(FromHost)]</c> occupancy, so it is true on EVERY client for EVERY player —
+	/// which is the whole authority story for the seated pose: nothing about it is
+	/// networked, because everything it needs already is.</summary>
+	public (ChessStation Station, ChessSeat Seat)? SeatedAt { get; private set; }
+
+	/// <summary>Recompute <see cref="SeatedAt"/>. Cheap enough to do per player per frame:
+	/// it is a walk of ~8 stations, the same order as FindNearbySeat, which already does
+	/// this every frame over stations × seats.</summary>
+	void UpdateSeatedAt()
+	{
+		// Our OWN seat comes from ChessStation.Active, not from the [Sync] fields: that
+		// covers the optimistic-claim window between pressing E and the host's occupancy
+		// landing, which is exactly the moment we sit down.
+		if ( !IsProxy && ChessStation.Active is { } active )
+		{
+			SeatedAt = (active, ChessStation.ActiveSeat);
+			return;
+		}
+
+		ulong id = Network.Owner?.SteamId ?? 0;
+		if ( id != 0 )
+		{
+			foreach ( var s in Scene.GetAllComponents<ChessStation>() )
+			{
+				if ( s.WhiteSteamId == id ) { SeatedAt = (s, ChessSeat.White); return; }
+				if ( s.BlackSteamId == id ) { SeatedAt = (s, ChessSeat.Black); return; }
+			}
+		}
+
+		SeatedAt = null;
+	}
+
+	bool _proxySeated;
+
+	/// <summary>
+	/// Sit a REMOTE player's citizen down (M13) — and stop their own PlayerController
+	/// standing it straight back up.
+	///
+	/// <para><b>This is the milestone's real difficulty, and it is not a maybe.</b>
+	/// <c>MoveMode.OnUpdateAnimatorState</c> — the engine's default move mode — opens with
+	/// <c>renderer.Set( "sit", 0 )</c>. A proxy's PlayerController is ENABLED (this method's
+	/// own OnUpdate early-returns before we could disable it, and its Renderer self-heals in
+	/// PlayerController.Elements.cs, so it really is animating), which means it runs
+	/// UpdateAnimation → Mode.UpdateAnimator → OnUpdateAnimatorState EVERY FRAME and stomps
+	/// `sit` back to 0. Whatever we write, a remote terry stands up again the same frame. It
+	/// also writes Renderer.WorldRotation from EyeAngles in OnRotateRenderBody, which would
+	/// fight the seated facing.</para>
+	///
+	/// <para><b>UseAnimatorControls, not Enabled.</b> The surgical cut: PlayerController's
+	/// call site is <c>if (UseAnimatorControls &amp;&amp; Renderer.IsValid())
+	/// UpdateAnimation(Renderer)</c>, so clearing it silences BOTH the sit stomp and the body
+	/// rotation while leaving the rest of the controller — physics, collision, the networked
+	/// transform we actually want — completely alone. Disabling the whole controller would
+	/// also work and would be a much bigger hammer, and it is not needed.</para>
+	///
+	/// <para>It self-heals if it ever leaks through a snapshot (it is a serialised
+	/// [Property] on a NetworkMode.Snapshot object, like BodyGroups): this runs every frame
+	/// on every client and restores it the moment the player stands.</para>
+	/// </summary>
+	void UpdateProxySeating()
+	{
+		bool seated = SeatedAt != null && ChessRing.Instance is not { TerrySeated: false };
+
+		// Written only when wrong, so a standing proxy costs one comparison.
+		if ( _controller != null && _controller.UseAnimatorControls == seated )
+			_controller.UseAnimatorControls = !seated;
+
+		if ( seated )
+			ApplySitPose();
+		else if ( _proxySeated )
+			// Only on the transition: once the animator is back on, the controller writes
+			// sit = 0 itself every frame and this would just be saying it twice.
+			ClearSitPose();
+
+		_proxySeated = seated;
 	}
 
 	/// <summary>
@@ -902,6 +1030,74 @@ public sealed class LobbyPlayer : Component
 	/// names for identical values.</summary>
 	const int SitPoseStanding = 0;
 	const int SitPoseChair = 1;
+
+	/// <summary>
+	/// Put this seated citizen's working hand where <see cref="Gambit.Chess.TerryPose"/>
+	/// says it goes. Called by <see cref="SeatedTerry"/> for every seat on every client.
+	///
+	/// <para><b>IK needs no GameObjects.</b> <c>SetIk(name, Transform)</c> takes a Transform
+	/// directly; CitizenAnimationHelper's IkLeftHand/IkRightHand GameObject properties are
+	/// editor sugar over exactly this call. So the target is lerped in code and handed
+	/// straight over — no scene objects to spawn, parent, or clean up.</para>
+	///
+	/// <para><b>SetIk wants a WORLD transform</b> and converts internally
+	/// (<c>tx = WorldTransform.ToLocal(tx)</c>). Handing it a local one silently puts the
+	/// hand somewhere near the floor of the room.</para>
+	///
+	/// <para><b>Right hand works, left hand idles.</b> Chess is played one-handed.</para>
+	/// </summary>
+	public void ApplyHandPose( ChessStation station, ChessSeat seat, Gambit.Chess.HandPose pose )
+	{
+		var r = _bodyRenderer;
+		var ring = ChessRing.Instance;
+		if ( r == null || ring == null || station == null ) return;
+		if ( ring is { TerrySeated: false } ) return;
+
+		// Where the hand would rest with nothing to do: elbows on the table, in the X
+		// margin. CLAUDE.md calls both X margins "kept clear — they are the seat cameras'
+		// sightlines", and this spends one of them ON PURPOSE: the hands ARE the sightline's
+		// subject. The board frame's half-extent is 21.75 and the tabletop's is 30, so 26
+		// lands squarely in the 8.25-wide margin — on the table, clear of the board.
+		float side = seat == ChessSeat.White ? -1f : +1f;
+		var idle = new Vector3( side * ring.HandIdleX, side * -ring.HandIdleY, ring.HandIdleZ );
+
+		Vector3 local = idle;
+		if ( pose.OnBoard && pose.Weight > 0f )
+		{
+			// TerryPose deals in square INDICES and scalars precisely so it can be run on a
+			// host with no engine. This is the half that needs Sandbox: turning them into a
+			// place. Square index is rank*8+file, matching ChessBoardView.SquareUnderCursor.
+			var from = SquareLocal( ring, pose.FromSquare );
+			var to = SquareLocal( ring, pose.ToSquare );
+			var on = Vector3.Lerp( from, to, pose.Travel ) + Vector3.Up * pose.Height;
+			local = Vector3.Lerp( idle, on, pose.Weight );
+		}
+
+		var world = station.WorldTransform.PointToWorld( local );
+
+		// Palm down over the board. The hand reaches from this seat's side, so it faces
+		// across the table the way the body does.
+		var rot = Rotation.From( 60f, seat == ChessSeat.White ? 0f : 180f, 0f );
+
+		r.Set( "holdtype", HoldTypeItem );
+		r.Set( "holdtype_handedness", HandednessRight );
+		r.Set( "holdtype_pose_hand", pose.FingerClose );
+		r.SetIk( "hand_right", new Transform( world, rot ) );
+	}
+
+	/// <summary>Clear the hand IK — the arm goes back to whatever the pose says.</summary>
+	public void ClearHandPose()
+	{
+		_bodyRenderer?.ClearIk( "hand_right" );
+	}
+
+	static Vector3 SquareLocal( ChessRing ring, int square ) =>
+		square < 0 ? Vector3.Zero : ring.SquareLocalPosition( square & 7, square >> 3 );
+
+	/// <summary>citizen.vanmgrph's holdtype enum — HoldItem, the one the finger-blend
+	/// (holdtype_pose_hand) is wired into. Handedness 1 = Right.</summary>
+	const int HoldTypeItem = 4;
+	const int HandednessRight = 1;
 
 	/// <summary>Undo <see cref="TrimSeatedAvatar"/>: put the head back and stop excluding
 	/// our cosmetics. Idempotent, and safe to call when nothing was ever trimmed.</summary>

@@ -326,10 +326,227 @@ public static class ChessSetBuilder
 		return go;
 	}
 
-	/// <summary>A sphere at a tube frame's vertex, hiding the mitre where two segments
-	/// meet. Same radius as the tubes, so it reads as the bend rather than as a knuckle.</summary>
-	public static void BuildJoint( GameObject parent, string name, Vector3 pos, float radius, Color tint )
-		=> AddSphere( parent, name, pos, radius * 2f, tint );
+	// ── Bent tube (M13) ──
+	//
+	// Real bends, not mitred corners with a sphere over the join. A tube frame IS its
+	// bends — that is what makes it read as bent tube rather than as welded pipe — so the
+	// corners get swept arcs and the whole polyline becomes ONE mesh.
+	//
+	// One mesh per frame rather than a GameObject per segment also happens to be much
+	// cheaper: a chair was ~22 renderers (10 tubes + 12 spheres) and is now 2.
+
+	/// <summary>Facets per 90° of bend. 6 puts a vertex every 15°, which at these radii is
+	/// well under a pixel of chord error.</summary>
+	const int BendFacets = 6;
+
+	/// <summary>Vertices around the tube's circumference. 12 is what a 0.75-radius tube
+	/// needs to read as round at arm's length.</summary>
+	const int TubeSides = 12;
+
+	/// <summary>
+	/// Sweep a tube of <paramref name="radius"/> along <paramref name="points"/>, rounding
+	/// every interior corner to <paramref name="bendRadius"/>, as ONE mesh.
+	///
+	/// <para><b>The corner maths, since nothing here can render it.</b> At a vertex V
+	/// between P and N: the turn angle φ is the angle between the incoming and outgoing
+	/// directions, and an arc of radius R tangent to both lines must start
+	/// <c>d = R·tan(φ/2)</c> back along the incoming leg and end d forward along the
+	/// outgoing one. For the 90° corners of a chair frame that is simply d = R. The arc's
+	/// centre sits perpendicular to the incoming direction at that tangent point, offset by
+	/// R toward the turn — and the arc is then swept about <c>dirIn × dirOut</c>.</para>
+	///
+	/// <para><b>The bend is clamped to what the legs can afford</b>: a corner cannot eat
+	/// more than half of either leg, or consecutive bends would overlap and the tube would
+	/// fold through itself. A chair's shortest leg is the back riser (7.35), so this bites
+	/// only if someone turns the radius up past ~3.6.</para>
+	///
+	/// <para>A rotation-minimising frame carries the ring around the path, so the tube does
+	/// not twist through the bends. The seed <c>up</c> is picked off whichever world axis
+	/// the first segment is least parallel to — a cylinder is symmetric, so any stable
+	/// choice does; an UNSTABLE one (Vector3.Up against a vertical riser) is the degenerate
+	/// case Rotation.LookAt's own guard exists for.</para>
+	/// </summary>
+	public static GameObject BuildTubePath( GameObject parent, string name, Vector3[] points,
+		float radius, float bendRadius, Color tint )
+	{
+		if ( points is not { Length: >= 2 } ) return null;
+
+		var path = RoundCorners( points, bendRadius );
+		if ( path.Count < 2 ) return null;
+
+		var go = new GameObject( true, name );
+		go.Parent = parent;
+
+		var renderer = go.AddComponent<ModelRenderer>();
+		renderer.Model = SweepTube( name, path, radius );
+		renderer.Tint = tint;
+		return go;
+	}
+
+	/// <summary>Replace each interior corner with an arc of <see cref="BendFacets"/> chords
+	/// per 90°, leaving the straight runs between them.</summary>
+	static List<Vector3> RoundCorners( Vector3[] points, float bendRadius )
+	{
+		var path = new List<Vector3> { points[0] };
+
+		for ( int i = 1; i < points.Length - 1; i++ )
+		{
+			var p = points[i - 1];
+			var v = points[i];
+			var n = points[i + 1];
+
+			var dirIn = ( v - p ).Normal;
+			var dirOut = ( n - v ).Normal;
+
+			float dot = Math.Clamp( dirIn.Dot( dirOut ), -1f, 1f );
+			float phi = MathF.Acos( dot );
+
+			// Straight through, or doubling back (which has no tangent arc at all).
+			if ( phi < 0.01f || phi > MathF.PI - 0.01f )
+			{
+				path.Add( v );
+				continue;
+			}
+
+			float r = bendRadius;
+			float d = r * MathF.Tan( phi * 0.5f );
+
+			// A corner may not eat more than half of either leg it sits on, or two bends
+			// meet in the middle and the tube folds through itself.
+			float maxD = MathF.Min( ( v - p ).Length, ( n - v ).Length ) * 0.5f;
+			if ( d > maxD && d > 0.0001f )
+			{
+				r *= maxD / d;
+				d = maxD;
+			}
+
+			if ( r < 0.0001f ) { path.Add( v ); continue; }
+
+			var start = v - dirIn * d;
+			var end = v + dirOut * d;
+
+			// Perpendicular to dirIn, pointing INTO the turn: the part of dirOut that
+			// dirIn doesn't already account for.
+			var perp = ( dirOut - dirIn * dot ).Normal;
+			var centre = start + perp * r;
+			var axis = dirIn.Cross( dirOut ).Normal;
+			var spoke = start - centre;
+
+			int facets = Math.Max( 1, (int)MathF.Ceiling( phi / ( MathF.PI * 0.5f ) * BendFacets ) );
+			path.Add( start );
+			for ( int f = 1; f < facets; f++ )
+			{
+				float a = phi * f / facets;
+				path.Add( centre + Rotate( spoke, axis, a ) );
+			}
+			path.Add( end );
+		}
+
+		path.Add( points[^1] );
+		return path;
+	}
+
+	/// <summary>Rodrigues' rotation. Hand-rolled rather than Rotation.FromAxis so the whole
+	/// arc is plain arithmetic with no quaternion round-trip per facet.</summary>
+	static Vector3 Rotate( Vector3 v, Vector3 axis, float radians )
+	{
+		float c = MathF.Cos( radians ), s = MathF.Sin( radians );
+		return v * c + axis.Cross( v ) * s + axis * axis.Dot( v ) * ( 1f - c );
+	}
+
+	/// <summary>Extrude a ring of <see cref="TubeSides"/> vertices along the path and cap
+	/// both ends. Bounds are accumulated from the real vertices — a wrong BBox culls the
+	/// whole chair the moment the camera looks slightly away from it.</summary>
+	static Model SweepTube( string name, List<Vector3> path, float radius )
+	{
+		var verts = new List<Vertex>();
+		var indices = new List<int>();
+
+		// Seed the frame off whichever world axis the first segment is LEAST parallel to,
+		// so a vertical riser can't pick a degenerate up. Any stable choice does — a
+		// cylinder has no roll to get wrong.
+		var dir0 = ( path[1] - path[0] ).Normal;
+		var seed = MathF.Abs( dir0.z ) < 0.9f ? Vector3.Up : Vector3.Forward;
+		var up = ( seed - dir0 * seed.Dot( dir0 ) ).Normal;
+
+		for ( int i = 0; i < path.Count; i++ )
+		{
+			// Tangent: the average of the legs either side, so a bend's ring splits the
+			// angle and the tube's skin stays smooth across it.
+			Vector3 tangent;
+			if ( i == 0 ) tangent = ( path[1] - path[0] ).Normal;
+			else if ( i == path.Count - 1 ) tangent = ( path[^1] - path[^2] ).Normal;
+			else tangent = ( ( path[i] - path[i - 1] ).Normal + ( path[i + 1] - path[i] ).Normal ).Normal;
+
+			// Rotation-minimising: re-project the previous up rather than recomputing it
+			// from a fixed axis, so the ring doesn't spin as the path turns.
+			up = ( up - tangent * up.Dot( tangent ) ).Normal;
+			var right = tangent.Cross( up ).Normal;
+
+			for ( int s = 0; s <= TubeSides; s++ )
+			{
+				float t = (float)s / TubeSides;
+				float a = t * MathF.PI * 2f;
+				var normal = ( right * MathF.Cos( a ) + up * MathF.Sin( a ) ).Normal;
+				verts.Add( new Vertex( path[i] + normal * radius, normal, right,
+					new Vector4( t, i, 0, 0 ) ) );
+			}
+		}
+
+		int ring = TubeSides + 1;
+		for ( int i = 0; i < path.Count - 1; i++ )
+		{
+			for ( int s = 0; s < TubeSides; s++ )
+			{
+				int a = i * ring + s;
+				int b = a + ring;
+				indices.Add( a ); indices.Add( b ); indices.Add( a + 1 );
+				indices.Add( a + 1 ); indices.Add( b ); indices.Add( b + 1 );
+			}
+		}
+
+		AddCap( verts, indices, path[0], -( path[1] - path[0] ).Normal, radius, flip: false );
+		AddCap( verts, indices, path[^1], ( path[^1] - path[^2] ).Normal, radius, flip: true );
+
+		var mesh = new Mesh( name, Material.Load( "materials/default.vmat" ) );
+		mesh.CreateVertexBuffer( verts.Count, verts );
+		mesh.CreateIndexBuffer( indices.Count, indices );
+
+		var bounds = BBox.FromPositionAndSize( path[0], 0.1f );
+		foreach ( var v in verts )
+			bounds = bounds.AddPoint( v.Position );
+		mesh.Bounds = bounds;
+
+		return Model.Builder.AddMesh( mesh ).Create();
+	}
+
+	/// <summary>A flat disc closing one end of the sweep. Its own vertices, because a cap's
+	/// normal is the axis and the tube's is radial — sharing them would smear the rim.</summary>
+	static void AddCap( List<Vertex> verts, List<int> indices, Vector3 centre, Vector3 normal,
+		float radius, bool flip )
+	{
+		var seed = MathF.Abs( normal.z ) < 0.9f ? Vector3.Up : Vector3.Forward;
+		var up = ( seed - normal * seed.Dot( normal ) ).Normal;
+		var right = normal.Cross( up ).Normal;
+
+		int centreIndex = verts.Count;
+		verts.Add( new Vertex( centre, normal, right, new Vector4( 0.5f, 0.5f, 0, 0 ) ) );
+
+		for ( int s = 0; s <= TubeSides; s++ )
+		{
+			float a = (float)s / TubeSides * MathF.PI * 2f;
+			var offset = right * MathF.Cos( a ) + up * MathF.Sin( a );
+			verts.Add( new Vertex( centre + offset * radius, normal, right,
+				new Vector4( 0.5f + MathF.Cos( a ) * 0.5f, 0.5f + MathF.Sin( a ) * 0.5f, 0, 0 ) ) );
+		}
+
+		for ( int s = 0; s < TubeSides; s++ )
+		{
+			int a = centreIndex + 1 + s;
+			if ( flip ) { indices.Add( centreIndex ); indices.Add( a ); indices.Add( a + 1 ); }
+			else { indices.Add( centreIndex ); indices.Add( a + 1 ); indices.Add( a ); }
+		}
+	}
 
 	// ── Primitive dressing ──
 

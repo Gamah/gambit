@@ -20,9 +20,18 @@ namespace Gambit.World;
 /// the <c>[Sync(FromHost)]</c> occupancy that is already on the wire. Every client animates
 /// the same chair the same way without anyone sending anything.</para>
 ///
-/// <para>Not ExecuteInEditor, matching <see cref="MarqueeGlow"/>: the editor preview keeps
-/// the pose and tint ChessRing built, which is the pulled-out chair whose clearances are
-/// the ones worth looking at.</para>
+/// <para><b>It BUILDS the chair too, and lives on the station rather than on the chair, for
+/// a reason that cost a whole client.</b> A chair's tubes are runtime Model.Builder meshes,
+/// and a runtime model has no asset path — so a chair that rides the host's snapshot
+/// arrives on a joining client as a room full of stretched ERROR models. The chair must
+/// therefore be NotNetworked and built per client, which means the thing that builds it has
+/// to live on something every client receives: the station. Same shape as
+/// <see cref="ChessBoardView"/>'s EnsureBoard, which rebuilds the lathed pieces locally for
+/// exactly the same reason.</para>
+///
+/// <para>Not ExecuteInEditor, matching <see cref="MarqueeGlow"/> and ChessBoardView: the
+/// editor preview keeps the chair (and the static tint) ChessRing built, and this takes
+/// over in play.</para>
 /// </summary>
 public sealed class StationChair : Component
 {
@@ -33,9 +42,9 @@ public sealed class StationChair : Component
 	/// table it slides on.</summary>
 	[Property] public ChessSeat Seat { get; set; }
 
+	GameObject _chair;
 	ModelRenderer _pad;
 	ModelRenderer _back;
-	ModelRenderer _return;
 
 	// Theme cache, shared by every chair in the room and refreshed when the settings
 	// version bumps — MarqueeGlow's shape exactly (World/MarqueeGlow.cs), because the
@@ -51,28 +60,50 @@ public sealed class StationChair : Component
 
 	/// <summary>Hand over the panel renderers. They are the only things themed — the frame
 	/// is its seat's colour and never changes.</summary>
-	public void SetPanels( GameObject pad, GameObject back, GameObject backReturn )
+	public void SetPanels( GameObject pad, GameObject back )
 	{
 		// Each may be null: AddBoxGo returns null when the box model is missing, and has
 		// always been allowed to draw nothing.
 		_pad = pad?.GetComponent<ModelRenderer>();
 		_back = back?.GetComponent<ModelRenderer>();
-		_return = backReturn?.GetComponent<ModelRenderer>();
 	}
 
 	protected override void OnUpdate()
 	{
 		var ring = ChessRing.Instance;
 		if ( ring == null ) return;
+		if ( !EnsureChair( ring ) ) return;
 
 		if ( _version != Gambit.UI.SettingsModel.SettingsVersion )
 			RefreshTheme();
 
 		Tint( _pad );
 		Tint( _back );
-		Tint( _return );
 
 		UpdateTuck( ring );
+	}
+
+	/// <summary>
+	/// Build this seat's chair, once, client-locally — and throw away anything that came
+	/// over the wire first.
+	///
+	/// <para>The destroy is the important half. On the HOST there is nothing to remove (the
+	/// ring skips the preview once _runtimeBuilt). On a JOINER there shouldn't be either —
+	/// but if a chair ever does ride a snapshot again, this is what stops the broken copy
+	/// standing next to the good one rather than leaving them fighting. Same defensive shape
+	/// as ChessBoardView.EnsureBoard destroying "Pieces" before building "PiecesView".</para>
+	/// </summary>
+	bool EnsureChair( ChessRing ring )
+	{
+		if ( _chair.IsValid() ) return true;
+
+		// Find-then-destroy, never a foreach: Destroy mutates the collection being walked.
+		// (ChessBoardView.EnsureBoard does exactly this for the same reason.)
+		string name = ChessRing.ChairName( Seat );
+		GameObject.Children.Find( c => c.Name == name )?.Destroy();
+
+		_chair = ring.BuildChairView( GameObject, Seat, this );
+		return _chair.IsValid();
 	}
 
 	void Tint( ModelRenderer r )
@@ -138,8 +169,11 @@ public sealed class StationChair : Component
 
 		// Smoothstep: a chair being pushed in accelerates and decelerates. Linear reads as
 		// a chair on rails.
+		//
+		// Written to the CHAIR, not to this component's own GameObject — we live on the
+		// station now, and sliding the station would take the table with it.
 		float t = _tuck * _tuck * ( 3f - 2f * _tuck );
-		LocalPosition = new Vector3( side * ( ring.ChairCenterX - inset * t ), 0f, 0f );
+		_chair.LocalPosition = new Vector3( side * ( ring.ChairCenterX - inset * t ), 0f, 0f );
 	}
 
 	static float Approach( float value, float target, float step )
