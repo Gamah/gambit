@@ -107,30 +107,42 @@ token and must be signed by *that* token. So:
   POSTs an explicit `/cancel` and an unanswered one is bounded by `challengeAnswerTTL`. Read
   from lila, not the OpenAPI doc, which says the opposite.
 
-#### There is NO shareable link (`/api/challenge/open` was removed — M12)
+#### The shareable link IS a relayed game — anon browser vs your board (open + accept?color=)
 
-**Gambit had a "shareable link" built on `POST /api/challenge/open`. It is gone, and this note
-is here so nobody rebuilds it without knowing why it can't be what it wants to be.**
+**An anonymous browser player CAN play your authed, board-relayed account. It is a real flow, it
+worked before M8, and getting it wrong twice is why this section is long.** The mechanism was
+re-derived from the live spec (`lichess-org/api` master, 2026-07-17) after a wrong "it's
+impossible" claim sat here:
 
-The whole point of Gambit is that **you play at the board you sat down at**, relayed to lichess
-by *your* `board:play` token. The only link that would fit that model is one where an anonymous
-web player plays **against your authed, board-relayed account**. **lichess cannot do that.** An
-open challenge is anonymous on *both* sides (`challenger:null`, `destUser:null`), and there is
-**no API to make our linked account a participant in it** — so the open-challenge link was
-anon-vs-anon, two browsers, a game *neither* the creator nor the board ever touched. That is
-not Gambit; it is Gambit generating a lichess link for two strangers. It also could not put the
-creator in the game (they were only ever handed the *opponent's* link), so a solo creator's game
-never started — the bug that surfaced this.
+| endpoint | `security:` | what it does for us |
+|---|---|---|
+| `POST /api/challenge/open` | **`[]`** (anonymous) | mint the link. A `board:play` token 403s it ("Missing scope: challenge:write"), so we send **no** token. |
+| `POST /api/challenge/{id}/accept?color=` | `["challenge:write","bot:play","board:play"]` | **seats our token holder** in the open challenge, on the chosen side. `board:play` is accepted; `color` is "only valid if this is an open challenge". |
+| `POST /api/challenge/{username}` | `["challenge:write","bot:play","board:play"]` | the direct challenge — same scope list, which is *why it works on `board:play`* and the open-create 403 looked contradictory. |
 
-The three real flows all keep the token holder as a participant and are what remain:
-**paired** (both seated + linked), **direct challenge** to a named lichess user
-(`/api/challenge/{name}`, reaches Blitz), and **lobby seek** (random *registered* opponent,
-Rapid+). The opponent in any board-relayed game is therefore always a **registered** lichess
-user — there is no "authed-vs-anonymous" primitive to build a link on.
+So `relay.runOpen`: **create the open challenge anonymously → `AcceptChallengeColor` with the
+player's token (this is the step M8 dropped, leaving the creator's seat empty and the game never
+starting) → publish `share_url` (the opposite colour's url) → watch the event stream for the
+opponent joining, as a seek does → `streamGame` the player's side to the board.** The browser
+opponent needs no lichess account.
 
-The consent model the link used to carry ("a game here is local unless you pick a lichess flow")
-did not depend on the link and still lives in `InfoScreen`'s Welcome + Lichess branches — keep
-saying it.
+- **No `challenge:write`, no re-link.** `board:play` is enough (create is anonymous, accept takes
+  board:play). The old pre-M8 code requested `challenge:write` but never needed it; the M8 rule
+  "board:play only" was fine — the M8 *bug* was skipping the accept step, not the scope.
+- **Blitz+ only**, unlike the old M8 one-shot that allowed bullet: OUR side plays through the
+  Board API now (we relay it), which won't play faster than blitz. The link is a *relayed game*
+  with a `client_game_id`, polled like a seek — not a bare link.
+- **It is a solo flow** (`PlayRequest.Open`, `solo()` true, one pending slot, one event stream).
+  `State.seek` is true (the browser opponent is a stranger); `ShareURL` is the only extra field.
+- **Colour** is which side WE take; the opponent's `share_url` is the opposite. "random"/"" accepts
+  without a colour and we learn our side from `gameFull` (`resolveSoloColor`), same as a seek.
+  Client-side, picking the colour **moves the player's seat** (`LobbyPlayer.SwitchSeat`) so the
+  board shows them where they'll play; random moves once the game starts.
+- **Cancellation is best-effort.** We created anonymously, so a `/cancel` may be refused; an
+  unjoined open challenge expires in 24h. `runOpen` bounds the wait by `challengeAnswerTTL` (same
+  hazard bound as the keep-alive challenge) and best-effort withdraws on timeout.
+- **The consent model still holds:** a game at a table is local unless a player picks a lichess
+  flow — `InfoScreen`'s Welcome + Lichess branches say it; keep saying it.
 
 #### The traps
 

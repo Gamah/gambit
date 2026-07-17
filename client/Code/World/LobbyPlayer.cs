@@ -637,6 +637,52 @@ public sealed class LobbyPlayer : Component
 		}
 	}
 
+	/// <summary>Switch the local player to the OTHER seat at the table they're engaged
+	/// at, moving the avatar and blending the overhead camera to the new side. Used by
+	/// the shareable-link colour chip so the board shows you where you'll play.
+	///
+	/// <para>Refused once a LOCAL game is live (leaving your side would abandon it) and
+	/// no-op if the target seat is taken. A live LICHESS game is fine, and that is the
+	/// point: for a random-colour link lichess assigns your side only when the game
+	/// starts, and the physical seat is just which side the camera views from — the
+	/// relayed game runs off your token, not the seat, so aligning them is cosmetic. (The
+	/// paired lichess flow is protected anyway: its other seat is taken, so this no-ops.)
+	/// Keeps <see cref="_seatReturnPos"/> so standing up still lands correctly.</para></summary>
+	public void SwitchSeat( ChessSeat seat )
+	{
+		if ( IsProxy ) return;
+		var station = ChessStation.Active;
+		if ( station == null || ChessStation.ActiveSeat == seat ) return;
+		if ( station.SeatTaken( seat ) ) return;
+
+		if ( Gambit.Game.LocalGameController.For( station ) is { Playing: true } ) return;
+
+		station.SwitchActiveSeat( seat );
+		if ( ChessStation.ActiveSeat != seat ) return; // the claim didn't take
+
+		// Re-plant the (hidden-to-us, networked-to-others) avatar at the new seat — the
+		// same slide-and-face-the-board as BeginEngage, but WITHOUT recapturing
+		// _seatReturnPos, which must stay at our original standing spot for stand-up.
+		var seatPos = station.SeatWorldPosition( seat );
+		seatPos.z = WorldPosition.z; // keep our height; slide sideways only
+		var boardFlat = station.WorldPosition;
+		boardFlat.z = seatPos.z;
+		var toBoard = boardFlat - seatPos;
+		WorldPosition = seatPos;
+		if ( toBoard.Length > 0.01f )
+			WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
+
+		// Re-blend the camera from where it is now to the new seat's anchor — the exact
+		// mechanism BeginEngage uses, just re-triggered: UpdateLockedCamera eases from
+		// _camFrom to SeatAnchor(ActiveSeat) over CamBlendTime once _engageTime resets.
+		if ( _cameraObject != null )
+		{
+			_camFromPos = _cameraObject.WorldPosition;
+			_camFromRot = _cameraObject.WorldRotation;
+			_engageTime = 0;
+		}
+	}
+
 	public void Disengage()
 	{
 		// Wall boards never moved the camera — just re-enable look and close the panel.

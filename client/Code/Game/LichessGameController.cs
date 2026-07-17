@@ -382,11 +382,19 @@ public sealed class LichessGameController : Component, IBoardGame
 	/// unless a challenge is in flight.</summary>
 	public string ChallengeOpponent { get; private set; }
 
-	/// <summary>Waiting on an opponent who isn't in this lobby — a lobby seek, or a
-	/// direct challenge someone hasn't accepted yet. Both are cancelled the same way
-	/// (the leave path, the cancel button) and neither is a table game, so the code
-	/// that has to treat them alike reads this rather than either flag.</summary>
-	public bool AwaitingOpponent => Seeking || Challenging;
+	/// <summary>We minted a shareable link and are waiting for a browser opponent to
+	/// open it. Drops to false once the game goes live.</summary>
+	public bool Opening { get; private set; }
+
+	/// <summary>The link to hand the browser opponent while <see cref="Opening"/> (and
+	/// on into the game — harmless once they've joined). Null for every other flow.</summary>
+	public string ShareUrl => State?.share_url;
+
+	/// <summary>Waiting on an opponent who isn't in this lobby — a lobby seek, a direct
+	/// challenge someone hasn't accepted, or a shareable link nobody has opened yet. All
+	/// are cancelled the same way (the leave path, the cancel button) and none is a table
+	/// game, so the code that treats them alike reads this rather than any one flag.</summary>
+	public bool AwaitingOpponent => Seeking || Challenging || Opening;
 
 	/// <summary>
 	/// Challenge a SPECIFIC lichess user by name.
@@ -419,6 +427,47 @@ public sealed class LichessGameController : Component, IBoardGame
 		Error = null;
 		string color = seat == ChessSeat.White ? "white" : "black";
 		_ = SendChallenge( _clientGameId, ChallengeOpponent, Local.Tc, rated, color );
+	}
+
+	/// <summary>
+	/// Mint a SHAREABLE link and play whoever opens it, on THIS board.
+	///
+	/// <para>Like a seek/challenge it needs only this player — the opponent is an
+	/// anonymous browser, no lichess account required their side. gamchess seats our
+	/// authed account in an open challenge (see the server's runOpen) and relays our
+	/// side here; the returned <see cref="ShareUrl"/> is what we hand out.</para>
+	///
+	/// <para>Blitz+ only, because our side plays through the Board API. The colour is
+	/// which side WE take — "random"/"" lets lichess pick, and we learn it from
+	/// <see cref="LocalSeat"/> once the game starts, same as a seek.</para>
+	/// </summary>
+	public void RequestOpenLink( bool rated, string color )
+	{
+		if ( Engaged || Local == null || Station == null ) return;
+		if ( LocalStationSeat == null ) return;          // must be seated to spend our grant
+		if ( !LichessTable.CanMirror( Local.Tc ) ) return; // blitz+ — our side relays via the board API
+
+		Engaged = true;
+		Opening = true;
+		_clientGameId = GamchessApi.NewClientGameId();
+		_version = 0;
+		Error = null;
+		_ = SendOpen( _clientGameId, Local.Tc, rated, color );
+	}
+
+	async Task SendOpen( string id, TimeControl tc, bool rated, string color )
+	{
+		var res = await LichessApi.OpenLink( id, tc, rated, color );
+		if ( res.Ok )
+		{
+			Adopt( GamchessApi.Deserialize<LichessPlayState>( res.Body ) );
+			return;
+		}
+
+		Error = ReadError( res );
+		Opening = false;
+		Engaged = false;
+		Log.Info( $"[Gambit] lichess open link refused: {Error}" );
 	}
 
 	async Task SendChallenge( string id, string opponent, TimeControl tc, bool rated, string color )
@@ -558,6 +607,7 @@ public sealed class LichessGameController : Component, IBoardGame
 		Engaged = false;
 		Seeking = false;
 		Challenging = false;
+		Opening = false;
 		ChallengeOpponent = null;
 		_pollBackoff = 0f;   // never let a dead game's backoff gag the next one
 		_reportedResult = false;
@@ -719,6 +769,7 @@ public sealed class LichessGameController : Component, IBoardGame
 		{
 			Seeking = false;
 			Challenging = false;
+			Opening = false;
 			ChallengeOpponent = null;
 		}
 

@@ -182,6 +182,7 @@ key switches lichess off entirely rather than storing plaintext.
 | `POST /api/v1/lichess/play` | FP | play the person opposite you. `{client_game_id, white_steam_id, black_steam_id, limit_seconds, increment_seconds, unlimited}` — **both seats must POST** |
 | `POST /api/v1/lichess/seek` | FP | play a random opponent. `{client_game_id, time_minutes, increment_seconds, rated, rating_range, color}` — one caller |
 | `POST /api/v1/lichess/challenge` | FP | challenge a named user. `{client_game_id, opponent, limit_seconds, increment_seconds, unlimited, rated, color}` — one caller; reaches blitz (a seek can't) |
+| `POST /api/v1/lichess/open` | FP | mint a **shareable link** an anonymous browser opponent plays you through — a relayed game, not a bare link. `{client_game_id, limit_seconds, increment_seconds, unlimited, rated, color}`. Creates an open challenge anonymously, seats you via `accept?color=`, and streams your side; the returned `share_url` (on the play state) is the opposite colour's url to hand out. Blitz+ (your side plays via the Board API) |
 | `GET /api/v1/lichess/play/{id}?since=N` | FP | **long poll** (held ~5s) for game state; 404 if you aren't in it |
 | `POST /api/v1/lichess/play/{id}/{action}` | FP | `move` (body `{uci}`) · `resign` · `draw` · `draw-decline` · `takeback` · `takeback-decline` · `abort` |
 | `DELETE /api/v1/lichess/play/{id}` | FP | withdraw a seek/challenge / drop a pending pairing |

@@ -70,6 +70,11 @@ public sealed class LichessPlayState
 	public string game_id { get; set; }
 	public string url { get; set; }
 
+	/// <summary>The link the seated player hands to their browser opponent (the
+	/// OPPOSITE colour's url of an open-challenge game). Empty for every other flow.
+	/// See <see cref="LichessApi.OpenLink"/> and the server's runOpen.</summary>
+	public string share_url { get; set; }
+
 	public string white_steam_id { get; set; }
 	public string black_steam_id { get; set; }
 	public string white_name { get; set; }

@@ -219,6 +219,29 @@
 							<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
 						}
 					}
+
+					@* Or hand out a link an ANONYMOUS browser player opens to play YOU on
+					   this board — no lichess account needed their side. gamchess seats your
+					   account in an open challenge and relays your side here (server runOpen).
+					   Blitz+ only (your side plays via the Board API), and the colour chip is
+					   which side YOU take — picking it moves your seat to match. *@
+					@if ( LichessSeatColor( ctrl ) is not null )
+					{
+						<div class="setup-label">OR GET A SHAREABLE LINK</div>
+						@if ( LichessTable.CanMirror( ctrl.Tc ) )
+						{
+							<div class="seek-row">
+								<div class="chip @( _openRated ? "on" : "" )" onclick="@( () => ToggleOpenRated() )">@( _openRated ? "Rated" : "Casual" )</div>
+								<div class="chip @( _openColor != "random" ? "on" : "" )" onclick="@( () => CycleOpenColor() )">@OpenColorText()</div>
+							</div>
+							<div class="button lichess" onclick="@( () => StartOpenLink() )">♞ Get a shareable link</div>
+							<div class="setup-hint">Send the link to anyone — they open it in a browser and play you here. No account needed.</div>
+						}
+						else
+						{
+							<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
+						}
+					}
 				}
 
 				@if ( BothSeated() )
@@ -247,8 +270,16 @@
 			   explicit /cancel) — without it we stay pairable after walking away. *@
 			@if ( Lichess() is { AwaitingOpponent: true } )
 			{
+				@* Shareable link: show the url to hand out while we wait for someone to
+				   open it. The game itself renders on the board once they join. *@
+				@if ( Lichess() is { Opening: true, ShareUrl: string share } )
+				{
+					<div class="link-url" onclick="@( () => CopyShareUrl( share ) )">@share</div>
+					<div class="button lichess" onclick="@( () => CopyShareUrl( share ) )">@ShareCopyText()</div>
+					<div class="setup-hint">Send this to your opponent — they open it in a browser and play you here.</div>
+				}
 				<div class="button" onclick="@( () => Lichess()?.CancelWaiting() )">
-					@( Lichess() is { Challenging: true } ? "Cancel the challenge" : "Cancel — stop looking" )
+					@CancelWaitingText()
 				</div>
 			}
 
@@ -432,6 +463,20 @@
 		border: 1px solid rgba(255, 255, 255, 0.14);
 		color: white;
 	}
+
+	/* The shareable link itself: monospace so it reads as a URL, click-to-copy. */
+	.link-url {
+		pointer-events: all;
+		cursor: pointer;
+		font-family: monospace;
+		font-size: 12px;
+		word-break: break-all;
+		padding: 5px 7px;
+		border-radius: 5px;
+		background-color: rgba(0, 0, 0, 0.3);
+		color: rgba(255, 255, 255, 0.85);
+	}
+	.link-url:hover { background-color: rgba(0, 0, 0, 0.45); }
 
 	.button.draw { background-color: rgba(255, 214, 10, 0.18); }
 	.button.draw:hover { background-color: rgba(255, 214, 10, 0.34); }
@@ -683,6 +728,70 @@
 		StateHasChanged();
 	}
 
+	// ── Shareable link (an anonymous browser opponent plays this player on the board) ──
+	// Colour is which side WE take; the opponent's link is the opposite side. Picking a
+	// side moves our seat to it (MoveSeatToColor); "random" is settled when the game
+	// starts and moved then (_openSeatPending, resolved in OnUpdate).
+	bool _openRated;
+	string _openColor = "random";
+	bool _openSeatPending;
+	RealTimeSince _shareCopied = 999f;
+
+	void ToggleOpenRated() { _openRated = !_openRated; StateHasChanged(); }
+
+	void CycleOpenColor()
+	{
+		_openColor = _openColor switch { "random" => "white", "white" => "black", _ => "random" };
+		MoveSeatToColor( _openColor );
+		StateHasChanged();
+	}
+
+	string OpenColorText() => _openColor switch
+	{
+		"white" => "You play White",
+		"black" => "You play Black",
+		_ => "Either colour",
+	};
+
+	void StartOpenLink()
+	{
+		Lichess()?.RequestOpenLink( _openRated, _openColor );
+		_openSeatPending = true; // move to the assigned side once the game starts (random)
+		StateHasChanged();
+	}
+
+	void CopyShareUrl( string url )
+	{
+		if ( string.IsNullOrEmpty( url ) ) return;
+		Clipboard.SetText( url );
+		_shareCopied = 0f;
+		StateHasChanged();
+	}
+
+	string ShareCopyText() => _shareCopied < 2f ? "Copied ✓" : "Copy the link to send";
+
+	/// <summary>Move the local player's seat to the side they picked, so the board shows
+	/// them where they'll play. white/black only — "random" is settled at game start.
+	/// No-op if the target seat is taken or there's a live game (see LobbyPlayer.SwitchSeat).</summary>
+	static void MoveSeatToColor( string color )
+	{
+		var seat = color switch
+		{
+			"white" => ChessSeat.White,
+			"black" => ChessSeat.Black,
+			_ => (ChessSeat?)null,
+		};
+		if ( seat is { } s ) LobbyPlayer.Local?.SwitchSeat( s );
+	}
+
+	string CancelWaitingText()
+	{
+		var lc = Lichess();
+		if ( lc is { Opening: true } ) return "Cancel this link";
+		if ( lc is { Challenging: true } ) return "Cancel the challenge";
+		return "Cancel — stop looking";
+	}
+
 	static string LichessText( LocalGameController ctrl ) =>
 		LocalLichess( ctrl )
 			? $"♞ Playing on lichess as {LichessLinkState.Username} ✓ (click to cancel)"
@@ -733,6 +842,7 @@
 
 		if ( lc.Seeking ) return "Looking for an opponent on lichess…";
 		if ( lc.Challenging ) return $"Waiting for {lc.ChallengeOpponent} to accept on lichess…";
+		if ( lc.Opening ) return "Waiting for someone to open your link…";
 
 		return lc.State?.status switch
 		{
@@ -853,6 +963,22 @@
 	{
 		if ( ChessStation.Active != null )
 			LichessLinkState.Poll();
+
+		// Shareable link with a random colour: lichess assigns our side when the game
+		// starts, so move our seat to match once we know it (white/black were already
+		// moved when picked). One-shot; also cleared if the request never became a game.
+		if ( _openSeatPending && Lichess() is { } lc )
+		{
+			if ( lc is { Playing: true, LocalSeat: { } seat } )
+			{
+				LobbyPlayer.Local?.SwitchSeat( seat );
+				_openSeatPending = false;
+			}
+			else if ( !lc.Engaged )
+			{
+				_openSeatPending = false;
+			}
+		}
 	}
 
 	static bool BothSeated() =>
@@ -936,6 +1062,11 @@
 				// "waiting for X to accept" line and the cancel button both hang off
 				// Challenging, and ChallengeOpponent names who (stable while it's set).
 				System.HashCode.Combine( _seekRated, _seekColor, _challengeRated,
-					Lichess()?.Challenging, Lichess()?.ChallengeOpponent ) ) );
+					Lichess()?.Challenging, Lichess()?.ChallengeOpponent,
+					// The shareable-link section: its chips, the "waiting" flag, the url to
+					// hand out, and the "Copied ✓" feedback (self-clears on a timer, so it
+					// must be hashed or it would stick).
+					System.HashCode.Combine( _openRated, _openColor, Lichess()?.Opening,
+						Lichess()?.ShareUrl, _shareCopied < 2f ) ) ) );
 	}
 }

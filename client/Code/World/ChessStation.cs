@@ -91,6 +91,23 @@ public sealed class ChessStation : Component
 		RequestLeave( (int)ActiveSeat );
 	}
 
+	/// <summary>Move the local occupant to the OTHER seat at this table, without leaving
+	/// the station — used when a shareable-link player picks their colour so the board
+	/// shows them where they'll play. Optimistic like <see cref="Enter"/>: releases the
+	/// old seat and claims the new one host-side (ordered RPCs), and OnUpdate reconciles
+	/// if the claim loses a race. No-op if the target seat is occupied by someone else.</summary>
+	public void SwitchActiveSeat( ChessSeat seat )
+	{
+		if ( Active != this || ActiveSeat == seat ) return;
+		if ( SeatTaken( seat ) ) return;                  // someone else holds it
+		if ( ChessRing.Instance?.Rebuilding ?? false ) return;
+
+		int old = (int)ActiveSeat;
+		ActiveSeat = seat;
+		RequestLeave( old );
+		RequestEnter( (int)seat, Gambit.Game.PlayerData.Load()?.DisplayName() );
+	}
+
 	protected override void OnUpdate()
 	{
 		// Seat-claim race reconciliation: if the host gave our seat to someone else

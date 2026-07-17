@@ -151,6 +151,34 @@ public static class LichessApi
 			$"/api/v1/lichess/play/{Uri.EscapeDataString( clientGameId )}", "DELETE", null );
 
 	/// <summary>
+	/// Mint a SHAREABLE link — an anonymous browser opponent plays YOU on the board.
+	///
+	/// <para>A real relayed game, not a bare link: gamchess creates an open challenge
+	/// anonymously, seats your authed account in it with your token
+	/// (<c>accept?color=</c>), and streams your side to this board while whoever opens
+	/// the returned <c>share_url</c> takes the other seat. So it drives the board like
+	/// a seek/challenge — mint a client_game_id and poll — and needs no lichess account
+	/// on their side.</para>
+	///
+	/// <para><b>Blitz+ only</b>, unlike the old bullet-friendly one-shot: your side
+	/// plays through the Board API now, which won't play faster than blitz.</para>
+	///
+	/// <para><paramref name="color"/> is the side YOU take; your opponent's
+	/// <c>share_url</c> is the opposite colour. "random"/"" lets lichess pick.</para>
+	/// </summary>
+	public static Task<GamchessApi.Result> OpenLink( string clientGameId, TimeControl tc,
+		bool rated, string color = null ) =>
+		GamchessApi.SendAuthed( "/api/v1/lichess/open", "POST", GamchessApi.Json( new
+		{
+			client_game_id = clientGameId,
+			limit_seconds = tc.InitialSeconds,
+			increment_seconds = tc.IncrementSeconds,
+			unlimited = tc.IsUnlimited,
+			rated,
+			color = color ?? "",
+		} ) );
+
+	/// <summary>
 	/// The game-state transport: a long poll. gamchess holds this open for ~5s
 	/// waiting for the state to pass <paramref name="since"/>, then answers.
 	///
