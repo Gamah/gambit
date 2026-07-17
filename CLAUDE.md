@@ -1225,8 +1225,26 @@ Three facts worth keeping:
 Music is the `gamah.skafinity` library — source-committed under
 `client/Libraries/gamah.skafinity/` (s&box pattern: libraries are source and
 auto-referenced by living there; do NOT add a `PackageReferences` entry — that
-double-registers the compiler). The scene carries a `SkafinityPlayer` +
-`SkafinityMusicPanel`; the panel is enabled only while engaged at the music wall board.
+double-registers the compiler). The player + panel are built client-local by
+`LocalMusicSystem` (never scene-authored — see the #12 rule above); the panel is enabled
+only while engaged at the music wall board.
+
+**A library's `.razor.scss` NEVER reaches a joining client — issue #12's second half.**
+A joiner of an editor-hosted lobby mounts no package: it gets code via the compiled
+CodeArchive (so a library *panel class* always arrives) and loose files only from the
+host's networked-file table, which is built by walking **the game package's `Code/` +
+`Assets/` alone** (auto-including `.scss`/`.ttf`/compiled assets, plus `.sbproj`
+`Resources` globs — which also only filter the game filesystem). Library folders are
+never walked, so a stylesheet living in one styles the host and 404s on every joiner —
+the "open + unstyled splayed board" that survived every NetworkMode fix, because it was
+never a networking bug. Hence the vendor patch: `SkafinityMusicPanel.razor.scss` lives at
+`client/Code/UI/` (the panel resolves it by mounted path, `UI/SkafinityMusicPanel.razor.scss`,
+which both locations map to — keep exactly ONE copy). Same mechanism, other victim: a raw
+asset loaded at runtime (`chess_glyphs.png` via `Texture.Load`) ships to joiners only if
+listed in the `.sbproj` `Resources` field — and the editor generates the REAL `.sbproj`,
+so that field must be set in the editor's Project Settings on each dev machine (the repo
+template documents the intent). Diagnose either with the host console:
+`debug_network_files 1` logs every file the host offers joiners.
 
 ## Lobby chat and proximity voice (M12)
 

@@ -9,6 +9,12 @@
    server never renders it, so skip its lifecycle there. On a listen server the host is still a
    player, so the host-client keeps the panel — this only sheds the headless case. *@
 @implements Component.DontExecuteOnServer
+@* GAMBIT VENDOR PATCH: this panel's .razor.scss lives in the GAME project
+   (client/Code/UI/SkafinityMusicPanel.razor.scss), not beside this file. The engine networks
+   loose files to joining clients ONLY from the game package's Code/+Assets/ — a library's
+   filesystem is never walked — so a stylesheet left here styles the host and 404s on every
+   joiner (issue #12's "unstyled" half). The panel resolves it by MOUNTED path
+   (UI/SkafinityMusicPanel.razor.scss), which both locations map to; keep exactly one copy. *@
 
 @*
 	The optional drop-in settings panel for the Skafinity music engine.
