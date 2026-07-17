@@ -380,6 +380,21 @@ public sealed class LichessTvSource
 				+ ( haveResult ? "" : " (gamchess sent no result for it)" ) );
 		}
 
+		// The reason arrives AFTER the swap now. gamchess publishes the featured swap the
+		// instant it sees it and fetches how the old game ended in the background, so the
+		// first frame of an ending carries an empty status ("Game over") and a later one
+		// fills it in. While we're still holding on THIS ended game, adopt the better line
+		// when it lands — otherwise the fanfare would keep the bare "Game over" for the
+		// whole hold even though lichess told us how it went a beat later.
+		if ( InFanfare && _gameId == _fanfareShownFor && st.last_game_id == _gameId
+			&& !string.IsNullOrEmpty( st.last_status ) )
+		{
+			LichessTv.Result( st.last_status, st.last_winner, out var lateHead, out var lateReason );
+			FanfareHeadline = lateHead;
+			FanfareReason = lateReason;
+			FanfareText = lateReason == null ? lateHead : $"{lateHead} — {lateReason}";
+		}
+
 		// Hold the finished position. We keep POLLING (that's what tells gamchess someone
 		// is here) but apply nothing — and because gamchess keeps only the latest state,
 		// there is no queue piling up behind this. When the hold ends we take whatever is

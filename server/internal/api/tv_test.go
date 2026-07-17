@@ -764,13 +764,19 @@ func TestTvFetchesTheResultOfTheGameThatJustEnded(t *testing.T) {
 		t.Fatalf("asked lichess %d times before any game had ended — must be 0", n)
 	}
 
-	// A second featured: the first game just ended.
+	// A second featured: the first game just ended. The swap is published immediately
+	// and the reason is fetched off the reader's path (see TestTvPublishesTheSwapBeforeTheResult
+	// for that ordering) — so the fully-settled state carries both the new game and the
+	// reason, though they may arrive in two versions.
 	next := `{"t":"featured","d":{"id":"NEWGAME1","orientation":"white","players":[` +
 		`{"color":"white","user":{"name":"alice"},"rating":2100,"seconds":180},` +
 		`{"color":"black","user":{"name":"bob"},"rating":2050,"seconds":180}],` +
 		`"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}}`
 	frames <- decodeTvFrame(t, next)
-	st = waitForVersion(t, ch, st.Version)
+	waitFor(t, func() bool {
+		st, _ = ch.snapshot()
+		return st.GameID == "NEWGAME1" && st.LastStatus != ""
+	})
 
 	mu.Lock()
 	got := append([]string(nil), asked...)
@@ -779,8 +785,6 @@ func TestTvFetchesTheResultOfTheGameThatJustEnded(t *testing.T) {
 		t.Fatalf("asked for %v, want exactly [BQ7M0K1i] — the game that ended, not the new one", got)
 	}
 
-	// The ending and its replacement must arrive TOGETHER, or the client would show the
-	// new game before it ever learned the old one finished.
 	if st.LastGameID != "BQ7M0K1i" {
 		t.Errorf("last_game_id %q, want BQ7M0K1i", st.LastGameID)
 	}
@@ -793,6 +797,95 @@ func TestTvFetchesTheResultOfTheGameThatJustEnded(t *testing.T) {
 	}
 	if st.GameID != "NEWGAME1" || st.WhiteName != "alice" {
 		t.Errorf("the new game didn't land: %q/%q", st.GameID, st.WhiteName)
+	}
+}
+
+// The swap must be published WITHOUT waiting for the result fetch. The client starts
+// its fanfare from the game id changing alone, so a slow lichess export must never
+// freeze the wall — the ending used to sit on the wrong side of the publish and the
+// board stayed frozen with no fanfare for the whole fetch. The reason arrives later.
+func TestTvPublishesTheSwapBeforeTheResult(t *testing.T) {
+	h := tvHandler(t)
+	frames := framePump(h)
+
+	release := make(chan struct{})
+	h.tv.gameResult = func(ctx context.Context, id string) (lichess.TvResult, error) {
+		select {
+		case <-release:
+			return lichess.TvResult{Status: "mate", Winner: "black"}, nil
+		case <-ctx.Done():
+			return lichess.TvResult{}, ctx.Err()
+		}
+	}
+
+	ch := h.tv.watch(lichess.ChannelBlitz)
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	st := waitForVersion(t, ch, 1)
+
+	frames <- decodeTvFrame(t, `{"t":"featured","d":{"id":"G2","orientation":"white","players":[`+
+		`{"color":"white","user":{"name":"a"}},{"color":"black","user":{"name":"b"}}],`+
+		`"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}}`)
+
+	// The swap lands while gameResult is still blocked: the new game and the ending id
+	// are here, the reason is not.
+	st = waitForVersion(t, ch, st.Version)
+	if st.GameID != "G2" {
+		t.Fatalf("the wall waited on the result fetch — new game %q not published", st.GameID)
+	}
+	if st.LastGameID != "BQ7M0K1i" {
+		t.Errorf("ending not announced with the swap: last_game_id %q", st.LastGameID)
+	}
+	if st.LastStatus != "" {
+		t.Errorf("last_status %q — must be empty until the fetch returns", st.LastStatus)
+	}
+
+	// Let the fetch finish; the reason arrives in a later version without disturbing the
+	// ending id it belongs to.
+	close(release)
+	st = waitForVersion(t, ch, st.Version)
+	if st.LastStatus != "mate" || st.LastWinner != "black" {
+		t.Errorf("late result = %q/%q, want mate/black", st.LastStatus, st.LastWinner)
+	}
+	if st.LastGameID != "BQ7M0K1i" {
+		t.Errorf("last_game_id changed under the late result: %q", st.LastGameID)
+	}
+	if st.GameID != "G2" {
+		t.Errorf("the late result clobbered the current game: %q", st.GameID)
+	}
+}
+
+// A fast channel can swap AGAIN before a result fetch returns. By then the state names
+// a newer ending, so the stale answer must be dropped rather than pinned to it — and it
+// must not even bump the version, or the client would needlessly re-snap its clocks.
+// Tested directly on setLastResult because "a no-op happened" has no wire signal to
+// wait on from the outside.
+func TestTvSetLastResultDropsAStaleEnding(t *testing.T) {
+	ch := &tvChannel{changed: make(chan struct{})}
+	ch.state.LastGameID = "G2"
+
+	// A result for a game the state has already moved past: dropped, no version change.
+	before := ch.version
+	ch.setLastResult("OLDGAME", "outoftime", "white")
+	if ch.state.LastStatus != "" || ch.state.LastWinner != "" {
+		t.Errorf("stale result applied: %q/%q", ch.state.LastStatus, ch.state.LastWinner)
+	}
+	if ch.version != before {
+		t.Errorf("stale result bumped the version %d→%d — that re-snaps the client's clocks", before, ch.version)
+	}
+
+	// A result for the current ending: applied, version bumped, waiters woken.
+	changed := ch.changed
+	ch.setLastResult("G2", "mate", "black")
+	if ch.state.LastStatus != "mate" || ch.state.LastWinner != "black" {
+		t.Errorf("current result not applied: %q/%q", ch.state.LastStatus, ch.state.LastWinner)
+	}
+	if ch.version != before+1 {
+		t.Errorf("version %d, want %d after applying the reason", ch.version, before+1)
+	}
+	select {
+	case <-changed:
+	default:
+		t.Error("waiters were not woken when the reason landed")
 	}
 }
 
@@ -812,7 +905,11 @@ func TestTvFanfareHandlesADraw(t *testing.T) {
 	frames <- decodeTvFrame(t, `{"t":"featured","d":{"id":"G2","orientation":"white","players":[`+
 		`{"color":"white","user":{"name":"a"}},{"color":"black","user":{"name":"b"}}],`+
 		`"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}}`)
-	st = waitForVersion(t, ch, st.Version)
+	// The reason is fetched off the reader's path now — wait for it to settle.
+	waitFor(t, func() bool {
+		st, _ = ch.snapshot()
+		return st.LastStatus != ""
+	})
 
 	if st.LastStatus != "stalemate" {
 		t.Errorf("last_status %q, want stalemate", st.LastStatus)

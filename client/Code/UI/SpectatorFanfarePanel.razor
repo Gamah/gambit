@@ -36,17 +36,23 @@
 <root>
 	@if ( !string.IsNullOrEmpty( Headline() ) )
 	{
-		<div class="banner">
-			@* One div per line, always — a div's auto height does not grow for wrapped
-			   text, and the reason is a separate field rather than a suffix precisely so
-			   this can be two lines. The second is dropped entirely when there's no
-			   reason to give ("Game aborted", or a result we couldn't fetch), rather than
-			   left as an empty gap under the headline. *@
-			<div class="headline">@Headline()</div>
-			@if ( !string.IsNullOrEmpty( Reason() ) )
-			{
-				<div class="reason">@Reason()</div>
-			}
+		@* Centering lives on this absolutely-positioned full-screen child, NEVER on root:
+		   a WorldPanel's root doesn't establish a centring context, so justify-content on
+		   it left-aligns the banner (it read "a little to the left" over the board). Every
+		   working WorldPanel here does exactly this — see SpectatorSeatPanel's .tag. *@
+		<div class="fit">
+			<div class="banner">
+				@* One div per line, always — a div's auto height does not grow for wrapped
+				   text, and the reason is a separate field rather than a suffix precisely so
+				   this can be two lines. The second is dropped entirely when there's no
+				   reason to give ("Game aborted", or a result we couldn't fetch), rather than
+				   left as an empty gap under the headline. *@
+				<div class="headline">@Headline()</div>
+				@if ( !string.IsNullOrEmpty( Reason() ) )
+				{
+					<div class="reason">@Reason()</div>
+				}
+			</div>
 		</div>
 	}
 </root>
@@ -58,6 +64,16 @@
 		width: 100%;
 		height: 100%;
 		pointer-events: none;
+	}
+
+	/* Full-screen overlay that does the centring — the one shape that works on a
+	   WorldPanel (root { 100% } + an absolutely-positioned child). */
+	.fit {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
 		align-items: center;
 		justify-content: center;
 	}

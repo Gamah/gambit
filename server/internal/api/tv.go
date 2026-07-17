@@ -224,6 +224,28 @@ func (c *tvChannel) update(fn func(*TvState)) {
 	c.mu.Unlock()
 }
 
+// setLastResult folds a finished game's reason into the current state and wakes
+// every waiter — but ONLY if that game is still the one the state says just ended.
+//
+// It runs from the background fetch kicked off on a featured swap, and a fast
+// channel can swap AGAIN before the fetch returns: by then LastGameID names a newer
+// ending and this answer is stale, so we drop it. Unlike update it does not bump the
+// version on a no-op — a spurious bump wakes the pollers, and the client re-snaps its
+// locally-run clocks on any version change, which would jerk them backwards.
+func (c *tvChannel) setLastResult(gameID, status, winner string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state.LastGameID != gameID {
+		return
+	}
+	c.state.LastStatus = status
+	c.state.LastWinner = winner
+	c.version++
+	c.state.Version = c.version
+	close(c.changed)
+	c.changed = make(chan struct{})
+}
+
 // currentGame returns the featured game id and both names as they stand — read
 // under the lock, before a featured swap overwrites them, so we know which game
 // just ended and who was playing it.
@@ -317,33 +339,27 @@ func (t *tv) run(ctx context.Context, c lichess.Channel, ch *tvChannel) {
 				w, b := f.White(), f.Black()
 
 				// A NEW featured game means the old one just ended — that swap is the only
-				// notice the feed ever gives. Go and ask how it went before publishing the
-				// new game, so the client gets the ending and its replacement in one
-				// atomic state and can never show the new game first.
-				//
-				// Synchronous on purpose. It blocks this stream's reader for one request,
-				// once per game, and the frames behind it just wait in the socket — cheap,
-				// and far simpler than a concurrent write-back racing the next fen. Never
-				// fatal: a failure leaves LastStatus empty and the fanfare loses its detail.
+				// notice the feed ever gives.
 				prev, prevW, prevB := ch.currentGame()
-				var result lichess.TvResult
-				if prev != "" && prev != f.ID {
-					rctx, cancel := context.WithTimeout(ctx, tvResultTimeout)
-					var err error
-					result, err = t.gameResult(rctx, prev)
-					cancel()
-					if err != nil {
-						t.log.Warn("lichess tv: couldn't read how the last game ended",
-							zap.String("channel", string(c)), zap.String("game", prev), zap.Error(err))
-					}
-				}
+				ended := prev != "" && prev != f.ID
 
+				// Publish the swap IMMEDIATELY, without the ending's reason.
+				//
+				// The client decides a game ended purely from the game_id changing (see the
+				// client's LichessTvSource) and starts its fanfare the instant it sees the
+				// swap — so it must not wait on a side fetch to lichess. Blocking the publish
+				// on GameResult here froze the wall for up to tvResultTimeout with no fanfare
+				// at all: the ending was on the WRONG side of the publish. LastGameID is set
+				// now (that's what the client matches "the game I'm showing just ended"
+				// against); LastStatus/LastWinner are filled in by the async fetch below and
+				// land in a later poll while the client is still holding on the finished
+				// position.
 				ch.update(func(s *TvState) {
 					s.Error = ""
-					if prev != "" && prev != f.ID {
+					if ended {
 						s.LastGameID = prev
-						s.LastStatus = result.Status
-						s.LastWinner = result.Winner
+						s.LastStatus = ""
+						s.LastWinner = ""
 						s.LastWhiteName, s.LastBlackName = prevW, prevB
 					}
 					s.GameID = f.ID
@@ -360,6 +376,27 @@ func (t *tv) run(ctx context.Context, c lichess.Channel, ch *tvChannel) {
 					s.clockAt = time.Now()
 					s.TickingSeat = sideToMove(f.Fen)
 				})
+
+				// Now go ask how the old game ended, OFF the reader's path — the TV feed
+				// says nothing, so this is the only way to get "White wins — out of time".
+				// One request per game end per channel, through the same governor as
+				// everything else. Never fatal: on failure the fanfare simply keeps its
+				// bare "Game over". setLastResult drops the answer if a newer game has since
+				// ended, so a fast channel that swaps again mid-fetch can't get a stale
+				// reason pinned to it.
+				if ended {
+					go func(prev string) {
+						rctx, cancel := context.WithTimeout(ctx, tvResultTimeout)
+						defer cancel()
+						result, err := t.gameResult(rctx, prev)
+						if err != nil {
+							t.log.Warn("lichess tv: couldn't read how the last game ended",
+								zap.String("channel", string(c)), zap.String("game", prev), zap.Error(err))
+							return
+						}
+						ch.setLastResult(prev, result.Status, result.Winner)
+					}(prev)
+				}
 			case ev.Fen != nil:
 				f := ev.Fen
 				ch.update(func(s *TvState) {

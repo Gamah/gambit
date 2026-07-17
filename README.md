@@ -312,13 +312,15 @@ clock sawtooth *upward*. It only ever spends time, never invents it, which keeps
 from reading higher than what's actually left. lichess remains the only authority.
 
 **The feed never says a game ended** — it just swaps to a new `featured`. So on a swap
-gamchess fetches the old game's result from `GET /game/export/{id}` (anonymous; `status` +
-`winner`, a missing winner meaning a draw) and publishes it atomically with the new game as
-`last_game_id/last_status/last_winner`. The client matches that id against the game on its own
-board and holds the finished position for 3s with a result line, because lichess TV cuts to
-the next game instantly. One request per game *end* per channel, through the same governor.
-No buffer accumulates: the relay keeps only the latest state, so the hold drops everything in
-between by construction.
+gamchess publishes the new game *immediately* (with `last_game_id` set) and fetches the old
+game's result from `GET /game/export/{id}` (anonymous; `status` + `winner`, a missing winner
+meaning a draw) in the background, folding `last_status/last_winner` in a beat later. The client
+starts its fanfare from the game id changing alone — so the fetch must NOT block the swap, or
+the wall freezes with no fanfare until it returns — and matches `last_game_id` against the game
+on its own board, holding the finished position for 3s with a result line (upgraded from "Game
+over" to the reason when it lands), because lichess TV cuts to the next game instantly. One
+request per game *end* per channel, through the same governor. No buffer accumulates: the relay
+keeps only the latest state, so the hold drops everything in between by construction.
 
 **TV is per-client and off-able.** It's one more entry in the north wall's existing cycle
 (which was already per-client), with no priority over real tables. Turn TV off, or kill

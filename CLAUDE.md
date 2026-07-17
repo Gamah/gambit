@@ -345,11 +345,10 @@ So the wall's fanfare splits the job in two, and **which half does what is the w
 
 - **The CLIENT decides a game ended**, from the featured id changing away from the one on its
   board. Nothing else can mean that, and it needs nothing from the server.
-- **gamchess only supplies the REASON**: it notices the same swap, fetches the old game's
+- **gamchess only supplies the REASON**: it notices the same swap and fetches the old game's
   result from **`GET /game/export/{id}`** (anonymous, like the feed; `status` + `winner`, where
-  a **missing winner means a draw**) and publishes it as `last_game_id/last_status/last_winner`
-  *atomically with* the new game. The client uses it only if `last_game_id` is the game it was
-  actually showing.
+  a **missing winner means a draw**), publishing it as `last_game_id/last_status/last_winner`.
+  The client uses it only if `last_game_id` is the game it was actually showing.
 
 The first version had the client WAIT for `last_game_id` to appear before announcing anything
 — which silently made the entire feature depend on the server half being deployed. Against a
@@ -360,10 +359,26 @@ undeployed server costs the *reason* ("Game over") and never the announcement.
 The client holds the finished position for `LichessTv.FanfareSeconds` (3s) with a result line,
 because lichess TV cuts to the next game instantly and on a wall that reads as a glitch.
 
-That fetch is **one request per game END per channel**, not per move, and it goes through the
-same governor as everything else. It is synchronous inside the stream reader on purpose: it
-happens once per game, the frames behind it just wait in the socket, and it means the ending
-and its replacement land in one state so the client can never show the new game first.
+**The swap and the reason are published SEPARATELY, and getting that wrong is what made the
+fanfare arrive late.** The export fetch is **one request per game END per channel**, not per
+move, through the same governor as everything else — but it was originally **synchronous inside
+the stream reader**, blocking the featured swap until it returned (up to `tvResultTimeout`, 3s,
+plus lichess's own latency). Because the client starts the fanfare purely from the game id
+changing, that blocked the *whole announcement*: the board sat frozen on the finished position
+with **no** fanfare for the length of the fetch, then jumped to the fanfare and the next game.
+The synchronous version justified itself as "the ending and its replacement land in one state so
+the client can never show the new game first" — but the client already refuses to advance during
+its own 3s hold, so ordering was never at risk; the coupling bought nothing and cost the delay.
+Now gamchess **publishes the swap immediately** (with `last_game_id` set, `last_status` empty)
+and fetches the reason in a **background goroutine**, folding it in with `tvChannel.setLastResult`
+when it returns. That method **drops a stale answer** (a fast channel can swap again mid-fetch, so
+it only applies when `last_game_id` still names the game it fetched) and **does not bump the
+version on that no-op** — a spurious bump would wake every poller and make the client re-snap its
+locally-run clocks (the sawtooth the clock section warns about). The client, still holding on the
+finished game, **upgrades** the fanfare line from "Game over" to "White wins — out of time" when
+the later poll carries the reason (`LichessTvSource`, guarded on `InFanfare && _gameId ==
+_fanfareShownFor`). This split is the same "the CLIENT decides a game ended; gamchess only
+supplies the REASON" separation stated above — the synchronous fetch was quietly violating it.
 
 **There is no buffer, and nothing to bound.** gamchess keeps only the LATEST state per channel
 (one slot, overwritten), so "hold for 3s, then take whatever is current" abandons all but the
