@@ -805,6 +805,8 @@ public sealed class LobbyPlayer : Component
 			_rigidbody.AngularVelocity = Vector3.Zero;
 		}
 
+		SetSeatedPhysics( false );
+
 		// The PlayerController's animator stops updating the body the moment the
 		// controller is disabled, so the last walk value keeps looping the locomotion
 		// animgraph in place. Stomp the movement parameters to idle ourselves — nothing
@@ -1064,7 +1066,7 @@ public sealed class LobbyPlayer : Component
 		float side = seat == ChessSeat.White ? -1f : +1f;
 		var idle = new Vector3( side * ring.HandIdleX, side * ring.HandIdleY, ring.HandIdleZ );
 
-		Vector3 local = idle;
+		Vector3 target = idle;
 		if ( pose.OnBoard && pose.Weight > 0f )
 		{
 			// TerryPose deals in square INDICES and scalars precisely so it can be run on a
@@ -1072,11 +1074,27 @@ public sealed class LobbyPlayer : Component
 			// place. Square index is rank*8+file, matching ChessBoardView.SquareUnderCursor.
 			var from = SquareLocal( ring, pose.FromSquare );
 			var to = SquareLocal( ring, pose.ToSquare );
-			var on = Vector3.Lerp( from, to, pose.Travel ) + Vector3.Up * pose.Height;
-			local = Vector3.Lerp( idle, on, pose.Weight );
+			var on = Vector3.Lerp( from, to, pose.Travel ) + Vector3.Up * ( pose.Height + ring.HandLift );
+			target = Vector3.Lerp( idle, on, pose.Weight );
 		}
 
-		var world = station.WorldTransform.PointToWorld( local );
+		// ── Chase the target; never teleport to it ──
+		//
+		// What crosses the wire is a SQUARE, so the target jumps a whole square at a time as
+		// the cursor crosses a boundary — and a hand that jumps reads as broken rather than
+		// as thinking. Easing the POSITION is what makes a quantised signal look like a hand
+		// vaguely following a mouse, which is the whole illusion. TerryPose's Weight already
+		// eases the hand on and off the BOARD; this eases it ACROSS the board, which the
+		// weight can't do because both ends are on it.
+		//
+		// Frame-rate independent: 1 − e^(−k·dt), not a raw lerp factor.
+		if ( _handLocal is not { } current )
+			_handLocal = target;                       // first frame: be there
+		else
+			_handLocal = Vector3.Lerp( current, target,
+				1f - MathF.Exp( -ring.HandChaseRate * Time.Delta ) );
+
+		var world = station.WorldTransform.PointToWorld( _handLocal.Value );
 
 		// Palm down over the board. The hand reaches from this seat's side, so it faces
 		// across the table the way the body does.
@@ -1088,19 +1106,40 @@ public sealed class LobbyPlayer : Component
 		r.SetIk( "hand_right", new Transform( world, rot ) );
 	}
 
-	/// <summary>Clear the hand IK — the arm goes back to whatever the pose says.</summary>
+	/// <summary>
+	/// Let the arm go — the whole arm, not just the IK.
+	///
+	/// <para><b>Releasing only the IK is not enough, and this is why a player who stood up
+	/// walked around the lobby with an arm hanging out at nothing.</b> <c>holdtype</c> is
+	/// what poses the arm AROUND an object, and once set to HoldItem <b>nothing in the
+	/// engine ever sets it back</b>: MoveMode.OnUpdateAnimatorState writes sit, b_swim,
+	/// b_climbing, b_grounded and duck — and no holdtype. So the arm keeps its
+	/// carrying-something shape forever, IK or no IK. Both have to be released, and
+	/// holdtype is the one with no owner but us.</para></summary>
 	public void ClearHandPose()
 	{
-		_bodyRenderer?.ClearIk( "hand_right" );
+		if ( _bodyRenderer == null ) return;
+
+		_bodyRenderer.ClearIk( "hand_right" );
+		_bodyRenderer.Set( "holdtype", HoldTypeNone );
+		_bodyRenderer.Set( "holdtype_pose_hand", 0f );
+		_handLocal = null;
 	}
 
 	static Vector3 SquareLocal( ChessRing ring, int square ) =>
 		square < 0 ? Vector3.Zero : ring.SquareLocalPosition( square & 7, square >> 3 );
 
-	/// <summary>citizen.vanmgrph's holdtype enum — HoldItem, the one the finger-blend
-	/// (holdtype_pose_hand) is wired into. Handedness 1 = Right.</summary>
+	/// <summary>citizen.vanmgrph's holdtype enum (none, pistol, rifle, shotgun, holditem, …)
+	/// — HoldItem is the one the finger-blend (holdtype_pose_hand) is wired into.
+	/// Handedness: 2H, RH, LH — so Right is 1.</summary>
+	const int HoldTypeNone = 0;
 	const int HoldTypeItem = 4;
 	const int HandednessRight = 1;
+
+	/// <summary>The hand's eased station-local position — see ApplyHandPose. Null until the
+	/// first frame it is placed, so it starts where it belongs rather than flying in from
+	/// the station's origin.</summary>
+	Vector3? _handLocal;
 
 	/// <summary>Undo <see cref="TrimSeatedAvatar"/>: put the head back and stop excluding
 	/// our cosmetics. Idempotent, and safe to call when nothing was ever trimmed.</summary>
@@ -1188,6 +1227,38 @@ public sealed class LobbyPlayer : Component
 	/// five lines, and the switch's end-snap wrote <c>seatPos.z = _switchAvatarFrom.z</c> —
 	/// correct only by accident, and only for as long as the seated z happened to equal the
 	/// standing z. The day SeatSitZ moves, that one pops and the other two don't.</para></summary>
+	/// <summary>
+	/// Take the seated body out of the physics world, and put it back on stand-up.
+	///
+	/// <para><b>Without this the table SHOVES you off your own chair, and the numbers say
+	/// so.</b> The table's BoxCollider spans x ±31.5 and the citizen's BodyRadius is 16, so
+	/// a body planted at |x| = 36 is 11 units deep inside it. Physics resolves that the only
+	/// way it can: <c>gambit_terry</c> measured the seated plant at −40.73 and +41.59
+	/// against the ±36 that was asked for, one of them lifted to z = 2.05 as well. A terry
+	/// perched on the back lip of its chair, reaching across the table, because the table
+	/// pushed it there.</para>
+	///
+	/// <para><b>The engine's own chair does exactly this</b>, which is the corroboration
+	/// rather than a coincidence: <c>BaseChair.Sit</c> is <c>player.Body.Enabled = false;
+	/// player.ColliderObject.Enabled = false;</c>, and <c>SitMoveMode.OnModeEnd</c> puts both
+	/// back. A seated player has nothing to collide with and nowhere to fall.</para>
+	///
+	/// <para>Read through the CONTROLLER's own references rather than our cached
+	/// <c>_rigidbody</c>: Body and ColliderObject are what the engine re-enables, and going
+	/// through the same handles is what stops us and it disagreeing about which objects
+	/// those are.</para>
+	/// </summary>
+	void SetSeatedPhysics( bool enabled )
+	{
+		if ( _controller == null ) return;
+
+		if ( _controller.Body.IsValid() )
+			_controller.Body.Enabled = enabled;
+
+		if ( _controller.ColliderObject.IsValid() )
+			_controller.ColliderObject.Enabled = enabled;
+	}
+
 	void PlantOnSeat( ChessStation station, ChessSeat seat )
 	{
 		// TerrySeated false is a full revert to the pre-M13 world, not just "don't draw
@@ -1303,6 +1374,10 @@ public sealed class LobbyPlayer : Component
 		RestoreSeatedAvatar();
 		ClearSitPose();
 		ClearHandPose();
+
+		// Back into the physics world — after the un-plant above, so we land standing where
+		// we stood rather than being resolved out of the table we were sitting at.
+		SetSeatedPhysics( true );
 
 		// Reverse of the engage blend: ease the camera from the anchor back to
 		// where it was when we engaged, then hand control back to the controller

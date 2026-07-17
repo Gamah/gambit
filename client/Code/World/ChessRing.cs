@@ -186,6 +186,29 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	[Property] public float HandIdleY { get; set; } = 10f;
 	[Property] public float HandIdleZ { get; set; } = 31f;
 
+	/// <summary>
+	/// Extra height on every hand target over the board — the trim for "the hand is too
+	/// close to the pieces".
+	///
+	/// <para><b>It lives here and not in TerryPose because TerryPose cannot read a
+	/// [Property].</b> That file is deliberately Sandbox-free so it can be driven through
+	/// real games in a harness on a host with no engine, which is exactly where its carry
+	/// bug was caught — so its heights are constants and this is the knob that tunes them
+	/// without giving that up. Turn TerryPose's constants for the SHAPE of the motion; turn
+	/// this for how high the whole thing rides.</para></summary>
+	[Property] public float HandLift { get; set; } = 0f;
+
+	/// <summary>
+	/// How fast the hand chases its target, as an exponential rate (higher = snappier).
+	///
+	/// <para><b>This is what makes a square-quantised signal look like a hand.</b> What
+	/// crosses the wire is a SQUARE index, so the target jumps a whole square at a time as
+	/// the cursor crosses a boundary — and a hand that jumps reads as broken rather than as
+	/// thinking. Easing the position turns that into a hand vaguely following a mouse, which
+	/// is the entire illusion. 12 settles a square's worth of travel in about a fifth of a
+	/// second: quick enough to feel attached to the cursor, slow enough to glide.</para></summary>
+	[Property] public float HandChaseRate { get; set; } = 12f;
+
 	/// <summary>Overhead table spot brightness. Strictly neutral white so the piece
 	/// and square tints read true (MarqueeGlow applies the user multiplier in play).</summary>
 	[Property] public float MarqueeBrightness { get; set; } = 3.3f;
@@ -1277,14 +1300,22 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 	/// <summary>The sitting surface's height.
 	///
-	/// <para><b>A knob, and the first thing to dial in the editor.</b> A real chair seat is
-	/// 17–18 inches and s&amp;box units are inches, so 18 is a real chair — but what
-	/// matters is whether it agrees with the citizen's SIT POSE, which cannot be known on
-	/// this host. The pose carries its own seat height above the avatar's origin and
-	/// <c>sit_offset_height</c> trims it by ±12 (the animgraph's own comment: "30 units at
-	/// the source, 12 after scaling to inches"). Dial this or the offset until the hips
-	/// land on the pad; they meet in the middle.</para></summary>
-	[Property] public float ChairSeatTopZ { get; set; } = 18f;
+	/// <para><b>MEASURED, not guessed — and it isn't 18.</b> This started at 18 because a
+	/// real chair seat is 17–18 inches and s&amp;box units are inches. But the citizen's sit
+	/// pose is what actually decides it, and <c>gambit_terry</c>'s ruler read the real bones
+	/// off a live seated one: <b>pelvis at z = 16.57</b> with the ankle at 3.81 (feet flat on
+	/// the floor). A pelvis BONE at 16.57 sits a few units above the surface the body rests
+	/// on — the sit bones are below the hip joint — so the pose wants a seat around 14, and
+	/// a pad at 18 was ABOVE the hips it was meant to hold.</para>
+	///
+	/// <para>Lowering the pad rather than raising the pose with <c>SitOffsetHeight</c> is
+	/// deliberate: the offset moves the whole pose relative to the origin, and the origin is
+	/// at the FEET — so raising it to meet an 18 pad would lift the feet off the floor. The
+	/// pose already has its feet planted; the chair is what should move.</para>
+	///
+	/// <para>Still a knob, and still the first thing to check: re-run <c>gambit_terry</c>
+	/// seated and compare the pelvis against this number.</para></summary>
+	[Property] public float ChairSeatTopZ { get; set; } = 14f;
 
 	/// <summary>Clearance from the armrest's top to the tabletop's underside. See
 	/// ChairArmrestZ — this is the input, the height is the output.</summary>

@@ -94,7 +94,10 @@ public static class TerryCommands
 			LobbyPlayer.UnpackHand( avatar.HandState, out int hover, out int selected );
 			var body = avatar.GameObject.GetComponentInChildren<SkinnedModelRenderer>();
 			int sit = body?.GetInt( "sit" ) ?? -1;
-			var ctrl = avatar.Components.Get<PlayerController>();
+			// EverythingInSelf: Components.Get<T>() skips DISABLED components by default, and a
+			// SEATED local player's controller is disabled by design — so the plain call
+			// reported "controller (none)" for the very case this line exists to describe.
+			var ctrl = avatar.Components.Get<PlayerController>( FindMode.EverythingInSelf );
 
 			Log.Info( $"   {seat}: {who} ({id}){( mine ? " [me]" : "" )}{( avatar.IsProxy ? " [proxy]" : "" )}" );
 			Log.Info( $"      sit={sit} ({( sit == 1 ? "SITTING" : "NOT sitting — if this is a proxy, its "

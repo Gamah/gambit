@@ -114,17 +114,26 @@ public static class TerryPose
 	public const float DropTime = 0.16f;
 	public const float PickupTime = LiftTime + TravelTime + DropTime;
 
-	/// <summary>Height a hovering hand floats at: above a pawn (4.8 at the shipped
-	/// PieceScale) and below a king (9.6), so it reads as considering the piece rather
-	/// than as either touching it or hanging over it.</summary>
-	public const float HoverHeight = 6f;
+	/// <summary>
+	/// Height a hovering hand floats at, above the board surface.
+	///
+	/// <para><b>This was 6, on the reasoning "above a pawn (4.8) and below a king (9.6)" —
+	/// which is exactly backwards.</b> Clearing the SHORTEST piece is not clearance at all:
+	/// a hand at 6 is buried to the wrist in every king, queen and bishop it passes, and
+	/// reads as pawing at the set. The tallest piece is the king at 9.6, so hovering starts
+	/// there and adds room to see under. A hand you can see daylight beneath reads as
+	/// considering a piece; one at piece height reads as touching it.</para></summary>
+	public const float HoverHeight = 14f;
 
-	/// <summary>Height the fingers close at — around the piece, not through it.</summary>
-	public const float GraspHeight = 2.2f;
+	/// <summary>Height the fingers close at — reaching DOWN toward the piece from the hover,
+	/// but still clear of the king's 9.6. Never touching: the pieces are rendered from the
+	/// FEN and the hand is decoration, so a hand that appeared to hold one would be lying
+	/// about which of them is real.</summary>
+	public const float GraspHeight = 11f;
 
-	/// <summary>Height a carried piece travels at: clear of everything on the board (a
-	/// king is 9.6, so this passes just over the tallest thing it could clip).</summary>
-	public const float LiftHeight = 10f;
+	/// <summary>Height a carried piece travels at: clear of everything on the board, and
+	/// above the hover so a pickup visibly lifts.</summary>
+	public const float LiftHeight = 17f;
 
 	/// <summary>Seconds for <see cref="HandPose.Weight"/> to cross its full range. The
 	/// hand fades between the idle target and the board rather than teleporting when the
