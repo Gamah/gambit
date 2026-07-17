@@ -7,27 +7,30 @@
 @inherits PanelComponent
 
 @*
-	The end-of-game banner, floating in front of the giant spectator board.
+	The end-of-game banner, sitting ABOVE the giant spectator board (inline with its face),
+	not floating in front of it.
 
 	lichess TV cuts to the next game the instant one ends — the result never appears, the
 	pieces just jump. So when the game on the wall finishes we hold the final position
 	(SpectatorController.FanfareHeadline is non-null for exactly that window) and put the
-	result over the middle of it: the headline big, the reason under it.
+	result above it: the headline big, the reason under it.
 
 	Two lines rather than one string with an em-dash. "White wins — out of time" reads as a
 	sentence; a banner glanced at from across a room wants a result and then a detail.
 
-	IN FRONT OF THE BOARD, not beside it, and that is the whole point of a separate panel.
-	The first attempt folded the result into SpectatorController.StatusText, which was
-	invisible in both places that render it: the engaged screen only draws while you're at
-	the station, and the info board's LiveText() only shows StatusText when there is NO
-	position — and a fanfare is precisely a held position. The result belongs where the
-	eye already is.
+	ABOVE THE BOARD, on the same wall, and that is the whole point of a separate panel. The
+	first attempt folded the result into SpectatorController.StatusText, which was invisible
+	in both places that render it: the engaged screen only draws while you're at the station,
+	and the info board's LiveText() only shows StatusText when there is NO position — and a
+	fanfare is precisely a held position. And a banner OVER the middle of the board buried the
+	very position it was announcing; above it keeps both readable. The result belongs where
+	the eye already is.
 
-	Display-only WorldPanel, no pointer input. Coplanar with the board and offset out of
-	its face, so it tilts with it (see SpectatorWall.AddFanfare). Empty markup when there
-	is nothing to announce — the panel is always present and simply draws nothing, which
-	is cheaper and less fragile than creating and destroying a GameObject every game.
+	Display-only WorldPanel, no pointer input. Sits just above the board's top edge and
+	near-coplanar with its face, so it tilts with the board (see SpectatorWall.AddFanfare).
+	Empty markup when there is nothing to announce — the panel is always present and simply
+	draws nothing, which is cheaper and less fragile than creating and destroying a
+	GameObject every game.
 *@
 
 <root>

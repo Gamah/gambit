@@ -77,17 +77,19 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 	const float FanfarePxWidth = 4096f;
 	const float FanfarePxHeight = 1024f;
 
-	/// <summary>How far the banner floats out of the board's FACE, in world units.
+	/// <summary>Where the end-of-game banner sits, in the board's own frame: ABOVE the
+	/// board's top edge (measured in world units from the top edge to the banner's centre),
+	/// and INLINE with the board — near-coplanar with its face, not floating out in front of
+	/// it where it covers the pieces.
 	///
-	/// <para>The pieces stand UP out of that face, so this has to clear the tallest of
-	/// them or the banner renders inside a king. Worked from the real numbers rather than
-	/// eyeballed: <c>SpectatorBoard3D.PieceScale</c> is <c>BoardSize / 26</c> = (56×8)/26
-	/// = 17.2, and <c>ChessSetBuilder.PieceHeight(King)</c> is 6.4 base units — so a king
-	/// stands ~110 units proud of the board. 140 clears it with room to spare.</para>
-	///
-	/// <para>Tied to <see cref="BoardCellSize"/>, so a bigger board wants a bigger number:
-	/// clearance ≈ <c>BoardCellSize × 8 / 26 × 6.4 × 1.3</c>.</para></summary>
-	const float FanfareFaceClearance = 140f;
+	/// <para>It used to push <c>140</c> out along the face normal and centre on the board,
+	/// which read as a banner stuck in front of the game. Above-and-inline keeps the board
+	/// clear. <see cref="FanfareAboveGap"/> clears the top edge by the banner's own
+	/// half-height (~a third of a king tall) plus a small gap; <see cref="FanfareInlineZ"/>
+	/// is a token offset off the face so the transparent panel bounds (which overlap the top
+	/// of the board) don't z-fight the board mesh.</para></summary>
+	const float FanfareAboveGap = 50f;
+	const float FanfareInlineZ = 8f;
 
 	/// <summary>World units the board sits in front of the wall's inner face
 	/// (RoomSize / 2), toward the room.</summary>
@@ -237,15 +239,15 @@ public sealed class SpectatorWall : Component, Component.ExecuteInEditor
 		AddSeatTag( "SpectatorWhiteTag", boardCentre + boardRot * WhiteOffset, inPlane, fitScale, white: true );
 		AddSeatTag( "SpectatorBlackTag", boardCentre + boardRot * BlackOffset, inPlane, fitScale, white: false );
 
-		// The end-of-game banner, floating just off the board's FACE and centred on it.
-		// Placed in the board's own frame and transformed through its rotation, so it
-		// tilts with the board exactly as the seat tags do — and offset along the board's
-		// local +Z (out of the face, toward the room) so it clears the standing pieces
-		// rather than intersecting them.
+		// The end-of-game banner, sitting ABOVE the board's top edge and inline with its
+		// face — not floating out in front where it covers the game. Placed in the board's
+		// own frame (files X, ranks Y, out-of-face +Z) and transformed through its rotation,
+		// so it tilts with the board exactly as the seat tags do. +Y clears the top edge;
+		// the small +Z keeps the transparent panel bounds off the board mesh.
 		var fanfare = new GameObject( true, "SpectatorFanfare" );
 		fanfare.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
 		fanfare.Parent = _root;
-		fanfare.LocalPosition = boardCentre + boardRot * new Vector3( 0f, 0f, FanfareFaceClearance );
+		fanfare.LocalPosition = boardCentre + boardRot * new Vector3( 0f, halfBoard + FanfareAboveGap, FanfareInlineZ );
 		fanfare.LocalRotation = inPlane;
 		fanfare.LocalScale = new Vector3( 1f, 1f, 1f ) * fitScale;
 		var fanfarePanel = fanfare.AddComponent<WorldPanel>();
