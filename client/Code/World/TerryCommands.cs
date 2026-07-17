@@ -188,9 +188,53 @@ public static class TerryCommands
 			+ "the pose's own seat height is above our pad." );
 
 		Log.Info( "   (x is toward the board — the near rank is at ±17.06, the tabletop's edge at ±30; "
-			+ "z is height — tabletop surface 30, underside 27, chair pad 18.)" );
+			+ "z is height — tabletop surface 30, underside 27, chair pad " + ring.ChairSeatTopZ + ".)" );
 		Log.Info( "   Any bone above reading \"no such bone\" is my guess at the name, not a missing bone: "
 			+ "run gambit_terry_bones for the real list." );
+
+		DumpReach( station, body, avatar );
+	}
+
+	/// <summary>
+	/// <b>Can the arm actually get there?</b> Prints what the IK was ASKED for beside the
+	/// bone it ACHIEVED, and measures the citizen's real arm off its own skeleton.
+	///
+	/// <para>This exists because "the hand is aligned with C1 instead of A1, and 2–3 squares
+	/// behind" has two completely different causes that look identical from outside — aiming
+	/// at the wrong place, or aiming right and not reaching. The first is a bug; the second
+	/// is arithmetic about a board that is 39 units across in front of a citizen with a
+	/// ~24-unit arm. Guessing between them cost a round of tuning, and the difference between
+	/// these two lines settles it in one run.</para></summary>
+	static void DumpReach( ChessStation station, SkinnedModelRenderer body, LobbyPlayer avatar )
+	{
+		if ( avatar.LastHandTarget is not { } target )
+		{
+			Log.Info( "   reach: no hand target this frame (not hovering a square you can act on)." );
+			return;
+		}
+
+		string ik = avatar.LastHandRight ? "hand_R" : "hand_L";
+		if ( !body.TryGetBoneTransform( ik, out var handTx ) ) return;
+
+		var hand = station.WorldTransform.PointToLocal( handTx.Position );
+		var miss = hand - target;
+
+		Log.Info( $"── reach: is it aiming wrong, or just not getting there? ──" );
+		Log.Info( $"   asked for   ({target.x,7:0.##}, {target.y,6:0.##}, {target.z,6:0.##})  [{ik}, "
+			+ $"{( avatar.LastHandRight ? "right" : "left" )} hand]" );
+		Log.Info( $"   achieved    ({hand.x,7:0.##}, {hand.y,6:0.##}, {hand.z,6:0.##})" );
+		Log.Info( $"   MISSED BY   {miss.Length:0.##} units  ({miss.x:+0.##;-0.##}, {miss.y:+0.##;-0.##}, {miss.z:+0.##;-0.##})"
+			+ $" — under ~2 means the IK is landing it; a big miss means the arm ran out." );
+
+		// The arm, off its own skeleton — so its reach is a measurement rather than my
+		// estimate of human proportion, which is what got this wrong the first time.
+		foreach ( var shoulder in new[] { "arm_upper_R", "arm_upper_L", "clavicle_R", "clavicle_L", "spine_2" } )
+		{
+			if ( !body.TryGetBoneTransform( shoulder, out var sh ) ) continue;
+			var s = station.WorldTransform.PointToLocal( sh.Position );
+			Log.Info( $"   {shoulder,-12} ({s.x,7:0.##}, {s.y,6:0.##}, {s.z,6:0.##})"
+				+ $"   -> {( s - hand ).Length:0.##} to the hand, {( s - target ).Length:0.##} to the target" );
+		}
 	}
 
 	static void Measure( ChessStation station, SkinnedModelRenderer body, string bone, string why )

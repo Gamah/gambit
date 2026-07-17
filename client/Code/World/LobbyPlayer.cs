@@ -1120,11 +1120,57 @@ public sealed class LobbyPlayer : Component
 		var world = station.WorldTransform.PointToWorld( _handLocal.Value )
 			+ rot * ring.HandGripOffset;
 
+		bool right = UseRightHand( ring, side, _handLocal.Value.y );
+		LastHandTarget = _handLocal.Value;
+		LastHandRight = right;
+
 		r.Set( "holdtype", HoldTypeItem );
-		r.Set( "holdtype_handedness", HandednessRight );
+		r.Set( "holdtype_handedness", right ? HandednessRight : HandednessLeft );
 		r.Set( "holdtype_pose_hand", pose.FingerClose );
-		r.SetIk( "hand_right", new Transform( world, rot ) );
+		r.SetIk( right ? IkRight : IkLeft, new Transform( world, rot ) );
+		r.ClearIk( right ? IkLeft : IkRight );
 	}
+
+	/// <summary>
+	/// Which hand reaches for a target on this side of the body.
+	///
+	/// <para><b>M13 said "right hand works, left hand idles — chess is played one-handed",
+	/// and measurement says that cannot work here.</b> s&amp;box is Y-left, so White (facing
+	/// +X) has its right at −Y: a1 sits at y +17.1, which is about 23 units of PURE SIDEWAYS
+	/// reach from a right shoulder near y −6, and 33 in total. Against a live citizen the arm
+	/// fell ~19 short — which is exactly what "the hand is aligned with C1 and 2–3 squares
+	/// behind where it should be" looks like from the outside. It was never aiming wrong; it
+	/// could not get there. Reaching with the hand on the square's OWN side drops a1 to 26
+	/// and costs nothing.</para>
+	///
+	/// <para>Touch-move etiquette really is one-handed, and a real player gets there by
+	/// LEANING — which a fixed sit pose cannot do. Given the choice between breaking the
+	/// etiquette and breaking the arm, the arm wins.</para>
+	///
+	/// <para>Hysteresis, because the alternative is a hand that flickers between two arms
+	/// every time the cursor wanders near the board's centre line: the reaching hand changes
+	/// only once the target is clearly on the other side.</para></summary>
+	bool UseRightHand( ChessRing ring, float side, float localY )
+	{
+		// side * y > 0 is "on this seat's right": White is side −1 and its right is −Y;
+		// Black is +1 and its right is +Y. One expression, both seats.
+		float toRight = side * localY;
+
+		if ( toRight > ring.HandSwapDeadband ) _handRight = true;
+		else if ( toRight < -ring.HandSwapDeadband ) _handRight = false;
+
+		return _handRight;
+	}
+
+	/// <summary>Which hand is reaching, and where it was last told to go (station-local) —
+	/// read by <c>gambit_terry</c>, which prints them beside the bone the IK actually
+	/// achieved. The gap between those two IS the reach error, and it is the only way to
+	/// tell "aiming at the wrong square" apart from "cannot get there" without guessing —
+	/// which is a distinction that already cost a round of tuning.</summary>
+	public Vector3? LastHandTarget { get; private set; }
+	public bool LastHandRight { get; private set; } = true;
+
+	bool _handRight = true;
 
 	/// <summary>
 	/// Let the arm go — the whole arm, not just the IK.
@@ -1140,10 +1186,14 @@ public sealed class LobbyPlayer : Component
 	{
 		if ( _bodyRenderer == null ) return;
 
-		_bodyRenderer.ClearIk( "hand_right" );
+		// BOTH — the reaching hand swaps sides now, so clearing only the one we happen to
+		// be using would leave the other latched wherever it last reached.
+		_bodyRenderer.ClearIk( IkRight );
+		_bodyRenderer.ClearIk( IkLeft );
 		_bodyRenderer.Set( "holdtype", HoldTypeNone );
 		_bodyRenderer.Set( "holdtype_pose_hand", 0f );
 		_handLocal = null;
+		LastHandTarget = null;
 	}
 
 	static Vector3 SquareLocal( ChessRing ring, int square ) =>
@@ -1155,6 +1205,12 @@ public sealed class LobbyPlayer : Component
 	const int HoldTypeNone = 0;
 	const int HoldTypeItem = 4;
 	const int HandednessRight = 1;
+	const int HandednessLeft = 2;
+
+	/// <summary>The animgraph's IK chain names (ik.hand_left.*, ik.hand_right.*) — NOT the
+	/// bone names, which are hand_L/hand_R. Two different vocabularies for one arm.</summary>
+	const string IkRight = "hand_right";
+	const string IkLeft = "hand_left";
 
 	/// <summary>The hand's eased station-local position — see ApplyHandPose. Null until the
 	/// first frame it is placed, so it starts where it belongs rather than flying in from
