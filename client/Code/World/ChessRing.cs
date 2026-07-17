@@ -1422,13 +1422,16 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// was there but barely read. Centred on the sitter it has 10.2 to give.</para></summary>
 	public float ChairCenterX => SeatSitBack + ChairSeatOffsetX;                // 39.4
 
-	/// <summary>The frame's front, as a chair-local x (+ is toward the board).</summary>
-	/// <summary>Chair-local y the geometry is shifted by, so the seat is under the sitter
-	/// rather than under the plant. Station-space, mirrored per seat by the same rule the
-	/// chair's own yaw uses.</summary>
+	/// <summary>How far the chair is shifted sideways so the seat is under the sitter rather
+	/// than under the plant — the pose's own lateral lean, as a station-space y.
+	///
+	/// <para>White faces +X so its left is +Y; Black faces −X so its left is −Y. One
+	/// constant covers both because the chair is yawed to face the board exactly as the
+	/// citizen is, so "the sitter's left" is the same side of each.</para></summary>
 	public float ChairOffsetY( ChessSeat seat ) =>
 		( seat == ChessSeat.White ? +1f : -1f ) * ChairSeatOffsetY;
 
+	/// <summary>The frame's front, as a chair-local x (+ is toward the board).</summary>
 	float ChairFrontX => ChairSeatDepth * 0.5f;                                 // +10.0
 
 	/// <summary>The frame's back, as a chair-local x.</summary>

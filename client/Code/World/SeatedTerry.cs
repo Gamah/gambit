@@ -71,16 +71,23 @@ public sealed class SeatedTerry : Component
 	{
 		if ( Station is not { } station ) return;
 
+		var src = Source;
+
 		// Nobody here: no avatars to pose, and nothing to spend a frame on. Six empty
 		// tables in a room must cost nothing.
 		if ( !station.AnySeatTaken )
 		{
-			_white = HandPose.None;
-			_black = HandPose.None;
+			// BASELINE, not None — the ply has to be carried, exactly as everywhere else
+			// here does it. HandPose.None resets the ply to 0 while _whiteMoved/_capture
+			// stay latched at the last move's values, so a seat refilling before the
+			// vacated table's [Sync] Phase has landed would make Advance's abandon rule
+			// read "40 != 0, 40 > 0, this seat moved" and replay the PREVIOUS occupant's
+			// whole pickup on the new sitter's hand. A narrow window — the local game
+			// drives an empty table to Over/Idle — but it is one RTT wide and free to shut.
+			_white = Baseline( src );
+			_black = Baseline( src );
 			return;
 		}
-
-		var src = Source;
 
 		// The board changed hands (a lichess game engaged, or was handed back when it
 		// ended). Every tracked value describes the OLD game, and comparing across the swap
@@ -188,12 +195,24 @@ public sealed class SeatedTerry : Component
 	LobbyPlayer ResolveAvatar( ChessStation station, ChessSeat seat,
 		ref LobbyPlayer player, ref ulong cachedId )
 	{
-		if ( ChessStation.Active == station && ChessStation.ActiveSeat == seat
-			&& LobbyPlayer.Local.IsValid() )
+		bool localHere = ChessStation.Active == station && LobbyPlayer.Local.IsValid();
+
+		if ( localHere && ChessStation.ActiveSeat == seat )
 			return LobbyPlayer.Local;
 
 		ulong id = station.SeatSteamId( seat );
 		if ( id == 0 )
+		{
+			player = null;
+			cachedId = 0;
+			return null;
+		}
+
+		// We're sitting at this table, but in the OTHER seat — so a seat here still carrying
+		// our SteamId is the host not having processed our SwitchActiveSeat yet. Believe
+		// Active/ActiveSeat (the local truth) over the stale [Sync], or for one round trip we
+		// resolve to BOTH seats and drive one avatar's hand twice in a frame.
+		if ( localHere && id == ( Connection.Local?.SteamId ?? 0 ) )
 		{
 			player = null;
 			cachedId = 0;
