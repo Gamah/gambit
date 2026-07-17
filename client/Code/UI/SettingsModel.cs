@@ -52,7 +52,10 @@ public static class SettingsModel
 	public static readonly (string Name, string Hex)[] Swatches =
 	{
 		("AUTO", ""),
-		("WHITE", "#FFFFFF"),
+		// A light grey, not pure white: the chip reads as "a little grey" rather than a
+		// blinding square, and it keeps the WHITE theme visibly LIGHTER than the darker-grey
+		// AUTO/default (WallTheme.DefaultAccent) instead of identical to it.
+		("WHITE", "#D0D0D0"),
 		("WARM", "#FFD9A8"),
 		("RED", "#FF5848"),
 		("YELLOW", "#FFE066"),

@@ -9,12 +9,14 @@ namespace Gambit.UI;
 /// keys off one <see cref="Accent"/> hue, so changing the room theme retints the whole wall
 /// UI; the room light itself stays white.
 ///
-/// AUTO/empty falls back to a NEUTRAL (near-black) theme — the default is white-accented,
-/// which the derived factors below turn into a dark panel with white text and borders. The
-/// old default was a dark green carried over from the rotaliate/skafinity music board; a
-/// black-and-white default is the intended look now. (A LITERAL black accent can't be the
-/// default: every derived colour scales the accent, so a black hue would make borders,
-/// headers and filled cells black-on-black — the accent has to be light for a dark theme.)
+/// AUTO/empty falls back to a NEUTRAL near-black theme — the default accent is a dark grey
+/// (#606060), which the derived factors below turn into a dark panel with dim-grey text and
+/// borders. The old default was a dark green carried over from the rotaliate/skafinity music
+/// board; a black-and-grey default is the intended look now, and it is deliberately DARKER
+/// than the WHITE swatch (a light grey, #D0D0D0) so the two neutrals don't look identical.
+/// (A LITERAL black accent can't be the default: every derived colour scales the accent, so
+/// a black hue would make borders, headers and filled cells black-on-black — the accent has
+/// to be a light-ish grey for a readable dark theme, and darker greys read as darker boards.)
 ///
 /// Panels bind these as inline <c>style=</c> values (which re-render on change, unlike a
 /// compiled &lt;style&gt; block) — see WallTheme.scss for the static font/radius tokens.
@@ -22,12 +24,15 @@ namespace Gambit.UI;
 /// </summary>
 public static class WallTheme
 {
-	// White: the neutral hue that the factors below turn into a near-black panel with white
-	// text/borders — the default "black" theme. A picked swatch (green, red, …) replaces it.
-	static readonly Color DefaultAccent = Color.White;
+	// A dark neutral grey: the factors below turn it into a near-black panel with dim grey
+	// text/borders — the default "black" theme, and deliberately DARKER than the WHITE
+	// swatch (#D0D0D0), which is the lighter neutral. Both are greys, so they can't be a
+	// pure-white accent (that made AUTO and WHITE identical); the darker the accent, the
+	// darker the whole board. A picked swatch (green, red, …) replaces it with a tint.
+	static readonly Color DefaultAccent = Color.Parse( "#606060" ) ?? Color.White;
 
 	/// <summary>The hue everything derives from: the room-light colour, or the default
-	/// neutral (white → a near-black theme) when the room light is AUTO/empty.</summary>
+	/// dark-grey neutral (a near-black theme) when the room light is AUTO/empty.</summary>
 	public static Color Accent
 	{
 		get
