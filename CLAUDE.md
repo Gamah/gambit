@@ -796,6 +796,12 @@ the channel, what the wall thinks it's showing, and gamchess's raw state. Exists
 "nothing is showing" was twice diagnosed by guesswork and once wrongly — none of the chain
 is visible from outside, and a feature that never fires looks exactly like one that isn't
 wired up.
+`gambit_music` — where does every music component live, and on which GameObject? One line
+per ScreenPanel / SkafinityPlayer / SkafinityMusicPanel / MusicBoardScreen with the GO's
+name, NetworkMode, flags and the panel's Enabled/IsOpen. Run it on a joined client: a music
+component on anything but the `LocalMusic` (Never, NotSaved) GO means that machine is
+running the pre-#12-fix scene or a stale build — the question three screenshot diagnoses
+couldn't answer.
 
 ---
 
