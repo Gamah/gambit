@@ -21,7 +21,9 @@ public static class MusicCommands
 	[ConCmd( "gambit_music" )]
 	public static void MusicStatus()
 	{
-		var scene = Game.ActiveScene;
+		// Sandbox.Game, spelled out: inside Gambit.UI a bare `Game` resolves to the
+		// sibling Gambit.Game namespace, not the engine's static class.
+		var scene = Sandbox.Game.ActiveScene;
 		if ( scene == null )
 		{
 			Log.Warning( "[Gambit] no active scene." );
