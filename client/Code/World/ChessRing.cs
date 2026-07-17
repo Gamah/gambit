@@ -1251,15 +1251,24 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// trusting: a corner may not eat more than half of either leg or two bends meet in the
 	/// middle and the tube folds through itself. The chair's shortest leg is the back riser
 	/// (ChairArmrestZ − ChairSeatRailZ = 7.35), so the clamp only bites past ~3.6.</para></summary>
-	const float ChairBendRadius = 2.5f;
+	[Property] public float ChairBendRadius { get; set; } = 2.5f;
 
 	/// <summary>Pad depth, along the board axis. Also the frame's span: the floor rail,
 	/// the seat rail and the armrest all run this far.</summary>
-	const float ChairSeatDepth = 18f;
+	[Property] public float ChairSeatDepth { get; set; } = 20f;
 
-	/// <summary>Pad width, across. The side frames sit at ±half of this, so the tubes
-	/// stand ChairTubeRadius proud of the pad's edges on each side.</summary>
-	const float ChairSeatWidth = 18f;
+	/// <summary>
+	/// Pad width, across. The side frames sit at ±half of this, so the tubes stand
+	/// ChairTubeRadius proud of the pad's edges on each side.
+	///
+	/// <para><b>This was 18 and read as a child's chair, and the reason is a number the
+	/// engine will tell you.</b> A citizen's <c>BodyRadius</c> is 16 — it is <b>32 units
+	/// wide</b>. An 18-wide seat is narrower than the person on it. 72 units tall is
+	/// roughly human-proportioned (eye at 64, and s&amp;box units are inches), which is why
+	/// an 18-inch seat HEIGHT is a real chair and the same number as a WIDTH is not: real
+	/// chairs are about as wide as the sitter, and this citizen is chunkier than the human
+	/// its height implies.</para></summary>
+	[Property] public float ChairSeatWidth { get; set; } = 26f;
 
 	/// <summary>Pad slab thickness. The seat rail runs through its middle, so the tube
 	/// stands (ChairTubeRadius − half of this) proud above and below — the pad is set
@@ -1288,8 +1297,8 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// curling forward at the top — but that was an interpretation, not a derivation (the
 	/// file says so itself), and in the room it read as the back curving inward at you. The
 	/// panel is the coloured surface of the chair and it wants to be one plane.</para></summary>
-	const float ChairBackBottomZ = 22f;
-	const float ChairBackTopZ = 34f;
+	[Property] public float ChairBackBottomZ { get; set; } = 22f;
+	[Property] public float ChairBackTopZ { get; set; } = 34f;
 	const float ChairBackThickness = 1.2f;
 
 	/// <summary>How far an EMPTY chair tucks toward the table. The seated position is the
@@ -1297,9 +1306,10 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// put the board out of the terry's reach (hips at 36 back, ~29 of arm, the near rank
 	/// at 17.06). So tucking is the only direction there is.
 	///
-	/// <para>Clamped to <see cref="ChairMaxTuck"/> at build: a chair tucked past the foot
-	/// plate is inside the table.</para></summary>
-	[Property] public float ChairTuckInset { get; set; } = 6f;
+	/// <para>Clamped to <see cref="ChairMaxTuck"/>: a chair tucked past the foot plate is
+	/// inside the table. That clamp is what the travel is really worth — see
+	/// <see cref="ChairCenterX"/>, which is where the room to move comes from.</para></summary>
+	[Property] public float ChairTuckInset { get; set; } = 9f;
 
 	/// <summary>Seconds an empty chair takes to slide out as someone sits.
 	///
@@ -1324,17 +1334,26 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 	// ── Derived. Change a constant above and every one of these moves. ──
 
-	/// <summary>Chair centre, as a magnitude — the seat's walk-up spot.</summary>
-	public float ChairCenterX => SeatSpotX;                                     // 32.12
+	/// <summary>
+	/// Chair centre, as a magnitude: <b>where the person actually sits</b>
+	/// (<see cref="SeatSitBack"/>), not the walk-up spot.
+	///
+	/// <para><b>It was SeatSpotX (32.12) and that was wrong twice over.</b> The seat spot is
+	/// where you STAND to press E; the seated avatar is planted 3.9 further back, so the
+	/// chair sat forward of its own occupant. And it cost the tuck its travel: the binding
+	/// constraint is that the front riser must stay outboard of the table's foot plate
+	/// (±15), so a chair centred at 32.12 could only ever move 7.4 — which is why the slide
+	/// was there but barely read. Centred on the sitter it has 10.2 to give.</para></summary>
+	public float ChairCenterX => SeatSitBack;                                   // 36.0
 
 	/// <summary>The frame's front, as a chair-local x (+ is toward the board).</summary>
-	float ChairFrontX => ChairSeatDepth * 0.5f;                                 // +9.0
+	float ChairFrontX => ChairSeatDepth * 0.5f;                                 // +10.0
 
 	/// <summary>The frame's back, as a chair-local x.</summary>
-	float ChairBackX => -ChairSeatDepth * 0.5f;                                 // −9.0
+	float ChairBackX => -ChairSeatDepth * 0.5f;                                 // −10.0
 
 	/// <summary>Side frames sit at ±this in chair-local y.</summary>
-	float ChairSideY => ChairSeatWidth * 0.5f;                                  // ±9.0
+	float ChairSideY => ChairSeatWidth * 0.5f;                                  // ±13.0
 
 	/// <summary>The floor rail's centreline — one radius up, so the tube rests ON the floor.</summary>
 	float ChairFloorRailZ => ChairTubeRadius;                                   // 0.75
@@ -1363,7 +1382,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// cylinder and its skin is what would meet the foot plate. (M13's design table gave
 	/// 8.12 from the centreline; the edge gives 7.37. Same conclusion at the shipped 6.0,
 	/// which is the only reason the miss was harmless.)</para></summary>
-	public float ChairMaxTuck => ChairCenterX - ChairFrontX - ChairTubeRadius - FootEdgeX; // 7.37
+	public float ChairMaxTuck => ChairCenterX - ChairFrontX - ChairTubeRadius - FootEdgeX; // 10.25
 
 	/// <summary>
 	/// One seat's chair, parented to the station beside WhiteAnchor / Table / BoardPlaque /

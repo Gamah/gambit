@@ -603,6 +603,13 @@ public sealed class ChessBoardView : Component
 	/// a hash gate skips work while this skips a network write.</para></summary>
 	void PublishHandState()
 	{
+		// MY table only. There is one ChessBoardView per station and they ALL run OnUpdate,
+		// so without this every other table in the ring also writes LobbyPlayer.Local's
+		// HandState — and since UpdateInput bails early for a table you aren't seated at,
+		// they'd all publish "no hand". Whichever view updated last would win, so the hand
+		// would flicker or vanish depending on component order. The change gate can't save
+		// it: the two writers genuinely disagree, so it passes both ways.
+		if ( ChessStation.Active != Station ) return;
 		if ( LobbyPlayer.Local is not { } me ) return;
 
 		int packed = LobbyPlayer.PackHand( _hoverSquare, SquareIndexOf( Selected ) );

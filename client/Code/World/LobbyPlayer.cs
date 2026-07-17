@@ -425,9 +425,12 @@ public sealed class LobbyPlayer : Component
 		if ( seated )
 			ApplySitPose();
 		else if ( _proxySeated )
+		{
 			// Only on the transition: once the animator is back on, the controller writes
 			// sit = 0 itself every frame and this would just be saying it twice.
 			ClearSitPose();
+			ClearHandPose();
+		}
 
 		_proxySeated = seated;
 	}
@@ -1059,7 +1062,7 @@ public sealed class LobbyPlayer : Component
 		// subject. The board frame's half-extent is 21.75 and the tabletop's is 30, so 26
 		// lands squarely in the 8.25-wide margin — on the table, clear of the board.
 		float side = seat == ChessSeat.White ? -1f : +1f;
-		var idle = new Vector3( side * ring.HandIdleX, side * -ring.HandIdleY, ring.HandIdleZ );
+		var idle = new Vector3( side * ring.HandIdleX, side * ring.HandIdleY, ring.HandIdleZ );
 
 		Vector3 local = idle;
 		if ( pose.OnBoard && pose.Weight > 0f )
@@ -1299,6 +1302,7 @@ public sealed class LobbyPlayer : Component
 		_hiddenRenderers.Clear();
 		RestoreSeatedAvatar();
 		ClearSitPose();
+		ClearHandPose();
 
 		// Reverse of the engage blend: ease the camera from the anchor back to
 		// where it was when we engaged, then hand control back to the controller
