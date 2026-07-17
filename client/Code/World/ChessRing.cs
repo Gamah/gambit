@@ -209,6 +209,36 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// second: quick enough to feel attached to the cursor, slow enough to glide.</para></summary>
 	[Property] public float HandChaseRate { get; set; } = 12f;
 
+	/// <summary>
+	/// Offset from the square to where the WRIST goes, in the hand's own rotated frame —
+	/// so the thumb and index end up over the square rather than the wrist.
+	///
+	/// <para><b>IK aims a BONE, and the bone is the wrist.</b> Put hand_R on a square and
+	/// the fingers hang past it; the piece the player is thinking about is under the palm
+	/// at best. This pulls the wrist back and up along the hand's own axes so the grip lands
+	/// on the target instead. Read the real hand_R off a seated citizen with
+	/// <c>gambit_terry</c> and tune against it — the ruler prints exactly this bone.</para></summary>
+	[Property] public Vector3 HandGripOffset { get; set; } = new( -3f, 0f, 3f );
+
+	/// <summary>Pitch of the hand over the board — nose-down, so the fingers point at the
+	/// piece rather than the palm facing it.</summary>
+	[Property, Range( 0f, 90f )] public float HandPitch { get; set; } = 60f;
+
+	/// <summary>
+	/// How far toward the tray a hand actually carries a piece it has taken, 0..1.
+	///
+	/// <para><b>It is not 1, and the arithmetic is why.</b> Each player's losses sit in
+	/// their OWN tray, so taking a black knight means reaching to |y| = 28 — about 29 units
+	/// across from a sitter whose pelvis is at y ≈ −0.9. That is a long way past where an
+	/// arm plausibly goes, and an IK target out of reach doesn't fail politely: it
+	/// straightens the arm and drags the shoulder after it.</para>
+	///
+	/// <para>So the hand lifts the piece, carries it most of the way, and lets go — and
+	/// <see cref="ChessBoardView"/>'s own capture slide (which has been walking pieces to
+	/// their trays since M11) finishes the trip. That is also just what happens when you
+	/// take a piece: you lift it clear and set it down, you don't post it.</para></summary>
+	[Property, Range( 0f, 1f )] public float HandDiscardReach { get; set; } = 0.6f;
+
 	/// <summary>Overhead table spot brightness. Strictly neutral white so the piece
 	/// and square tints read true (MarqueeGlow applies the user multiplier in play).</summary>
 	[Property] public float MarqueeBrightness { get; set; } = 3.3f;
@@ -1366,8 +1396,23 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	// ── Derived. Change a constant above and every one of these moves. ──
 
 	/// <summary>
+	/// How far BEHIND the plant the chair's centre sits, and how far to the side.
+	///
+	/// <para><b>Both measured, not chosen.</b> <c>gambit_terry</c>'s ruler read a seated
+	/// citizen's pelvis at <b>3.4 back of its own origin and 0.89 to its left</b> — the sit
+	/// pose leans. The plant puts the ORIGIN at SeatSitBack, so a chair centred there is
+	/// centred 3.4 in front of the person in it, which is why the terry read as sitting too
+	/// far back and slightly to one side of its own seat. Offsetting the chair by the pose's
+	/// own lean puts the sitter in the middle of it.</para>
+	///
+	/// <para>Y is in CHAIR-local terms (positive = the sitter's left), so one number covers
+	/// both seats: the chair is yawed to face the board, exactly as the citizen is.</para></summary>
+	[Property] public float ChairSeatOffsetX { get; set; } = 3.4f;
+	[Property] public float ChairSeatOffsetY { get; set; } = 0.89f;
+
+	/// <summary>
 	/// Chair centre, as a magnitude: <b>where the person actually sits</b>
-	/// (<see cref="SeatSitBack"/>), not the walk-up spot.
+	/// (<see cref="SeatSitBack"/> plus the pose's own backward lean), not the walk-up spot.
 	///
 	/// <para><b>It was SeatSpotX (32.12) and that was wrong twice over.</b> The seat spot is
 	/// where you STAND to press E; the seated avatar is planted 3.9 further back, so the
@@ -1375,9 +1420,15 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// constraint is that the front riser must stay outboard of the table's foot plate
 	/// (±15), so a chair centred at 32.12 could only ever move 7.4 — which is why the slide
 	/// was there but barely read. Centred on the sitter it has 10.2 to give.</para></summary>
-	public float ChairCenterX => SeatSitBack;                                   // 36.0
+	public float ChairCenterX => SeatSitBack + ChairSeatOffsetX;                // 39.4
 
 	/// <summary>The frame's front, as a chair-local x (+ is toward the board).</summary>
+	/// <summary>Chair-local y the geometry is shifted by, so the seat is under the sitter
+	/// rather than under the plant. Station-space, mirrored per seat by the same rule the
+	/// chair's own yaw uses.</summary>
+	public float ChairOffsetY( ChessSeat seat ) =>
+		( seat == ChessSeat.White ? +1f : -1f ) * ChairSeatOffsetY;
+
 	float ChairFrontX => ChairSeatDepth * 0.5f;                                 // +10.0
 
 	/// <summary>The frame's back, as a chair-local x.</summary>
@@ -1413,7 +1464,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// cylinder and its skin is what would meet the foot plate. (M13's design table gave
 	/// 8.12 from the centreline; the edge gives 7.37. Same conclusion at the shipped 6.0,
 	/// which is the only reason the miss was harmless.)</para></summary>
-	public float ChairMaxTuck => ChairCenterX - ChairFrontX - ChairTubeRadius - FootEdgeX; // 10.25
+	public float ChairMaxTuck => ChairCenterX - ChairFrontX - ChairTubeRadius - FootEdgeX; // 13.65
 
 	/// <summary>
 	/// One seat's chair, parented to the station beside WhiteAnchor / Table / BoardPlaque /
@@ -1486,7 +1537,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		// AT the seat spot, facing the board — so chair-local +X is "toward the board" on
 		// both sides and everything below is written once, unsigned. StationChair slides
 		// this x for the tuck.
-		chair.LocalPosition = new Vector3( side * ChairCenterX, 0f, 0f );
+		chair.LocalPosition = new Vector3( side * ChairCenterX, ChairOffsetY( seat ), 0f );
 		chair.LocalRotation = Rotation.FromYaw( white ? 0f : 180f );
 
 		// ── D5 fallback hook, mirroring BuildPiece/PieceHeight's convention: a real model
@@ -1727,6 +1778,18 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// at the station origin, so this works parented to either.</summary>
 	public Vector3 SquareLocalPosition( int file, int rank ) =>
 		CellCenter( rank, file, TableTopZ + FrameThickness + CellThickness ) * TableScale;
+
+	/// <summary>
+	/// Where a hand goes to drop a piece it has just taken: the middle of that piece's
+	/// OWNER's tray — because that is where ChessBoardView actually puts it, and the hand
+	/// following the piece somewhere else would be two answers to one question.
+	///
+	/// <para><paramref name="white"/> is the VICTIM's colour, not the captor's: each
+	/// player's losses sit in their own tray (see TraySlotLocalPosition), so taking a black
+	/// knight means reaching across to Black's side. That is a long reach, and it is also
+	/// what a real player does.</para></summary>
+	public Vector3 TrayHandLocalPosition( bool white ) =>
+		TraySlotLocalPosition( white, TrayRows / 2 );
 
 	/// <summary>Uniform scale ChessBoardView passes to ChessSetBuilder so runtime
 	/// pieces match the ring-built preview set (see BuildPieces).</summary>

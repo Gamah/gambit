@@ -12,7 +12,15 @@ public enum HandPhase
 	/// <summary>A piece is picked out: hand down at it, fingers nearly closed.</summary>
 	Selected,
 
-	/// <summary>A move landed: closing on the from-square and lifting.</summary>
+	/// <summary>A capture, step one: reaching to the TO square and closing on the piece
+	/// that is about to be taken. Only ever happens for a capture.</summary>
+	Clearing,
+
+	/// <summary>A capture, step two: carrying the taken piece off the board to its owner's
+	/// tray, and letting go of it there.</summary>
+	Discarding,
+
+	/// <summary>Closing on the from-square and lifting.</summary>
 	Lifting,
 
 	/// <summary>Travelling from-square → to-square at lift height.</summary>
@@ -32,36 +40,53 @@ public enum HandPhase
 /// engine. Same shape as <see cref="CapturedMaterial"/> (plain <c>char[64]</c>) and
 /// <see cref="BoardDiff"/> (plain FEN + ply).</para>
 ///
-/// <para>It carries its own <see cref="Ply"/> and <see cref="Since"/> rather than leaving
-/// them to the caller: that is what makes <see cref="TerryPose.Advance"/> a closed state
-/// machine, and what lets the abandon rule below be PROVEN here instead of reviewed.</para>
+/// <para>It carries its own <see cref="Ply"/>, <see cref="Since"/> and <see cref="Rush"/>
+/// rather than leaving them to the caller: that is what makes <see cref="TerryPose.Advance"/>
+/// a closed state machine, and what lets the abandon rule be PROVEN here instead of
+/// reviewed.</para>
 /// </summary>
 /// <param name="Phase">What the hand is doing.</param>
 /// <param name="FromSquare">Square index (rank*8+file) the hand is at, or −1 when idle.</param>
-/// <param name="ToSquare">Where it is heading; equal to <paramref name="FromSquare"/> unless carrying.</param>
-/// <param name="Travel">0..1 along From → To. Only ever non-zero while carrying.</param>
+/// <param name="ToSquare">Where it is heading; equal to <paramref name="FromSquare"/> unless travelling.</param>
+/// <param name="ToTray">The destination is the taken piece's TRAY, not <paramref name="ToSquare"/>.
+/// Only ever true while <see cref="HandPhase.Discarding"/>. The driver owns where a tray IS.</param>
+/// <param name="Travel">0..1 along From → To. Only ever non-zero while travelling.</param>
 /// <param name="Height">World units above the board surface.</param>
 /// <param name="FingerClose">0..1 → the animgraph's <c>holdtype_pose_hand</c>.</param>
-/// <param name="Weight">0..1 blend from the elbows-on-table idle target to the square target.</param>
+/// <param name="Weight">0..1 blend from the elbows-on-table idle target to the board target.</param>
 /// <param name="Ply">The move count this pose was resolved against — see the abandon rule.</param>
-/// <param name="Since">Seconds into the pickup timeline (Lifting → Carrying → Dropping).</param>
+/// <param name="Capture">This move takes a piece, so the timeline has the victim's trip to
+/// the tray in front of it. <b>Stored, not inferred.</b> The first version worked it back out
+/// of Phase and Since — which silently fails during a capture's own Lifting phase (the
+/// prologue is over, so the phase looks ordinary, but the clock is only 1.2s into a 2.8s
+/// timeline and reads as a plain move nearly finished). It would have replayed as the wrong
+/// gesture.</param>
+/// <param name="Since">Seconds since this move's animation began, already scaled by Rush.</param>
+/// <param name="Rush">How far behind the game this hand is running — see <see cref="TerryPose.Advance"/>.</param>
 public readonly record struct HandPose(
 	HandPhase Phase,
 	int FromSquare,
 	int ToSquare,
+	bool ToTray,
 	float Travel,
 	float Height,
 	float FingerClose,
 	float Weight,
 	int Ply,
-	float Since )
+	bool Capture,
+	float Since,
+	float Rush )
 {
 	/// <summary>Nothing has been observed yet: idle, no square, no weight, ply 0.</summary>
 	public static readonly HandPose None =
-		new( HandPhase.Idle, -1, -1, 0f, 0f, 0f, 0f, 0, 0f );
+		new( HandPhase.Idle, -1, -1, false, 0f, 0f, 0f, 0f, 0, false, 0f, 0f );
 
 	/// <summary>The hand is on the board rather than resting on the table.</summary>
 	public bool OnBoard => FromSquare >= 0;
+
+	/// <summary>Playing out a move, rather than reacting to a cursor.</summary>
+	public bool Animating => Phase is HandPhase.Clearing or HandPhase.Discarding
+		or HandPhase.Lifting or HandPhase.Carrying or HandPhase.Dropping;
 }
 
 /// <summary>What the driver observed about this seat this frame.</summary>
@@ -73,6 +98,9 @@ public readonly record struct HandPose(
 /// <param name="Ply">The game's move count.</param>
 /// <param name="LastMoveUci">UCI of the move that produced <paramref name="Ply"/>, or null.</param>
 /// <param name="SeatMoved">That move was played by the seat being animated.</param>
+/// <param name="Capture">That move took a piece — so the hand has to clear the victim off
+/// the board before it can put anything on the square. <see cref="BoardDiff"/> answers this
+/// from the FEN alone, en passant included.</param>
 /// <param name="GameLive">There is a game to have hands about.</param>
 public readonly record struct HandInput(
 	int Hover,
@@ -80,6 +108,7 @@ public readonly record struct HandInput(
 	int Ply,
 	string LastMoveUci,
 	bool SeatMoved,
+	bool Capture,
 	bool GameLive );
 
 /// <summary>
@@ -102,17 +131,49 @@ public readonly record struct HandInput(
 /// </summary>
 public static class TerryPose
 {
-	// ── The pickup timeline ──
+	// ── The timeline ──
 	//
-	// Post-hoc by construction: a move is only observable once it has already been played,
-	// so the front half (reach, close) is driven live from hover/selection and this covers
-	// what is left — lift, travel, set down. Total 0.56s, which is about as long as a
-	// pickup can take before the piece has visibly been on its new square for a while.
+	// SLOW, on purpose. A hand that snatches a piece across the board in half a second reads
+	// as a glitch; a hand that picks it up, carries it and sets it down reads as a person.
+	// The whole of a plain move is 1.6s and a capture is 2.8s, against the 0.56s this
+	// started at.
+	//
+	// What makes that affordable is Rush (below): the animation is allowed to be slower than
+	// the game only for as long as the game lets it be.
+	//
+	// The FRONT half of a move — reach, hesitate, close — isn't here at all. It is driven
+	// live from hover/selection, because a move is only observable once it has already been
+	// played. By the time a ply lands, the hand is usually already at the from-square.
 
-	public const float LiftTime = 0.14f;
-	public const float TravelTime = 0.26f;
-	public const float DropTime = 0.16f;
-	public const float PickupTime = LiftTime + TravelTime + DropTime;
+	/// <summary>Capture step one: reach the victim's square and close on it.</summary>
+	public const float ClearTime = 0.45f;
+
+	/// <summary>Capture step two: carry the victim to its owner's tray and let go.</summary>
+	public const float DiscardTime = 0.75f;
+
+	/// <summary>Close on the from-square and lift. For a CAPTURE this is also the trip back
+	/// from the tray — the driver's own easing covers the distance.</summary>
+	public const float LiftTime = 0.45f;
+
+	/// <summary>Carry from-square → to-square.</summary>
+	public const float TravelTime = 0.75f;
+
+	/// <summary>Set down and open the fingers.</summary>
+	public const float DropTime = 0.4f;
+
+	/// <summary>A plain move, end to end.</summary>
+	public const float MoveTime = LiftTime + TravelTime + DropTime;              // 1.60
+
+	/// <summary>A capture: the victim has to leave the board before the attacker can land
+	/// on its square, and that really is an extra trip.</summary>
+	public const float CaptureTime = ClearTime + DiscardTime + MoveTime;         // 2.80
+
+	/// <summary>
+	/// How much faster than 1× the hand may play to catch up, per move it has fallen behind.
+	/// Capped, because past a point a hand moving fast enough is a hand teleporting, and the
+	/// abandon rule is a better answer than a blur.
+	/// </summary>
+	public const float MaxRush = 4f;
 
 	/// <summary>
 	/// Height a hovering hand floats at, above the board surface.
@@ -135,10 +196,18 @@ public static class TerryPose
 	/// above the hover so a pickup visibly lifts.</summary>
 	public const float LiftHeight = 17f;
 
-	/// <summary>Seconds for <see cref="HandPose.Weight"/> to cross its full range. The
-	/// hand fades between the idle target and the board rather than teleporting when the
-	/// cursor crosses onto a square.</summary>
-	public const float FadeTime = 0.25f;
+	/// <summary>Seconds for the hand to come ON to the board — a cursor lands on a square and
+	/// the hand follows it, so this is quick.</summary>
+	public const float FadeInTime = 0.25f;
+
+	/// <summary>
+	/// Seconds for the hand to go back to rest once there is nothing to hover.
+	///
+	/// <para><b>Much slower than the way in, deliberately.</b> Coming on is a reaction and
+	/// should track the cursor; going off is a hand relaxing, and a hand that snaps back to
+	/// the table the instant the cursor leaves a square reads as a rubber band. The two
+	/// directions are different gestures, so they get different times.</para></summary>
+	public const float FadeOutTime = 1.2f;
 
 	// Finger poses, as holdtype_pose_hand. POLARITY IS UNVERIFIED — the parameter, its
 	// 0..1 range and its finger role are all read off citizen.vanmgrph, but which end is
@@ -174,17 +243,34 @@ public static class TerryPose
 		{
 			if ( input.Ply > prev.Ply && input.SeatMoved
 				&& TryParseUci( input.LastMoveUci, out int from, out int to ) )
-				return Timeline( from, to, since: 0f, ply: input.Ply, weight: 1f );
+			{
+				// ── Rush ──
+				//
+				// We were still animating the LAST move when this one landed, so the hand is
+				// behind the game and the slow timeline is why. Play the new one faster, and
+				// keep stacking while the game keeps outrunning us: a hand that finishes
+				// cleanly resets to 1× on its own (Hover/Idle/Selected all clear it below).
+				//
+				// This is what buys the slow timeline. The animation is allowed to take 1.6s
+				// only for as long as the game lets it — the moment it can't, it compresses
+				// rather than falling behind or being dropped mid-gesture.
+				float rush = prev.Animating ? Min( prev.Rush + 1f, MaxRush ) : 0f;
+				return Timeline( from, to, input.Capture, since: 0f, ply: input.Ply, rush );
+			}
 
 			return Idle( prev with { Ply = input.Ply }, input.Ply, dt );
 		}
 
-		// A pickup already in flight, and the game hasn't moved under it: run it out.
-		if ( prev.Phase is HandPhase.Lifting or HandPhase.Carrying or HandPhase.Dropping )
+		// A move already in flight, and the game hasn't moved under it: run it out.
+		if ( prev.Animating )
 		{
-			float since = prev.Since + dt;
-			if ( since < PickupTime )
-				return Timeline( prev.FromSquare, prev.ToSquare, since, input.Ply, prev.Weight );
+			// Rush scales the CLOCK, not the shape — so a rushed animation is the same
+			// gesture played faster and lands in exactly the same place.
+			float since = prev.Since + dt * ( 1f + prev.Rush );
+
+			if ( since < ( prev.Capture ? CaptureTime : MoveTime ) )
+				return Timeline( prev.FromSquare, prev.ToSquare, prev.Capture, since,
+					input.Ply, prev.Rush );
 			// The hand has set the piece down; fall through to whatever it is doing NOW,
 			// which is usually hovering the square it is still over.
 		}
@@ -202,17 +288,19 @@ public static class TerryPose
 		return Idle( prev, input.Ply, dt );
 	}
 
-	/// <summary>The hand on a square, fading in from wherever it was.</summary>
+	/// <summary>The hand on a square, fading in from wherever it was. Rush is cleared: a
+	/// hand that is reacting to a cursor is by definition not behind the game.</summary>
 	static HandPose Square( HandPhase phase, int square, float height, float fingers,
 		in HandPose prev, int ply, float dt ) =>
-		new( phase, square, square, 0f, height, fingers,
-			Approach( prev.Weight, 1f, dt ), ply, 0f );
+		new( phase, square, square, false, 0f, height, fingers,
+			Approach( prev.Weight, 1f, dt / FadeInTime ), ply, false, 0f, 0f );
 
-	/// <summary>Off the board, fading out. Keeps no square: the driver reads Weight 0 as
-	/// "use the elbows-on-table target" and the square would be a lie.</summary>
+	/// <summary>Off the board, fading out SLOWLY (see FadeOutTime). Keeps no square once the
+	/// weight is spent: the driver reads Weight 0 as "use the elbows-on-table target" and a
+	/// square would be a lie.</summary>
 	static HandPose Idle( in HandPose prev, int ply, float dt )
 	{
-		float w = Approach( prev.Weight, 0f, dt );
+		float w = Approach( prev.Weight, 0f, dt / FadeOutTime );
 		// Fade out from where the hand actually IS, so it doesn't snap to the table the
 		// frame a hover ends. Once the weight is spent, drop the square entirely.
 		if ( w <= 0f )
@@ -221,15 +309,16 @@ public static class TerryPose
 		return prev with
 		{
 			Phase = HandPhase.Idle,
-			Travel = prev.Travel,
 			Weight = w,
 			Ply = ply,
+			Capture = false,
 			Since = 0f,
+			Rush = 0f,
 		};
 	}
 
 	/// <summary>
-	/// The pickup timeline, resolved from <paramref name="since"/> alone — so a pose
+	/// The move's timeline, resolved from <paramref name="since"/> alone — so a pose
 	/// re-derived from its clock lands in exactly the same place as one that ran frame by
 	/// frame, and there is no accumulated state to get out of step with it.
 	///
@@ -242,30 +331,67 @@ public static class TerryPose
 	/// origin to its origin</b> — a hand that lifts a piece, travels nowhere, and sets it
 	/// back down while the piece itself is already across the board. It read as obviously
 	/// correct and the harness caught it on the first run. Keep the pair intact.</para>
+	///
+	/// <para><b>A capture is a different gesture, not a faster one.</b> You cannot put a
+	/// piece on an occupied square: the victim comes off FIRST, goes to its own tray, and
+	/// only then does the attacker move. That is two trips, and pretending otherwise is what
+	/// makes a capture read as one piece eating another.</para>
 	/// </summary>
-	static HandPose Timeline( int from, int to, float since, int ply, float weight )
+	static HandPose Timeline( int from, int to, bool capture, float since, int ply, float rush )
 	{
-		weight = 1f; // a pickup is never partial — the hand is holding a piece
+		const float w = 1f; // a hand holding a piece is never partly on the board
 
-		if ( since < LiftTime )
+		// `since` stays ABSOLUTE — time since this move began — everywhere, including in
+		// what gets stored. `t` is the offset into the plain-move part. Keeping the two
+		// apart is what lets a pose be re-derived from its own clock.
+		float t = since;
+
+		if ( capture )
 		{
-			float u = LiftTime <= 0f ? 1f : since / LiftTime;
-			return new HandPose( HandPhase.Lifting, from, to, 0f,
-				Lerp( GraspHeight, LiftHeight, u ), FingersHolding, weight, ply, since );
+			// Step one: reach the victim's square and close on it.
+			if ( t < ClearTime )
+			{
+				float u = Div( t, ClearTime );
+				return new HandPose( HandPhase.Clearing, to, to, false, 0f,
+					Lerp( HoverHeight, GraspHeight, u ),
+					Lerp( FingersHovering, FingersHolding, u ), w, ply, true, since, rush );
+			}
+
+			// Step two: take it off the board. ToTray — the driver owns where that IS,
+			// because a tray is geometry and this file may not know about geometry.
+			if ( t < ClearTime + DiscardTime )
+			{
+				float u = Div( t - ClearTime, DiscardTime );
+				// Open the fingers only at the very end, over the tray.
+				float fingers = u < 0.8f ? FingersHolding
+					: Lerp( FingersHolding, FingersReleased, Div( u - 0.8f, 0.2f ) );
+				return new HandPose( HandPhase.Discarding, to, to, true, Smoothstep( u ),
+					Lerp( GraspHeight, LiftHeight, Smoothstep( Min( u * 2f, 1f ) ) ),
+					fingers, w, ply, true, since, rush );
+			}
+
+			t -= ClearTime + DiscardTime;
 		}
 
-		if ( since < LiftTime + TravelTime )
+		if ( t < LiftTime )
 		{
-			float u = TravelTime <= 0f ? 1f : ( since - LiftTime ) / TravelTime;
-			return new HandPose( HandPhase.Carrying, from, to, Smoothstep( u ),
-				LiftHeight, FingersHolding, weight, ply, since );
+			float u = Div( t, LiftTime );
+			return new HandPose( HandPhase.Lifting, from, to, false, 0f,
+				Lerp( GraspHeight, LiftHeight, u ), FingersHolding, w, ply, capture, since, rush );
 		}
 
-		float d = Clamp01( DropTime <= 0f ? 1f : ( since - LiftTime - TravelTime ) / DropTime );
+		if ( t < LiftTime + TravelTime )
+		{
+			float u = Div( t - LiftTime, TravelTime );
+			return new HandPose( HandPhase.Carrying, from, to, false, Smoothstep( u ),
+				LiftHeight, FingersHolding, w, ply, capture, since, rush );
+		}
+
+		float d = Clamp01( Div( t - LiftTime - TravelTime, DropTime ) );
 		// Travel 1: the hand is over the DESTINATION. Same pair of squares, arrived.
-		return new HandPose( HandPhase.Dropping, from, to, 1f,
+		return new HandPose( HandPhase.Dropping, from, to, false, 1f,
 			Lerp( LiftHeight, GraspHeight, d ), Lerp( FingersHolding, FingersReleased, d ),
-			weight, ply, since );
+			w, ply, capture, since, rush );
 	}
 
 	/// <summary>UCI ("e2e4", "e7e8q") → two square indices, matching
@@ -298,13 +424,16 @@ public static class TerryPose
 	// Hand-rolled rather than MathX/MathF: this file must compile with no Sandbox
 	// reference so the harness on the dev host can run it.
 
-	static float Approach( float value, float target, float dt )
+	static float Approach( float value, float target, float step )
 	{
-		float step = dt / FadeTime;
 		if ( value < target ) return value + step >= target ? target : value + step;
 		if ( value > target ) return value - step <= target ? target : value - step;
 		return target;
 	}
+
+	static float Div( float a, float b ) => b <= 0f ? 1f : a / b;
+
+	static float Min( float a, float b ) => a < b ? a : b;
 
 	static float Clamp01( float v ) => v < 0f ? 0f : v > 1f ? 1f : v;
 

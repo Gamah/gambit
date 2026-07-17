@@ -172,8 +172,13 @@ public sealed class StationChair : Component
 		//
 		// Written to the CHAIR, not to this component's own GameObject — we live on the
 		// station now, and sliding the station would take the table with it.
+		//
+		// The Y must be carried through, not zeroed: the chair is offset sideways to sit
+		// under the pose's own lean (see ChessRing.ChairOffsetY), and writing 0 here would
+		// undo that on the first frame the tuck ran.
 		float t = _tuck * _tuck * ( 3f - 2f * _tuck );
-		_chair.LocalPosition = new Vector3( side * ( ring.ChairCenterX - inset * t ), 0f, 0f );
+		_chair.LocalPosition = new Vector3( side * ( ring.ChairCenterX - inset * t ),
+			ring.ChairOffsetY( Seat ), 0f );
 	}
 
 	static float Approach( float value, float target, float step )

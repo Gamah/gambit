@@ -1073,7 +1073,21 @@ public sealed class LobbyPlayer : Component
 			// host with no engine. This is the half that needs Sandbox: turning them into a
 			// place. Square index is rank*8+file, matching ChessBoardView.SquareUnderCursor.
 			var from = SquareLocal( ring, pose.FromSquare );
-			var to = SquareLocal( ring, pose.ToSquare );
+
+			// ToTray: the hand is taking a captured piece off the board. TerryPose can't
+			// know where a tray is — it may not know about geometry at all — so it says
+			// "the tray" and this decides which. The VICTIM's, because that is where
+			// ChessBoardView actually puts the piece, and a hand walking it somewhere else
+			// would be a second answer to a settled question. The victim is whatever this
+			// seat isn't.
+			// …and only PART of the way: see HandDiscardReach. The victim's tray is across
+			// the board, well past where an arm goes, and an unreachable IK target doesn't
+			// fail politely — it straightens the arm and drags the shoulder after it.
+			var to = pose.ToTray
+				? Vector3.Lerp( from, ring.TrayHandLocalPosition( white: seat == ChessSeat.Black ),
+					ring.HandDiscardReach )
+				: SquareLocal( ring, pose.ToSquare );
+
 			var on = Vector3.Lerp( from, to, pose.Travel ) + Vector3.Up * ( pose.Height + ring.HandLift );
 			target = Vector3.Lerp( idle, on, pose.Weight );
 		}
@@ -1094,11 +1108,17 @@ public sealed class LobbyPlayer : Component
 			_handLocal = Vector3.Lerp( current, target,
 				1f - MathF.Exp( -ring.HandChaseRate * Time.Delta ) );
 
-		var world = station.WorldTransform.PointToWorld( _handLocal.Value );
-
-		// Palm down over the board. The hand reaches from this seat's side, so it faces
+		// Fingers down over the board, reaching from this seat's side — so the hand faces
 		// across the table the way the body does.
-		var rot = Rotation.From( 60f, seat == ChessSeat.White ? 0f : 180f, 0f );
+		var rot = station.WorldRotation
+			* Rotation.From( ring.HandPitch, seat == ChessSeat.White ? 0f : 180f, 0f );
+
+		// The IK aims a BONE, and the bone is the WRIST — so a target dropped straight on a
+		// square puts the fingers past it and the piece under the palm. Pull the wrist back
+		// along the hand's own axes so the grip lands where the player is looking.
+		// gambit_terry's ruler prints hand_R, which is exactly this bone: tune against it.
+		var world = station.WorldTransform.PointToWorld( _handLocal.Value )
+			+ rot * ring.HandGripOffset;
 
 		r.Set( "holdtype", HoldTypeItem );
 		r.Set( "holdtype_handedness", HandednessRight );

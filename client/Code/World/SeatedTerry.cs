@@ -52,6 +52,15 @@ public sealed class SeatedTerry : Component
 	HandPose _white = HandPose.None;
 	HandPose _black = HandPose.None;
 
+	// The board's last classified change, latched. BoardDiff answers "was that a move, who
+	// played it, did it take something" from the FEN and the ply — the same classifier
+	// TableSounds uses, so the hands and the sounds cannot disagree about what happened.
+	// One per STATION, not per seat: both seats are looking at one board.
+	string _lastFen;
+	int _lastPly;
+	bool _whiteMoved;
+	bool _capture;
+
 	// Resolved avatars, cached on change rather than scanned per frame.
 	LobbyPlayer _whitePlayer;
 	LobbyPlayer _blackPlayer;
@@ -86,11 +95,48 @@ public sealed class SeatedTerry : Component
 			_lastSource = src;
 			_white = Baseline( src );
 			_black = Baseline( src );
+			_lastFen = src?.Game?.Fen;
+			_lastPly = src?.Game?.MoveCount ?? 0;
 			return;
 		}
 
+		Classify( src );
+
 		Drive( station, ChessSeat.White, src, ref _white, ref _whitePlayer, ref _whiteId );
 		Drive( station, ChessSeat.Black, src, ref _black, ref _blackPlayer, ref _blackId );
+	}
+
+	/// <summary>
+	/// What just happened on this board, once, for both seats.
+	///
+	/// <para>Latched rather than recomputed per seat: the classification is a property of
+	/// the BOARD, and a move lands on exactly one frame — the same frame both seats' poses
+	/// see their ply change. Keeping the last answer means the flags are still right on that
+	/// frame no matter which seat is driven first.</para>
+	///
+	/// <para><b>BoardDiff, not our own FEN reading.</b> It is the same classifier
+	/// TableSounds uses, it is Sandbox-free and harness-proven against real games, and it
+	/// gets capture right for en passant — where the victim isn't on the destination square
+	/// and "is something standing there" quietly says no.</para></summary>
+	void Classify( IBoardGame src )
+	{
+		if ( src?.Game is not { } game ) return;
+
+		string fen = game.Fen;
+		int ply = game.MoveCount;
+
+		var change = BoardDiff.Between( _lastFen, _lastPly, fen, ply,
+			out bool whiteMoved, out bool capture );
+
+		_lastFen = fen;
+		_lastPly = ply;
+
+		// Only a MOVE updates the flags. A rewind/reset carries no "who moved" at all, and
+		// TerryPose abandons on it anyway.
+		if ( change != BoardChange.Move ) return;
+
+		_whiteMoved = whiteMoved;
+		_capture = capture;
 	}
 
 	/// <summary>Take the source's ply as read, silently — so a hand never animates a move
@@ -115,30 +161,17 @@ public sealed class SeatedTerry : Component
 		var packed = avatar.IsValid() ? avatar.HandState : -1;
 		LobbyPlayer.UnpackHand( packed, out int hover, out int selected );
 
-		// Whose move was the last one? BoardDiff's rule, from the FEN alone: the side to
-		// move AFTER a move is the player who did NOT make it.
-		bool whiteMoved = game.Fen is { } fen && SideToMoveIsBlack( fen );
-		bool seatMoved = whiteMoved == ( seat == ChessSeat.White );
-
 		pose = TerryPose.Advance( pose, new HandInput(
 			Hover: hover,
 			Selected: selected,
 			Ply: game.MoveCount,
 			LastMoveUci: game.LastMoveUci ?? src.LastMoveUci,
-			SeatMoved: seatMoved,
+			SeatMoved: _whiteMoved == ( seat == ChessSeat.White ),
+			Capture: _capture,
 			GameLive: src.Playing ), Time.Delta );
 
 		if ( avatar.IsValid() )
 			avatar.ApplyHandPose( station, seat, pose );
-	}
-
-	/// <summary>Read the FEN's side-to-move field. Spelled out rather than
-	/// <c>fen.Contains(" b ")</c>, for BoardDiff.SideToMoveIsBlack's reason: the substring
-	/// search is accidentally correct, not obviously correct.</summary>
-	static bool SideToMoveIsBlack( string fen )
-	{
-		int sp = fen.IndexOf( ' ' );
-		return sp >= 0 && sp + 1 < fen.Length && fen[sp + 1] == 'b';
 	}
 
 	/// <summary>
