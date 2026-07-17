@@ -546,11 +546,14 @@ func (r *relay) cancelChallenge(steamID int64, challengeID string) {
 // The player's token is used only to attribute and later cancel it — the game is
 // played by whoever opens the links, never as this player's account.
 func (r *relay) CreateOpenLink(ctx context.Context, steamID int64, p lichess.ChallengeParams) (lichess.OpenChallengeResult, error) {
-	token, _, err := r.credentials(ctx, steamID)
-	if err != nil {
+	// The request to lichess is anonymous (see lichess.OpenChallenge — a board:play token
+	// is refused there), but we still require the caller to be LINKED: it gates who can
+	// spend our shared lichess IP budget, and gives a clear "not linked" error rather than
+	// minting a link for someone who never connected an account.
+	if _, _, err := r.credentials(ctx, steamID); err != nil {
 		return lichess.OpenChallengeResult{}, err
 	}
-	return lichess.OpenChallenge(ctx, token, p)
+	return lichess.OpenChallenge(ctx, p)
 }
 
 // CancelOpenLink withdraws a link the player made. Best-effort tidiness, not

@@ -123,6 +123,13 @@
 		pointer-events: all;
 	}
 
+	/* Hide SliderControl's built-in value bubble — it renders as a bare black box
+	   (its .value-tooltip .label has a hardcoded black background in the base scss),
+	   and it's redundant here anyway: the row label above already shows the value. */
+	.wslider .value-tooltip {
+		display: none;
+	}
+
 	/* Base bg/colour are inline (runtime theme, CellStyle); only layout + the hover/
 	   selected border feedback live here. Inline bg defeats a :hover bg, so hover
 	   feedback is the border alone. */

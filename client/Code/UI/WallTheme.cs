@@ -4,12 +4,17 @@ using Sandbox;
 namespace Gambit.UI;
 
 /// <summary>
-/// Runtime palette for the lobby wall boards and their engage screens (the old
-/// dark-green-on-black music-board look), derived from the "room theme" hue
-/// (Settings → ROOM THEME — stored in <c>WorldLightColor</c>). Everything keys off one
-/// <see cref="Accent"/> hue, so changing the room theme retints the whole wall UI; the
-/// room light itself stays white. AUTO/empty falls back to the canonical green so the
-/// default look is unchanged.
+/// Runtime palette for the lobby wall boards and their engage screens, derived from the
+/// "room theme" hue (Settings → ROOM THEME — stored in <c>WorldLightColor</c>). Everything
+/// keys off one <see cref="Accent"/> hue, so changing the room theme retints the whole wall
+/// UI; the room light itself stays white.
+///
+/// AUTO/empty falls back to a NEUTRAL (near-black) theme — the default is white-accented,
+/// which the derived factors below turn into a dark panel with white text and borders. The
+/// old default was a dark green carried over from the rotaliate/skafinity music board; a
+/// black-and-white default is the intended look now. (A LITERAL black accent can't be the
+/// default: every derived colour scales the accent, so a black hue would make borders,
+/// headers and filled cells black-on-black — the accent has to be light for a dark theme.)
 ///
 /// Panels bind these as inline <c>style=</c> values (which re-render on change, unlike a
 /// compiled &lt;style&gt; block) — see WallTheme.scss for the static font/radius tokens.
@@ -17,10 +22,12 @@ namespace Gambit.UI;
 /// </summary>
 public static class WallTheme
 {
-	static readonly Color DefaultAccent = Color.Parse( "#2f9450" ) ?? Color.White;
+	// White: the neutral hue that the factors below turn into a near-black panel with white
+	// text/borders — the default "black" theme. A picked swatch (green, red, …) replaces it.
+	static readonly Color DefaultAccent = Color.White;
 
 	/// <summary>The hue everything derives from: the room-light colour, or the default
-	/// green when the room light is AUTO/empty.</summary>
+	/// neutral (white → a near-black theme) when the room light is AUTO/empty.</summary>
 	public static Color Accent
 	{
 		get
@@ -30,8 +37,9 @@ public static class WallTheme
 		}
 	}
 
-	// Derived palette — factors chosen so the default green reproduces the original
-	// hardcoded values (#030d07 bg, #2f9450 accent, green-tinted text, etc.).
+	// Derived palette — the accent is scaled/mixed so a light accent (the white default)
+	// yields a near-black background with white text/borders, and a coloured accent tints
+	// the same dark UI.
 	public static string Bg        => Rgb( Scale( Accent, 0.09f ) );              // panel fill (near-black tint)
 	public static string Border    => Rgba( Accent, 0.6f );                       // accent border
 	public static string Divider   => Rgba( Accent, 0.25f );                      // hairline dividers

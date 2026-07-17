@@ -234,7 +234,7 @@
 					{
 						<div class="link-url" onclick="@( () => CopyOpenLink() )">@OpenLinkToShare()</div>
 						<div class="button lichess" onclick="@( () => CopyOpenLink() )">@OpenLinkButtonText()</div>
-						<div class="button" onclick="@( () => ClearOpenLink() )">New link / cancel this one</div>
+						<div class="button" onclick="@( () => ClearOpenLink() )">Forget this link</div>
 						<div class="setup-hint">Send it to anyone — they open it and play you on lichess.org. It expires in 24h.</div>
 					}
 					else
@@ -724,11 +724,11 @@
 	{
 		if ( _creatingLink || ctrl == null ) return;
 
-		// Cancel a link we already made before minting another — tidiness, so a
-		// player who changes clock/colour doesn't leave a trail of live links.
-		if ( _openLink?.id is string old )
-			_ = LichessApi.CancelOpenLink( old );
-
+		// We don't try to cancel a previous link: open challenges are created anonymously
+		// now (a board:play token is refused by /api/challenge/open), and lichess only lets
+		// the CREATING token cancel — which an anonymous challenge doesn't have. An unused
+		// link just expires on its own (24h), so a doomed DELETE would only spend our shared
+		// lichess budget. Just forget the old one locally and mint a new one.
 		_openLink = null;
 		_openError = null;
 		_creatingLink = true;
@@ -763,8 +763,8 @@
 
 	void ClearOpenLink()
 	{
-		if ( _openLink?.id is string id )
-			_ = LichessApi.CancelOpenLink( id );
+		// Just forget it locally — an anonymous open challenge can't be cancelled through
+		// us (see CreateOpenLink) and expires on its own in 24h.
 		_openLink = null;
 		_openError = null;
 		StateHasChanged();

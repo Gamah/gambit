@@ -752,9 +752,10 @@ func TestValidUsername(t *testing.T) {
 
 func TestOpenChallengeForm(t *testing.T) {
 	var got url.Values
-	var path string
+	var path, auth string
 	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		path = r.URL.Path
+		auth = r.Header.Get("Authorization")
 		body, _ := io.ReadAll(r.Body)
 		got, _ = url.ParseQuery(string(body))
 		io.WriteString(w, `{"id":"Ceofnzd3","url":"https://lichess.org/Ceofnzd3",`+
@@ -762,13 +763,18 @@ func TestOpenChallengeForm(t *testing.T) {
 			`"urlBlack":"https://lichess.org/Ceofnzd3?color=black"}`)
 	})
 
-	res, err := OpenChallenge(context.Background(), "tok",
+	res, err := OpenChallenge(context.Background(),
 		ChallengeParams{LimitSeconds: 180, IncrementSeconds: 2, Rated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if path != "/api/challenge/open" {
 		t.Fatalf("path: got %q", path)
+	}
+	// Anonymous on purpose: a board:play token here is refused for want of challenge:write,
+	// and the endpoint needs no auth. No Authorization header may go out.
+	if auth != "" {
+		t.Fatalf("open challenge must be anonymous, sent Authorization %q", auth)
 	}
 	if res.ID != "Ceofnzd3" || res.URLWhite == "" || res.URLBlack == "" {
 		t.Fatalf("result missing links: %+v", res)
@@ -793,7 +799,7 @@ func TestOpenChallengeAllowsBullet(t *testing.T) {
 		io.WriteString(w, `{"id":"b1","url":"https://lichess.org/b1",`+
 			`"urlWhite":"https://lichess.org/b1?color=white","urlBlack":"https://lichess.org/b1?color=black"}`)
 	})
-	if _, err := OpenChallenge(context.Background(), "tok",
+	if _, err := OpenChallenge(context.Background(),
 		ChallengeParams{LimitSeconds: 60, IncrementSeconds: 0}); err != nil {
 		t.Fatalf("a bullet open challenge should be allowed: %v", err)
 	}
@@ -804,7 +810,7 @@ func TestOpenChallengeRejectsOffDomainClock(t *testing.T) {
 	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("an off-domain clock must be refused locally, not sent")
 	})
-	if _, err := OpenChallenge(context.Background(), "tok",
+	if _, err := OpenChallenge(context.Background(),
 		ChallengeParams{LimitSeconds: 200, IncrementSeconds: 0}); err == nil {
 		t.Fatal("expected 200s (not a legal clock.limit) to be refused")
 	}
@@ -818,7 +824,7 @@ func TestOpenChallengeUnlimitedOmitsClock(t *testing.T) {
 		io.WriteString(w, `{"id":"u1","url":"https://lichess.org/u1",`+
 			`"urlWhite":"https://lichess.org/u1?color=white","urlBlack":"https://lichess.org/u1?color=black"}`)
 	})
-	if _, err := OpenChallenge(context.Background(), "tok", ChallengeParams{Unlimited: true}); err != nil {
+	if _, err := OpenChallenge(context.Background(), ChallengeParams{Unlimited: true}); err != nil {
 		t.Fatal(err)
 	}
 	if got.Has("clock.limit") || got.Has("clock.increment") {

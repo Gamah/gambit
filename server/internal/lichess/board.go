@@ -388,18 +388,21 @@ type OpenChallengeResult struct {
 //     SeekRealtime gate games our TOKEN plays through the Board API; an open
 //     challenge is played on the web, so BULLET is fine here where it can reach
 //     lichess by no other path. Only lichess's clock DOMAIN still applies.
-//   - The token is for ATTRIBUTION AND CANCELLATION, not participation. Open
-//     challenge is `security: []` — it needs no auth — but an anonymous one cannot
-//     be cancelled (lichess ties the cancel right to the creating OAuth token) and
-//     carries no User-Agent attribution to us. Creating it with the player's token
-//     via our RoundTripper fixes both. It does NOT put the game on their record or
-//     their account: they are still not a player.
+//   - It is created ANONYMOUSLY — no token. `security: []` says it needs none, and
+//     that is not the whole story: if you DO present a token, lichess scope-checks it
+//     and requires `challenge:write`, which Gambit never holds (board:play is our only
+//     scope). Sending the player's board:play token here 403s "Missing scope:
+//     challenge:write" (seen live). So we send no token; our User-Agent still names us
+//     via the RoundTripper. The one thing lost is cancellation — lichess ties the
+//     cancel right to the creating token, and an anonymous challenge has none — but see
+//     below: that costs nothing.
 //
 // Because our player is never a participant, an abandoned open challenge is
 // harmless in a way a named challenge is not — nobody can start a game on our
-// player's account by accepting it. It simply expires (24h) if unused. Cancelling
-// is tidiness, not safety.
-func OpenChallenge(ctx context.Context, token string, p ChallengeParams) (OpenChallengeResult, error) {
+// player's account by accepting it. It simply expires (24h) if unused, which is why
+// creating it anonymously (and so being unable to cancel it) is fine: cancelling was
+// only ever tidiness, not safety.
+func OpenChallenge(ctx context.Context, p ChallengeParams) (OpenChallengeResult, error) {
 	// Only the clock DOMAIN matters here — no board-compatibility floor (see the
 	// doc comment: this game is web-played, not played by our token).
 	if !p.Unlimited {
@@ -421,7 +424,9 @@ func OpenChallenge(ctx context.Context, token string, p ChallengeParams) (OpenCh
 	}
 	form.Set("rated", fmt.Sprint(p.Rated))
 
-	body, err := postBody(ctx, token, "/api/challenge/open", form)
+	// "" token → anonymous (no Authorization header). See the doc comment: a board:play
+	// token here is refused for want of challenge:write.
+	body, err := postBody(ctx, "", "/api/challenge/open", form)
 	if err != nil {
 		return OpenChallengeResult{}, err
 	}
@@ -863,7 +868,15 @@ func postBody(ctx context.Context, token, path string, form url.Values) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("lichess: build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	// A blank token means an ANONYMOUS request — no Authorization header at all, the same
+	// contract the stream client documents. It matters for /api/challenge/open, which is
+	// security:[] (needs no auth) but scope-checks any token you DO present and requires
+	// challenge:write — a scope Gambit never holds. Sending an empty bearer would 401; not
+	// sending one is what lets that endpoint through. Our User-Agent still identifies us
+	// via the RoundTripper.
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Header.Set("Accept", "application/json")
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

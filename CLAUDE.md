@@ -122,10 +122,18 @@ future session doesn't try to fold it into the relay:
 - **No board-API speed floor.** The blitz/rapid floors gate games our *token* plays through the
   Board API; an open challenge is web-played, so **bullet is fine** — it is the one path that
   reaches lichess from a Bullet table.
-- **The token is for attribution + cancellation, not play.** `security: []` — it needs no auth —
-  but an anonymous one can't be cancelled (lichess ties the cancel right to the creating token)
-  and carries no User-Agent. So we create it with the player's token via our RoundTripper; it
-  does **not** put the game on their record or make them a player.
+- **It is created ANONYMOUSLY — no token — and this corrects an earlier claim in this file that
+  cost a live 403.** The old note said we send the player's token "for attribution + cancellation";
+  we don't, and we can't. `security: []` says the endpoint needs no auth, but that is **not** the
+  whole story: if you *do* present a token, lichess scope-checks it and demands **`challenge:write`**,
+  which Gambit never holds (`board:play` is our only scope). A `board:play` token here 403s
+  **"Missing scope: challenge:write"** — reported from a real game (the shareable link, while a named
+  challenge with the same token worked, because a challenge to a user accepts `board:play` and the
+  open endpoint does not). So `OpenChallenge` sends **no** Authorization header; our User-Agent still
+  names us via the RoundTripper. The cost is that an anonymous challenge **cannot be cancelled**
+  (lichess ties the cancel right to the creating token) — which is why `CreateOpenLink` no longer
+  cancels a prior link and the button says "Forget this link", not "cancel". It still does **not**
+  put the game on anyone's record or make them a player.
 - **Abandonment is harmless, unlike a named challenge.** Nobody can start a game on our player's
   account by opening the link (they're not in it), so an unused link just expires (24h).
   Cancelling is tidiness. The colour chip picks **which url we copy** (opponent gets the opposite
