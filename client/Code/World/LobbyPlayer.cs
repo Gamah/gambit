@@ -498,6 +498,12 @@ public sealed class LobbyPlayer : Component
 		if ( lichess is { AwaitingOpponent: true } )
 			lichess.CancelWaiting();
 
+		// Standing up from a FINISHED lichess game: release the server-side play so its
+		// pending slot and event stream don't linger to the 10-min sweep (which after a
+		// link game can leave a stale gameStart the next link trips on). No-op otherwise.
+		if ( lichess is { State: { finished: true } } )
+			lichess.DismissFinished();
+
 		if ( lichessForfeits )
 			lichess.ResignLocal();
 		else if ( localForfeits )

@@ -527,6 +527,10 @@ public sealed class LocalGameController : Component, IBoardGame
 		OverResult = null;
 		WhiteReady = false;
 		BlackReady = false;
+		// An idle table is not a lichess game. Recomputed at HostStartFresh anyway, but
+		// leaving it true here would have the seam keep resolving to a stale lichess
+		// controller for a beat, and reads as a lichess table in the setup UI.
+		LichessGame = false;
 		HostClearOffers();
 		_whiteRemaining = 0f;
 		_blackRemaining = 0f;
@@ -1185,6 +1189,24 @@ public sealed class LocalGameController : Component, IBoardGame
 		if ( !LichessReasons.Contains( reason ) ) reason = "Game over";
 
 		HostEnd( reason, result );
+	}
+
+	/// <summary>Local seated player clears a FINISHED game to start a new one without
+	/// standing up — the "New game" button. Over tables only; the host enforces it.
+	/// <para>The board stays showing the result until this (or a stand-up) fires, so a
+	/// player can study what happened first. This is the button that clears it.</para></summary>
+	public void RequestNewGame()
+	{
+		if ( LocalSeat == null || !GameOver ) return;
+		RequestNewGameHost( GameId );
+	}
+
+	[Rpc.Host]
+	void RequestNewGameHost( int gameId )
+	{
+		if ( gameId != GameId || Phase != PhaseOver ) return;
+		if ( !IsSeatedCaller( out _ ) ) return;
+		HostSetIdle();
 	}
 
 	/// <summary>Local seated player toggles their ready flag (HUD).</summary>

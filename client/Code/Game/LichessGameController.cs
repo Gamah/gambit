@@ -506,6 +506,19 @@ public sealed class LichessGameController : Component, IBoardGame
 		Log.Info( $"[Gambit] lichess seek refused: {Error}" );
 	}
 
+	/// <summary>Done with a FINISHED game (the New Game button, or standing up): drop it
+	/// locally and tell gamchess to release the server-side play — the pending slot and
+	/// the token's event stream — so the NEXT link/seek starts clean. Without this the
+	/// play lingers until the 10-minute sweep, which after a link game can leave a stale
+	/// gameStart on the event stream that a fresh link would trip on.</summary>
+	public void DismissFinished()
+	{
+		if ( State is not { finished: true } || string.IsNullOrEmpty( _clientGameId ) ) return;
+		string id = _clientGameId;
+		Clear();
+		_ = LichessApi.Cancel( id ); // releases the pending slot + cancels the play's context
+	}
+
 	/// <summary>Withdraw an opponent request we're still waiting on — a seek, or a
 	/// challenge a named user hasn't answered.
 	///

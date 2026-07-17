@@ -50,6 +50,10 @@
 				{
 					<div class="status over">@lc.ResultString</div>
 					<div class="reason">@lc.OverReason (on lichess)</div>
+					@* The board holds the finished position so you can see what happened;
+					   this is the button that clears it and frees the table for a new game
+					   (and releases the server-side play so the next link starts clean). *@
+					<div class="button" onclick="@( () => NewGame() )">New game — clear the board</div>
 				}
 				else if ( LichessStatus() is string note )
 				{
@@ -69,6 +73,7 @@
 			{
 				<div class="status over">@( ctrl.OverResult ?? ctrl.Game?.ResultString )</div>
 				<div class="reason">@( ctrl.OverReason ?? ctrl.Game?.ResultReason )</div>
+				<div class="button" onclick="@( () => NewGame() )">New game — clear the board</div>
 			}
 			else
 			{
@@ -765,6 +770,16 @@
 		if ( string.IsNullOrEmpty( url ) ) return;
 		Clipboard.SetText( url );
 		_shareCopied = 0f;
+		StateHasChanged();
+	}
+
+	/// <summary>"New game — clear the board": drop a finished game and return the table
+	/// to setup without standing up. Cleans up the server-side lichess play too (a no-op
+	/// for a local game), then resets the local table to idle.</summary>
+	void NewGame()
+	{
+		Lichess()?.DismissFinished();
+		Controller()?.RequestNewGame();
 		StateHasChanged();
 	}
 

@@ -688,7 +688,13 @@ func (r *relay) runOpen(ctx context.Context, p *play) {
 	// Watch the event stream for the opponent joining, BEFORE we create/accept, so an
 	// instant join isn't missed — the same ordering runSeek needs and for the same
 	// reason (nothing but gameStart tells us the browser player arrived).
-	gameCh := make(chan string, 1)
+	//
+	// Buffered, because the event stream REPLAYS every current game as a gameStart the
+	// moment it connects: after a previous game there can be stale ids waiting here, and
+	// taking the first one would grab the wrong game (this is the "the link just says
+	// waiting" bug). We filter for OUR game id below — safe because an open challenge's
+	// id IS its game id (the share urls are lichess.org/{id}).
+	gameCh := make(chan string, 8)
 	eventCtx, stopEvents := context.WithCancel(ctx)
 	defer stopEvents()
 	go func() {
@@ -758,19 +764,30 @@ func (r *relay) runOpen(ctx context.Context, p *play) {
 	waitCtx, stopWaiting := context.WithTimeout(ctx, challengeAnswerTTL)
 	defer stopWaiting()
 
+	// Wait for OUR game to start — a gameStart whose id is our open challenge's id.
+	// Anything else on the stream is a stale replay of another game and is ignored, or
+	// the whole flow would "start" on the wrong (already-finished) game and stick.
 	var gameID string
-	select {
-	case gameID = <-gameCh:
-		stopEvents()
-	case <-waitCtx.Done():
-		if ctx.Err() != nil {
-			return // the player stood up; Cancel has already published why
+waitForStart:
+	for {
+		select {
+		case id := <-gameCh:
+			if id == open.ID {
+				gameID = id
+				stopEvents()
+				break waitForStart
+			}
+			// stale/other game — keep waiting
+		case <-waitCtx.Done():
+			if ctx.Err() != nil {
+				return // the player stood up; Cancel has already published why
+			}
+			go r.cancelChallenge(p.req.SoloSteamID, open.ID)
+			p.fail("nobody opened the link in time. Make a new one.")
+			return
+		case <-ctx.Done():
+			return
 		}
-		go r.cancelChallenge(p.req.SoloSteamID, open.ID)
-		p.fail("nobody opened the link in time. Make a new one.")
-		return
-	case <-ctx.Done():
-		return
 	}
 
 	// Answered — leaving challengeID set would have a later Cancel try to /cancel a LIVE
