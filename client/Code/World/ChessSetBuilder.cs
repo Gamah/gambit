@@ -262,6 +262,75 @@ public static class ChessSetBuilder
 		return Model.Builder.AddMesh( mesh ).Create();
 	}
 
+	// ── Tubes (M13) ──
+	//
+	// A lathe CANNOT bend a tube — it revolves a profile about one axis. So a bent-tube
+	// frame is built as straight segments with a sphere at each vertex to hide the mitre,
+	// and every segment is a PAIR OF ENDPOINTS in the caller's local space. That is the
+	// whole reason to prefer it over a swept mesh on this host: an endpoint is arithmetic,
+	// and CLAUDE.md's rule is that nothing here can render, so check where the EDGES land.
+
+	/// <summary>One unit cylinder — radius 1, height 1, spanning z 0..1 — shared by every
+	/// tube on every chair. A rectangle profile revolved IS a cylinder, so this is the
+	/// existing lathe with a four-point profile; the (0,0)→(1,0) and (1,1)→(0,1) bands are
+	/// its end caps, and BuildLathe's normal rule already faces them −Z and +Z.</summary>
+	static Model _tubeModel;
+
+	static Model TubeModel()
+	{
+		if ( _tubeModel != null && _tubeModel.IsValid() ) return _tubeModel;
+		_tubeModel = BuildLathe( "chess_tube", new Vector2[]
+		{
+			new( 0f, 0f ), new( 1f, 0f ), new( 1f, 1f ), new( 0f, 1f ),
+		} );
+		return _tubeModel;
+	}
+
+	/// <summary>
+	/// A straight tube of <paramref name="radius"/> from <paramref name="a"/> to
+	/// <paramref name="b"/>, both in <paramref name="parent"/>'s local space.
+	///
+	/// <para><b>The rotation is the one thing here that could be silently 90° wrong</b>, so
+	/// it is derived rather than guessed. The lathe's axis is <b>+Z</b>;
+	/// <c>Rotation.LookAt</c> makes <b>+X</b> forward. <c>Rotation.FromPitch(90)</c> maps
+	/// +X → −Z (ChessRing's TableLight pins that sign: <c>FromPitch(90f); // forward
+	/// straight down</c>), which is a +90° turn about +Y, and the same turn maps +Z → +X.
+	/// So <c>LookAt(dir) * FromPitch(90)</c> sends +Z → +X → dir. </para>
+	///
+	/// <para><b>The single-argument LookAt is load-bearing, not shorthand.</b> The two-arg
+	/// <c>LookAt(dir, Vector3.Up)</c> computes <c>(up − forward·dot).Normal</c> — for a
+	/// VERTICAL tube that is the zero vector, and the rotation is degenerate. A chair's
+	/// risers are vertical, so that is four segments per chair, not an exotic case. The
+	/// one-arg overload carries the engine's own guard for exactly this
+	/// (<c>if forward.WithZ(0).IsNearZeroLength → LookAt(forward, Vector3.Left)</c>), and
+	/// a cylinder is symmetric about its axis so the roll it picks cannot matter.</para>
+	/// </summary>
+	public static GameObject BuildTube( GameObject parent, string name, Vector3 a, Vector3 b,
+		float radius, Color tint )
+	{
+		var dir = b - a;
+		float length = dir.Length;
+		if ( length < 0.001f ) return null; // a zero-length segment has no direction to face
+
+		var go = new GameObject( true, name );
+		go.Parent = parent;
+		go.LocalPosition = a;
+		go.LocalRotation = Rotation.LookAt( dir ) * Rotation.FromPitch( 90f );
+		// The model is a UNIT cylinder, so this is a plain scale rather than the
+		// box.vmdl bounds trick — local Z runs along the segment, X/Y are the radius.
+		go.LocalScale = new Vector3( radius, radius, length );
+
+		var renderer = go.AddComponent<ModelRenderer>();
+		renderer.Model = TubeModel();
+		renderer.Tint = tint;
+		return go;
+	}
+
+	/// <summary>A sphere at a tube frame's vertex, hiding the mitre where two segments
+	/// meet. Same radius as the tubes, so it reads as the bend rather than as a knuckle.</summary>
+	public static void BuildJoint( GameObject parent, string name, Vector3 pos, float radius, Color tint )
+		=> AddSphere( parent, name, pos, radius * 2f, tint );
+
 	// ── Primitive dressing ──
 
 	/// <summary>Same dev-box sizing trick as ChessRing.AddBox (box.vmdl is not 1×1×1),

@@ -86,6 +86,33 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	const float FrameThickness = 1f;
 	const float CellThickness = 0.5f;
 
+	// The table's own body, in base units. Named because M13's chair has to fit UNDER
+	// this thing and AROUND its foot, and every one of those clearances is the
+	// difference between two of these numbers. They were typed inline in
+	// BuildChessTable, which is fine for a builder nothing else reads and no use at all
+	// to something that has to keep 1.5 units off the underside of the slab.
+	const float TopThickness = 2f;
+	const float FootSizeXY = 20f;
+	const float FootHeight = 1f;
+	const float PedestalSizeXY = 10f;
+	const float PedestalHeight = 17f;
+
+	/// <summary>The tabletop's TOP surface — what everything on the table stands on.</summary>
+	public float TableTopSurfaceZ => TableTopZ * TableScale;                        // 30.0
+
+	/// <summary>The tabletop slab's UNDERSIDE. This is the number a chair's armrest is
+	/// derived FROM: it is the only thing that decides how tall an arm can be before it
+	/// fouls the table, and typing the armrest height instead is how you get a 0.25
+	/// clearance and find out in the room. See ChairArmrestZ.</summary>
+	public float TableTopSlabBottomZ => ( TableTopZ - TopThickness ) * TableScale;  // 27.0
+
+	/// <summary>|x| of the tabletop's edge.</summary>
+	public float TableEdgeX => TopSizeX * 0.5f * TableScale;                        // 30.0
+
+	/// <summary>|x| of the foot plate's edge — the widest part of the table at floor
+	/// level, and therefore what bounds how far a chair can tuck in.</summary>
+	public float FootEdgeX => FootSizeXY * 0.5f * TableScale;                       // 15.0
+
 	// Tabletop footprint in base units. The board frame is BoardSize + 3 = 29
 	// square, so these two numbers ARE the margins, and each margin has a job:
 	//
@@ -515,6 +542,10 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 				BuildStationPlaque( station, i );
 				// The clock, standing on the +X margin this table was widened to hold (M11).
 				BuildStationClock( station, controller, lichess );
+				// A chair at each seat (M13) — always both, occupied or not: a table with no
+				// chairs reads as a table you can't sit at.
+				BuildStationChair( station, component, ChessSeat.White );
+				BuildStationChair( station, component, ChessSeat.Black );
 			}
 		}
 
@@ -1062,6 +1093,284 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		driver.LeadText = face.AddComponent<Gambit.UI.TableClockTextPanel>();
 	}
 
+	// ══ The chair (M13) ══
+	//
+	// A cantilever tube frame — Breuer/Cesca. Legs a U opening backwards, arms a U opening
+	// forwards, sharing the seat rail, so in side elevation they read as an S rotated 90°.
+	// Square pad, L-shaped back, thin tube.
+	//
+	// ── Chair-local space, and why the mirror is a yaw ──
+	//
+	// The chair GO sits AT its seat's walk-up spot and is yawed to face the board, so
+	// chair-local +X means "toward the board" for BOTH seats and the two chairs are one
+	// code path with one set of numbers. M13's design table gave every coordinate twice,
+	// signed per seat; that is the arithmetic the clock's plates got backwards first try.
+	// Here the only thing carrying a side is the GO's own x, where a wrong seat is visible
+	// in the diff.
+	//
+	// ── Nothing here is free space ──
+	//
+	// Two ends of this are DERIVED and are not style: the chair's centre is the seat spot
+	// (SeatSpotX — move the camera and the chair follows it, because they are the same
+	// place), and the armrest's height comes off the tabletop's underside. See
+	// ChairArmrestZ for what typing that one instead costs.
+
+	/// <summary>Tube radius. Thin — this is a bent-tube frame, not a plank.</summary>
+	const float ChairTubeRadius = 0.75f;
+
+	/// <summary>Pad depth, along the board axis. Also the frame's span: the floor rail,
+	/// the seat rail and the armrest all run this far.</summary>
+	const float ChairSeatDepth = 18f;
+
+	/// <summary>Pad width, across. The side frames sit at ±half of this, so the tubes
+	/// stand ChairTubeRadius proud of the pad's edges on each side.</summary>
+	const float ChairSeatWidth = 18f;
+
+	/// <summary>Pad slab thickness. The seat rail runs through its middle, so the tube
+	/// stands (ChairTubeRadius − half of this) proud above and below — the pad is set
+	/// INTO the frame rather than laid on top of it.</summary>
+	const float ChairPadThickness = 1.2f;
+
+	/// <summary>The sitting surface's height.
+	///
+	/// <para><b>A knob, and the first thing to dial in the editor.</b> A real chair seat is
+	/// 17–18 inches and s&amp;box units are inches, so 18 is a real chair — but what
+	/// matters is whether it agrees with the citizen's SIT POSE, which cannot be known on
+	/// this host. The pose carries its own seat height above the avatar's origin and
+	/// <c>sit_offset_height</c> trims it by ±12 (the animgraph's own comment: "30 units at
+	/// the source, 12 after scaling to inches"). Dial this or the offset until the hips
+	/// land on the pad; they meet in the middle.</para></summary>
+	[Property] public float ChairSeatTopZ { get; set; } = 18f;
+
+	/// <summary>Clearance from the armrest's top to the tabletop's underside. See
+	/// ChairArmrestZ — this is the input, the height is the output.</summary>
+	const float ChairArmrestTableGap = 1.5f;
+
+	/// <summary>Back panel: bottom, top, and how far the L's return reaches forward.
+	/// ChairBackTopZ is the chair's overall height and what a D5 chair model would be
+	/// scaled to.</summary>
+	const float ChairBackBottomZ = 22f;
+	const float ChairBackTopZ = 34f;
+	const float ChairBackThickness = 1.2f;
+	const float ChairBackReturn = 3f;
+
+	/// <summary>How far an EMPTY chair tucks toward the table. The seated position is the
+	/// geometry itself — that IS the pulled-out state, and pulling out any further would
+	/// put the board out of the terry's reach (hips at 36 back, ~29 of arm, the near rank
+	/// at 17.06). So tucking is the only direction there is.
+	///
+	/// <para>Clamped to <see cref="ChairMaxTuck"/> at build: a chair tucked past the foot
+	/// plate is inside the table.</para></summary>
+	[Property] public float ChairTuckInset { get; set; } = 6f;
+
+	/// <summary>Seconds an empty chair takes to slide out as someone sits.
+	///
+	/// <para>Free of any networking, which is the whole reason it can exist: it derives
+	/// from the <c>[Sync(FromHost)]</c> seat occupancy, so every client animates the same
+	/// chair the same way off state that already replicates.</para></summary>
+	[Property] public float ChairTuckSeconds { get; set; } = 0.5f;
+
+	/// <summary>How far the frame's tint is pushed from mid-grey toward its seat's piece
+	/// colour. An INTERPRETATION of "75% black vs white", not a derivation — hence a
+	/// constant rather than a buried literal.
+	///
+	/// <para>A bare <c>pieceColor × 0.75</c> was rejected: it drives Black to
+	/// (0.068, 0.053, 0.045), which is the table's own wood (0.16, 0.11, 0.07) under the
+	/// 3.3× spot. Lerping from grey keeps Black at (0.1925, 0.1775, 0.17) — still clearly
+	/// the dark chair, still clearly not the table.</para></summary>
+	const float ChairFrameTintStrength = 0.75f;
+
+	/// <summary>What the frame tint is pushed AWAY from. Mid-grey: a chair frame is metal,
+	/// and metal is what both seats' frames have in common.</summary>
+	static readonly Color ChairFrameBase = new( 0.5f, 0.5f, 0.5f );
+
+	// ── Derived. Change a constant above and every one of these moves. ──
+
+	/// <summary>Chair centre, as a magnitude — the seat's walk-up spot.</summary>
+	public float ChairCenterX => SeatSpotX;                                     // 32.12
+
+	/// <summary>The frame's front, as a chair-local x (+ is toward the board).</summary>
+	float ChairFrontX => ChairSeatDepth * 0.5f;                                 // +9.0
+
+	/// <summary>The frame's back, as a chair-local x.</summary>
+	float ChairBackX => -ChairSeatDepth * 0.5f;                                 // −9.0
+
+	/// <summary>Side frames sit at ±this in chair-local y.</summary>
+	float ChairSideY => ChairSeatWidth * 0.5f;                                  // ±9.0
+
+	/// <summary>The floor rail's centreline — one radius up, so the tube rests ON the floor.</summary>
+	float ChairFloorRailZ => ChairTubeRadius;                                   // 0.75
+
+	/// <summary>The seat rail's centreline: through the pad's middle, so the pad is inset
+	/// into the frame rather than balanced on it.</summary>
+	float ChairSeatRailZ => ChairSeatTopZ - ChairPadThickness * 0.5f;           // 17.40
+
+	/// <summary>
+	/// The armrest's centreline. <b>Derived from the tabletop's underside, and that is the
+	/// point of the whole number.</b>
+	///
+	/// <para>Typed instead as "8 above the seat" it lands at z 26, tops out at 26.75
+	/// against an underside of 27.00, and every arm in the room has a quarter of a unit of
+	/// air over it — which nobody would notice until the first person sat down. Coming at
+	/// it from the table gives 24.75, an armrest top of 25.50, and a real 1.50 of clearance
+	/// that stays 1.50 if the table ever changes height. Same lesson as ClockPlaneOriginZ
+	/// and the plaque's corner: derive the edge, don't place it by the number that would be
+	/// right if nothing else existed.</para>
+	/// </summary>
+	float ChairArmrestZ => TableTopSlabBottomZ - ChairArmrestTableGap - ChairTubeRadius;  // 24.75
+
+	/// <summary>The most a chair may tuck before its front riser is inside the table.
+	///
+	/// <para>Measured at the tube's INNER SURFACE, not its centreline — the chair is a
+	/// cylinder and its skin is what would meet the foot plate. (M13's design table gave
+	/// 8.12 from the centreline; the edge gives 7.37. Same conclusion at the shipped 6.0,
+	/// which is the only reason the miss was harmless.)</para></summary>
+	public float ChairMaxTuck => ChairCenterX - ChairFrontX - ChairTubeRadius - FootEdgeX; // 7.37
+
+	/// <summary>
+	/// One seat's chair, parented to the station beside WhiteAnchor / Table / BoardPlaque /
+	/// TableClock — never under Table, where ChessBoardView.ResolveCells prefix-scans for
+	/// "Cell " and would try to parse a chair leg as a square.
+	///
+	/// <para><b>Always present at both seats.</b> A table with no chairs reads as a table
+	/// you can't sit at, and spawning one on sit would pop it in under the player.</para>
+	///
+	/// <para><b>No collider.</b> The consequence is real and accepted: you walk through
+	/// every chair in the room. In exchange SeatWorldPosition, InteractRange and the ring's
+	/// floor-slide are all untouched — and the seat spot IS the chair's centre, so a solid
+	/// chair is a solid box exactly where a player has to stand to sit down.</para>
+	///
+	/// <para>Built here rather than in a builder component of its own, which buys hotload
+	/// for free: Editor/HotloadRebuild.cs already calls RebuildPreview().</para>
+	/// </summary>
+	void BuildStationChair( GameObject station, ChessStation component, ChessSeat seat )
+	{
+		bool white = seat == ChessSeat.White;
+		float side = white ? -1f : +1f;
+
+		var chair = new GameObject( true, white ? "Chair White" : "Chair Black" );
+		chair.Parent = station;
+		// AT the seat spot, facing the board — so chair-local +X is "toward the board" on
+		// both sides and everything below is written once, unsigned. StationChair slides
+		// this x for the tuck.
+		chair.LocalPosition = new Vector3( side * ChairCenterX, 0f, 0f );
+		chair.LocalRotation = Rotation.FromYaw( white ? 0f : 180f );
+
+		var driver = chair.AddComponent<StationChair>();
+		driver.Station = component;
+		driver.Seat = seat;
+
+		// ── D5 fallback hook, mirroring BuildPiece/PieceHeight's convention: a real model
+		// scaled to the same overall height, so an import keeps the room's proportions.
+		var model = Model.Load( "models/chess/chair.vmdl" );
+		if ( model != null && !model.IsError )
+		{
+			var go = new GameObject( true, "Model" );
+			go.Parent = chair;
+			var mr = go.AddComponent<ModelRenderer>();
+			mr.Model = model;
+			mr.Tint = ChairFrameTint( white );
+			float h = model.Bounds.Size.z;
+			if ( h > 0.01f ) go.LocalScale = ChairBackTopZ / h;
+			return;
+		}
+
+		BuildChairFrame( chair, ChairFrameTint( white ), driver );
+	}
+
+	/// <summary>75% of the way from a metal grey toward this seat's piece colour.
+	/// Component-wise rather than Color.Lerp, matching WallTheme's house style (it avoids
+	/// Color operators throughout).</summary>
+	static Color ChairFrameTint( bool white )
+	{
+		var piece = white ? ChessSetBuilder.WhiteColor : ChessSetBuilder.BlackColor;
+		float t = ChairFrameTintStrength;
+		return new Color(
+			ChairFrameBase.r + ( piece.r - ChairFrameBase.r ) * t,
+			ChairFrameBase.g + ( piece.g - ChairFrameBase.g ) * t,
+			ChairFrameBase.b + ( piece.b - ChairFrameBase.b ) * t );
+	}
+
+	/// <summary>
+	/// The procedural frame, in chair-local space.
+	///
+	/// <para><b>The two descriptions cross-check each other, and that is the design's own
+	/// proof.</b> In SIDE ELEVATION each frame is one 5-segment polyline — floor rail →
+	/// front riser → seat rail → back riser → armrest — whose front end is free, so the
+	/// arms open forwards while the legs open backwards. In PLAN the sled closes at the
+	/// front and the back rail closes at the back. Both readings land on the same
+	/// object.</para>
+	///
+	/// <para>Every segment is a pair of endpoints, so every edge in here is checkable by
+	/// arithmetic on a host that cannot render — see BuildTube.</para>
+	/// </summary>
+	void BuildChairFrame( GameObject chair, Color frame, StationChair driver )
+	{
+		float r = ChairTubeRadius;
+
+		for ( int i = 0; i < 2; i++ )
+		{
+			float y = i == 0 ? -ChairSideY : +ChairSideY;
+			string tag = i == 0 ? "R" : "L";
+
+			// The 5-segment polyline, back to front then up and forward again: an S on
+			// its side. Points shared by two segments get a joint sphere over the mitre.
+			var floorBack = new Vector3( ChairBackX, y, ChairFloorRailZ );
+			var floorFront = new Vector3( ChairFrontX, y, ChairFloorRailZ );
+			var railFront = new Vector3( ChairFrontX, y, ChairSeatRailZ );
+			var railBack = new Vector3( ChairBackX, y, ChairSeatRailZ );
+			var armBack = new Vector3( ChairBackX, y, ChairArmrestZ );
+			var armFront = new Vector3( ChairFrontX, y, ChairArmrestZ );
+
+			ChessSetBuilder.BuildTube( chair, $"FloorRail {tag}", floorBack, floorFront, r, frame );
+			ChessSetBuilder.BuildTube( chair, $"FrontRiser {tag}", floorFront, railFront, r, frame );
+			ChessSetBuilder.BuildTube( chair, $"SeatRail {tag}", railFront, railBack, r, frame );
+			ChessSetBuilder.BuildTube( chair, $"BackRiser {tag}", railBack, armBack, r, frame );
+			ChessSetBuilder.BuildTube( chair, $"Armrest {tag}", armBack, armFront, r, frame );
+
+			// Joints at the four bends. Not at floorBack or armFront: those are the sled's
+			// heel and the arm's open end, which are ends, not corners.
+			ChessSetBuilder.BuildJoint( chair, $"Bend {tag}0", floorFront, r, frame );
+			ChessSetBuilder.BuildJoint( chair, $"Bend {tag}1", railFront, r, frame );
+			ChessSetBuilder.BuildJoint( chair, $"Bend {tag}2", railBack, r, frame );
+			ChessSetBuilder.BuildJoint( chair, $"Bend {tag}3", armBack, r, frame );
+			// Rounded ends, so a tube doesn't present a flat cap to the room.
+			ChessSetBuilder.BuildJoint( chair, $"End {tag}0", floorBack, r, frame );
+			ChessSetBuilder.BuildJoint( chair, $"End {tag}1", armFront, r, frame );
+		}
+
+		// The two cross-tubes that make the side frames one object rather than two: the
+		// sled closes at the FRONT, the seat rails at the BACK. Opposite ends on purpose —
+		// that is what leaves the legs' U opening backwards and the arms' forwards.
+		ChessSetBuilder.BuildTube( chair, "FloorCross",
+			new Vector3( ChairFrontX, -ChairSideY, ChairFloorRailZ ),
+			new Vector3( ChairFrontX, +ChairSideY, ChairFloorRailZ ), r, frame );
+		ChessSetBuilder.BuildTube( chair, "BackCross",
+			new Vector3( ChairBackX, -ChairSideY, ChairSeatRailZ ),
+			new Vector3( ChairBackX, +ChairSideY, ChairSeatRailZ ), r, frame );
+
+		// ── The panels. Tinted by StationChair from the room theme, so they are handed
+		// over rather than coloured here.
+		var pad = AddBoxGo( chair, "SeatPad",
+			new Vector3( 0f, 0f, ChairSeatRailZ ),
+			new Vector3( ChairSeatDepth, ChairSeatWidth, ChairPadThickness ),
+			null, ChairFrameBase );
+
+		// The L: an upright at the back riser's own x, and a return forward at the top.
+		var back = AddBoxGo( chair, "BackPanel",
+			new Vector3( ChairBackX, 0f, ( ChairBackBottomZ + ChairBackTopZ ) * 0.5f ),
+			new Vector3( ChairBackThickness, ChairSeatWidth, ChairBackTopZ - ChairBackBottomZ ),
+			null, ChairFrameBase );
+
+		var ret = AddBoxGo( chair, "BackReturn",
+			new Vector3( ChairBackX + ChairBackReturn * 0.5f, 0f,
+				ChairBackTopZ - ChairBackThickness * 0.5f ),
+			new Vector3( ChairBackReturn, ChairSeatWidth, ChairBackThickness ),
+			null, ChairFrameBase );
+
+		driver.SetPanels( pad, back, ret );
+	}
+
 	/// <summary>Locked-camera anchor for one seat. side −1 = White (outward),
 	/// +1 = Black (inward). Positioned above and behind the board edge, pre-aimed
 	/// down at the board center so LobbyPlayer can lerp straight to it.</summary>
@@ -1096,9 +1405,23 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		int n = Math.Max( count, 2 );
 		float r = Radius * ( MathF.Sin( MathF.PI / 8f ) / MathF.Sin( MathF.PI / n ) );
 		float roomHalf = ( Components.Get<LobbyRoom>()?.RoomSize ?? 800f ) * 0.5f;
-		float seatFootprint = SeatOrbitRadius * MathF.Cos( SeatPitch * (MathF.PI / 180f) );
-		return MathF.Min( r, roomHalf - seatFootprint - 30f );
+		// SeatSpotX IS this seat footprint — the orbit's ground radius. It was spelled out
+		// here and again in BuildSeatAnchor's offset; M13 needs it a third time (the chair
+		// is centred on it), and three copies of one trig expression is how they stop
+		// agreeing. The 30 stays a literal: it is a margin for the PLAYER, not a footprint.
+		return MathF.Min( r, roomHalf - SeatSpotX - 30f );
 	}
+
+	/// <summary>
+	/// |x| of a seat's walk-up spot: the camera orbit's ground footprint, and so also the
+	/// centre of that seat's chair (M13). White is at −x, Black at +x.
+	///
+	/// <para>Everything about a seat is measured from here — the anchor sits directly above
+	/// it (see <see cref="BuildSeatAnchor"/>), <see cref="ChessStation.SeatWorldPosition"/>
+	/// is it at floor height, and <see cref="RingRadius"/> reserves room for it. At the
+	/// shipped SeatOrbitRadius 56 / SeatPitch 55° it is 32.12.</para>
+	/// </summary>
+	public float SeatSpotX => SeatOrbitRadius * MathF.Cos( SeatPitch * ( MathF.PI / 180f ) );
 
 	/// <summary>
 	/// Chess table: pedestal + top slab of box primitives, a board frame with 64
@@ -1124,9 +1447,15 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		colliderGo.AddComponent<BoxCollider>().Scale = new Vector3( TopSizeX + 2f, TopSizeY + 2f, 21 ) * s;
 
 		// Body: foot plate, pedestal column, tabletop slab (top surface at TableTopZ).
-		AddBox( table, "Foot", new Vector3( 0, 0, 0.5f ) * s, new Vector3( 20, 20, 1 ) * s );
-		AddBox( table, "Pedestal", new Vector3( 0, 0, 9.5f ) * s, new Vector3( 10, 10, 17 ) * s );
-		AddBox( table, "Top", new Vector3( 0, 0, TableTopZ - 1f ) * s, new Vector3( TopSizeX, TopSizeY, 2 ) * s );
+		// Every box is placed from its own named size rather than a literal, so the
+		// chair's clearances (which are differences between these) can't drift from the
+		// geometry they describe. Same numbers as before, derived.
+		AddBox( table, "Foot", new Vector3( 0, 0, FootHeight * 0.5f ) * s,
+			new Vector3( FootSizeXY, FootSizeXY, FootHeight ) * s );
+		AddBox( table, "Pedestal", new Vector3( 0, 0, FootHeight + PedestalHeight * 0.5f ) * s,
+			new Vector3( PedestalSizeXY, PedestalSizeXY, PedestalHeight ) * s );
+		AddBox( table, "Top", new Vector3( 0, 0, TableTopZ - TopThickness * 0.5f ) * s,
+			new Vector3( TopSizeX, TopSizeY, TopThickness ) * s );
 
 		BuildBoard( table );
 		BuildTrays( table );
