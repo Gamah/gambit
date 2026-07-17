@@ -107,41 +107,30 @@ token and must be signed by *that* token. So:
   POSTs an explicit `/cancel` and an unanswered one is bounded by `challengeAnswerTTL`. Read
   from lila, not the OpenAPI doc, which says the opposite.
 
-#### The shareable link is NOT a relayed game (open challenge)
+#### There is NO shareable link (`/api/challenge/open` was removed — M12)
 
-**`POST /api/challenge/open` is a different animal from every flow above, and the difference is
-the whole design.** It mints a link (`url`, plus `urlWhite`/`urlBlack` = `url?color=…`); the
-first two people to open it are paired and **play on lichess.org**. Load-bearing facts, so a
-future session doesn't try to fold it into the relay:
+**Gambit had a "shareable link" built on `POST /api/challenge/open`. It is gone, and this note
+is here so nobody rebuilds it without knowing why it can't be what it wants to be.**
 
-- **It is never relayed, streamed, or drawn on the Gambit board.** Both sides are anonymous to
-  us (`challenger:null`, `destUser:null`) — there is **no API to make our linked account a
-  participant** in an open challenge, so gamchess cannot stream it as a player and there is
-  nothing to render. The endpoint returns a link and steps back. This is why it holds no `play`,
-  no long poll, no state (`relay.CreateOpenLink`/`CancelOpenLink` are one-shot, stateless).
-- **No board-API speed floor.** The blitz/rapid floors gate games our *token* plays through the
-  Board API; an open challenge is web-played, so **bullet is fine** — it is the one path that
-  reaches lichess from a Bullet table.
-- **It is created ANONYMOUSLY — no token — and this corrects an earlier claim in this file that
-  cost a live 403.** The old note said we send the player's token "for attribution + cancellation";
-  we don't, and we can't. `security: []` says the endpoint needs no auth, but that is **not** the
-  whole story: if you *do* present a token, lichess scope-checks it and demands **`challenge:write`**,
-  which Gambit never holds (`board:play` is our only scope). A `board:play` token here 403s
-  **"Missing scope: challenge:write"** — reported from a real game (the shareable link, while a named
-  challenge with the same token worked, because a challenge to a user accepts `board:play` and the
-  open endpoint does not). So `OpenChallenge` sends **no** Authorization header; our User-Agent still
-  names us via the RoundTripper. The cost is that an anonymous challenge **cannot be cancelled**
-  (lichess ties the cancel right to the creating token) — which is why `CreateOpenLink` no longer
-  cancels a prior link and the button says "Forget this link", not "cancel". It still does **not**
-  put the game on anyone's record or make them a player.
-- **Abandonment is harmless, unlike a named challenge.** Nobody can start a game on our player's
-  account by opening the link (they're not in it), so an unused link just expires (24h).
-  Cancelling is tidiness. The colour chip picks **which url we copy** (opponent gets the opposite
-  side), never a request field.
-- **This is also the answer to "two linked players who DON'T want it on lichess":** a game at a
-  table is local and touches no lichess account unless a player picks one of the four options.
-  That sentence is load-bearing consent copy — it lives in `InfoScreen`'s Welcome + Lichess
-  branches, and read as ambiguous until it was said outright. If the flows change, say it again.
+The whole point of Gambit is that **you play at the board you sat down at**, relayed to lichess
+by *your* `board:play` token. The only link that would fit that model is one where an anonymous
+web player plays **against your authed, board-relayed account**. **lichess cannot do that.** An
+open challenge is anonymous on *both* sides (`challenger:null`, `destUser:null`), and there is
+**no API to make our linked account a participant in it** — so the open-challenge link was
+anon-vs-anon, two browsers, a game *neither* the creator nor the board ever touched. That is
+not Gambit; it is Gambit generating a lichess link for two strangers. It also could not put the
+creator in the game (they were only ever handed the *opponent's* link), so a solo creator's game
+never started — the bug that surfaced this.
+
+The three real flows all keep the token holder as a participant and are what remain:
+**paired** (both seated + linked), **direct challenge** to a named lichess user
+(`/api/challenge/{name}`, reaches Blitz), and **lobby seek** (random *registered* opponent,
+Rapid+). The opponent in any board-relayed game is therefore always a **registered** lichess
+user — there is no "authed-vs-anonymous" primitive to build a link on.
+
+The consent model the link used to carry ("a game here is local unless you pick a lichess flow")
+did not depend on the link and still lives in `InfoScreen`'s Welcome + Lichess branches — keep
+saying it.
 
 #### The traps
 
