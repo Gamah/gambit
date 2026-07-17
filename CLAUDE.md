@@ -977,6 +977,23 @@ Deviating from them is how un-compilable mistakes get in.
   as an exemplar for a long time; **there is no `SplashScreen`** — no `.cs`, no `.razor`, only an
   orphan scene entry (see the scene-orphan rule below). It was pointing at a file that does not
   exist, in the file every session is told to trust.
+- **A joining client does NOT load the scene from disk — it rebuilds it from the host's
+  snapshot, and that snapshot's `NetworkMode` filter is a real fork in behaviour.** Verified in
+  the engine (issue #12): `SceneNetworkSystem.OnLoadSceneMsg` **destroys** the client's scene and
+  applies the host's snapshot; `GameObject.Serialize.ShouldSave` **drops every `NetworkMode.Never`
+  object** from that snapshot and **rebuilds every `Snapshot` object from the host's LIVE state**.
+  So for anything authored in `lobby.scene`, neither mode is client-local: `Snapshot` leaks the
+  host's runtime state onto joiners (this is exactly how the music board came to render *open and
+  unstyled* — the panel's live `Enabled`/`IsOpen` rode the wire), and `Never` means the object
+  **never reaches the joiner at all** (setting the scene GO to `Never` made the board vanish on
+  clients — the seductive-looking "minimal fix" that cannot work). The **only** way to get a
+  strictly-client-local screen/audio object is to BUILD it in code: either self-attach to the
+  scene ScreenPanel (the pattern above), or — when it needs its own isolated ScreenPanel — spawn
+  it from a **`GameObjectSystem`** onto a runtime `NetworkMode.Never` GO. `LocalMusicSystem` does
+  the latter for the Skafinity trio (player + board + `MusicBoardScreen`), mirroring terryball's
+  `LocalHudSystem`; a `GameObjectSystem` is instantiated locally on every machine independent of
+  the snapshot, which is the whole point. **Never author a client-local screen or audio component
+  in the scene** — put it on a code-built `Never` object.
 
 ## s&box API Whitelist
 
