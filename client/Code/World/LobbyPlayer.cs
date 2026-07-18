@@ -1089,6 +1089,23 @@ public sealed class LobbyPlayer : Component
 				: SquareLocal( ring, pose.ToSquare );
 
 			var on = Vector3.Lerp( from, to, pose.Travel ) + Vector3.Up * ( pose.Height + ring.HandLift );
+
+			// ── The reach clamp ──
+			//
+			// The seated arm is ~20u and the shoulder sits far back (gambit_terry: shoulder at
+			// x −44.6, arm 19.9), so most of a 34-deep board is beyond it. A target past the arm
+			// doesn't fail politely — the IK straightens and drags the shoulder after it. Pull an
+			// out-of-reach target back onto a sphere around the shoulder instead: the hand keeps
+			// POINTING at the true square from as far as the arm honestly goes. The hand is
+			// decoration — it never touches the FEN piece — so reaching toward a far piece reads
+			// better than straining short, and the near half is genuinely reached.
+			if ( ShoulderLocal( station ) is { } shoulder )
+			{
+				var reachOut = on - shoulder;
+				if ( reachOut.Length > ring.HandReach )
+					on = shoulder + reachOut.Normal * ring.HandReach;
+			}
+
 			target = Vector3.Lerp( idle, on, pose.Weight );
 		}
 
@@ -1181,6 +1198,17 @@ public sealed class LobbyPlayer : Component
 
 	static Vector3 SquareLocal( ChessRing ring, int square ) =>
 		square < 0 ? Vector3.Zero : ring.SquareLocalPosition( square & 7, square >> 3 );
+
+	/// <summary>The working arm's shoulder pivot (arm_upper_R), station-local — the centre the
+	/// reach clamp measures from. Read fresh so it follows the pose (a lean, a scoot) rather
+	/// than a stale constant; null if the bone can't be resolved, in which case the clamp is
+	/// simply skipped and the raw target stands.</summary>
+	Vector3? ShoulderLocal( ChessStation station )
+	{
+		if ( _bodyRenderer != null && _bodyRenderer.TryGetBoneTransform( "arm_upper_R", out var tx ) )
+			return station.WorldTransform.PointToLocal( tx.Position );
+		return null;
+	}
 
 	/// <summary>citizen.vanmgrph's holdtype enum (none, pistol, rifle, shotgun, holditem, …)
 	/// — HoldItem is the one the finger-blend (holdtype_pose_hand) is wired into.

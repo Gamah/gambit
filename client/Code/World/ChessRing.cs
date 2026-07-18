@@ -101,8 +101,18 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	///
 	/// <para>The belly figure rests on an ESTIMATED torso half-depth of ~5.5 scaled to a
 	/// 72-unit citizen, which could easily be ±2. That is the tightest guess in M13 and the
-	/// reason this must stay tunable.</para></summary>
-	[Property] public float SeatSitBack { get; set; } = 36f;
+	/// reason this must stay tunable.</para>
+	///
+	/// <para><b>CORRECTED from 36 on measurement (gambit_terry).</b> At 36 the shoulder
+	/// (arm_upper_R) sits at station-local x −44.6 — 8.6 BEHIND the plant origin, because a
+	/// seated citizen's shoulders are back over the chair — and the arm is only 19.9u, not the
+	/// ~24 M13 guessed. The nearest square (−17.06) is then 28.7u away: the arm falls 8.8u
+	/// short of reaching ANY square. Scooting to 26 puts the shoulder at −34.6, bringing rank 1
+	/// within reach (e1 → 19.4u ≈ the arm). Bounded by the knees, checked against the real
+	/// bones: at 26 the feet land at x −19.7, still clear of the foot plate (−15). Push lower
+	/// for more reach while watching the knees clip. The far half is beyond a 19.9u arm no
+	/// matter what — that is what HandReach's clamp is for.</para></summary>
+	[Property] public float SeatSitBack { get; set; } = 26f;
 
 	/// <summary>
 	/// Height a seated avatar's ORIGIN is planted at, station-local. The FLOOR, by default.
@@ -238,6 +248,24 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// their trays since M11) finishes the trip. That is also just what happens when you
 	/// take a piece: you lift it clear and set it down, you don't post it.</para></summary>
 	[Property, Range( 0f, 1f )] public float HandDiscardReach { get; set; } = 0.6f;
+
+	/// <summary>
+	/// The seated arm's usable reach, station units — the radius of the sphere around the
+	/// shoulder (arm_upper_R) that <see cref="LobbyPlayer.ApplyHandPose"/> clamps every hand
+	/// target into.
+	///
+	/// <para><b>This is the load-bearing number, and it is measured, not guessed.</b>
+	/// gambit_terry reads the arm off the real skeleton at 19.9u, and the shoulder sits far
+	/// enough back that most of a 34-deep board is beyond it. An IK target past the arm doesn't
+	/// fail politely — it straightens and drags the shoulder after it (the front-edge fist in
+	/// the bug report). Clamping the target onto this sphere instead keeps the hand POINTING at
+	/// the true square from as far as the arm honestly goes. The hand never touches the FEN
+	/// piece anyway, so reaching toward a far piece reads better than straining short.</para>
+	///
+	/// <para>Default 18 = ~0.9 of the measured 19.9, backed off so the arm isn't at full lock.
+	/// Raise it toward 20 for a longer reach and a straighter arm; drop it for a softer,
+	/// more-bent one. Tune against gambit_terry_probe.</para></summary>
+	[Property] public float HandReach { get; set; } = 18f;
 
 
 	/// <summary>Overhead table spot brightness. Strictly neutral white so the piece
