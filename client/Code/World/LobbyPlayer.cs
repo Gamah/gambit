@@ -1480,6 +1480,7 @@ public sealed class LobbyPlayer : Component
 		var t = new Gambit.Chess.RiseTunables(
 			Reach: _measuredArm - SeatedHandSpikes.ReachMargin,
 			MaxLean: SeatedHandSpikes.MaxLean,
+			RiseGrace: SeatedHandSpikes.RiseGrace,
 			LegReach: SeatedHandSpikes.LegReachOverride > 0f
 				? SeatedHandSpikes.LegReachOverride
 				: _measuredLeg - LegMargin,

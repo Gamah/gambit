@@ -139,10 +139,14 @@ public static class SeatedHandSpikes
 
 	/// <summary>The most the terry leans in, world units of shoulder-forward travel. The
 	/// LEAN-vs-RISE split is the "pelvis should go back" knob: every unit the spine shear
-	/// carries is a unit the pelvis doesn't travel, and the pelvis gliding deep over the
-	/// table was the first screenshot's exact complaint. 12 leans the torso hard and keeps
-	/// the hips near the chair. <c>gambit_terry_maxlean</c>.</summary>
-	public static float MaxLean = 12f;
+	/// carries is a unit the pelvis doesn't travel. 12 read as aggressive in the editor;
+	/// 8 is the current taste. <c>gambit_terry_maxlean</c>.</summary>
+	public static float MaxLean = 8f;
+
+	/// <summary>Horizontal shortfall the hand may leave to the piece-slide before the body
+	/// rises at all — the dead-band that keeps bottom-rank moves seated. "Getting out of
+	/// the chair should only be for far ranks." <c>gambit_terry_grace</c>.</summary>
+	public static float RiseGrace = 4f;
 
 	/// <summary>Z the hips gain per unit of forward rise (0 = the old horizontal glide).
 	/// Pushing UP off the chair while driving forward is what makes a deep reach read as
@@ -287,6 +291,13 @@ public static class SeatedHandSpikes
 		Log.Info( TorsoPitchMax > 0f
 			? $"[Gambit] torso pitch ON, capped {TorsoPitchMax}° over the table; hips capped at the table edge."
 			: "[Gambit] torso pitch OFF — hips uncapped (the pre-pitch glide, for comparison)." );
+	}
+
+	[ConCmd( "gambit_terry_grace" )]
+	public static void SetGrace( float u )
+	{
+		RiseGrace = u < 0f ? 0f : u;
+		Log.Info( $"[Gambit] rise grace = {RiseGrace}u left to the slide before the body rises (bigger = lazier terry)." );
 	}
 
 	[ConCmd( "gambit_terry_lift" )]

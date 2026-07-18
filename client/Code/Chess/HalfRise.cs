@@ -65,6 +65,9 @@ public readonly record struct V3( float X, float Y, float Z )
 public readonly record struct RiseTunables(
 	float Reach,          // honest arm reach: measured arm length minus a grip margin
 	float MaxLean,        // spine_2 translate cap (M14's proven natural lean)
+	float RiseGrace,      // horizontal shortfall the hand is allowed to LEAVE to the
+	                      //   piece-slide before the body bothers rising — the dead-band
+	                      //   that keeps bottom-rank moves seated
 	float LegReach,       // pelvis → ankle, minus a margin — how far the hips may stray from a planted foot
 	float MaxStep,        // how far a planted foot may slide toward the hips when the legs run out
 	float MaxRise,        // hard cap on |pelvis delta| — past this a hover reads as flight
@@ -84,7 +87,7 @@ public readonly record struct RiseTunables(
 	float BraceZ )        // ...on the tabletop surface
 {
 	public static readonly RiseTunables Default = new(
-		Reach: 18f, MaxLean: 12f, LegReach: 30f, MaxStep: 16f, MaxRise: 46f,
+		Reach: 18f, MaxLean: 8f, RiseGrace: 4f, LegReach: 30f, MaxStep: 16f, MaxRise: 46f,
 		RiseLift: 0.3f,
 		PitchGain: 0f,      // pitch buys NO reach: override rotations do not carry child
 		                    //   bones (measured in-editor: 15.8u budgeted, ~3 materialised)
@@ -176,7 +179,10 @@ public static class HalfRise
 		var toTarget = target - shoulderLeaned;
 		float horizDist = toTarget.LengthXY;
 		var dir = toTarget.HorizontalNormal;
-		float horizNeed = Max( horizDist - horizReach, 0f );
+		// The grace: the slide may carry the last few units, so the body only rises for
+		// what the hand GENUINELY can't have — bottom ranks stay seated (grab-on-contact
+		// still fires: the hand parks inside the grab radius of the piece).
+		float horizNeed = Max( horizDist - horizReach - t.RiseGrace, 0f );
 
 		// ── 3a. The TORSO PITCH takes its share before the hips move at all. ──
 		// "Hips driving forward is the wrong direction" — right: a real body leaning

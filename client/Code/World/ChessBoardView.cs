@@ -142,6 +142,27 @@ public sealed class ChessBoardView : Component
 		public float Age;
 		public float Seconds;
 		public float Arc;
+
+		/// <summary>Seconds this slide WAITS at its origin for a terry's hand to come and
+		/// pick the piece up — the remote-client giveaway was the piece departing the
+		/// instant the FEN landed while the hand was still a second away. Zero for slides
+		/// nobody is going to perform (no seated terry, tray walks, resyncs); expiring
+		/// degrades to the plain slide, so a missing hand costs nothing but the wait.</summary>
+		public float HoldForHand;
+	}
+
+	/// <summary>How long a move-slide will wait for the hand. Covers a capture's prologue
+	/// (the hand clears the victim first, ~1.2s) plus the reach itself, with slack.</summary>
+	const float HandHoldSeconds = 2.5f;
+
+	/// <summary>Is a seated terry going to perform the moving side's move at this table?
+	/// Mirrors the gate SeatedTerry itself animates under.</summary>
+	bool HandWillPerform( char moverPiece )
+	{
+		if ( ChessRing.Instance is not { TerrySeated: true } ) return false;
+		if ( !SeatedHandSpikes.HandsOn ) return false;
+		if ( Station is not { } st ) return false;
+		return st.SeatTaken( char.IsUpper( moverPiece ) ? ChessSeat.White : ChessSeat.Black );
 	}
 
 	readonly List<Slide> _slides = new();
@@ -389,6 +410,7 @@ public sealed class ChessBoardView : Component
 					Age = 0f,
 					Seconds = MoveSeconds,
 					Arc = MoveArc,
+					HoldForHand = HandWillPerform( c ) ? HandHoldSeconds : 0f,
 				} );
 			}
 		}
@@ -569,9 +591,21 @@ public sealed class ChessBoardView : Component
 
 			// A carried piece's slide neither ages nor writes position — the hand owns
 			// the piece, and the slide is only kept alive as the fallback the release
-			// path above re-arms.
+			// path above re-arms. Grabbing also ends any hold: the wait was FOR this.
 			if ( carryFresh && ReferenceEquals( slide.Piece, _carried ) )
+			{
+				slide.HoldForHand = 0f;
 				continue;
+			}
+
+			// Waiting for the hand: the piece sits on its origin square until the grab
+			// (above) or the hold expires and the plain slide takes over.
+			if ( slide.HoldForHand > 0f )
+			{
+				slide.HoldForHand -= Time.Delta;
+				slide.Piece.LocalPosition = slide.From;
+				continue;
+			}
 
 			slide.Age += Time.Delta;
 			// Duration and arc ride the slide, not the component: a move across a
