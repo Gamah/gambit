@@ -87,6 +87,15 @@
 > **Deferred by choice**: the `gambit_terry_replay` tuning loop — not until the above stop
 > being broken ("probably worth just nuking until the above are in a better state").
 
+**Where everything lives** (the 30-second map for a fresh session):
+`Code/Chess/HalfRise.cs` planner (Sandbox-free) · `Code/Chess/TerryPose.cs` gesture state
+machine + tempo constants · `Code/World/SeatedTerry.cs` per-station driver + doctor/sweep/
+probe/net dump · `Code/World/LobbyPlayer.cs` the runtime (PlanRise / ApplyRiseOverrides /
+servo / wrist rot; search "half-rise") · `Code/World/ChessBoardView.cs` carry + hold-for-hand
+· `Code/Game/LichessGameController.cs` spectator mirror · `Code/World/TerryTuning.cs` +
+lobby.scene the inspector surface · `Code/World/SeatedHandSpikes.cs` the statics + console
+levers · **`scripts/halfrise_harness/`** the planner proof (`dotnet run`, must stay green).
+
 **Branch `m14-terry-halfrise-ik`.** The reaching-hand idea was nuked (5fd4157) because a
 SEATED citizen can't reach: ~20u arm, far corner ~35u away, and every seated lever combined
 lands mid-board (the old SEATED-HANDS-REACH.md, recoverable at `origin/m14-terry-hands-spikes`,
