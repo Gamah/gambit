@@ -1,5 +1,36 @@
 # The half-rise: terries that pick up the pieces (M14, second attempt)
 
+> **MILESTONE PAUSE (2026-07-18) — MVP works, looks janky. Read this first.**
+>
+> The mechanics are DONE and verified across two clients: the terry leans/rises to a
+> square, the wrist follows the arm, the piece waits on its square until the hand grabs
+> it, rides the hand through the move, and spectators see all of it — including real
+> lichess games, via the spectator mirror. Every knob is an inspector slider
+> (**TerryTuning** in lobby.scene, saved values = shipping truth). No hanging objectives.
+>
+> **The next session's job is purely the LOOK.** Start by diffing this branch against
+> master; the goal is "good enough", and the current state is extremely janky. Known
+> jank, in the order it was observed:
+> - the motion quality: everything is exponential-chase easing — no anticipation, no
+>   settle, reads robotic; the rise/lean amounts are taste-tunable but the MOTION is not
+> - finger polarity (holdtype_pose_hand open/closed ends) still unverified from M13
+> - a capture's victim slides to the tray on its own, not synced to the hand's
+>   clear-the-victim gesture (v1 scope cut, documented below)
+> - the brace hand and foot steps engage/release visibly (eased, but not choreographed)
+> - mirrored lichess boards show no clocks; one unexplained one-off NRE
+>   (OnParametersSetAsync, no stack) on a joiner
+>
+> **"Better methods for testing and tuning" is the request.** Candidates for the next
+> session's first hour: a `gambit_terry_replay` that loops a scripted move sequence
+> (near/far/capture) at a table so sliders can be tuned against a repeating motion
+> instead of playing games; a fixed spectator camera bookmark; and the doctor pattern
+> extended to score motion (jerk/settle time), not just reach.
+>
+> If procedural posing can't reach "good enough", the researched fallback is authored
+> clips via `DirectPlayback.Play(name, target, heading, interpTime)` — the engine
+> supports bespoke reach animations with root-motion retargeting; that is a design fork
+> to decide deliberately, not drift into.
+
 **Branch `m14-terry-halfrise-ik`.** The reaching-hand idea was nuked (5fd4157) because a
 SEATED citizen can't reach: ~20u arm, far corner ~35u away, and every seated lever combined
 lands mid-board (the old SEATED-HANDS-REACH.md, recoverable at `origin/m14-terry-hands-spikes`,
@@ -55,32 +86,18 @@ the seated player's own first-person view; the first joined client to look repor
 half-rise makes the scoot pointless, and the harness reads BETTER at 36 (54 vs 51): the
 longer horizontal run lines the rise up with the far squares.
 
-## What only the editor can answer (the next session's checklist)
+## What the editor sessions answered (engine facts, keep)
 
-1. **Does the pelvis override carry the LEG chains' solve** the way `spine_2` carried the
-   arm's? `gambit_terry_sweep` is the verdict table: half-rise gain should be large with miss
-   ≤ ~4 at e8. A gain of ~0 means the rise never moved the skeleton.
-2. **Do the pre-compensated foot pins keep the feet still** through a rise? Look at the feet.
-3. **Does it read as a person** leaning over a table, and does the piece-in-hand carry sell
-   it? Taste calls: `gambit_terry_probe` (all-64), a real game, a second client watching.
-4. Finger polarity (`holdtype_pose_hand` open/closed ends) — still unverified from M13.
-
-Levers: `gambit_terry_rise / _maxrise / _step / _risechase / _brace` plus all of M14's.
-Kill chain, three deep: `ChessRing.TerrySeated` → `gambit_terry_hands` → `gambit_terry_rise`.
-
-**SOLVED (retest): the joiner saw no animation because a lichess game was INVISIBLE to every
-non-participant by construction.** Nothing about a lichess game was networked — each
-participant polls gamchess privately, a solo flow (seek / challenge / shareable link) starts
-no local game at all, and `Engaged` only goes true on the client that asked. The joiner's
-`gambit_terry_net` dump said it plainly: `game=NULL, playing=False`. Not an animation bug —
-spectators couldn't see the BOARD either. Fixed with the **spectator mirror** in
-`LichessGameController`: the participant `[Rpc.Host]`-reports the observed move list, the
-host folds it into `[Sync] MirrorMoves/MirrorLive`, every non-engaged client rebuilds a
-display game and exposes it through the same `IBoardGame` seam (`Mirroring`) — so the view,
-sounds, hands and carry all light up for spectators and late joiners at once. Mirrored
-boards show no clocks (v1) and never accept input. NOTE: the probe/sweep are LOCAL-only
-diagnostics — a joiner is not supposed to see them; test mirroring with a real game.
-`gambit_terry_net` remains the diagnostic if the retest still fails.
+1. **Bone-override TRANSLATIONS carry the whole subtree, exactly** — pelvis and spine
+   overrides landed to the decimal every run. **ROTATIONS do not carry child bones**
+   (pitch budgeted 15.8u of shoulder travel; ~3 materialised). Both measured, not read.
+2. The animgraph solves IK before overrides apply — pre-compensated targets work; a
+   ~5u post-override native warp remains (procedural bones by elimination) and the hand
+   SERVO steers it out rather than modelling it.
+3. The sit pose tucks the ankles ~25u behind the pelvis — never feed animated ankles to
+   a reach planner; choose the plants.
+4. The spectator mirror works (mirroring=True on a joiner during the host's browser-link
+   lichess game), and so does the whole networked hand path.
 
 ## Decisions already made (don't relitigate)
 
