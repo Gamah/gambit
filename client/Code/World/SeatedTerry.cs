@@ -207,6 +207,155 @@ public sealed class SeatedTerry : Component
 	/// <summary>Toggled by <c>gambit_terry_sweep</c>. Local-seated station only.</summary>
 	public static bool Sweep;
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// THE DOCTOR — one command, no knobs. gambit_terry_doctor strains the hand at the
+	// far-rank centre under each candidate ReachMargin in turn, measures everything the
+	// knobs exist for (planned rise, applied rise, shoulder travel, miss to the true
+	// ask), fires the one-shot pipeline dump mid-run, prints ONE verdict table, and
+	// APPLIES the winning margin itself. Exists because turning levers by hand against
+	// an animation you can't see clearly is a chore nobody should be assed to do.
+	// ─────────────────────────────────────────────────────────────────────────────
+
+	/// <summary>Toggled by <c>gambit_terry_doctor</c>. Local-seated station only.</summary>
+	public static bool Doctor;
+
+	static readonly float[] DocMargins = { 2f, 4f, 6f, 8f };
+	const float DocSettle = 1.2f;   // rise chase at 6/s is ~99.9% settled by here
+	const float DocHold = 1.5f;
+
+	bool _docActive;
+	int _docPhase;
+	float _docHeld;
+	bool _docMeasured;
+
+	readonly float[] _docPlan = new float[4];
+	readonly float[] _docResid = new float[4];
+	readonly float[] _docApplied = new float[4];
+	readonly float[] _docShoulder = new float[4];
+	readonly float[] _docMiss = new float[4];
+
+	bool _docSavedHands, _docSavedSphere, _docSavedNatural, _docSavedRise;
+	float _docSavedBand, _docSavedMargin;
+
+	void DoctorTick( ChessStation station )
+	{
+		var avatar = LobbyPlayer.Local;
+		var seat = ChessStation.ActiveSeat;
+		if ( !avatar.IsValid() ) return;
+
+		if ( !_docActive )
+		{
+			_docActive = true;
+			_docPhase = 0;
+			_docHeld = 0f;
+			_docMeasured = false;
+
+			_docSavedHands = SeatedHandSpikes.HandsOn;
+			_docSavedSphere = SeatedHandSpikes.UseSphereClamp;
+			_docSavedBand = SeatedHandSpikes.ReachBandX;
+			_docSavedNatural = SeatedHandSpikes.NaturalLean;
+			_docSavedRise = SeatedHandSpikes.HalfRiseOn;
+			_docSavedMargin = SeatedHandSpikes.ReachMargin;
+
+			SeatedHandSpikes.HandsOn = true;
+			SeatedHandSpikes.UseSphereClamp = false;
+			SeatedHandSpikes.ReachBandX = -999f;
+			SeatedHandSpikes.NaturalLean = true;
+			SeatedHandSpikes.HalfRiseOn = true;
+			SeatedHandSpikes.ReachMargin = DocMargins[0];
+
+			Log.Info( $"[Gambit] doctor: straining at the far-rank centre under margins "
+				+ $"{string.Join( "/", DocMargins )} (~{DocMargins.Length * DocHold:0}s). One verdict table lands at the end; "
+				+ "the winner is applied automatically. Hold still." );
+		}
+
+		_docHeld += Time.Delta;
+
+		int target = SweepTarget( seat );
+		var pose = new HandPose( HandPhase.Selected, target, target, false, 0f,
+			TerryPose.GraspHeight, TerryPose.FingersGrasping, 1f, 0, false, 0f, 0f );
+		avatar.ApplyHandPose( station, seat, pose );
+
+		if ( !_docMeasured && _docHeld >= DocSettle )
+		{
+			_docMeasured = true;
+
+			// The full pipeline dump, once, at the first (shipping-default) margin — so
+			// the paste carries the planner inputs and the bone anim-vs-final table too.
+			if ( _docPhase == 0 ) SeatedHandSpikes.RiseDebug = true;
+
+			var plan = avatar.RisePlanDebug;
+			_docPlan[_docPhase] = plan?.PelvisDelta.Length ?? 0f;
+			_docResid[_docPhase] = plan?.Residual ?? -1f;
+			_docApplied[_docPhase] = avatar.RiseAppliedDebug;
+
+			var body = avatar.GameObject.GetComponentInChildren<SkinnedModelRenderer>();
+			if ( body != null )
+			{
+				if ( body.TryGetBoneTransform( "arm_upper_R", out var sh ) )
+					_docShoulder[_docPhase] = station.WorldTransform.PointToLocal( sh.Position ).x;
+				if ( body.TryGetBoneTransform( "hand_R", out var hand )
+					&& avatar.LastHandIkTarget is { } asked )
+					_docMiss[_docPhase] = ( station.WorldTransform.PointToLocal( hand.Position ) - asked ).Length;
+			}
+		}
+
+		if ( _docHeld >= DocHold )
+		{
+			_docPhase++;
+			_docHeld = 0f;
+			_docMeasured = false;
+			if ( _docPhase >= DocMargins.Length )
+			{
+				DoctorReport( seat );
+				Doctor = false;
+				_docActive = false;
+				RestoreDoctorLevers();
+				avatar.ClearHandPose();
+			}
+			else
+			{
+				SeatedHandSpikes.ReachMargin = DocMargins[_docPhase];
+			}
+		}
+	}
+
+	void DoctorReport( ChessSeat seat )
+	{
+		Log.Info( "── gambit_terry_doctor: the far-rank centre under each reach margin ──" );
+		Log.Info( "   margin  plan|Δ|  resid  applied  shldrX    miss" );
+		int best = 0;
+		for ( int i = 0; i < DocMargins.Length; i++ )
+		{
+			Log.Info( $"   {DocMargins[i],5:0.0}  {_docPlan[i],7:0.0}  {_docResid[i],5:0.0}"
+				+ $"  {_docApplied[i],7:0.0}  {_docShoulder[i],6:0.0}  {_docMiss[i],6:0.0}" );
+			if ( _docMiss[i] > 0f && ( _docMiss[best] <= 0f || _docMiss[i] < _docMiss[best] ) ) best = i;
+		}
+
+		SeatedHandSpikes.ReachMargin = DocMargins[best];
+		Log.Info( $"   VERDICT: margin {DocMargins[best]} wins (miss {_docMiss[best]:0.0}) — APPLIED. "
+			+ $"({( seat == ChessSeat.White ? "White" : "Black" )} seat; the harness expects plan|Δ|≈35, resid≈3 at this square.)" );
+		Log.Info( "── reading it ──" );
+		Log.Info( "   plan|Δ| far below ~35        → the PLANNER under-asks: read the 'rise debug' inputs above" );
+		Log.Info( "                                  (pelvis/ankle heights, leg budget) — the live skeleton disagrees" );
+		Log.Info( "                                  with the harness numbers somewhere." );
+		Log.Info( "   applied ≪ plan|Δ|            → the easing/override never landed: bone-override problem." );
+		Log.Info( "   shldrX barely moves          → the pelvis override isn't carrying the skeleton this run." );
+		Log.Info( "   miss stays ~6-9 at EVERY margin → not extension slack: the solver or the pre-compensation" );
+		Log.Info( "                                  is losing a constant — paste this whole block back." );
+	}
+
+	void RestoreDoctorLevers()
+	{
+		SeatedHandSpikes.HandsOn = _docSavedHands;
+		SeatedHandSpikes.UseSphereClamp = _docSavedSphere;
+		SeatedHandSpikes.ReachBandX = _docSavedBand;
+		SeatedHandSpikes.NaturalLean = _docSavedNatural;
+		SeatedHandSpikes.HalfRiseOn = _docSavedRise;
+		// ReachMargin deliberately NOT restored: the doctor's whole job is to leave the
+		// winning value applied.
+	}
+
 	const int SweepPhases = 4;          // baseline, natural lean, sit=2, natural+sit=2
 	const float SweepSettle = 1.0f;     // seconds before measuring — long enough for a sit-pose blend
 	const float SweepHold = 1.3f;       // seconds per phase total
@@ -408,6 +557,19 @@ public sealed class SeatedTerry : Component
 	{
 		if ( Station is not { } station ) return;
 
+		// THE DOCTOR (gambit_terry_doctor): the one-command knob turner. Same gates as the sweep.
+		if ( Doctor && ChessStation.Active == station && LobbyPlayer.Local.IsValid() )
+		{
+			DoctorTick( station );
+			return;
+		}
+		if ( _docActive )
+		{
+			_docActive = false;
+			RestoreDoctorLevers();
+			LobbyPlayer.Local?.ClearHandPose();
+		}
+
 		// M14 one-shot SWEEP (gambit_terry_sweep): steps every reach spike's config in turn,
 		// settling between each, and dumps ONE table so the whole quantitative test pastes in one
 		// block. Local-seated station only, same gate as the probe.
@@ -597,6 +759,13 @@ public sealed class SeatedTerry : Component
 		Log.Info( $"   source={( src == null ? "NULL" : src.GetType().Name )}"
 			+ $"  game={( game == null ? "NULL" : $"ply {game.MoveCount}, last {game.LastMoveUci ?? "-"}" )}"
 			+ $"  playing={src?.Playing}  latched: lastPly={_lastPly} wMoved={_whiteMoved} cap={_capture}" );
+		// The spectator mirror is the newest link and the one a joiner lives or dies by.
+		int mirrorPlies = string.IsNullOrEmpty( Lichess?.MirrorMoves )
+			? 0 : Lichess.MirrorMoves.Split( ' ', System.StringSplitOptions.RemoveEmptyEntries ).Length;
+		Log.Info( $"   lichess: engaged={Lichess?.Engaged}  mirroring={Lichess?.Mirroring}"
+			+ $"  mirrorLive={Lichess?.MirrorLive}  mirrorPlies={mirrorPlies}"
+			+ "  (a spectator needs mirroring=True during someone else's lichess game;"
+			+ " mirrorLive=False there means the participant's reports never reached this client)" );
 		Log.Info( $"   seats: W={station.WhiteSteamId} '{station.WhiteName}'  B={station.BlackSteamId} '{station.BlackName}'" );
 		DumpSeat( station, ChessSeat.White, _white );
 		DumpSeat( station, ChessSeat.Black, _black );

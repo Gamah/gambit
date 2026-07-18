@@ -1670,10 +1670,12 @@ public sealed class LobbyPlayer : Component
 	const string IkFootLeft = "foot_left";
 	const string IkFootRight = "foot_right";
 
-	/// <summary>Diagnostics for <c>gambit_terry_net</c> — is there a renderer to pose, and
-	/// how much rise is actually applied right now on THIS machine.</summary>
+	/// <summary>Diagnostics for <c>gambit_terry_net</c> / <c>gambit_terry_doctor</c> — is
+	/// there a renderer to pose, how much rise is actually applied on THIS machine, and
+	/// what the planner last decided.</summary>
 	public bool HasBody => _bodyRenderer != null;
 	public float RiseAppliedDebug => _riseApplied.Length;
+	public Gambit.Chess.RisePlan? RisePlanDebug => _risePlan;
 
 	/// <summary>Where the working hand's wrist ACTUALLY is this frame (world, final pose —
 	/// after IK, overrides, everything). This is what a carried piece rides: the rendered

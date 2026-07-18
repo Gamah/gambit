@@ -359,6 +359,24 @@ public static class SeatedHandSpikes
 			+ "arm_upper_R / spine_2 x: if 2 sits the shoulders forward, that reach is free before A or B." );
 	}
 
+	/// <summary><b>The one-command knob turner.</b> Strains the hand at the far-rank centre under
+	/// each candidate reach margin, measures planned/applied rise, shoulder travel and the miss,
+	/// dumps the full pipeline once, prints ONE verdict table and APPLIES the winner. Run this
+	/// instead of turning gambit_terry_margin/_leg by hand.</summary>
+	[ConCmd( "gambit_terry_doctor" )]
+	public static void DoctorCmd()
+	{
+		if ( ChessStation.Active == null )
+		{
+			Log.Warning( "[Gambit] doctor: sit down first — it drives YOUR seated hand, and nobody is seated." );
+			return;
+		}
+		SeatedTerry.Doctor = !SeatedTerry.Doctor;
+		Log.Info( SeatedTerry.Doctor
+			? "[Gambit] doctor ON — ~6s of automated reach trials; one verdict table lands at the end. Paste it back."
+			: "[Gambit] doctor cancelled." );
+	}
+
 	/// <summary><b>The one-paste command.</b> Runs every QUANTITATIVE spike in turn — baseline,
 	/// sit=2, lean(spine_2), lean(arm_upper_R), armscale — settling the skeleton between each and
 	/// dumping ONE table with the verdicts. Sit down and run it; ~7s, hold still. The only spike it
