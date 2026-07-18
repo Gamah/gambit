@@ -146,6 +146,15 @@ instead of ¼ — still unplayable, and the lean is unverified.)
 both seats mirror across it (White −X, Black +X). You cannot slide it toward one player without
 sliding it from the other — **no scale or offset makes the whole board reachable by both.**
 
+**The trap in the naive shrink:** the reachable zone is a **fixed x-band (x ≤ ~−13)** owned by the
+unscaled seated avatar, *independent of both `BoardSize` and `TableScale`*. Shrinking the board
+around x=0 pulls the near rank **inward** (−17 → toward 0), i.e. **out of the reach band**, while
+the far rank stays on the +x side and never enters it — so a board-only shrink makes reach
+*worse*. To actually fit the board under the hand you must **also pull the seat in**
+(`SeatSitBack`, and the camera-side `SeatOrbitRadius`/`SeatSpotX` that set where the body and its
+sightline live), which is what cascades into the ring radius, both seat cameras, the walk-up spot
+and the chair — the milestone-sized retune.
+
 **Blast radius of a scale change (not one knob — milestone-sized):**
 - `TableScale` (×1.5) multiplies the whole table stack, board, **pieces** (`PieceScale =
   TableScale·BoardSize/26`), **trays** (`TraySlotLocalPosition`), **clock** (`BuildStationClock`)
