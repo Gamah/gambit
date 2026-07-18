@@ -233,6 +233,92 @@ public static class TerryCommands
 			Log.Info( $"   {shoulder,-12} ({s.x,7:0.##}, {s.y,6:0.##}, {s.z,6:0.##})"
 				+ $"   -> {( s - hand ).Length:0.##} to the hand, {( s - target ).Length:0.##} to the target" );
 		}
+
+		DumpReachGrid( ChessRing.Instance, station, body, ChessStation.Active == station
+			? ChessStation.ActiveSeat : SeatOf( station, avatar ) );
+	}
+
+	/// <summary>
+	/// <b>The whole board's reach, as an 8×8 map.</b> For every square, the distance from
+	/// this seat's shoulder to where <see cref="LobbyPlayer.ApplyHandPose"/> would put the
+	/// grasp target, against the citizen's real arm length. A square reads <c>ok</c> if the
+	/// arm can make it and <c>+N</c> (units short) if it can't.
+	///
+	/// <para>This is the measurement the M13 hand path was missing: "reachable" was reasoned
+	/// square by square from a guessed shoulder, and the guess was the whole problem. One
+	/// run of this seated prints the real envelope — which ranks the seated arm can honestly
+	/// reach, and by how much the rest fall short — so the lean/clamp redesign is tuned
+	/// against arithmetic, not the guess.</para>
+	///
+	/// <para>Measured at the GRASP height (picking a piece up). A carry rides ~6 higher
+	/// (LiftHeight), so anything marginal here is worse mid-carry — the grid is the
+	/// optimistic case.</para></summary>
+	static void DumpReachGrid( ChessRing ring, ChessStation station,
+		SkinnedModelRenderer body, ChessSeat seat )
+	{
+		if ( ring == null ) return;
+
+		// The arm, measured off its own skeleton rather than estimated: upper + lower
+		// segment lengths. If a segment name misses, say so and fall back to a nominal 24
+		// so the grid still renders rather than vanishing on a naming guess.
+		float armLen = 24f;
+		bool measured = false;
+		if ( body.TryGetBoneTransform( "arm_upper_R", out var up )
+			&& body.TryGetBoneTransform( "arm_lower_R", out var lo )
+			&& body.TryGetBoneTransform( "hand_R", out var hn ) )
+		{
+			armLen = ( up.Position - lo.Position ).Length + ( lo.Position - hn.Position ).Length;
+			measured = true;
+		}
+
+		// The shoulder pivot the reach is measured FROM — arm_upper_R, falling back to the
+		// clavicle if the upper-arm bone is named something else on this model.
+		Vector3 shoulder;
+		string shoulderBone;
+		if ( body.TryGetBoneTransform( "arm_upper_R", out var sh ) )
+		{ shoulder = station.WorldTransform.PointToLocal( sh.Position ); shoulderBone = "arm_upper_R"; }
+		else if ( body.TryGetBoneTransform( "clavicle_R", out var cl ) )
+		{ shoulder = station.WorldTransform.PointToLocal( cl.Position ); shoulderBone = "clavicle_R"; }
+		else
+		{
+			Log.Info( "   reach grid: no arm_upper_R or clavicle_R on this model — run "
+				+ "gambit_terry_bones for the real shoulder name." );
+			return;
+		}
+
+		float graspZ = Gambit.Chess.TerryPose.GraspHeight + ring.HandLift;
+
+		Log.Info( "── reach grid: which squares can the seated arm make? ──" );
+		Log.Info( $"   shoulder {shoulderBone} at station-local ({shoulder.x:0.#}, {shoulder.y:0.#}, {shoulder.z:0.#})"
+			+ $" · arm {armLen:0.#}u ({( measured ? "measured off the skeleton" : "FALLBACK 24 — arm bones not found" )})"
+			+ $" · grasp height {graspZ:0.#} over the surface" );
+		Log.Info( seat == ChessSeat.White
+			? "   White sits at −X; rank 8 (far) at top, rank 1 (near) at bottom — near ranks should read ok."
+			: "   Black sits at +X; rank 8 (near) at top, rank 1 (far) at bottom — near ranks should read ok." );
+		Log.Info( "       a      b      c      d      e      f      g      h" );
+
+		for ( int rank = 7; rank >= 0; rank-- )
+		{
+			string row = $"   {rank + 1} ";
+			for ( int file = 0; file < 8; file++ )
+			{
+				var t = ring.SquareLocalPosition( file, rank ) + Vector3.Up * graspZ;
+				float miss = ( t - shoulder ).Length - armLen;
+				row += miss <= 0f ? "  ok   " : $" +{miss,4:0.0} ";
+			}
+			Log.Info( row );
+		}
+		Log.Info( "   ok = the arm reaches it; +N = short by N units. This is the envelope the "
+			+ "lean must extend and the clamp must fold unreachable squares into." );
+	}
+
+	/// <summary>Which seat this avatar is measured in — the local seat when it is us,
+	/// otherwise whichever seat carries its SteamId. Only used to label the reach grid.</summary>
+	static ChessSeat SeatOf( ChessStation station, LobbyPlayer avatar )
+	{
+		ulong id = avatar.Network.Owner?.SteamId ?? 0;
+		return station.SeatSteamId( ChessSeat.Black ) == id && id != 0
+			? ChessSeat.Black : ChessSeat.White;
 	}
 
 	static void Measure( ChessStation station, SkinnedModelRenderer body, string bone, string why )
