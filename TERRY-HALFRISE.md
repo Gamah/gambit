@@ -49,12 +49,14 @@
 > 3. Then carry the TAKEN piece to the capture tray with the modified grip (index
 >    extended, thumb+MIDDLE holding it).
 >
-> **The EXCHANGE between 2 and 3 is a single specific animation beat, not two gestures.**
-> The taking piece lands, and in the SAME motion the hand switches poses and departs with
-> the taken piece — zero rest, zero in-between, zero interpolated idle between placing
-> one and lifting the other. The drop's end pose IS the grab's start pose (the hand is
-> already at the square; both pieces are there): the pinch releases the attacker as the
-> middle finger closes on the victim, one continuous motion into the tray carry.
+> **The EXCHANGE between 2 and 3 is a single specific animation beat, not two gestures —
+> and NOT a one-frame swap.** The distinction: the swap has real DURATION (the fingers
+> visibly morph from pinch to middle-grip over the beat), but zero DWELL — the hand never
+> stops, never rests, never returns to an idle pose between placing one piece and leaving
+> with the other. The taking piece lands and the hand departs with the taken piece in the
+> same continuous motion: the pinch is releasing the attacker WHILE the middle finger is
+> closing on the victim, the grip morph overlapping the hand's own arrival-and-departure
+> arc rather than inserted between them as a pause.
 >
 > So the timeline reorders to Lift → Carry → **DropAndSwap (one beat)** → Discard, the
 > victim's tray slide must wait for the swap (today it fires the instant the FEN lands),
