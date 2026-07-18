@@ -537,8 +537,25 @@ public sealed class SeatedTerry : Component
 			GameLive: src.Playing ), Time.Delta );
 
 		if ( avatar.IsValid() )
+		{
 			avatar.ApplyHandPose( station, seat, pose );
+
+			// The piece rides the hand (M14): while this pose is replaying a move, tell
+			// the view so the moved piece tracks the hand bone instead of its own slide.
+			// Gated on the hands actually RENDERING — a piece must never ride a hand the
+			// kill switches turned invisible.
+			if ( pose.Animating && SeatedHandSpikes.HandsOn
+				&& ChessRing.Instance is { TerrySeated: true } )
+			{
+				_view ??= station.GameObject.GetComponent<ChessBoardView>();
+				_view?.ReportHandCarry( pose, avatar );
+			}
+		}
 	}
+
+	/// <summary>The board view on this same station, resolved lazily — it is the other
+	/// half of the hand-carry handshake (see <see cref="ChessBoardView.ReportHandCarry"/>).</summary>
+	ChessBoardView _view;
 
 	/// <summary>
 	/// Whose avatar is in this seat.

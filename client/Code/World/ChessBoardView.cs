@@ -146,6 +146,54 @@ public sealed class ChessBoardView : Component
 
 	readonly List<Slide> _slides = new();
 
+	// ── The hand carry (M14): the piece rides the terry's hand ──
+	//
+	// While a seated terry's hand is replaying a move (TerryPose Lifting/Carrying/
+	// Dropping), the moved piece is positioned at the HAND BONE each frame instead of
+	// running its own slide clock — that is what turns "a hand gesturing near a sliding
+	// piece" into "a terry picking up and moving a piece". SeatedTerry reports the carry
+	// per frame (it owns which avatar and which pose); this view owns which GameObject
+	// that means and what happens when the carry ends.
+	//
+	// The report is VOLATILE by design — good for a fraction of a second, re-asserted
+	// every frame. The abandon rule (a ply landing mid-animation), a hand toggled off, a
+	// player standing up: all of them simply stop the reports, and the piece falls back
+	// to its slide from wherever the hand left it (a short settle, below). Nothing here
+	// has to know WHY a carry ended. The spectator wall is untouched: SpectatorBoard3D
+	// never had hands and keeps the plain slide, per the design decision.
+	GameObject _carried;       // piece riding a hand right now (the mover; a capture's victim keeps its tray slide)
+	GameObject _carriedPrev;   // last frame's, to detect release and hand the slide back
+	float _carryStamp = -1f;
+	Vector3 _carryWorld;       // world position for the piece's base this frame
+
+	/// <summary>How far below the wrist bone the held piece's base hangs — the piece sits
+	/// in the fingers, not impaled on the forearm. Tune in-editor.</summary>
+	const float CarryHang = 8f;
+
+	/// <summary>The short settle a released piece plays from wherever the hand left it to
+	/// its true square — covers both a finished drop (hand is already over the square, so
+	/// this is invisible polish) and an abandoned carry (the piece must not teleport).</summary>
+	const float SettleSeconds = 0.18f;
+
+	/// <summary>Called by <see cref="SeatedTerry"/> every frame a seat's hand is replaying
+	/// a move on this board. Attacker only: the destination square owns the mover's
+	/// GameObject once SyncPieces has applied the FEN, which it always has by the time a
+	/// pose is animating (both react to the same ply change).</summary>
+	public void ReportHandCarry( in Gambit.Chess.HandPose pose, LobbyPlayer avatar )
+	{
+		if ( pose.Phase is not ( Gambit.Chess.HandPhase.Lifting
+			or Gambit.Chess.HandPhase.Carrying or Gambit.Chess.HandPhase.Dropping ) ) return;
+		if ( pose.ToSquare is < 0 or > 63 ) return;
+		if ( avatar?.HandBoneWorld() is not { } hand ) return;
+
+		var piece = _pieces[pose.ToSquare];
+		if ( piece == null ) return;
+
+		_carried = piece;
+		_carryStamp = Time.Now;
+		_carryWorld = hand + Vector3.Down * CarryHang;
+	}
+
 	// ── Captured pieces ──
 	//
 	// Each player's losses sit in a tray on their own side of the table. Two rules
@@ -467,6 +515,35 @@ public sealed class ChessBoardView : Component
 
 	void AdvanceSlides()
 	{
+		// ── The hand carry, resolved before any slide advances ──
+		bool carryFresh = _carried.IsValid() && Time.Now - _carryStamp < 0.15f;
+
+		// Release: the carry ended (or switched pieces) since last frame. Hand the piece
+		// back to its slide FROM WHERE IT IS — a finished drop settles invisibly onto its
+		// square; an abandoned one glides there instead of teleporting.
+		if ( _carriedPrev.IsValid() && ( !carryFresh || !ReferenceEquals( _carried, _carriedPrev ) ) )
+		{
+			var s = _slides.Find( x => x.Piece == _carriedPrev );
+			if ( s != null )
+			{
+				s.From = _carriedPrev.LocalPosition;
+				s.Age = 0f;
+				s.Seconds = SettleSeconds;
+				s.Arc = 0f;
+			}
+			_carriedPrev = null;
+		}
+
+		if ( carryFresh )
+		{
+			_carriedPrev = _carried;
+			_carried.WorldPosition = _carryWorld;
+		}
+		else
+		{
+			_carried = null;
+		}
+
 		for ( int i = _slides.Count - 1; i >= 0; i-- )
 		{
 			var slide = _slides[i];
@@ -475,6 +552,12 @@ public sealed class ChessBoardView : Component
 				_slides.RemoveAt( i );
 				continue;
 			}
+
+			// A carried piece's slide neither ages nor writes position — the hand owns
+			// the piece, and the slide is only kept alive as the fallback the release
+			// path above re-arms.
+			if ( carryFresh && ReferenceEquals( slide.Piece, _carried ) )
+				continue;
 
 			slide.Age += Time.Delta;
 			// Duration and arc ride the slide, not the component: a move across a

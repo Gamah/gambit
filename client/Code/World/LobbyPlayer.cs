@@ -1588,6 +1588,17 @@ public sealed class LobbyPlayer : Component
 	const string IkFootLeft = "foot_left";
 	const string IkFootRight = "foot_right";
 
+	/// <summary>Where the working hand's wrist ACTUALLY is this frame (world, final pose —
+	/// after IK, overrides, everything). This is what a carried piece rides: the rendered
+	/// hand, not the target it was aimed at, so piece and fingers can never disagree even
+	/// while the IK is mid-chase or the arm is clamped short.</summary>
+	public Vector3? HandBoneWorld()
+	{
+		if ( _bodyRenderer != null && _bodyRenderer.TryGetBoneTransform( "hand_R", out var tx ) )
+			return tx.Position;
+		return null;
+	}
+
 	/// <summary>Where the hand was last told to go (station-local) — read by
 	/// <c>gambit_terry</c>, which prints it beside the bone the IK actually achieved. The
 	/// gap between those two IS the reach error, and it is the only way to tell "aiming at
