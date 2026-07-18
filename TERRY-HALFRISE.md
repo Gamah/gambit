@@ -91,6 +91,13 @@ diagnostics — a joiner is not supposed to see them; test mirroring with a real
   two-trip choreography (hand clears the victim first) is modelled in TerryPose already;
   synchronising the victim's slide to the hand is a later polish, not a blocker.
 - **The brace is honest or absent**: offered only when the left arm can actually reach it.
-- **No rotations in the overrides.** A torso *pitch* would read better than a shear-lean, but
-  whether rotation propagates through a bone override subtree is unproven; translations are
-  proven. If the editor session wants pitch, spike it behind a lever first.
+- **One rotation ships: the torso YAW** (`gambit_terry_yaw`, capped 30°, eased in with the
+  rise) — two-bone IK can never turn the chest, so the turn is authored on the spine
+  override. Whether override rotation propagates to the arm subtree is STILL unproven — the
+  yaw is safe anyway because the **hand servo** trues the fingertip against the true ask
+  regardless. The same argument does NOT extend to a torso pitch: pitch moves the head/
+  camera-relevant mass, so spike it behind a lever first if wanted.
+- **The servo is the answer to "the model is wrong somewhere"**: every stage we control was
+  proven exact (overrides land to the decimal, the animation-domain IK nails its compensated
+  target) and the final hand still warped ~5u — some post-override native stage no API
+  reads. Don't model the unmodellable; measure last frame's error and steer it out.
