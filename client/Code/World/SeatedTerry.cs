@@ -171,9 +171,231 @@ public sealed class SeatedTerry : Component
 		Log.Info( "   ok = IK landed it (miss ≤ 2); a number = units short. '?' = never measured." );
 	}
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// M14 SWEEP — rip out with the probe. One command that runs every quantitative spike.
+	//
+	// gambit_terry_sweep drives the local seated hand at a fixed FAR square and measures how far
+	// the arm actually gets under each config in turn — baseline, sit=2, lean(spine_2),
+	// lean(arm_upper_R), armscale — settling the skeleton between each, then prints one table.
+	// It forces a controlled environment (hands on, sphere clamp off, reach band wide open so the
+	// hand strains at the far target instead of idling) and restores every lever afterwards. The
+	// visual A taste call it cannot answer — that stays an eyeball — but every NUMBER the spikes
+	// turn on is here in one pasteable block.
+	// ─────────────────────────────────────────────────────────────────────────────
+
+	/// <summary>Toggled by <c>gambit_terry_sweep</c>. Local-seated station only.</summary>
+	public static bool Sweep;
+
+	const int SweepPhases = 5;          // baseline, sit2, lean-spine, lean-arm, armscale
+	const float SweepSettle = 1.0f;     // seconds before measuring — long enough for a sit-pose blend
+	const float SweepHold = 1.3f;       // seconds per phase total
+
+	bool _sweepActive;
+	int _sweepPhase;
+	float _sweepHeld;
+	bool _sweepMeasured;
+
+	readonly float[] _swArm = new float[SweepPhases];
+	readonly float[] _swShoulderX = new float[SweepPhases];
+	readonly float[] _swHandX = new float[SweepPhases];
+	readonly float[] _swMiss = new float[SweepPhases];
+
+	// Levers snapshotted at sweep start, restored at the end.
+	bool _savedHands, _savedSphere, _savedLean;
+	int _savedSit;
+	float _savedBand, _savedLeanF, _savedScale;
+	string _savedLeanBone;
+
+	/// <summary>The far target the sweep strains at: a mid-far centre square (rank 5 for White,
+	/// rank 4 for Black — symmetric), well past the ~rank-2 baseline ceiling so a lean that
+	/// composes visibly closes the gap.</summary>
+	static int SweepTarget( ChessSeat seat ) => ( seat == ChessSeat.White ? 4 : 3 ) * 8 + 4;
+
+	void SweepTick( ChessStation station )
+	{
+		var avatar = LobbyPlayer.Local;
+		var seat = ChessStation.ActiveSeat;
+		if ( !avatar.IsValid() ) return;
+
+		if ( !_sweepActive )
+		{
+			_sweepActive = true;
+			_sweepPhase = 0;
+			_sweepHeld = 0f;
+			_sweepMeasured = false;
+
+			_savedHands = SeatedHandSpikes.HandsOn;
+			_savedSphere = SeatedHandSpikes.UseSphereClamp;
+			_savedBand = SeatedHandSpikes.ReachBandX;
+			_savedSit = SeatedHandSpikes.SitPose;
+			_savedLean = SeatedHandSpikes.LeanOn;
+			_savedLeanBone = SeatedHandSpikes.LeanBone;
+			_savedLeanF = SeatedHandSpikes.LeanForward;
+			_savedScale = SeatedHandSpikes.ArmScale;
+
+			// The controlled environment: hands live, no clamp, band wide open so every phase
+			// strains at the SAME far target and the misses are comparable.
+			SeatedHandSpikes.HandsOn = true;
+			SeatedHandSpikes.UseSphereClamp = false;
+			SeatedHandSpikes.ReachBandX = -999f;
+
+			Log.Info( "[Gambit] sweep: measuring reach under every spike config (~7s) — hold still, don't stand up." );
+			ConfigureSweepPhase( 0 );
+		}
+
+		_sweepHeld += Time.Delta;
+
+		// Drive the hand at the far target every frame so the chase settles and the bone override
+		// (lean/scale) re-applies before we read the bone.
+		int target = SweepTarget( seat );
+		var pose = new HandPose( HandPhase.Selected, target, target, false, 0f,
+			TerryPose.GraspHeight, TerryPose.FingersGrasping, 1f, 0, false, 0f, 0f );
+		avatar.ApplyHandPose( station, seat, pose );
+
+		if ( !_sweepMeasured && _sweepHeld >= SweepSettle )
+		{
+			_sweepMeasured = true;
+			MeasureSweepPhase( station, avatar, _sweepPhase );
+		}
+
+		if ( _sweepHeld >= SweepHold )
+		{
+			_sweepPhase++;
+			_sweepHeld = 0f;
+			_sweepMeasured = false;
+			if ( _sweepPhase >= SweepPhases )
+			{
+				SweepReport( seat );
+				RestoreSweepLevers();
+				Sweep = false;
+				_sweepActive = false;
+				avatar.ClearHandPose();
+			}
+			else
+			{
+				ConfigureSweepPhase( _sweepPhase );
+			}
+		}
+	}
+
+	/// <summary>Set the FULL lever config for a phase (not incremental — so phase N never inherits
+	/// phase N−1's sit pose or lean).</summary>
+	static void ConfigureSweepPhase( int phase )
+	{
+		// Defaults for every phase; each phase below overrides only what it tests.
+		SeatedHandSpikes.SitPose = 1;
+		SeatedHandSpikes.LeanOn = false;
+		SeatedHandSpikes.LeanBone = "spine_2";
+		SeatedHandSpikes.LeanForward = 10f;
+		SeatedHandSpikes.ArmScale = 1f;
+
+		switch ( phase )
+		{
+			case 1: SeatedHandSpikes.SitPose = 2; break;                                    // sitting_02
+			case 2: SeatedHandSpikes.LeanOn = true; SeatedHandSpikes.LeanBone = "spine_2"; break;
+			case 3: SeatedHandSpikes.LeanOn = true; SeatedHandSpikes.LeanBone = "arm_upper_R"; break;
+			case 4: SeatedHandSpikes.ArmScale = 1.5f; break;
+			// case 0: baseline — defaults as set above.
+		}
+	}
+
+	void MeasureSweepPhase( ChessStation station, LobbyPlayer avatar, int phase )
+	{
+		var body = avatar.GameObject.GetComponentInChildren<SkinnedModelRenderer>();
+		if ( body == null ) return;
+
+		// Arm length off the skeleton (real names first, un-suffixed fallback — same as the ruler).
+		float arm = 0f;
+		if ( TryBone( body, out var up, "arm_upper_R" )
+			&& TryBone( body, out var lo, "arm_lower_R1", "arm_lower_R" )
+			&& TryBone( body, out var hn, "hand_R1", "hand_R" ) )
+			arm = ( up.Position - lo.Position ).Length + ( lo.Position - hn.Position ).Length;
+
+		float shoulderX = TryBone( body, out var sh, "arm_upper_R" )
+			? station.WorldTransform.PointToLocal( sh.Position ).x : 0f;
+
+		float handX = 0f, miss = 0f;
+		if ( body.TryGetBoneTransform( "hand_R", out var hand ) )
+		{
+			var local = station.WorldTransform.PointToLocal( hand.Position );
+			handX = local.x;
+			if ( avatar.LastHandIkTarget is { } asked )
+				miss = ( local - asked ).Length;
+		}
+
+		_swArm[phase] = arm;
+		_swShoulderX[phase] = shoulderX;
+		_swHandX[phase] = handX;
+		_swMiss[phase] = miss;
+	}
+
+	void SweepReport( ChessSeat seat )
+	{
+		string[] names = { "baseline", "sit=2", "lean spine_2", "lean arm_R", "armscale 1.5" };
+
+		Log.Info( "── gambit_terry_sweep: reach under each spike (target = far centre square) ──" );
+		Log.Info( seat == ChessSeat.White ? "   (White seat; handX rises toward the board as reach extends)"
+			: "   (Black seat; handX falls toward the board as reach extends)" );
+		Log.Info( "   phase          arm    shldrX    handX     miss" );
+		for ( int i = 0; i < SweepPhases; i++ )
+			Log.Info( $"   {names[i],-13} {_swArm[i],5:0.0}  {_swShoulderX[i],7:0.0}  {_swHandX[i],7:0.0}  {_swMiss[i],7:0.0}" );
+
+		// Verdicts, as miss-reduction vs baseline (positive = the arm got closer to the far target).
+		float sitShoulder = _swShoulderX[1] - _swShoulderX[0];
+		bool sitMoved = sitShoulder >= 1f || sitShoulder <= -1f;
+		Log.Info( "── reading it ──" );
+		Log.Info( $"   sit=2 shoulder Δ: {sitShoulder:+0.0;-0.0}u ({( sitMoved ? "sitting_02 shifts the shoulder — measure the sign against the board" : "no real shift — sitting_02 buys nothing" )})" );
+		Log.Info( $"   lean spine_2 reach gain: {_swMiss[0] - _swMiss[2]:+0.0;-0.0}u "
+			+ $"({( _swMiss[0] - _swMiss[2] >= 2f ? "the lean composed via the torso" : "no gain — the arm subtree didn't inherit the override" )})" );
+		Log.Info( $"   lean arm_R reach gain:   {_swMiss[0] - _swMiss[3]:+0.0;-0.0}u "
+			+ $"({( _swMiss[0] - _swMiss[3] >= 2f ? "the IK re-solves against a moved root — B IS ALIVE" : "IK ignores the override — B is dead, fall back to A" )})" );
+		Log.Info( $"   armscale 1.5 reach gain: {_swMiss[0] - _swMiss[4]:+0.0;-0.0}u "
+			+ $"({( _swMiss[0] - _swMiss[4] >= 2f ? "native honoured the bone scale — C worth a look" : "no gain — native ignores per-bone scale, C declined with evidence" )})" );
+		Log.Info( "   (arm should be ~19.9 measured, not 24; if it reads 24 the bone names missed — run gambit_terry_bones.)" );
+		Log.Info( "   A (near-half taste call) is the one thing this can't score — turn hands on and LOOK: gambit_terry_hands." );
+	}
+
+	void RestoreSweepLevers()
+	{
+		SeatedHandSpikes.HandsOn = _savedHands;
+		SeatedHandSpikes.UseSphereClamp = _savedSphere;
+		SeatedHandSpikes.ReachBandX = _savedBand;
+		SeatedHandSpikes.SitPose = _savedSit;
+		SeatedHandSpikes.LeanOn = _savedLean;
+		SeatedHandSpikes.LeanBone = _savedLeanBone ?? "spine_2";
+		SeatedHandSpikes.LeanForward = _savedLeanF;
+		SeatedHandSpikes.ArmScale = _savedScale;
+	}
+
+	/// <summary>First bone name that resolves — arm_lower_R1 vs arm_lower_R, hand_R1 vs hand_R —
+	/// so a naming variant doesn't silently miss (mirrors TerryCommands.TryBone).</summary>
+	static bool TryBone( SkinnedModelRenderer body, out Transform tx, params string[] names )
+	{
+		foreach ( var n in names )
+			if ( body.TryGetBoneTransform( n, out tx ) )
+				return true;
+		tx = default;
+		return false;
+	}
+
 	protected override void OnUpdate()
 	{
 		if ( Station is not { } station ) return;
+
+		// M14 one-shot SWEEP (gambit_terry_sweep): steps every reach spike's config in turn,
+		// settling between each, and dumps ONE table so the whole quantitative test pastes in one
+		// block. Local-seated station only, same gate as the probe.
+		if ( Sweep && ChessStation.Active == station && LobbyPlayer.Local.IsValid() )
+		{
+			SweepTick( station );
+			return;
+		}
+		if ( _sweepActive )
+		{
+			_sweepActive = false;
+			RestoreSweepLevers();
+			LobbyPlayer.Local?.ClearHandPose();
+		}
 
 		// DEBUG PROBE (see above). Only the local-seated station drives it; when it turns
 		// off (or you stand up) release the hand and fall back to the normal path.

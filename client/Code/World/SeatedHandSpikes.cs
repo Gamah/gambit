@@ -190,6 +190,25 @@ public static class SeatedHandSpikes
 			+ "arm_upper_R / spine_2 x: if 2 sits the shoulders forward, that reach is free before A or B." );
 	}
 
+	/// <summary><b>The one-paste command.</b> Runs every QUANTITATIVE spike in turn — baseline,
+	/// sit=2, lean(spine_2), lean(arm_upper_R), armscale — settling the skeleton between each and
+	/// dumping ONE table with the verdicts. Sit down and run it; ~7s, hold still. The only spike it
+	/// can't score is Approach A's read-as-playing taste call, which is inherently a look
+	/// (<c>gambit_terry_hands</c> then watch). Restores every lever afterwards.</summary>
+	[ConCmd( "gambit_terry_sweep" )]
+	public static void Sweep()
+	{
+		if ( ChessStation.Active == null )
+		{
+			Log.Warning( "[Gambit] sweep: sit down first — it drives YOUR seated hand, and nobody is seated." );
+			return;
+		}
+		SeatedTerry.Sweep = !SeatedTerry.Sweep;
+		Log.Info( SeatedTerry.Sweep
+			? "[Gambit] sweep ON — measuring reach under every spike config (~7s). One table lands at the end; paste it back."
+			: "[Gambit] sweep cancelled." );
+	}
+
 	/// <summary>The playbook: the whole M14 spike plan, the live lever state, and which lever to
 	/// pull for which reading — in one place so a session in the editor never has to reconstruct
 	/// it from the doc.</summary>
@@ -202,7 +221,10 @@ public static class SeatedHandSpikes
 		Log.Info( $"   Lean(B)={( LeanOn ? $"ON {LeanForward}u on '{LeanBone}'" : "off" )}  "
 			+ $"ArmScale(C)={ArmScale}{( ArmScale == 1f ? " (neutral)" : " (best-effort probe)" )}" );
 		Log.Info( "   Everything defaults OFF; the bodies (ChessRing.TerrySeated) are shipped and separate." );
-		Log.Info( "── how to run each ──" );
+		Log.Info( "── the one-paste shortcut ──" );
+		Log.Info( "   gambit_terry_sweep = run every NUMERIC spike in turn (~7s) and dump one table. "
+			+ "Only Approach A's read-as-playing taste call needs a manual look (gambit_terry_hands)." );
+		Log.Info( "── how to run each by hand ──" );
 		Log.Info( "   0. sit down. gambit_terry = ruler + geometric reach grid (works with hands off)." );
 		Log.Info( "   cross-cut: gambit_terry_sit 2  → does sitting_02 lean the shoulders? (free reach if so)" );
 		Log.Info( "   A: gambit_terry_hands, then gambit_terry_probe → does a hand that touches near pieces "
