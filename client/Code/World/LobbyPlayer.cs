@@ -1235,10 +1235,15 @@ public sealed class LobbyPlayer : Component
 		r.ClearPhysicsBones();
 		_reachSpikeApplied = true;
 
+		// READ THE ANIMATION POSE, not the final one. TryGetBoneTransform returns the FINAL
+		// transform — which already includes LAST frame's override — so offsetting/scaling that
+		// compounds every frame and the bone flies off to thousands of units (it did: the first
+		// sweep read 712 → 1702 → 3e14). TryGetBoneTransformAnimation is the post-animation,
+		// pre-override pose, so a fixed offset/scale on it is stable frame to frame.
 		if ( lean )
 		{
 			var bone = model.Bones.GetBone( SeatedHandSpikes.LeanBone );
-			if ( bone is not null && r.TryGetBoneTransform( bone, out var world ) )
+			if ( bone is not null && r.TryGetBoneTransformAnimation( bone, out var world ) )
 			{
 				// "Forward" = toward the board = station +X for White (who sits at −X), −X for Black.
 				float fwd = seat == ChessSeat.White ? +1f : -1f;
@@ -1254,7 +1259,7 @@ public sealed class LobbyPlayer : Component
 			foreach ( var name in ArmScaleBones )
 			{
 				var b = model.Bones.GetBone( name );
-				if ( b is null || !r.TryGetBoneTransform( b, out var w ) ) continue;
+				if ( b is null || !r.TryGetBoneTransformAnimation( b, out var w ) ) continue;
 				w.Scale *= SeatedHandSpikes.ArmScale;
 				r.SetBoneTransform( b, r.WorldTransform.ToLocal( w ) );
 			}

@@ -88,6 +88,13 @@ public sealed class SeatedTerry : Component
 	bool _probeMeasured;
 	readonly float[] _probeMiss = new float[64];
 
+	// The probe FORCES the arm to strain at every square (wide band, no sphere clamp) so the grid
+	// is the true reach envelope — otherwise Approach A idles the far squares and the probe
+	// measures reach-to-idle, printing a fake "ok" for ranks it never touches. Saved here, restored
+	// when the probe ends or is aborted.
+	float _probeSavedBand;
+	bool _probeSavedSphere;
+
 	const float ProbeHold = 0.6f;    // seconds parked on each square — enough to watch it settle
 	const float ProbeSettle = 0.35f; // measure once the chase easing has arrived
 
@@ -105,8 +112,16 @@ public sealed class SeatedTerry : Component
 			_probeHeld = 0f;
 			_probeMeasured = false;
 			for ( int i = 0; i < 64; i++ ) _probeMiss[i] = -1f;
-			Log.Info( "[Gambit] probe: sweeping the hand over all 64 squares at grasp height. "
-				+ "Watch the arm; the miss per square lands in the grid at the end." );
+
+			// Force the arm to strain at every square, so the grid is the true envelope and not
+			// Approach A's idle-for-far-squares (which reads as a fake "ok").
+			_probeSavedBand = SeatedHandSpikes.ReachBandX;
+			_probeSavedSphere = SeatedHandSpikes.UseSphereClamp;
+			SeatedHandSpikes.ReachBandX = -999f;
+			SeatedHandSpikes.UseSphereClamp = false;
+
+			Log.Info( "[Gambit] probe: sweeping the hand over all 64 squares at grasp height, forcing a "
+				+ "reach at each (not Approach A idle). Watch the arm; the miss per square lands in the grid at the end." );
 		}
 
 		_probeHeld += Time.Delta;
@@ -144,6 +159,7 @@ public sealed class SeatedTerry : Component
 				Probe = false;
 				_probeActive = false;
 				_probeSquare = -1;
+				RestoreProbeLevers();
 				avatar.ClearHandPose();
 			}
 		}
@@ -169,6 +185,12 @@ public sealed class SeatedTerry : Component
 			Log.Info( row );
 		}
 		Log.Info( "   ok = IK landed it (miss ≤ 2); a number = units short. '?' = never measured." );
+	}
+
+	void RestoreProbeLevers()
+	{
+		SeatedHandSpikes.ReachBandX = _probeSavedBand;
+		SeatedHandSpikes.UseSphereClamp = _probeSavedSphere;
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────────
@@ -408,6 +430,7 @@ public sealed class SeatedTerry : Component
 		{
 			_probeActive = false;
 			_probeSquare = -1;
+			RestoreProbeLevers();
 			LobbyPlayer.Local?.ClearHandPose();
 		}
 
