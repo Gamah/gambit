@@ -25,9 +25,19 @@
 >    release-settle only starts once carry reports stop (after Dropping ends) and covers
 >    whatever distance the clamped hand left; candidate fix is piece-led placement (release
 >    the piece onto its square as Dropping STARTS, quick settle, hand follows it down).
-> 4. **Hover between candidate squares is overly snappy/aggressive** while everything else
->    is slow — HandChaseRate is now a TerryTuning slider (default dropped 12 → 8); find
->    the value, then shape if needed.
+> 4. **The tempo is TWO tempos, not one** (owner-specified, replaces the single
+>    HandChaseRate story):
+>    - **Hover/selection = lazy.** While a player is deciding — including having a piece
+>      SELECTED — the hand may drift; a-file to h-file taking ~3s is fine. Selecting a
+>      piece is NOT a move and stays on this tempo.
+>    - **A committed move = a hard wall-time budget.** From the ply landing to the piece
+>      set down — INCLUDING catching up from wherever the lazy hover left the hand —
+>      the whole gesture completes inside one tunable budget, default ~1s. The catch-up
+>      is part of the budget, so a lagging hand moves FAST to its pickup, not at the
+>      hover drift rate. Implementation sketch: split HoverChaseRate (slow) from
+>      GestureChaseRate (fast), and scale the phase durations down when the approach
+>      distance eats into the budget. ASSUMED, confirm live: a capture (two trips) gets
+>      proportionally more, ~1.5-2× the budget, on the same catch-up rule.
 >
 > **The finger choreography, specified by the owner** (replaces the single
 > `holdtype_pose_hand` blend, whose open/closed polarity was never even verified):
