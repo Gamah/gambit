@@ -1067,6 +1067,9 @@ public sealed class LobbyPlayer : Component
 		if ( !SeatedHandSpikes.HandsOn )
 		{
 			if ( _reachSpikeApplied ) { r.ClearPhysicsBones(); _reachSpikeApplied = false; }
+			ReleaseRiseIk( r );
+			_riseApplied = Vector3.Zero;
+			_leanApplied = Vector3.Zero;
 			return;
 		}
 
@@ -1240,6 +1243,18 @@ public sealed class LobbyPlayer : Component
 		}
 		else
 		{
+			// Half-rise just switched off (a lever, or a sweep phase): release its foot/brace
+			// IK and eased state HERE, not only in the lever command — the sweep flips
+			// HalfRiseOn between phases without ClearHandPose, and pinned feet must never
+			// leak into a seated phase's measurement.
+			if ( _riseFeetIk || _riseBraceIk
+				|| _riseApplied != Vector3.Zero || _leanApplied != Vector3.Zero )
+			{
+				ReleaseRiseIk( r );
+				_riseApplied = Vector3.Zero;
+				_leanApplied = Vector3.Zero;
+			}
+
 			// M14 Approach B/C: bend the skeleton BEFORE the IK solves, so the measurement reads
 			// whether the two-bone IK re-derives against the changed shoulder. No-op unless a lever
 			// is pulled; self-clears when they are all neutral.

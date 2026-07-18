@@ -222,15 +222,15 @@ public sealed class SeatedTerry : Component
 	readonly float[] _swMiss = new float[SweepPhases];
 
 	// Levers snapshotted at sweep start, restored at the end.
-	bool _savedHands, _savedSphere, _savedLean, _savedNatural;
+	bool _savedHands, _savedSphere, _savedLean, _savedNatural, _savedRise;
 	int _savedSit;
 	float _savedBand, _savedLeanF, _savedScale;
 	string _savedLeanBone;
 
-	/// <summary>The far target the sweep strains at: a mid-far centre square (rank 5 for White,
-	/// rank 4 for Black — symmetric), well past the ~rank-2 baseline ceiling so a lean that
-	/// composes visibly closes the gap.</summary>
-	static int SweepTarget( ChessSeat seat ) => ( seat == ChessSeat.White ? 4 : 3 ) * 8 + 4;
+	/// <summary>The far target the sweep strains at: the FAR-RANK centre (e8 for White, e1 for
+	/// Black). It was rank 5 when the lean was the only lever; the half-rise claims the far
+	/// rank itself (harness residual ~2.4 at e8), so that is what the sweep must measure.</summary>
+	static int SweepTarget( ChessSeat seat ) => ( seat == ChessSeat.White ? 7 : 0 ) * 8 + 4;
 
 	void SweepTick( ChessStation station )
 	{
@@ -254,6 +254,7 @@ public sealed class SeatedTerry : Component
 			_savedLeanF = SeatedHandSpikes.LeanForward;
 			_savedScale = SeatedHandSpikes.ArmScale;
 			_savedNatural = SeatedHandSpikes.NaturalLean;
+			_savedRise = SeatedHandSpikes.HalfRiseOn;
 
 			// The controlled environment: hands live, no clamp, band wide open so every phase
 			// strains at the SAME far target and the misses are comparable.
@@ -305,19 +306,23 @@ public sealed class SeatedTerry : Component
 	static void ConfigureSweepPhase( int phase )
 	{
 		// Isolate each config: everything off/upright unless this phase turns it on. The manual
-		// spike levers (Approach B/C) stay off — the sweep is now about the shipping default (the
-		// natural graded lean) and the free sit-pose gain, not the distortion hacks.
+		// spike levers (Approach B/C) stay off — the sweep ladders up the SHIPPING stack:
+		// nothing → the M14 lean → the half-rise → half-rise + sitting_02.
 		SeatedHandSpikes.NaturalLean = false;
+		SeatedHandSpikes.HalfRiseOn = false;
 		SeatedHandSpikes.SitPose = 1;
 		SeatedHandSpikes.LeanOn = false;
 		SeatedHandSpikes.ArmScale = 1f;
 
 		switch ( phase )
 		{
-			case 1: SeatedHandSpikes.NaturalLean = true; break;                            // the shipping default
-			case 2: SeatedHandSpikes.SitPose = 2; break;                                   // sitting_02 alone
-			case 3: SeatedHandSpikes.NaturalLean = true; SeatedHandSpikes.SitPose = 2; break; // both together
-			// case 0: baseline — upright, no lean.
+			case 1: SeatedHandSpikes.NaturalLean = true; break;              // the seated lean alone (M14's ceiling)
+			case 2: SeatedHandSpikes.NaturalLean = true;
+				SeatedHandSpikes.HalfRiseOn = true; break;                   // the shipping default
+			case 3: SeatedHandSpikes.NaturalLean = true;
+				SeatedHandSpikes.HalfRiseOn = true;
+				SeatedHandSpikes.SitPose = 2; break;                         // + the free pose lean
+			// case 0: baseline — upright, seated, nothing.
 		}
 	}
 
@@ -353,23 +358,25 @@ public sealed class SeatedTerry : Component
 
 	void SweepReport( ChessSeat seat )
 	{
-		string[] names = { "baseline", "natural lean", "sit=2", "natural+sit=2" };
+		string[] names = { "baseline", "lean only", "half-rise", "half-rise+sit2" };
 
-		Log.Info( "── gambit_terry_sweep: reach to a far-centre square under each config ──" );
-		Log.Info( seat == ChessSeat.White ? "   (White seat; handX rises toward the board as reach extends. rank5≈+2.4)"
-			: "   (Black seat; handX falls toward the board as reach extends. rank4≈−2.4)" );
+		Log.Info( "── gambit_terry_sweep: reach to the FAR-RANK centre under each config ──" );
+		Log.Info( seat == ChessSeat.White ? "   (White seat, target e8: handX must reach +17.1. Baseline dies ~−13.)"
+			: "   (Black seat, target e1: handX must reach −17.1. Baseline dies ~+13.)" );
 		Log.Info( "   phase           arm    shldrX    handX     miss" );
 		for ( int i = 0; i < SweepPhases; i++ )
 			Log.Info( $"   {names[i],-14} {_swArm[i],5:0.0}  {_swShoulderX[i],7:0.0}  {_swHandX[i],7:0.0}  {_swMiss[i],7:0.0}" );
 
 		// Verdicts, as miss-reduction vs the upright baseline (positive = the hand got closer).
 		Log.Info( "── reading it ──" );
-		Log.Info( $"   natural lean gain:  {_swMiss[0] - _swMiss[1]:+0.0;-0.0}u  ← the shipping default; the terry leans in to reach" );
-		Log.Info( $"   sit=2 alone gain:   {_swMiss[0] - _swMiss[2]:+0.0;-0.0}u  (free, straight from the pose)" );
-		Log.Info( $"   natural + sit=2:    {_swMiss[0] - _swMiss[3]:+0.0;-0.0}u  closer to the far target" );
-		Log.Info( "   Far squares beyond even this get the piece-slide for the last bit — a natural motion, not a miss." );
-		Log.Info( "   (arm should read ~19.9, not 24; if it says 24 the bone names missed — run gambit_terry_bones.)" );
-		Log.Info( "   The one thing this can't score is whether the lean READS as leaning — turn it on and LOOK: gambit_terry_hands." );
+		Log.Info( $"   lean-only gain:     {_swMiss[0] - _swMiss[1]:+0.0;-0.0}u  (M14's seated ceiling — expect ~5)" );
+		Log.Info( $"   half-rise gain:     {_swMiss[0] - _swMiss[2]:+0.0;-0.0}u  ← THE VERDICT. Harness says e8 lands ~2.4 short;" );
+		Log.Info( "                                a big gain with miss ≤ ~4 = the pelvis override carried the legs' and arm's solve" );
+		Log.Info( "                                (the engine unknown). A gain of ~0 = the rise never moved the skeleton — check" );
+		Log.Info( "                                gambit_terry_spikes and whether the terry visibly lifts off the chair." );
+		Log.Info( $"   half-rise + sit=2:  {_swMiss[0] - _swMiss[3]:+0.0;-0.0}u  (is sitting_02's free lean still worth having?)" );
+		Log.Info( "   Also LOOK while it runs: do the feet stay planted? Does the off hand find the table?" );
+		Log.Info( "   (arm should read ~19.9, not 24; if it says 24 the bone names missed.)" );
 	}
 
 	void RestoreSweepLevers()
@@ -383,6 +390,7 @@ public sealed class SeatedTerry : Component
 		SeatedHandSpikes.LeanForward = _savedLeanF;
 		SeatedHandSpikes.ArmScale = _savedScale;
 		SeatedHandSpikes.NaturalLean = _savedNatural;
+		SeatedHandSpikes.HalfRiseOn = _savedRise;
 	}
 
 	/// <summary>First bone name that resolves — arm_lower_R1 vs arm_lower_R, hand_R1 vs hand_R —

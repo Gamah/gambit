@@ -1,0 +1,73 @@
+# The half-rise: terries that pick up the pieces (M14, second attempt)
+
+**Branch `m14-terry-halfrise-ik`.** The reaching-hand idea was nuked (5fd4157) because a
+SEATED citizen can't reach: ~20u arm, far corner ~35u away, and every seated lever combined
+lands mid-board (the old SEATED-HANDS-REACH.md, recoverable at `origin/m14-terry-hands-spikes`,
+has the proof). This attempt keeps everything M14 *proved* and removes the one assumption that
+killed it: **that the pelvis stays on the chair.**
+
+## The mechanism, in one paragraph
+
+When a square is past even the leaned arm, the terry **half-rises**: the pelvis bone is
+overridden up-and-forward toward the piece — the same `SetBoneTransform` subtree-carry M14
+proved on `spine_2`, one bone higher — bounded by the **legs** (feet planted, allowed a small
+step, never into the table's foot plate) instead of by the chair. The feet stay planted via
+the engine's own `foot_left`/`foot_right` animgraph IK (game-facing; confirmed in
+`citizen.vanmgrph` — four IK targets exist, not two), the off hand braces on the tabletop via
+`hand_left`, and the moved piece **rides the rendered hand bone** through
+Lifting/Carrying/Dropping, so the room sees a terry pick a piece up and put it down.
+
+**The one trick that makes four IK chains coexist with bone overrides:** the animgraph solves
+IK *before* overrides apply, so every IK target is aimed at **(true target − the override
+translation its chain will ride)** — feet ride the pelvis; hands ride pelvis + spine. The
+override then carries the solved limb exactly onto the true target. Translation-only, no
+rotations anywhere, so the compensation is a vector subtraction and the mechanism is the one
+already proven in-editor.
+
+## The proof (dotnet harness, this host)
+
+`Code/Chess/HalfRise.cs` is the whole geometry, Sandbox-free, driven over all 64 squares from
+both seats with the measured M13 skeleton (`scratchpad/halfrise` in the session; re-create
+from the constants in the file header comments):
+
+```
+       a      b      c      d      e      f      g      h
+   8    7.4    7.8    3.1    3.8    2.4    1.9    3.1    4.7
+   7    6.6    3.8    1.5   ok     ok     ok     ok      0.5
+   6   ok      0.1   ok     ok     ok     ok     ok     ok
+   5   ok     ok     ok     ok     ok     ok     ok     ok
+  1-4                       all ok
+```
+
+**51/64 squares honestly reachable** (M13 seated: 5/64, far rank 30–35 short); worst corner
+7.8u, inside the piece-slide fallback that already ships. Legs never over-extend, feet never
+enter the table base, mirror round-trips exact, no NaNs, no cliffs. The key insight the first
+cut got wrong: the rise must be **horizontal** — the legs are the scarce resource, and
+altitude bought from them is altitude the arm's own sphere covers for free. That one change
+was worth 20 squares.
+
+## What only the editor can answer (the next session's checklist)
+
+1. **Does the pelvis override carry the LEG chains' solve** the way `spine_2` carried the
+   arm's? `gambit_terry_sweep` is the verdict table: half-rise gain should be large with miss
+   ≤ ~4 at e8. A gain of ~0 means the rise never moved the skeleton.
+2. **Do the pre-compensated foot pins keep the feet still** through a rise? Look at the feet.
+3. **Does it read as a person** leaning over a table, and does the piece-in-hand carry sell
+   it? Taste calls: `gambit_terry_probe` (all-64), a real game, a second client watching.
+4. Finger polarity (`holdtype_pose_hand` open/closed ends) — still unverified from M13.
+
+Levers: `gambit_terry_rise / _maxrise / _step / _risechase / _brace` plus all of M14's.
+Kill chain, three deep: `ChessRing.TerrySeated` → `gambit_terry_hands` → `gambit_terry_rise`.
+
+## Decisions already made (don't relitigate)
+
+- **Real pick-up**: the piece rides the rendered `hand_R` bone (release = short settle slide,
+  so the abandon rule degrades to a glide, never a teleport). The spectator wall keeps the
+  plain slide — it has no terries.
+- **v1 carries the attacker only**; a capture's victim keeps its existing tray slide. The
+  two-trip choreography (hand clears the victim first) is modelled in TerryPose already;
+  synchronising the victim's slide to the hand is a later polish, not a blocker.
+- **The brace is honest or absent**: offered only when the left arm can actually reach it.
+- **No rotations in the overrides.** A torso *pitch* would read better than a shear-lean, but
+  whether rotation propagates through a bone override subtree is unproven; translations are
+  proven. If the editor session wants pitch, spike it behind a lever first.

@@ -338,21 +338,21 @@ public static class SeatedHandSpikes
 	[ConCmd( "gambit_terry_spikes" )]
 	public static void Playbook()
 	{
-		Log.Info( "── M14 seated hands — levers & playbook ──" );
-		Log.Info( $"   HandsOn={HandsOn}  SitPose={SitPoseClamped}  "
-			+ $"NaturalLean={( NaturalLean ? $"ON (max {MaxLean}u on '{NaturalLeanBone}')" : "off" )}" );
-		Log.Info( $"   Comparison levers — OutOfReach(nat off)={( UseSphereClamp ? "sphere clamp" : $"idle band {ReachBandX}" )}  "
+		Log.Info( "── M14 half-rise hands — levers & playbook ──" );
+		Log.Info( $"   HandsOn={HandsOn}  HalfRise={( HalfRiseOn ? $"ON (maxrise {MaxRise}, step {MaxStep}, chase {RiseChaseRate}, brace {( BraceOn ? "on" : "off" )})" : "OFF" )}  "
+			+ $"SitPose={SitPoseClamped}  Lean={( NaturalLean ? $"{MaxLean}u/'{NaturalLeanBone}'" : "off" )}" );
+		Log.Info( $"   Comparison levers — OutOfReach(rise+nat off)={( UseSphereClamp ? "sphere clamp" : $"idle band {ReachBandX}" )}  "
 			+ $"ManualLean(B)={( LeanOn ? $"{LeanForward}u/{LeanBone}" : "off" )}  ArmScale(C)={ArmScale}" );
-		Log.Info( "   The DEFAULT is the natural graded lean: the terry leans in as far as needed to reach a piece, "
-			+ "and the piece-slide finishes the farthest squares. No arm-stretch, no dead idle." );
+		Log.Info( "   The DEFAULT is the half-rise: past the leaned arm the terry rises off the chair toward the piece, "
+			+ "feet planted (they may step), off hand braced on the table, and PICKS THE PIECE UP (it rides the hand)." );
 		Log.Info( "── run it ──" );
-		Log.Info( "   1. sit down, gambit_terry_hands, start a game → watch your hand reach & lean over the board." );
-		Log.Info( "   2. gambit_terry_sweep → one table: how far baseline / natural lean / sit=2 / both reach (~5s)." );
-		Log.Info( "   Tune: gambit_terry_maxlean <u> (how far it leans), gambit_terry_natlbone <bone> (waist vs shoulders), "
-			+ "gambit_terry_sit 2 (add the free pose lean)." );
-		Log.Info( "── the question that decides it ──" );
-		Log.Info( "   Does the lean-and-reach read as a PERSON playing chess? If yes → ship natural lean (+maybe sit=2)." );
-		Log.Info( "   Comparison-only levers (off by default): gambit_terry_natural off, then gambit_terry_clamp / "
-			+ "gambit_terry_lean / gambit_terry_armscale to see the isolated hacks. Full plan: SEATED-HANDS-REACH.md." );
+		Log.Info( "   1. sit down, start a game → far moves should lift the terry off the chair; the piece rides the hand." );
+		Log.Info( "   2. gambit_terry_sweep → the verdict table: baseline / lean / half-rise / +sit2 at the far rank (~6s)." );
+		Log.Info( "   3. gambit_terry_probe → all-64 grid; the harness predicts ok everywhere but ~rank 7-8 edges (≤8u)." );
+		Log.Info( "── the engine unknowns this session must answer ──" );
+		Log.Info( "   a. Does the pelvis override carry the LEG chains as spine_2 carried the arm's? (sweep verdict)" );
+		Log.Info( "   b. Do the pre-compensated foot pins keep the feet still through a rise? (look at the feet)" );
+		Log.Info( "   c. Does the rise READ as a person leaning over the table? (the taste call, as ever)" );
+		Log.Info( "   Kill chain: ChessRing.TerrySeated → gambit_terry_hands → gambit_terry_rise. Doc: TERRY-HALFRISE.md." );
 	}
 }
