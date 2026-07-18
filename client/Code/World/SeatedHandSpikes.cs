@@ -24,6 +24,13 @@ namespace Gambit.World;
 /// (<see cref="LobbyPlayer.ApplyHandPose"/>, <see cref="LobbyPlayer.ApplySitPose"/>,
 /// <see cref="ChessRing.SquareReachable"/>).</para>
 ///
+/// <para><b>The INSPECTOR surface is <see cref="TerryTuning"/></b> — a scene-authored
+/// component (lobby.scene) whose [Property] sliders push into these statics ON CHANGE.
+/// Tune there and save the scene; the SCENE's values are the shipping truth, and the code
+/// defaults here are only what a scene-less world falls back to. The console levers keep
+/// working between inspector touches (TerryTuning deliberately never re-asserts, so the
+/// doctor/sweep/probe can still force phases through these statics mid-run).</para>
+///
 /// <para><b>Cleanup pass, when a verdict is in:</b> keep the winning approach's real behaviour
 /// (fold the chosen lever's value back into <see cref="ChessRing"/>/<see cref="TerryPose"/> as a
 /// fixed constant, or delete the whole hand path again per the doc's "shipping nothing is a
@@ -101,6 +108,17 @@ public static class SeatedHandSpikes
 	/// carry — every rise/lean lands to the decimal. The lever stays for cosmetic
 	/// experiments only; reach never depends on it. <c>gambit_terry_pitch</c>.</summary>
 	public static float TorsoPitchMax = 0f;
+
+	// ── The carry (read by ChessBoardView; tuned via TerryTuning) ──
+
+	/// <summary>How far below the wrist bone a held piece's base hangs.</summary>
+	public static float CarryHang = 8f;
+
+	/// <summary>How close the hand must get before a piece leaves its slide for the hand.</summary>
+	public static float GrabRadius = 9f;
+
+	/// <summary>How long a move-slide waits at its origin for the hand to come and grab it.</summary>
+	public static float HandHoldSeconds = 2.5f;
 
 	/// <summary>One-shot: log the ENTIRE half-rise pipeline for the next planned reach frame —
 	/// planner inputs (live bones, measured chains), plan outputs, eased applied values, and

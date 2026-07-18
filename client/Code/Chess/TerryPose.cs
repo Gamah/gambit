@@ -184,19 +184,19 @@ public static class TerryPose
 	/// reads as pawing at the set. The tallest piece is the king at 9.6, so hovering starts
 	/// there and adds room to see under. A hand you can see daylight beneath reads as
 	/// considering a piece; one at piece height reads as touching it.</para></summary>
-	public const float HoverHeight = 12f;
+	public static float HoverHeight = 12f;   // static, not const: TerryTuning drives it from the inspector
 
 	/// <summary>Height the fingers close at — reaching DOWN toward the piece from the hover,
 	/// brushing the king's 9.6. (The "never touching" rule this constant was born under is
 	/// gone: since the hand-carry, the grasped piece really does ride the hand, so closing
 	/// AT the piece is honest now — and a whole extra unit of daylight read as a wrist
 	/// hovering awkwardly high.)</summary>
-	public const float GraspHeight = 10f;
+	public static float GraspHeight = 10f;   // static, not const: TerryTuning drives it from the inspector
 
 	/// <summary>Height a carried piece travels at: clear of everything on the board, and
 	/// above the hover so a pickup visibly lifts. (17 carried the wrist a half-piece too
 	/// high through every move — the first thing the eye catches on a carry.)</summary>
-	public const float LiftHeight = 14f;
+	public static float LiftHeight = 14f;    // static, not const: TerryTuning drives it from the inspector
 
 	/// <summary>Seconds for the hand to come ON to the board — a cursor lands on a square and
 	/// the hand follows it, so this is quick.</summary>

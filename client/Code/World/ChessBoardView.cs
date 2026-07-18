@@ -151,10 +151,6 @@ public sealed class ChessBoardView : Component
 		public float HoldForHand;
 	}
 
-	/// <summary>How long a move-slide will wait for the hand. Covers a capture's prologue
-	/// (the hand clears the victim first, ~1.2s) plus the reach itself, with slack.</summary>
-	const float HandHoldSeconds = 2.5f;
-
 	/// <summary>Is a seated terry going to perform the moving side's move at this table?
 	/// Mirrors the gate SeatedTerry itself animates under.</summary>
 	bool HandWillPerform( char moverPiece )
@@ -187,9 +183,7 @@ public sealed class ChessBoardView : Component
 	float _carryStamp = -1f;
 	Vector3 _carryWorld;       // world position for the piece's base this frame
 
-	/// <summary>How far below the wrist bone the held piece's base hangs — the piece sits
-	/// in the fingers, not impaled on the forearm. Tune in-editor.</summary>
-	const float CarryHang = 8f;
+	// CarryHang/GrabRadius/HandHoldSeconds live on SeatedHandSpikes (inspector: TerryTuning).
 
 	/// <summary>The short settle a released piece plays from wherever the hand left it to
 	/// its true square — covers both a finished drop (hand is already over the square, so
@@ -218,16 +212,12 @@ public sealed class ChessBoardView : Component
 		// and the hand merely chases it; once held, it stays held for the whole gesture
 		// (the hand may then swing wide without dropping it).
 		if ( !ReferenceEquals( piece, _carried )
-			&& ( piece.WorldPosition - hand ).Length > GrabRadius ) return;
+			&& ( piece.WorldPosition - hand ).Length > SeatedHandSpikes.GrabRadius ) return;
 
 		_carried = piece;
 		_carryStamp = Time.Now;
-		_carryWorld = hand + Vector3.Down * CarryHang;
+		_carryWorld = hand + Vector3.Down * SeatedHandSpikes.CarryHang;
 	}
-
-	/// <summary>How close the hand must get to a piece before the piece leaves its slide
-	/// for the hand. Roughly the hand's own grasp envelope; tune in-editor.</summary>
-	const float GrabRadius = 9f;
 
 	// ── Captured pieces ──
 	//
@@ -410,7 +400,7 @@ public sealed class ChessBoardView : Component
 					Age = 0f,
 					Seconds = MoveSeconds,
 					Arc = MoveArc,
-					HoldForHand = HandWillPerform( c ) ? HandHoldSeconds : 0f,
+					HoldForHand = HandWillPerform( c ) ? SeatedHandSpikes.HandHoldSeconds : 0f,
 				} );
 			}
 		}
