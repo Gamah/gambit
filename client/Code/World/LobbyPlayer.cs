@@ -1079,6 +1079,7 @@ public sealed class LobbyPlayer : Component
 		var idle = new Vector3( side * ring.HandIdleX, side * ring.HandIdleY, ring.HandIdleZ );
 
 		_pendingLean = 0f;
+		_risePlan = null; // re-planned (or not) below; a frame with no plan eases the rise out
 		Vector3 target = idle;
 		if ( pose.OnBoard && pose.Weight > 0f )
 		{
@@ -1117,7 +1118,22 @@ public sealed class LobbyPlayer : Component
 			// The old M13 sphere clamp is kept behind the lever ONLY to compare the two failure
 			// modes live. It collapses the far ranks onto ~rank 2 (the frozen-hand trap the doc
 			// documents) — flip gambit_terry_clamp to see it.
-			if ( SeatedHandSpikes.NaturalLean && ShoulderLocal( station ) is { } sh0 )
+			//
+			// ── M14 second attempt: the half-rise (default) ──
+			// The planner owns the WHOLE reach story: the proven M14 lean first, then rising the
+			// pelvis off the chair toward the target, bounded by the legs (planted feet that may
+			// step) instead of the chair. Everything it returns is applied in
+			// ApplyRiseOverrides; here we only take the clamped hand target — which equals the
+			// true target for the 51/64 squares the harness proves honestly reachable, and sits
+			// on the risen reach sphere (never straining) for the far corners the piece-slide
+			// still finishes. Geometry: Code/Chess/HalfRise.cs, proven in the dotnet harness.
+			if ( SeatedHandSpikes.HalfRiseOn && PlanRise( station, seat, on ) is { } risePlan )
+			{
+				_risePlan = risePlan;
+				_pendingLean = 0f; // the plan carries its own lean; the M14 path must not double it
+				target = Vector3.Lerp( idle, FromPlanner( risePlan.Hand, seat ), pose.Weight );
+			}
+			else if ( SeatedHandSpikes.NaturalLean && ShoulderLocal( station ) is { } sh0 )
 			{
 				// ── Reach like a person: lean in only as far as needed, then reach ──
 				//
@@ -1210,10 +1226,25 @@ public sealed class LobbyPlayer : Component
 		r.Set( "holdtype_handedness", HandednessRight );
 		r.Set( "holdtype_pose_hand", pose.FingerClose );
 
-		// M14 Approach B/C: bend the skeleton BEFORE the IK solves, so the measurement reads
-		// whether the two-bone IK re-derives against the changed shoulder. No-op unless a lever
-		// is pulled; self-clears when they are all neutral.
-		ApplyReachSpikes( r, station, seat );
+		if ( SeatedHandSpikes.HalfRiseOn )
+		{
+			// The half-rise path: ease + apply the pelvis/lean overrides and the foot/brace
+			// IK, then PRE-COMPENSATE the right hand's target. The animgraph IK solves
+			// BEFORE bone overrides apply, and the arm's chain rides the pelvis + spine
+			// subtree — so an override translating that subtree by Δ carries the solved
+			// hand by Δ too. Aiming at (true − Δ) is what lands the hand ON the true
+			// target after the override. Δ is the APPLIED (eased) value, not the plan's,
+			// so the compensation can never outrun the bones.
+			ApplyRiseOverrides( r, station, seat );
+			world -= _riseApplied + _leanApplied;
+		}
+		else
+		{
+			// M14 Approach B/C: bend the skeleton BEFORE the IK solves, so the measurement reads
+			// whether the two-bone IK re-derives against the changed shoulder. No-op unless a lever
+			// is pulled; self-clears when they are all neutral.
+			ApplyReachSpikes( r, station, seat );
+		}
 
 		r.SetIk( IkRight, new Transform( world, rot ) );
 	}
@@ -1302,6 +1333,261 @@ public sealed class LobbyPlayer : Component
 
 	static readonly string[] ArmScaleBones = { "arm_upper_R", "arm_lower_R1" };
 
+	// ───────────────────────────── M14: the half-rise runtime ─────────────────────────────
+
+	/// <summary>This frame's plan from <see cref="Gambit.Chess.HalfRise"/> (planner frame:
+	/// station-local, White-seat orientation), or null when the hand is idle / the target is
+	/// seated-reachable with no rise. Written by ApplyHandPose, consumed by
+	/// <see cref="ApplyRiseOverrides"/> in the same call.</summary>
+	Gambit.Chess.RisePlan? _risePlan;
+
+	/// <summary>The pelvis translation ACTUALLY applied this frame (world space, eased toward
+	/// the plan) — also exactly what the IK pre-compensation subtracts, which is why it is
+	/// stored rather than recomputed: the bones and the compensation must never disagree.</summary>
+	Vector3 _riseApplied;
+
+	/// <summary>The spine-lean translation actually applied (world space, eased) — the arm
+	/// chain rides pelvis + spine, so the hand compensation subtracts both.</summary>
+	Vector3 _leanApplied;
+
+	bool _riseFeetIk;   // foot_left/foot_right IK currently held
+	bool _riseBraceIk;  // hand_left brace IK currently held
+	float _measuredArm; // live |arm_upper_R→arm_lower_R| + |→hand_R|, 0 until first read
+	float _measuredLeg; // live |leg_upper_R→leg_lower_R| + |→ankle_R|
+
+	/// <summary>Fallbacks when the skeleton can't be read (M13's measured citizen).</summary>
+	const float FallbackArm = 19.9f;
+	const float FallbackLeg = 30f;
+
+	/// <summary>Grip/knee slack subtracted from the measured chains before planning, so the
+	/// solver is never asked for a straight-locked limb.</summary>
+	const float ReachMargin = 2f;
+	const float LegMargin = 2f;
+
+	/// <summary>
+	/// Read the live skeleton, mirror everything into the planner's White frame, and plan
+	/// this frame's reach. Null when any bone is unreadable — the caller then falls through
+	/// to the seated M14 lean, so a missing bone degrades to the old world, never to a
+	/// missing hand.
+	/// </summary>
+	Gambit.Chess.RisePlan? PlanRise( ChessStation station, ChessSeat seat, Vector3 grasp )
+	{
+		var r = _bodyRenderer;
+		var ring = ChessRing.Instance;
+		if ( r?.Model == null || ring == null ) return null;
+
+		if ( ShoulderLocal( station ) is not { } shoulder ) return null;
+		if ( BoneAnimLocal( station, "pelvis" ) is not { } pelvis ) return null;
+		if ( BoneAnimLocal( station, "ankle_L" ) is not { } ankleL ) return null;
+		if ( BoneAnimLocal( station, "ankle_R" ) is not { } ankleR ) return null;
+
+		MeasureLimbs( r );
+
+		// Feet may step toward the table but never INTO its base; the brace lands in the
+		// player's left side margin on the tabletop. All derived from the ring's real
+		// geometry rather than typed twice.
+		var t = new Gambit.Chess.RiseTunables(
+			Reach: _measuredArm - ReachMargin,
+			MaxLean: SeatedHandSpikes.MaxLean,
+			LegReach: _measuredLeg - LegMargin,
+			MaxStep: SeatedHandSpikes.MaxStep,
+			MaxRise: SeatedHandSpikes.MaxRise,
+			FootMinX: -( ring.FootEdgeX + 1f ),
+			BraceEngage: 6f,
+			BraceMinX: -( ring.TableEdgeX - 6f ),
+			BraceMaxX: 10f,
+			BraceY: ( ring.BoardSize + 3f ) * 0.5f * ring.TableScale + 2.5f,
+			BraceZ: ring.TableTopSurfaceZ );
+
+		bool black = seat == ChessSeat.Black;
+		return Gambit.Chess.HalfRise.Plan(
+			ToPlanner( grasp, black ), ToPlanner( shoulder, black ), ToPlanner( pelvis, black ),
+			ToPlanner( ankleL, black ), ToPlanner( ankleR, black ), t );
+	}
+
+	/// <summary>
+	/// Turn the plan into the skeleton: ease the pelvis/lean toward it, override the bones,
+	/// and pin the feet (and maybe the off hand) with pre-compensated IK targets. Runs every
+	/// frame the hand is active, INCLUDING frames with no plan — that is how the rise eases
+	/// back down instead of snapping when the reach ends.
+	/// </summary>
+	void ApplyRiseOverrides( SkinnedModelRenderer r, ChessStation station, ChessSeat seat )
+	{
+		Vector3 wantRise = Vector3.Zero, wantLean = Vector3.Zero;
+		if ( _risePlan is { } plan )
+		{
+			wantRise = station.WorldRotation * FromPlanner( plan.PelvisDelta, seat );
+			wantLean = station.WorldRotation * ( FromPlanner( plan.LeanDir, seat ) * plan.Lean );
+		}
+
+		// The same frame-rate-independent chase as the hand — the plan may step (a foot
+		// commits, the leg constraint engages) and the bones must not.
+		float k = 1f - MathF.Exp( -SeatedHandSpikes.RiseChaseRate * Time.Delta );
+		_riseApplied = Vector3.Lerp( _riseApplied, wantRise, k );
+		_leanApplied = Vector3.Lerp( _leanApplied, wantLean, k );
+
+		bool active = _riseApplied.Length > 0.05f || _leanApplied.Length > 0.05f;
+		if ( !active )
+		{
+			_riseApplied = Vector3.Zero;
+			_leanApplied = Vector3.Zero;
+			if ( _reachSpikeApplied ) { r.ClearPhysicsBones(); _reachSpikeApplied = false; }
+			ReleaseRiseIk( r );
+			return;
+		}
+
+		if ( r.Model is not { } model ) return;
+
+		// Clear-then-set every frame — the engine's own physics-bone pattern, and the M14
+		// lesson: always offset the ANIMATION pose (TryGetBoneTransformAnimation), never the
+		// final one, or last frame's override compounds and the bone flies off to thousands
+		// of units (it did: 712 → 1702 → 3e14).
+		r.ClearPhysicsBones();
+		_reachSpikeApplied = true;
+
+		if ( model.Bones.GetBone( "pelvis" ) is { } pelvisBone
+			&& r.TryGetBoneTransformAnimation( pelvisBone, out var pw ) )
+		{
+			pw.Position += _riseApplied;
+			r.SetBoneTransform( pelvisBone, r.WorldTransform.ToLocal( pw ) );
+		}
+
+		// The spine lean rides ON TOP of the rise — its override is absolute, so it must
+		// include the rise too, or it would pin the upper body back at the un-risen spot
+		// and the "lean" would tear the torso from the hips.
+		if ( _leanApplied.Length > 0.05f
+			&& model.Bones.GetBone( SeatedHandSpikes.NaturalLeanBone ) is { } leanBone
+			&& r.TryGetBoneTransformAnimation( leanBone, out var lw ) )
+		{
+			lw.Position += _riseApplied + _leanApplied;
+			r.SetBoneTransform( leanBone, r.WorldTransform.ToLocal( lw ) );
+		}
+
+		if ( _risePlan is { } p && _riseApplied.Length > 0.05f )
+		{
+			// The feet: pinned to the plan's plants through the engine's own foot IK,
+			// pre-compensated by the rise alone (the legs ride the pelvis, not the spine).
+			PinFoot( r, station, seat, "ankle_L", IkFootLeft, p.FootL );
+			PinFoot( r, station, seat, "ankle_R", IkFootRight, p.FootR );
+			_riseFeetIk = true;
+
+			// The off hand braces on the table — planner already guaranteed the left arm
+			// honestly reaches it, or gave none.
+			if ( SeatedHandSpikes.BraceOn && p.Brace is { } b )
+			{
+				var world = station.WorldTransform.PointToWorld( FromPlanner( b, seat ) );
+				var rot = station.WorldRotation
+					* Rotation.From( 80f, seat == ChessSeat.White ? 0f : 180f, 0f );
+				r.SetIk( IkLeft, new Transform( world - _riseApplied - _leanApplied, rot ) );
+				_riseBraceIk = true;
+			}
+			else if ( _riseBraceIk )
+			{
+				r.ClearIk( IkLeft );
+				_riseBraceIk = false;
+			}
+		}
+		else
+		{
+			ReleaseRiseIk( r );
+		}
+	}
+
+	/// <summary>Pin one foot: the animgraph solves against the UN-risen skeleton, so the
+	/// target is the true plant minus the rise; after the pelvis override carries the leg,
+	/// the foot lands exactly on the plant. Rotation is the foot's own animated one, so
+	/// pinning never twists an ankle.</summary>
+	void PinFoot( SkinnedModelRenderer r, ChessStation station, ChessSeat seat,
+		string ankleBone, string ik, Gambit.Chess.V3 plant )
+	{
+		var rot = Rotation.Identity;
+		if ( r.Model?.Bones.GetBone( ankleBone ) is { } bone
+			&& r.TryGetBoneTransformAnimation( bone, out var tx ) )
+			rot = tx.Rotation;
+
+		var world = station.WorldTransform.PointToWorld( FromPlanner( plant, seat ) );
+		r.SetIk( ik, new Transform( world - _riseApplied, rot ) );
+	}
+
+	void ReleaseRiseIk( SkinnedModelRenderer r )
+	{
+		if ( _riseFeetIk )
+		{
+			r.ClearIk( IkFootLeft );
+			r.ClearIk( IkFootRight );
+			_riseFeetIk = false;
+		}
+		if ( _riseBraceIk )
+		{
+			r.ClearIk( IkLeft );
+			_riseBraceIk = false;
+		}
+	}
+
+	/// <summary>Measure the working arm and leg off the LIVE skeleton once (they never change
+	/// under a fixed avatar), with M13's measured numbers as the fallback — so a bone-name
+	/// drift degrades the plan's inputs, never NaNs it.</summary>
+	void MeasureLimbs( SkinnedModelRenderer r )
+	{
+		if ( _measuredArm > 0f ) return;
+		float arm = ChainLength( r, new[] { "arm_upper_R" },
+			new[] { "arm_lower_R1", "arm_lower_R" }, new[] { "hand_R1", "hand_R" } );
+		float leg = ChainLength( r, new[] { "leg_upper_R" },
+			new[] { "leg_lower_R1", "leg_lower_R" }, new[] { "ankle_R" } );
+		_measuredArm = arm > 4f ? arm : FallbackArm;
+		_measuredLeg = leg > 4f ? leg : FallbackLeg;
+	}
+
+	static float ChainLength( SkinnedModelRenderer r,
+		string[] root, string[] mid, string[] end )
+	{
+		if ( !TryBoneWorld( r, root, out var a ) || !TryBoneWorld( r, mid, out var b )
+			|| !TryBoneWorld( r, end, out var c ) )
+			return 0f;
+		return ( a - b ).Length + ( b - c ).Length;
+	}
+
+	static bool TryBoneWorld( SkinnedModelRenderer r, string[] names, out Vector3 pos )
+	{
+		foreach ( var n in names )
+		{
+			if ( r.TryGetBoneTransform( n, out var tx ) )
+			{
+				pos = tx.Position;
+				return true;
+			}
+		}
+		pos = default;
+		return false;
+	}
+
+	/// <summary>A bone's ANIMATION (pre-override) position, station-local — the same
+	/// feedback-proof read as <see cref="ShoulderLocal"/>, for the same reason: the rise
+	/// moves these bones, and planning against the moved pose would oscillate.</summary>
+	Vector3? BoneAnimLocal( ChessStation station, string boneName )
+	{
+		if ( _bodyRenderer?.Model?.Bones.GetBone( boneName ) is { } bone
+			&& _bodyRenderer.TryGetBoneTransformAnimation( bone, out var tx ) )
+			return station.WorldTransform.PointToLocal( tx.Position );
+		return null;
+	}
+
+	/// <summary>Station frame → planner frame (rotate Black's world 180° about Z so the
+	/// planner only ever reasons about White's seat; chirality survives, so Black's right
+	/// hand stays its right hand).</summary>
+	static Gambit.Chess.V3 ToPlanner( Vector3 v, bool black ) =>
+		black ? new Gambit.Chess.V3( -v.x, -v.y, v.z ) : new Gambit.Chess.V3( v.x, v.y, v.z );
+
+	/// <summary>Planner frame → station frame, the inverse of <see cref="ToPlanner"/>.</summary>
+	static Vector3 FromPlanner( Gambit.Chess.V3 v, ChessSeat seat ) =>
+		seat == ChessSeat.Black ? new Vector3( -v.X, -v.Y, v.Z ) : new Vector3( v.X, v.Y, v.Z );
+
+	/// <summary>The animgraph's foot IK chains — citizen.vanmgrph declares exactly four
+	/// game-facing IK targets (hand_left/right, foot_left/right); these are the other two.</summary>
+	const string IkLeft = "hand_left";
+	const string IkFootLeft = "foot_left";
+	const string IkFootRight = "foot_right";
+
 	/// <summary>Where the hand was last told to go (station-local) — read by
 	/// <c>gambit_terry</c>, which prints it beside the bone the IK actually achieved. The
 	/// gap between those two IS the reach error, and it is the only way to tell "aiming at
@@ -1339,6 +1625,13 @@ public sealed class LobbyPlayer : Component
 		// M14: drop any Approach B/C bone override too, so standing up (or toggling a spike off)
 		// doesn't leave a leaned or scaled skeleton frozen in place.
 		if ( _reachSpikeApplied ) { _bodyRenderer.ClearPhysicsBones(); _reachSpikeApplied = false; }
+
+		// The half-rise: release the foot pins and the brace, and zero the eased state so
+		// the next reach starts from the chair rather than from a stale mid-rise.
+		ReleaseRiseIk( _bodyRenderer );
+		_risePlan = null;
+		_riseApplied = Vector3.Zero;
+		_leanApplied = Vector3.Zero;
 	}
 
 	static Vector3 SquareLocal( ChessRing ring, int square ) =>

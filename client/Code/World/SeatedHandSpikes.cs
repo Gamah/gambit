@@ -37,10 +37,44 @@ public static class SeatedHandSpikes
 	// Each field is a lever; the comment says what result it is FOR and what the cleanup
 	// decision is once you have looked at it. Defaults are the shipped-M13 world with hands OFF.
 
-	/// <summary><b>Master gate for the hands (A &amp; B).</b> false = bodies only, no hand IK —
-	/// the shipped M13 world. <c>gambit_terry_hands</c>. Turn on to watch the hands play through a
-	/// real or local game at your table.</summary>
-	public static bool HandsOn;
+	/// <summary><b>Master gate for the hands.</b> false = bodies only, no hand IK — the shipped
+	/// M13 world. <c>gambit_terry_hands</c>. <b>Default ON since the M14 half-rise</b>: the half-rise makes the
+	/// reach real, so the hands are the deliverable rather than a spike. The kill chain is
+	/// three-deep on purpose: <see cref="ChessRing.TerrySeated"/> (no bodies at all) →
+	/// this (bodies, no hands) → <see cref="HalfRiseOn"/> (hands, no rise).</summary>
+	public static bool HandsOn = true;
+
+	// ───────────────────────────── M14: the half-rise ─────────────────────────────
+
+	/// <summary><b>The M14 half-rise deliverable: the half-rise reach (default ON).</b> When a square is past
+	/// even the leaned arm, the terry rises off the chair and carries the PELVIS toward it — the
+	/// same bone-override mechanism M14 proved on spine_2, applied one bone higher, bounded by the
+	/// LEGS (planted feet, which may step) instead of by the chair. Feet stay planted via the
+	/// engine's own foot IK targets, pre-compensated for the override (the animgraph solves before
+	/// overrides apply). The whole geometry is <c>Code/Chess/HalfRise.cs</c>, harness-proven:
+	/// 51/64 squares honestly reachable, worst corner ~8u (the piece-slide finishes those).
+	/// <c>gambit_terry_rise</c>. Off = the M14 natural-lean world, seated ceiling ~rank 2.</summary>
+	public static bool HalfRiseOn = true;
+
+	/// <summary>Hard cap on how far the pelvis may travel, world units. The harness plans ~24u for
+	/// the far rank; this only exists so a bad input can't fly the terry across the room.
+	/// <c>gambit_terry_maxrise</c>.</summary>
+	public static float MaxRise = 34f;
+
+	/// <summary>How far a planted foot may slide toward the hips when the legs run out (a person
+	/// shifts a foot to lean across a table). 0 = feet welded, rise shrinks instead.
+	/// <c>gambit_terry_step</c>.</summary>
+	public static float MaxStep = 12f;
+
+	/// <summary>Chase rate for the pelvis/lean easing, 1/s — the rise is a motion, not a teleport,
+	/// and the planner's output may step when the leg constraint engages. Lower = statelier.
+	/// <c>gambit_terry_risechase</c>.</summary>
+	public static float RiseChaseRate = 6f;
+
+	/// <summary>Plant the OFF hand on the tabletop while risen (it tracks the body through the +Y
+	/// side margin, and is skipped whenever the left arm couldn't honestly reach it).
+	/// <c>gambit_terry_brace</c>.</summary>
+	public static bool BraceOn = true;
 
 	/// <summary><b>Approach A vs the old M13 hack — the A/B comparison lever.</b>
 	/// false (default) = Approach A: a square outside <see cref="ReachBandX"/> idles the hand, no
@@ -70,10 +104,11 @@ public static class SeatedHandSpikes
 	/// comparison levers below.</para></summary>
 	public static bool NaturalLean = true;
 
-	/// <summary>The most the terry leans in, world units of shoulder-forward travel. ~15 is a real
-	/// lean over the board without lunging flat. Higher reaches farther but starts to look like a
-	/// dive; lower keeps it subtle and leans more on the piece-slide. <c>gambit_terry_maxlean</c>.</summary>
-	public static float MaxLean = 15f;
+	/// <summary>The most the terry leans in, world units of shoulder-forward travel. Was 15 when
+	/// the lean was the ONLY reach lever; now the half-rise does the long-haul work, so the
+	/// lean is back to a subtle torso tip layered on top (the harness proof ran at 6).
+	/// <c>gambit_terry_maxlean</c>.</summary>
+	public static float MaxLean = 6f;
 
 	/// <summary>Bone the natural lean translates forward. <c>spine_2</c> tips the shoulders over the
 	/// board (its subtree carries the arm). If it reads as sliding rather than leaning, this is the
@@ -138,6 +173,46 @@ public static class SeatedHandSpikes
 		if ( !HandsOn ) LobbyPlayer.Local?.ClearHandPose(); // drop any IK + bone override we left on
 		Log.Info( $"[Gambit] seated hands {( HandsOn ? "ON" : "OFF (bodies only — the shipped world)" )}. "
 			+ "Sit down; run gambit_terry to read the reach, gambit_terry_probe to sweep it." );
+	}
+
+	[ConCmd( "gambit_terry_rise" )]
+	public static void ToggleRise()
+	{
+		HalfRiseOn = !HalfRiseOn;
+		if ( !HalfRiseOn ) LobbyPlayer.Local?.ClearHandPose(); // drop pelvis override + foot/left IK
+		Log.Info( HalfRiseOn
+			? $"[Gambit] half-rise ON (default) — the terry rises off the chair to reach far squares; feet "
+				+ $"planted (step up to {MaxStep}u), pelvis capped {MaxRise}u, brace {( BraceOn ? "on" : "off" )}."
+			: "[Gambit] half-rise OFF — seated lean only (the M14 world, reach ceiling ~rank 2)." );
+	}
+
+	[ConCmd( "gambit_terry_maxrise" )]
+	public static void SetMaxRise( float u )
+	{
+		MaxRise = u < 0f ? 0f : u;
+		Log.Info( $"[Gambit] max pelvis rise = {MaxRise}u (the harness plans ~24 for the far rank)." );
+	}
+
+	[ConCmd( "gambit_terry_step" )]
+	public static void SetMaxStep( float u )
+	{
+		MaxStep = u < 0f ? 0f : u;
+		Log.Info( $"[Gambit] max foot step = {MaxStep}u (0 = feet welded; the rise shrinks instead)." );
+	}
+
+	[ConCmd( "gambit_terry_risechase" )]
+	public static void SetRiseChase( float k )
+	{
+		RiseChaseRate = k <= 0f ? 6f : k;
+		Log.Info( $"[Gambit] rise chase rate = {RiseChaseRate}/s (lower = statelier rise)." );
+	}
+
+	[ConCmd( "gambit_terry_brace" )]
+	public static void ToggleBrace()
+	{
+		BraceOn = !BraceOn;
+		if ( !BraceOn ) LobbyPlayer.Local?.ClearHandPose();
+		Log.Info( $"[Gambit] table brace (off hand) {( BraceOn ? "ON" : "OFF" )}." );
 	}
 
 	[ConCmd( "gambit_terry_natural" )]
