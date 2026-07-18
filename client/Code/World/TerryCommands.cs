@@ -193,6 +193,7 @@ public static class TerryCommands
 			+ "run gambit_terry_bones for the real list." );
 
 		DumpReach( station, body, avatar );
+		DumpReachGrid( ring, station, body, seat );
 	}
 
 	/// <summary>
@@ -233,9 +234,6 @@ public static class TerryCommands
 			Log.Info( $"   {shoulder,-12} ({s.x,7:0.##}, {s.y,6:0.##}, {s.z,6:0.##})"
 				+ $"   -> {( s - hand ).Length:0.##} to the hand, {( s - target ).Length:0.##} to the target" );
 		}
-
-		DumpReachGrid( ChessRing.Instance, station, body, ChessStation.Active == station
-			? ChessStation.ActiveSeat : SeatOf( station, avatar ) );
 	}
 
 	/// <summary>
@@ -310,15 +308,6 @@ public static class TerryCommands
 		}
 		Log.Info( "   ok = the arm reaches it; +N = short by N units. This is the envelope the "
 			+ "lean must extend and the clamp must fold unreachable squares into." );
-	}
-
-	/// <summary>Which seat this avatar is measured in — the local seat when it is us,
-	/// otherwise whichever seat carries its SteamId. Only used to label the reach grid.</summary>
-	static ChessSeat SeatOf( ChessStation station, LobbyPlayer avatar )
-	{
-		ulong id = avatar.Network.Owner?.SteamId ?? 0;
-		return station.SeatSteamId( ChessSeat.Black ) == id && id != 0
-			? ChessSeat.Black : ChessSeat.White;
 	}
 
 	static void Measure( ChessStation station, SkinnedModelRenderer body, string bone, string why )
