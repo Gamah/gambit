@@ -46,12 +46,19 @@
 > 1. Pick up the TAKING piece first — plain thumb+index "okay" pinch.
 > 2. Carry it to the taken piece's square and set it down. **Both pieces simply share the
 >    square for now** — how that looks is a later tune, not a blocker.
-> 3. Then pick up the TAKEN piece with the modified grip (index extended, thumb+MIDDLE
->    holding it) and carry it to the capture tray.
+> 3. Then carry the TAKEN piece to the capture tray with the modified grip (index
+>    extended, thumb+MIDDLE holding it).
 >
-> So the timeline reorders to Lift → Carry → Drop → GrabVictim → Discard, the victim's
-> tray slide must wait for step 3 (today it fires the instant the FEN lands), and the
-> "exchange on the target square" moment is the new centre of the gesture.
+> **The EXCHANGE between 2 and 3 is a single specific animation beat, not two gestures.**
+> The taking piece lands, and in the SAME motion the hand switches poses and departs with
+> the taken piece — zero rest, zero in-between, zero interpolated idle between placing
+> one and lifting the other. The drop's end pose IS the grab's start pose (the hand is
+> already at the square; both pieces are there): the pinch releases the attacker as the
+> middle finger closes on the victim, one continuous motion into the tray carry.
+>
+> So the timeline reorders to Lift → Carry → **DropAndSwap (one beat)** → Discard, the
+> victim's tray slide must wait for the swap (today it fires the instant the FEN lands),
+> and the exchange beat is the centre of the whole capture gesture.
 >
 > **The finger choreography, specified by the owner** (replaces the single
 > `holdtype_pose_hand` blend, whose open/closed polarity was never even verified):
