@@ -282,6 +282,35 @@ session flips through all the spikes and logs the results; one cleanup pass keep
 deletes the scaffolding.** Everything defaults OFF — the shipped world (bodies only,
 `ChessRing.TerrySeated`) is untouched until you pull a lever.
 
+### What the editor sweeps established (2026-07-18), and the direction
+
+Measured, not recalled (`gambit_terry_sweep`, White seat, station-local x):
+
+- **Baseline tops out at ~rank 2.** Shoulder ~−32, arm ~19.9, hand reaches x≈−13. The doc's
+  ceiling, confirmed.
+- **The IK re-solves against a moved shoulder — proven three ways.** `sitting_02` shifts the
+  shoulder +7u and the hand follows +6u (free, from the pose). A `spine_2` bone-override lean
+  moves it and the hand follows (Approach B composes — the doc's open question, answered YES). A
+  1.5× arm-bone scale even works (native honours it, +10u) — **C was wrong in the old doc**, but a
+  scaled arm looks grotesque and still only reaches ~rank 4.
+- **Nothing reaches the far half (ranks 5–8)** by any lever — the hard limit stands.
+- **The two early "verdicts" were scaffolding bugs, not findings:** the lean/scale blew up to
+  712→1702→3e14 (reading the already-overridden bone and re-applying — fixed to read the
+  animation pose), and the probe printed fake "ok" on far ranks (measuring reach-to-idle — fixed
+  to force a strain).
+
+**Direction chosen: a graded NATURAL LEAN, now the default (`NaturalLean`, on when hands are on).**
+A seated player reaches a far piece by leaning in from the waist, not by stretching — so
+`ApplyHandPose` leans the torso toward the target only as far as needed (capped at `MaxLean`),
+reaches from the leaned position clamped to that envelope (no straightened/dragged arm — the thing
+that read as broken), and lets `ChessBoardView`'s piece-slide finish the farthest squares (a
+natural motion, not a miss). This is Approach B done as a real motion rather than a hack, folding
+in A's "don't strain" and dropping the arm-stretch/scale distortions. The sit pose is NOT the
+limiter — the 5° clamp is on the animgraph *aim*, which we bypass entirely with the bone override;
+the sit pose only governs the legs, and the lean composes on top of it. `sitting_02` remains
+available as a free +6u on top (`gambit_terry_sit 2`). **The open question is now visual only: does
+the lean-and-reach read as a person playing chess?** — answerable only in the editor.
+
 **The rulers (unchanged, read the result):** `gambit_terry` (config dump + bone ruler + geometric
 reach grid — works with hands off), `gambit_terry_probe` (sweeps the hand over all 64 squares and
 prints achieved-vs-asked per square), `gambit_terry_bones` (real bone names), and

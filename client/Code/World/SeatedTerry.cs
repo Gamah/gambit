@@ -197,18 +197,17 @@ public sealed class SeatedTerry : Component
 	// M14 SWEEP — rip out with the probe. One command that runs every quantitative spike.
 	//
 	// gambit_terry_sweep drives the local seated hand at a fixed FAR square and measures how far
-	// the arm actually gets under each config in turn — baseline, sit=2, lean(spine_2),
-	// lean(arm_upper_R), armscale — settling the skeleton between each, then prints one table.
-	// It forces a controlled environment (hands on, sphere clamp off, reach band wide open so the
-	// hand strains at the far target instead of idling) and restores every lever afterwards. The
-	// visual A taste call it cannot answer — that stays an eyeball — but every NUMBER the spikes
-	// turn on is here in one pasteable block.
+	// the arm actually gets under each config — baseline (no lean), the natural graded lean (the
+	// shipping default), sit=2, and both together — settling between each, then prints one table.
+	// It forces a controlled environment (hands on, sphere clamp off, reach band wide open) and
+	// restores every lever afterwards. The visual taste call it cannot answer — does the lean read
+	// as leaning — stays an eyeball, but the reach NUMBERS are here in one pasteable block.
 	// ─────────────────────────────────────────────────────────────────────────────
 
 	/// <summary>Toggled by <c>gambit_terry_sweep</c>. Local-seated station only.</summary>
 	public static bool Sweep;
 
-	const int SweepPhases = 5;          // baseline, sit2, lean-spine, lean-arm, armscale
+	const int SweepPhases = 4;          // baseline, natural lean, sit=2, natural+sit=2
 	const float SweepSettle = 1.0f;     // seconds before measuring — long enough for a sit-pose blend
 	const float SweepHold = 1.3f;       // seconds per phase total
 
@@ -223,7 +222,7 @@ public sealed class SeatedTerry : Component
 	readonly float[] _swMiss = new float[SweepPhases];
 
 	// Levers snapshotted at sweep start, restored at the end.
-	bool _savedHands, _savedSphere, _savedLean;
+	bool _savedHands, _savedSphere, _savedLean, _savedNatural;
 	int _savedSit;
 	float _savedBand, _savedLeanF, _savedScale;
 	string _savedLeanBone;
@@ -254,6 +253,7 @@ public sealed class SeatedTerry : Component
 			_savedLeanBone = SeatedHandSpikes.LeanBone;
 			_savedLeanF = SeatedHandSpikes.LeanForward;
 			_savedScale = SeatedHandSpikes.ArmScale;
+			_savedNatural = SeatedHandSpikes.NaturalLean;
 
 			// The controlled environment: hands live, no clamp, band wide open so every phase
 			// strains at the SAME far target and the misses are comparable.
@@ -304,20 +304,20 @@ public sealed class SeatedTerry : Component
 	/// phase N−1's sit pose or lean).</summary>
 	static void ConfigureSweepPhase( int phase )
 	{
-		// Defaults for every phase; each phase below overrides only what it tests.
+		// Isolate each config: everything off/upright unless this phase turns it on. The manual
+		// spike levers (Approach B/C) stay off — the sweep is now about the shipping default (the
+		// natural graded lean) and the free sit-pose gain, not the distortion hacks.
+		SeatedHandSpikes.NaturalLean = false;
 		SeatedHandSpikes.SitPose = 1;
 		SeatedHandSpikes.LeanOn = false;
-		SeatedHandSpikes.LeanBone = "spine_2";
-		SeatedHandSpikes.LeanForward = 10f;
 		SeatedHandSpikes.ArmScale = 1f;
 
 		switch ( phase )
 		{
-			case 1: SeatedHandSpikes.SitPose = 2; break;                                    // sitting_02
-			case 2: SeatedHandSpikes.LeanOn = true; SeatedHandSpikes.LeanBone = "spine_2"; break;
-			case 3: SeatedHandSpikes.LeanOn = true; SeatedHandSpikes.LeanBone = "arm_upper_R"; break;
-			case 4: SeatedHandSpikes.ArmScale = 1.5f; break;
-			// case 0: baseline — defaults as set above.
+			case 1: SeatedHandSpikes.NaturalLean = true; break;                            // the shipping default
+			case 2: SeatedHandSpikes.SitPose = 2; break;                                   // sitting_02 alone
+			case 3: SeatedHandSpikes.NaturalLean = true; SeatedHandSpikes.SitPose = 2; break; // both together
+			// case 0: baseline — upright, no lean.
 		}
 	}
 
@@ -353,28 +353,23 @@ public sealed class SeatedTerry : Component
 
 	void SweepReport( ChessSeat seat )
 	{
-		string[] names = { "baseline", "sit=2", "lean spine_2", "lean arm_R", "armscale 1.5" };
+		string[] names = { "baseline", "natural lean", "sit=2", "natural+sit=2" };
 
-		Log.Info( "── gambit_terry_sweep: reach under each spike (target = far centre square) ──" );
-		Log.Info( seat == ChessSeat.White ? "   (White seat; handX rises toward the board as reach extends)"
-			: "   (Black seat; handX falls toward the board as reach extends)" );
-		Log.Info( "   phase          arm    shldrX    handX     miss" );
+		Log.Info( "── gambit_terry_sweep: reach to a far-centre square under each config ──" );
+		Log.Info( seat == ChessSeat.White ? "   (White seat; handX rises toward the board as reach extends. rank5≈+2.4)"
+			: "   (Black seat; handX falls toward the board as reach extends. rank4≈−2.4)" );
+		Log.Info( "   phase           arm    shldrX    handX     miss" );
 		for ( int i = 0; i < SweepPhases; i++ )
-			Log.Info( $"   {names[i],-13} {_swArm[i],5:0.0}  {_swShoulderX[i],7:0.0}  {_swHandX[i],7:0.0}  {_swMiss[i],7:0.0}" );
+			Log.Info( $"   {names[i],-14} {_swArm[i],5:0.0}  {_swShoulderX[i],7:0.0}  {_swHandX[i],7:0.0}  {_swMiss[i],7:0.0}" );
 
-		// Verdicts, as miss-reduction vs baseline (positive = the arm got closer to the far target).
-		float sitShoulder = _swShoulderX[1] - _swShoulderX[0];
-		bool sitMoved = sitShoulder >= 1f || sitShoulder <= -1f;
+		// Verdicts, as miss-reduction vs the upright baseline (positive = the hand got closer).
 		Log.Info( "── reading it ──" );
-		Log.Info( $"   sit=2 shoulder Δ: {sitShoulder:+0.0;-0.0}u ({( sitMoved ? "sitting_02 shifts the shoulder — measure the sign against the board" : "no real shift — sitting_02 buys nothing" )})" );
-		Log.Info( $"   lean spine_2 reach gain: {_swMiss[0] - _swMiss[2]:+0.0;-0.0}u "
-			+ $"({( _swMiss[0] - _swMiss[2] >= 2f ? "the lean composed via the torso" : "no gain — the arm subtree didn't inherit the override" )})" );
-		Log.Info( $"   lean arm_R reach gain:   {_swMiss[0] - _swMiss[3]:+0.0;-0.0}u "
-			+ $"({( _swMiss[0] - _swMiss[3] >= 2f ? "the IK re-solves against a moved root — B IS ALIVE" : "IK ignores the override — B is dead, fall back to A" )})" );
-		Log.Info( $"   armscale 1.5 reach gain: {_swMiss[0] - _swMiss[4]:+0.0;-0.0}u "
-			+ $"({( _swMiss[0] - _swMiss[4] >= 2f ? "native honoured the bone scale — C worth a look" : "no gain — native ignores per-bone scale, C declined with evidence" )})" );
-		Log.Info( "   (arm should be ~19.9 measured, not 24; if it reads 24 the bone names missed — run gambit_terry_bones.)" );
-		Log.Info( "   A (near-half taste call) is the one thing this can't score — turn hands on and LOOK: gambit_terry_hands." );
+		Log.Info( $"   natural lean gain:  {_swMiss[0] - _swMiss[1]:+0.0;-0.0}u  ← the shipping default; the terry leans in to reach" );
+		Log.Info( $"   sit=2 alone gain:   {_swMiss[0] - _swMiss[2]:+0.0;-0.0}u  (free, straight from the pose)" );
+		Log.Info( $"   natural + sit=2:    {_swMiss[0] - _swMiss[3]:+0.0;-0.0}u  closer to the far target" );
+		Log.Info( "   Far squares beyond even this get the piece-slide for the last bit — a natural motion, not a miss." );
+		Log.Info( "   (arm should read ~19.9, not 24; if it says 24 the bone names missed — run gambit_terry_bones.)" );
+		Log.Info( "   The one thing this can't score is whether the lean READS as leaning — turn it on and LOOK: gambit_terry_hands." );
 	}
 
 	void RestoreSweepLevers()
@@ -387,6 +382,7 @@ public sealed class SeatedTerry : Component
 		SeatedHandSpikes.LeanBone = _savedLeanBone ?? "spine_2";
 		SeatedHandSpikes.LeanForward = _savedLeanF;
 		SeatedHandSpikes.ArmScale = _savedScale;
+		SeatedHandSpikes.NaturalLean = _savedNatural;
 	}
 
 	/// <summary>First bone name that resolves — arm_lower_R1 vs arm_lower_R, hand_R1 vs hand_R —

@@ -1078,6 +1078,7 @@ public sealed class LobbyPlayer : Component
 		float side = seat == ChessSeat.White ? -1f : +1f;
 		var idle = new Vector3( side * ring.HandIdleX, side * ring.HandIdleY, ring.HandIdleZ );
 
+		_pendingLean = 0f;
 		Vector3 target = idle;
 		if ( pose.OnBoard && pose.Weight > 0f )
 		{
@@ -1116,8 +1117,31 @@ public sealed class LobbyPlayer : Component
 			// The old M13 sphere clamp is kept behind the lever ONLY to compare the two failure
 			// modes live. It collapses the far ranks onto ~rank 2 (the frozen-hand trap the doc
 			// documents) — flip gambit_terry_clamp to see it.
-			if ( SeatedHandSpikes.UseSphereClamp )
+			if ( SeatedHandSpikes.NaturalLean && ShoulderLocal( station ) is { } sh0 )
 			{
+				// ── Reach like a person: lean in only as far as needed, then reach ──
+				//
+				// A seated player reaches a far piece by leaning from the waist, not by growing the
+				// arm. Lean the torso toward the target by the shortfall (capped at MaxLean) —
+				// ApplyReachSpikes turns _pendingLean into the actual bone override that moves the
+				// shoulder forward. Then clamp the reach to the LEANED envelope so the arm never
+				// straightens or drags (the thing that read as broken). ChessBoardView's piece-slide
+				// covers any residual for the farthest squares — which is just sliding a piece you
+				// can't quite place. Near squares: deficit ≤ 0, no lean, upright, exact reach.
+				float reach = ring.HandReach;
+				float deficit = ( on - sh0 ).Length - reach;
+				_pendingLean = deficit > 0f ? Math.Min( deficit, SeatedHandSpikes.MaxLean ) : 0f;
+
+				float fwd = seat == ChessSeat.White ? +1f : -1f;
+				var leaned = sh0 + new Vector3( fwd * _pendingLean, 0f, 0f );
+				var reachOut = on - leaned;
+				if ( reachOut.Length > reach )
+					on = leaned + reachOut.Normal * reach;
+				target = Vector3.Lerp( idle, on, pose.Weight );
+			}
+			else if ( SeatedHandSpikes.UseSphereClamp )
+			{
+				// Comparison lever: the cut M13 static sphere clamp (no lean — collapses far ranks).
 				if ( ShoulderLocal( station ) is { } shoulder )
 				{
 					var reachOut = on - shoulder;
@@ -1132,7 +1156,7 @@ public sealed class LobbyPlayer : Component
 			}
 			else
 			{
-				target = idle; // out of band → rest, don't strain at a piece the arm can't make
+				target = idle; // isolated Approach A: out of band → rest
 			}
 		}
 
@@ -1194,9 +1218,14 @@ public sealed class LobbyPlayer : Component
 		r.SetIk( IkRight, new Transform( world, rot ) );
 	}
 
-	/// <summary>Whether we currently hold a bone override (Approach B lean / C arm-scale), so the
-	/// off-paths know to clear it exactly once rather than every frame.</summary>
+	/// <summary>Whether we currently hold a bone override (natural lean / spike lean / arm-scale),
+	/// so the off-paths know to clear it exactly once rather than every frame.</summary>
 	bool _reachSpikeApplied;
+
+	/// <summary>How far the natural lean wants the torso forward THIS frame (world units), computed
+	/// in <see cref="ApplyHandPose"/> from the reach shortfall and applied in
+	/// <see cref="ApplyReachSpikes"/>. 0 = upright (target within reach, or lean off).</summary>
+	float _pendingLean;
 
 	/// <summary>
 	/// M14 reach spikes, applied per frame just before the hand IK — <b>scaffolding, deleted with
@@ -1221,10 +1250,14 @@ public sealed class LobbyPlayer : Component
 	/// </summary>
 	void ApplyReachSpikes( SkinnedModelRenderer r, ChessStation station, ChessSeat seat )
 	{
-		bool lean = SeatedHandSpikes.LeanOn && SeatedHandSpikes.LeanForward != 0f;
+		// The natural lean (default) drives the bone from _pendingLean; the manual Approach-B lean
+		// lever is only live when the natural path is off, so the two never fight over the bone.
+		bool natural = SeatedHandSpikes.NaturalLean && _pendingLean > 0.01f;
+		bool manualLean = !SeatedHandSpikes.NaturalLean
+			&& SeatedHandSpikes.LeanOn && SeatedHandSpikes.LeanForward != 0f;
 		bool scale = SeatedHandSpikes.ArmScale != 1f;
 
-		if ( !lean && !scale )
+		if ( !natural && !manualLean && !scale )
 		{
 			if ( _reachSpikeApplied ) { r.ClearPhysicsBones(); _reachSpikeApplied = false; }
 			return;
@@ -1240,15 +1273,16 @@ public sealed class LobbyPlayer : Component
 		// compounds every frame and the bone flies off to thousands of units (it did: the first
 		// sweep read 712 → 1702 → 3e14). TryGetBoneTransformAnimation is the post-animation,
 		// pre-override pose, so a fixed offset/scale on it is stable frame to frame.
-		if ( lean )
+		if ( natural || manualLean )
 		{
-			var bone = model.Bones.GetBone( SeatedHandSpikes.LeanBone );
+			string boneName = natural ? SeatedHandSpikes.NaturalLeanBone : SeatedHandSpikes.LeanBone;
+			float amount = natural ? _pendingLean : SeatedHandSpikes.LeanForward;
+			var bone = model.Bones.GetBone( boneName );
 			if ( bone is not null && r.TryGetBoneTransformAnimation( bone, out var world ) )
 			{
 				// "Forward" = toward the board = station +X for White (who sits at −X), −X for Black.
 				float fwd = seat == ChessSeat.White ? +1f : -1f;
-				var offset = station.WorldRotation * new Vector3( fwd * SeatedHandSpikes.LeanForward, 0f, 0f );
-				world.Position += offset;
+				world.Position += station.WorldRotation * new Vector3( fwd * amount, 0f, 0f );
 				r.SetBoneTransform( bone, r.WorldTransform.ToLocal( world ) );
 			}
 		}
@@ -1311,12 +1345,15 @@ public sealed class LobbyPlayer : Component
 		square < 0 ? Vector3.Zero : ring.SquareLocalPosition( square & 7, square >> 3 );
 
 	/// <summary>The working arm's shoulder pivot (arm_upper_R), station-local — the centre the
-	/// reach clamp measures from. Read fresh so it follows the pose (a lean, a scoot) rather
-	/// than a stale constant; null if the bone can't be resolved, in which case the clamp is
-	/// simply skipped and the raw target stands.</summary>
+	/// reach measures from. Reads the ANIMATION pose (post-sit, pre-override), NOT the final one:
+	/// the natural lean moves the shoulder via a bone override, so reading the final (already-leaned)
+	/// shoulder to compute this frame's lean would feed the lean back into itself and oscillate. The
+	/// animation pose is the un-leaned shoulder, so the deficit — and the lean it drives — is stable.
+	/// Null if the bone can't be resolved, in which case the reach clamp is skipped.</summary>
 	Vector3? ShoulderLocal( ChessStation station )
 	{
-		if ( _bodyRenderer != null && _bodyRenderer.TryGetBoneTransform( "arm_upper_R", out var tx ) )
+		if ( _bodyRenderer?.Model?.Bones.GetBone( "arm_upper_R" ) is { } bone
+			&& _bodyRenderer.TryGetBoneTransformAnimation( bone, out var tx ) )
 			return station.WorldTransform.PointToLocal( tx.Position );
 		return null;
 	}

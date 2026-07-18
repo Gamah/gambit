@@ -60,6 +60,26 @@ public static class SeatedHandSpikes
 	/// as a constant.</para></summary>
 	public static float ReachBandX = 12f;
 
+	/// <summary><b>The real motion: a graded natural lean (default ON).</b> A seated player reaches
+	/// a far piece by leaning in from the waist, not by growing the arm. When on, the hand leans
+	/// the torso toward the target only as far as NEEDED (capped at <see cref="MaxLean"/>), reaches
+	/// from the leaned position clamped to that envelope so the arm never straightens or drags, and
+	/// lets ChessBoardView's piece-slide finish the last bit for the farthest squares. No
+	/// distortion, no dead idle — this is what a person does. <c>gambit_terry_natural</c>.
+	/// <para>Supersedes the isolated Approach-A idle and the M13 sphere clamp; those remain only as
+	/// comparison levers below.</para></summary>
+	public static bool NaturalLean = true;
+
+	/// <summary>The most the terry leans in, world units of shoulder-forward travel. ~15 is a real
+	/// lean over the board without lunging flat. Higher reaches farther but starts to look like a
+	/// dive; lower keeps it subtle and leans more on the piece-slide. <c>gambit_terry_maxlean</c>.</summary>
+	public static float MaxLean = 15f;
+
+	/// <summary>Bone the natural lean translates forward. <c>spine_2</c> tips the shoulders over the
+	/// board (its subtree carries the arm). If it reads as sliding rather than leaning, this is the
+	/// knob to move (a lower spine bone hinges more from the waist).</summary>
+	public static string NaturalLeanBone = "spine_2";
+
 	/// <summary><b>Approach B — the SetBoneOverride fake-lean.</b> false = no lean. true = each
 	/// frame, override <see cref="LeanBone"/> forward toward the board by <see cref="LeanForward"/>
 	/// units before the hand IK solves. <c>gambit_terry_lean &lt;units&gt;</c> (0 turns it off).
@@ -118,6 +138,34 @@ public static class SeatedHandSpikes
 		if ( !HandsOn ) LobbyPlayer.Local?.ClearHandPose(); // drop any IK + bone override we left on
 		Log.Info( $"[Gambit] seated hands {( HandsOn ? "ON" : "OFF (bodies only — the shipped world)" )}. "
 			+ "Sit down; run gambit_terry to read the reach, gambit_terry_probe to sweep it." );
+	}
+
+	[ConCmd( "gambit_terry_natural" )]
+	public static void ToggleNatural()
+	{
+		NaturalLean = !NaturalLean;
+		if ( !NaturalLean ) LobbyPlayer.Local?.ClearHandPose();
+		Log.Info( NaturalLean
+			? $"[Gambit] natural lean ON (default) — the terry leans in up to {MaxLean}u to reach, then the "
+				+ "piece-slide covers the rest. gambit_terry_maxlean tunes it; gambit_terry_natlbone the bone."
+			: "[Gambit] natural lean OFF — falls back to the isolated Approach-A idle / sphere-clamp levers." );
+	}
+
+	[ConCmd( "gambit_terry_maxlean" )]
+	public static void SetMaxLean( float u )
+	{
+		MaxLean = u < 0f ? 0f : u;
+		Log.Info( $"[Gambit] max natural lean = {MaxLean}u of shoulder-forward travel. "
+			+ "~15 is a real lean over the board; higher reaches farther but starts to look like a dive." );
+	}
+
+	[ConCmd( "gambit_terry_natlbone" )]
+	public static void SetNaturalBone( string bone )
+	{
+		NaturalLeanBone = string.IsNullOrWhiteSpace( bone ) ? "spine_2" : bone;
+		LobbyPlayer.Local?.ClearHandPose();
+		Log.Info( $"[Gambit] natural lean bone = '{NaturalLeanBone}'. spine_2 tips the shoulders; a lower spine "
+			+ "bone (spine_1/spine_0) hinges more from the waist if it reads as sliding rather than leaning." );
 	}
 
 	[ConCmd( "gambit_terry_clamp" )]
@@ -215,26 +263,21 @@ public static class SeatedHandSpikes
 	[ConCmd( "gambit_terry_spikes" )]
 	public static void Playbook()
 	{
-		Log.Info( "── M14 seated-hand spikes — levers & playbook ──" );
+		Log.Info( "── M14 seated hands — levers & playbook ──" );
 		Log.Info( $"   HandsOn={HandsOn}  SitPose={SitPoseClamped}  "
-			+ $"OutOfReach={( UseSphereClamp ? "M13 sphere clamp" : $"Approach A idle (band |x|>={ReachBandX})" )}" );
-		Log.Info( $"   Lean(B)={( LeanOn ? $"ON {LeanForward}u on '{LeanBone}'" : "off" )}  "
-			+ $"ArmScale(C)={ArmScale}{( ArmScale == 1f ? " (neutral)" : " (best-effort probe)" )}" );
-		Log.Info( "   Everything defaults OFF; the bodies (ChessRing.TerrySeated) are shipped and separate." );
-		Log.Info( "── the one-paste shortcut ──" );
-		Log.Info( "   gambit_terry_sweep = run every NUMERIC spike in turn (~7s) and dump one table. "
-			+ "Only Approach A's read-as-playing taste call needs a manual look (gambit_terry_hands)." );
-		Log.Info( "── how to run each by hand ──" );
-		Log.Info( "   0. sit down. gambit_terry = ruler + geometric reach grid (works with hands off)." );
-		Log.Info( "   cross-cut: gambit_terry_sit 2  → does sitting_02 lean the shoulders? (free reach if so)" );
-		Log.Info( "   A: gambit_terry_hands, then gambit_terry_probe → does a hand that touches near pieces "
-			+ "and idles for far ones read as PLAYING or BROKEN? Taste call. gambit_terry_band tunes the edge; "
-			+ "gambit_terry_clamp flips to the old sphere hack to compare. Gate: if worse than no hand, SHIP NOTHING." );
-		Log.Info( "   B: gambit_terry_lean 10 → then gambit_terry. Did reach extend? If not, "
-			+ "gambit_terry_leanbone arm_upper_R and retry. Gate: if it won't compose, fall back to A." );
-		Log.Info( "   C: gambit_terry_armscale 1.5 → then gambit_terry. Did hand_R actually reach farther? "
-			+ "Almost certainly not (no bone-scale API) — decline with evidence." );
-		Log.Info( "   Verdict → one cleanup pass: keep the winner as constants, delete SeatedHandSpikes.cs + "
-			+ "TerryCommands.cs + the probe. Full plan: SEATED-HANDS-REACH.md." );
+			+ $"NaturalLean={( NaturalLean ? $"ON (max {MaxLean}u on '{NaturalLeanBone}')" : "off" )}" );
+		Log.Info( $"   Comparison levers — OutOfReach(nat off)={( UseSphereClamp ? "sphere clamp" : $"idle band {ReachBandX}" )}  "
+			+ $"ManualLean(B)={( LeanOn ? $"{LeanForward}u/{LeanBone}" : "off" )}  ArmScale(C)={ArmScale}" );
+		Log.Info( "   The DEFAULT is the natural graded lean: the terry leans in as far as needed to reach a piece, "
+			+ "and the piece-slide finishes the farthest squares. No arm-stretch, no dead idle." );
+		Log.Info( "── run it ──" );
+		Log.Info( "   1. sit down, gambit_terry_hands, start a game → watch your hand reach & lean over the board." );
+		Log.Info( "   2. gambit_terry_sweep → one table: how far baseline / natural lean / sit=2 / both reach (~5s)." );
+		Log.Info( "   Tune: gambit_terry_maxlean <u> (how far it leans), gambit_terry_natlbone <bone> (waist vs shoulders), "
+			+ "gambit_terry_sit 2 (add the free pose lean)." );
+		Log.Info( "── the question that decides it ──" );
+		Log.Info( "   Does the lean-and-reach read as a PERSON playing chess? If yes → ship natural lean (+maybe sit=2)." );
+		Log.Info( "   Comparison-only levers (off by default): gambit_terry_natural off, then gambit_terry_clamp / "
+			+ "gambit_terry_lean / gambit_terry_armscale to see the isolated hacks. Full plan: SEATED-HANDS-REACH.md." );
 	}
 }
