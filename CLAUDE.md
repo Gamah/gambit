@@ -661,15 +661,13 @@ have been run here at all.
   kill switch (git commit `0f68c91` is why). The seat-plant/chair knobs (`SeatSitBack`,
   `SeatSitZ`, `SitOffsetHeight`, `ChairSeatTopZ`, …) are **code defaults on a runtime-built
   `ChessRing`**, so retuning them is an edit-and-hotload loop, not a scene tweak.
-  → **What a fixed-size Citizen CANNOT do is reach a piece.** Its arm is ~20u with no stretch
-  in the animgraph; the board is 34u deep and shared/centred between both seats, so the seated
-  hand reaches ~rank 2 and no lever moves it further. The entire IK/hand-posing path
-  (`ApplyHandPose`, `TerryPose`, the hover-sync, the `gambit_terry` measurement tools) was
-  removed rather than left as dead scaffolding — **the proof, the measured numbers, and the M14
-  plan are in `SEATED-HANDS-REACH.md`**, and the cut code is recoverable at tag
-  **`terry-hands-final`**. Before anyone re-attempts hands: read that doc, do the spike it names
-  FIRST, and know that "the bodies are enough" is a legitimate answer. The bodies are cosmetic —
-  no player-facing copy (`CenterInfoPanel`/`InfoScreen`) describes them, so none went stale.
+  → **What a fixed-size Citizen CANNOT do is reach a piece, and the hands idea is abandoned —
+  do not re-attempt it.** Its arm is ~20u with no stretch in the animgraph; the board is 34u
+  deep and shared/centred between both seats, so the seated hand reaches ~rank 2 and no lever
+  moves it further (a graded torso lean and a per-bone scale were both prototyped in-editor and
+  confirmed this — nothing reaches the far half without distorting the body). The IK/hand-posing
+  path was built, proven not to work, and removed. The bodies are cosmetic — no player-facing
+  copy (`CenterInfoPanel`/`InfoScreen`) describes them, so none went stale.
 - **Wall boards go through `WallBoardGeometry` — all of them.** It owns the size
   (`BoardScale`), the aspect (`Stretch`), and the shared floor anchor (`FloorAnchor`, which
   every board calls per-frame from its own `OnUpdate`). Boards match each other because
