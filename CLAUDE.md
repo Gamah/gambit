@@ -647,8 +647,8 @@ have been run here at all.
 - `ChessSetBuilder` lathes each piece as a runtime mesh. `BuildPiece(type, color, scale)`
   first tries `Model.Load("models/chess/{type}.vmdl")` and falls back to procedural —
   so dropping in a real piece set later is a one-function swap (**D5**).
-- `ChessStation` holds two-seat occupancy: `[Sync(FromHost)] WhiteSeatSteamId` /
-  `BlackSeatSteamId` (+ Steam names), claimed via `[Rpc.Host] RequestEnter(seat)`
+- `ChessStation` holds two-seat occupancy: `[Sync(FromHost)] WhiteSteamId` /
+  `BlackSteamId` (+ `WhiteName`/`BlackName`), claimed via `[Rpc.Host] RequestEnter(seat)`
   first-wins with loser-side reconciliation (**D1**). Seat cameras orbit the board
   center (`SeatOrbitRadius`/`SeatPitch`/`SeatLookDownAngle`). You take the side you
   walk up to; leaving a live game is a two-stage resign (Escape/Leave twice).
