@@ -25,7 +25,7 @@ public static class BoardGame
 	/// a fourth was the point to stop. Agreeing by construction costs nothing.</para>
 	/// </summary>
 	public static IBoardGame Source( LocalGameController local, LichessGameController lichess ) =>
-		lichess is { Engaged: true } ? lichess : local;
+		lichess is { Engaged: true } or { Mirroring: true } ? lichess : local;
 }
 
 /// <summary>

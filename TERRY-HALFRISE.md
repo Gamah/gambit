@@ -68,13 +68,19 @@ longer horizontal run lines the rise up with the far squares.
 Levers: `gambit_terry_rise / _maxrise / _step / _risechase / _brace` plus all of M14's.
 Kill chain, three deep: `ChessRing.TerrySeated` → `gambit_terry_hands` → `gambit_terry_rise`.
 
-**OPEN: a joined client reported seeing none of the animation.** The design says it should —
-SeatedTerry runs on every client, driven entirely by state that is already synced (occupancy,
-the game's ply, the packed HandState) — so one link in that chain is dead on joiners, and
-which one is not guessable from here. **`gambit_terry_net`** dumps the whole chain on the
-machine that runs it (statics → per-station refs → source/game ply → per-seat resolved
-avatar/renderer/HandState → the latched pose) with a reading key. Run it on the JOINED
-client mid-game; the dead link names itself.
+**SOLVED (retest): the joiner saw no animation because a lichess game was INVISIBLE to every
+non-participant by construction.** Nothing about a lichess game was networked — each
+participant polls gamchess privately, a solo flow (seek / challenge / shareable link) starts
+no local game at all, and `Engaged` only goes true on the client that asked. The joiner's
+`gambit_terry_net` dump said it plainly: `game=NULL, playing=False`. Not an animation bug —
+spectators couldn't see the BOARD either. Fixed with the **spectator mirror** in
+`LichessGameController`: the participant `[Rpc.Host]`-reports the observed move list, the
+host folds it into `[Sync] MirrorMoves/MirrorLive`, every non-engaged client rebuilds a
+display game and exposes it through the same `IBoardGame` seam (`Mirroring`) — so the view,
+sounds, hands and carry all light up for spectators and late joiners at once. Mirrored
+boards show no clocks (v1) and never accept input. NOTE: the probe/sweep are LOCAL-only
+diagnostics — a joiner is not supposed to see them; test mirroring with a real game.
+`gambit_terry_net` remains the diagnostic if the retest still fails.
 
 ## Decisions already made (don't relitigate)
 

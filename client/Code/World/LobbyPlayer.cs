@@ -1240,6 +1240,27 @@ public sealed class LobbyPlayer : Component
 			// so the compensation can never outrun the bones.
 			ApplyRiseOverrides( r, station, seat );
 			world -= _riseApplied + _leanApplied;
+
+			// One-shot pipeline dump, second half: what was ACTUALLY applied and where the
+			// bones ACTUALLY are (animation vs final). Splits "planner under-asked" from
+			// "bones under-moved" from "solver missed the compensated target".
+			if ( SeatedHandSpikes.RiseDebug )
+			{
+				Log.Info( "── rise debug: the skeleton ──" );
+				Log.Info( $"   applied: rise=({_riseApplied.x:0.0},{_riseApplied.y:0.0},{_riseApplied.z:0.0})"
+					+ $" |{_riseApplied.Length:0.0}|  lean=|{_leanApplied.Length:0.0}|"
+					+ $"  feetIk={_riseFeetIk}  braceIk={_riseBraceIk}" );
+				DumpBone( r, station, "pelvis" );
+				DumpBone( r, station, SeatedHandSpikes.NaturalLeanBone );
+				DumpBone( r, station, "arm_upper_R" );
+				DumpBone( r, station, "hand_R" );
+				Log.Info( $"   right-hand IK asked (station-local, post-compensation): "
+					+ $"{Fmt( station.WorldTransform.PointToLocal( world ) )}  true ask: "
+					+ $"{( LastHandIkTarget is { } ask ? Fmt( ask ) : "-" )}" );
+				Log.Info( "   → 'final' should equal 'anim + applied' for pelvis and the lean bone; if it doesn't, the"
+					+ " override isn't landing. hand_R final should equal the TRUE ask; short = the solver/compensation." );
+				SeatedHandSpikes.RiseDebug = false;
+			}
 		}
 		else
 		{
@@ -1402,9 +1423,11 @@ public sealed class LobbyPlayer : Component
 		// player's left side margin on the tabletop. All derived from the ring's real
 		// geometry rather than typed twice.
 		var t = new Gambit.Chess.RiseTunables(
-			Reach: _measuredArm - ReachMargin,
+			Reach: _measuredArm - SeatedHandSpikes.ReachMargin,
 			MaxLean: SeatedHandSpikes.MaxLean,
-			LegReach: _measuredLeg - LegMargin,
+			LegReach: SeatedHandSpikes.LegReachOverride > 0f
+				? SeatedHandSpikes.LegReachOverride
+				: _measuredLeg - LegMargin,
 			MaxStep: SeatedHandSpikes.MaxStep,
 			MaxRise: SeatedHandSpikes.MaxRise,
 			FootMinX: -( ring.FootEdgeX + 1f ),
@@ -1415,9 +1438,31 @@ public sealed class LobbyPlayer : Component
 			BraceZ: ring.TableTopSurfaceZ );
 
 		bool black = seat == ChessSeat.Black;
-		return Gambit.Chess.HalfRise.Plan(
+		var plan = Gambit.Chess.HalfRise.Plan(
 			ToPlanner( grasp, black ), ToPlanner( shoulder, black ), ToPlanner( pelvis, black ),
 			ToPlanner( ankleL, black ), ToPlanner( ankleR, black ), t );
+
+		// One-shot pipeline dump (gambit_terry_rise_dbg), first half: what the planner was
+		// GIVEN and what it decided. The second half (applied values, bones) logs at the end
+		// of ApplyHandPose once the overrides for this frame are down.
+		if ( SeatedHandSpikes.RiseDebug )
+		{
+			Log.Info( "── rise debug: the planner ──" );
+			Log.Info( $"   inputs (station-local, anim pose): grasp={Fmt( grasp )}  shoulder={Fmt( shoulder )}"
+				+ $"  pelvis={Fmt( pelvis )}  ankleL={Fmt( ankleL )}  ankleR={Fmt( ankleR )}" );
+			Log.Info( $"   chains: arm measured {_measuredArm:0.0} → reach {t.Reach:0.0}"
+				+ $"  leg measured {_measuredLeg:0.0} → budget {t.LegReach:0.0}"
+				+ $"{( SeatedHandSpikes.LegReachOverride > 0f ? " (OVERRIDDEN)" : "" )}"
+				+ $"  maxRise {t.MaxRise:0.0}  maxStep {t.MaxStep:0.0}  footMinX {t.FootMinX:0.0}" );
+			Log.Info( $"   plan: lean {plan.Lean:0.0}  rise |Δ|={plan.PelvisDelta.Length:0.0}"
+				+ $" Δ=({plan.PelvisDelta.X:0.0},{plan.PelvisDelta.Y:0.0},{plan.PelvisDelta.Z:0.0})"
+				+ $"  hand=({plan.Hand.X:0.0},{plan.Hand.Y:0.0},{plan.Hand.Z:0.0})  residual {plan.Residual:0.0}"
+				+ $"  stepped={plan.Stepped}  feet L=({plan.FootL.X:0.0},{plan.FootL.Y:0.0}) R=({plan.FootR.X:0.0},{plan.FootR.Y:0.0})" );
+			Log.Info( "   → if |Δ| here is far below the harness's ~35 for a far square, the LIVE leg triangle is"
+				+ " the collapse: check 'leg measured' and the pelvis/ankle Z inputs above. gambit_terry_leg <u> overrides it." );
+		}
+
+		return plan;
 	}
 
 	/// <summary>
@@ -1541,7 +1586,9 @@ public sealed class LobbyPlayer : Component
 
 	/// <summary>Measure the working arm and leg off the LIVE skeleton once (they never change
 	/// under a fixed avatar), with M13's measured numbers as the fallback — so a bone-name
-	/// drift degrades the plan's inputs, never NaNs it.</summary>
+	/// drift degrades the plan's inputs, never NaNs it. Logged once, because a silently wrong
+	/// chain (a twist/helper bone resolving where the real one should) collapses the whole
+	/// leg triangle and reads as "the terry won't rise" with nothing else visibly wrong.</summary>
 	void MeasureLimbs( SkinnedModelRenderer r )
 	{
 		if ( _measuredArm > 0f ) return;
@@ -1551,6 +1598,26 @@ public sealed class LobbyPlayer : Component
 			new[] { "leg_lower_R1", "leg_lower_R" }, new[] { "ankle_R" } );
 		_measuredArm = arm > 4f ? arm : FallbackArm;
 		_measuredLeg = leg > 4f ? leg : FallbackLeg;
+		Log.Info( $"[Gambit] terry limbs measured: arm {arm:0.0} (using {_measuredArm:0.0}), "
+			+ $"leg {leg:0.0} (using {_measuredLeg:0.0}); fallbacks {FallbackArm}/{FallbackLeg}. "
+			+ "Arm should read ~19.9. If leg reads far off ~30, the leg bones misresolved — gambit_terry_leg overrides." );
+	}
+
+	static string Fmt( Vector3 v ) => $"({v.x:0.0},{v.y:0.0},{v.z:0.0})";
+
+	/// <summary>Rise-debug: one bone's animation position vs its final one, station-local —
+	/// the difference IS the override actually landing (or not).</summary>
+	void DumpBone( SkinnedModelRenderer r, ChessStation station, string boneName )
+	{
+		string anim = "-", final_ = "-";
+		if ( r.Model?.Bones.GetBone( boneName ) is { } bone )
+		{
+			if ( r.TryGetBoneTransformAnimation( bone, out var a ) )
+				anim = Fmt( station.WorldTransform.PointToLocal( a.Position ) );
+			if ( r.TryGetBoneTransform( boneName, out var f ) )
+				final_ = Fmt( station.WorldTransform.PointToLocal( f.Position ) );
+		}
+		Log.Info( $"   bone {boneName,-12} anim {anim}  final {final_}" );
 	}
 
 	static float ChainLength( SkinnedModelRenderer r,

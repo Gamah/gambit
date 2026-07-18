@@ -76,6 +76,20 @@ public static class SeatedHandSpikes
 	/// <c>gambit_terry_brace</c>.</summary>
 	public static bool BraceOn = true;
 
+	/// <summary>Override the MEASURED leg reach (pelvis→ankle budget), world units; 0 = use the
+	/// live chain measurement. Exists because the first editor run showed the planner asking for
+	/// far less rise than the harness plans — and a mis-measured leg (a twist/helper bone
+	/// resolving where the real one should) collapses the leg triangle silently.
+	/// <c>gambit_terry_leg</c>.</summary>
+	public static float LegReachOverride;
+
+	/// <summary>One-shot: log the ENTIRE half-rise pipeline for the next planned reach frame —
+	/// planner inputs (live bones, measured chains), plan outputs, eased applied values, and
+	/// each key bone's animation-vs-final position. This is how "the hand stops at rank 2" gets
+	/// split into planner-under-asking vs bones-under-moving vs solver-missing, from one paste.
+	/// <c>gambit_terry_rise_dbg</c>.</summary>
+	public static bool RiseDebug;
+
 	/// <summary><b>Approach A vs the old M13 hack — the A/B comparison lever.</b>
 	/// false (default) = Approach A: a square outside <see cref="ReachBandX"/> idles the hand, no
 	/// reach animated (the doc's "don't move the hand at all"). true = the cut M13 sphere clamp
@@ -213,6 +227,38 @@ public static class SeatedHandSpikes
 		BraceOn = !BraceOn;
 		if ( !BraceOn ) LobbyPlayer.Local?.ClearHandPose();
 		Log.Info( $"[Gambit] table brace (off hand) {( BraceOn ? "ON" : "OFF" )}." );
+	}
+
+	/// <summary>Slack subtracted from the measured arm before planning (how far inside the reach
+	/// sphere every ask sits). The first probe showed the hand landing a consistent ~6-9u
+	/// short-and-high OF ITS OWN ASK — the signature of a two-bone solver asked at near-full
+	/// extension. Raising this bends the elbow into every reach at the cost of raw coverage.
+	/// <c>gambit_terry_margin</c>.</summary>
+	public static float ReachMargin = 2f;
+
+	[ConCmd( "gambit_terry_margin" )]
+	public static void SetReachMargin( float u )
+	{
+		ReachMargin = u < 0f ? 0f : u;
+		Log.Info( $"[Gambit] reach margin = {ReachMargin}u inside the measured arm. Bigger = bent-elbow asks the "
+			+ "solver actually lands; smaller = longer reach the solver may undercut. Re-run gambit_terry_probe." );
+	}
+
+	[ConCmd( "gambit_terry_leg" )]
+	public static void SetLegReach( float u )
+	{
+		LegReachOverride = u < 0f ? 0f : u;
+		Log.Info( LegReachOverride > 0f
+			? $"[Gambit] leg reach OVERRIDDEN to {LegReachOverride}u (the planner's pelvis→ankle budget)."
+			: "[Gambit] leg reach back to the live chain measurement (gambit_terry_rise_dbg prints it)." );
+	}
+
+	[ConCmd( "gambit_terry_rise_dbg" )]
+	public static void RiseDbg()
+	{
+		RiseDebug = true;
+		Log.Info( "[Gambit] rise debug armed — reach at a FAR square (hover/select it, or run the probe) "
+			+ "and the next planned frame dumps the whole pipeline: inputs → plan → applied → bones." );
 	}
 
 	[ConCmd( "gambit_terry_natural" )]
