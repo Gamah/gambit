@@ -174,28 +174,91 @@ retune of framing + layout, not a one-knob change. It reinforces the decision.
 
 ---
 
-## For the next milestone: keep vs cut
+## What M13 shipped, and what got cut
 
-**Cut (the reaching-hand path):**
+**Shipped:** the seated bodies — `TerrySeated` gate, sit pose (`sit=1`), the physics un-plant
+(`SetSeatedPhysics`), the chair (`StationChair`), the seat-camera blend, and the head-trim
+(`TrimSeatedAvatar`) that keeps the camera out of the skull. Gaze and blink are the stock Citizen
+idle; nothing in Gambit drives them. This is "two people at a board," and it stands.
 
-| file / symbol | what it is |
+**Cut** (this commit — the whole reaching-hand path proven impossible above):
+
+| file / symbol | was |
 |---|---|
-| `LobbyPlayer.ApplyHandPose` + reach clamp + `ShoulderLocal` | the IK targeting path — the thing that can't work |
-| `World/SeatedTerry.cs` — the debug **probe** block + `gambit_terry_probe` | rip-out scaffolding, marked as such in-file |
-| `ChessRing` `HandReach`, `HandLift`, `HandIdle*`, `HandGripOffset`, `HandPitch`, `HandDiscardReach`, `HandChaseRate` | hand-targeting knobs |
+| `World/SeatedTerry.cs` (deleted) | the IBoardGame-seam watcher that drove the hands + the `gambit_terry_probe` sweep |
+| `Code/Chess/TerryPose.cs` (deleted) | the pure, harness-proven hand state machine |
+| `World/TerryCommands.cs` (deleted) | `gambit_terry` ruler + reach grid, `gambit_terry_probe` — the measurement tools that produced this doc |
+| `LobbyPlayer.ApplyHandPose` / `ClearHandPose` / `ShoulderLocal` / `LastHandTarget` / `LastHandIkTarget` / `HandState` [Sync] / `PackHand` / `UnpackHand` | the IK targeting path + the hover/selection sync that fed it |
+| `ChessBoardView.PublishHandState` / `SquareIndexOf` | published the local player's hover/selection for observers' hands |
+| `ChessRing` `HandReach` / `HandLift` / `HandIdle*` / `HandGripOffset` / `HandPitch` / `HandDiscardReach` / `HandChaseRate` / `TrayHandLocalPosition` + the `SeatedTerry` wiring | the hand-targeting knobs |
 
-**Keep:**
+**Recovery is one checkout.** All of it is preserved at the annotated tag **`terry-hands-final`**
+(commit `ccde34f`) — the IK path, the state machine, and the measurement tools intact. M14 starts
+by cherry-picking or reading from there, not by re-deriving. `git show terry-hands-final:client/Code/Chess/TerryPose.cs` et al.
 
-| file / symbol | why |
-|---|---|
-| `Code/Chess/TerryPose.cs` | pure, harness-proven state machine — reference if hands are ever revisited at a smaller scale |
-| `World/SeatedTerry.cs` — the watcher (minus probe) | only if some *near-half* gesture is ever wanted |
-| `LobbyPlayer.LastHandIkTarget` | a real diagnostic (true wrist target vs grasp point) |
-| `TerryCommands.cs` — `gambit_terry` ruler + reach grid | the measurement tool that produced this doc |
-| **The seated bodies** — `sit=1`, plant, chair, camera blend, gaze, blink | the milestone's actual deliverable; independent of the arm |
+---
 
-**If reaching hands are ever revisited**, the only honest scopes are: (a) **reach your own half
-only, clamp/omit the rest** — accept the far half is never touched, and let the existing
-piece-slide carry far moves; or (b) commit to the **`SetBoneOverride` fake-lean spike** (unverified
-IK composition) to push the honest zone to the board center. Reaching across is off the table
-without a longer-armed model.
+## M14 plan: give the terries hands on the pieces (or decide not to)
+
+The goal is a hand that touches the pieces, or an honest decision that the bodies are enough.
+M13 proved the naive version is geometrically dead, so M14 is **three ranked approaches, each
+gated on a spike done FIRST** — do not re-instate the full IK path and *then* discover it can't
+work. Ordered cheapest-and-most-certain first.
+
+**Approach A — near-half-only reach (cheap, feasibility already proven).**
+- **Scope:** the hand reaches and touches pieces on **ranks 1–2 (your own side)**, which M13
+  measured as genuinely reachable at `SeatSitBack=26` (see the reach grid above). Far moves keep
+  `ChessBoardView`'s existing piece-slide, which has walked pieces since M11 — the hand simply
+  doesn't animate a reach it can't make; it idles for unreachable squares.
+- **Spike (a TASTE call, room-gated — this host cannot answer it):** does a hand that touches
+  near pieces but sits idle for far ones read as *playing*, or as *broken/half-finished*? Restore
+  `ApplyHandPose` from `terry-hands-final`, **clamp its domain to the reachable band** (drop the
+  reach-clamp-onto-a-sphere hack — for out-of-band squares, don't move the hand at all), and look
+  at it in the editor.
+- **Gate:** if a partial reach reads worse than no reach, **stop here** and M14 ships nothing new —
+  the bodies were already the deliverable. This is a real possible outcome, not a failure.
+- **Cost if kept:** re-add the hover/selection sync (`HandState`/`PackHand`/`PublishHandState`,
+  all recoverable from the tag) so an observer floats a hand over the square the mover is thinking
+  about; the rest is the restored path with a tighter domain.
+
+**Approach B — `SetBoneOverride` fake-lean (medium risk, reaches board CENTER, never the far ranks).**
+- **The unknown that gates everything:** does `SkinnedModelRenderer.SetBoneTransform` →
+  `SceneModel.SetBoneOverride` on a spine bone **compose with the hand IK in the same frame**?
+  The override is applied *after* the animator; whether the two-bone IK then re-solves against the
+  **leaned** shoulder or the animator's original one is **unverified** and decides the whole
+  approach. (Source basis: `SkinnedModelRenderer.Bones.cs:172-178`, and the no-stretch chain facts
+  in the engine-source section above.)
+- **Spike:** override `spine_2` (or the pelvis subtree) forward ~10u each `OnUpdate`, then `SetIk`
+  the hand at a center square, and measure `hand_R` (the old `gambit_terry` ruler technique) to see
+  whether reach actually extended. Also eval: does the leaned torso clip the tabletop or look
+  grotesque?
+- **Best case:** honest reach to ~**x −2…+3**, i.e. ranks 1–4ish. **Ranks 5–8 remain
+  unreachable** without the shoulder leaving the chair — B does not change that ceiling, it raises
+  the floor.
+- **Gate:** if the IK doesn't compose or the lean reads as broken, **fall back to A**.
+
+**Approach C — longer-armed seated model (the only full-board fix, biggest cost).**
+- **Research, before any art:** can a **seated** citizen get a modified arm **per-instance**
+  without touching the shared roaming citizen (one model, whole lobby)? Candidates: a separate
+  seated model, a per-instance **bone scale** on the seated renderer, or an additive arm-length.
+  The open question is whether the two-bone IK **honors** a scaled bone as extra reach or
+  re-normalizes it away (the animgraph has **no stretch** — a scaled bone may or may not read as a
+  longer effective segment). Answer this in a spike before committing to a model pipeline.
+- **Art:** CC0 only (repo rule). The Poly Haven set on file is *pieces*, not a citizen; a modified
+  citizen arm is the realistic path, not a new body.
+- **Gate:** high cost, only pursued if A and B are both rejected **and** physical full-board reach
+  is judged worth it. Most likely C is documented-and-declined, like several PLAN.md rows.
+
+**Cross-cutting, re-verify LIVE before any approach (house rule: derive, don't recall):**
+- **The `sitting_02` lean question M13 never answered.** M13 used `sit=1` (`sitting_01`). Whether
+  `sit=2` visibly leans the shoulders over the table — buying reach for free — is in the binary
+  clip and needs an **editor look**. If it leans meaningfully, it changes the math for A and B.
+- **The seat-framing cascade.** Moving the seat in, or shrinking the board, is **not one knob** —
+  the blast-radius list above is the checklist: `SeatOrbitRadius`/`SeatPitch`/`BuildSeatAnchor`,
+  `RingRadius`/`seatFootprint`, `UiFit`/`ScreenFractionRect`, the chair geometry, and the
+  independent `SpectatorBoard3D`. Any approach that repositions the sitter pays this.
+- **The info boards.** Per CLAUDE.md, if M14 changes what a player sees at the table, `CenterInfoPanel`
+  and `InfoScreen`'s Welcome branch describe it and must not be left saying otherwise.
+
+**If M14 does nothing:** that is a legitimate close. The bodies sit, look right, and the game plays;
+"terries playing chess" is already true in every sense except a hand on the wood.

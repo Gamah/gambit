@@ -33,53 +33,6 @@ public sealed class LobbyPlayer : Component
 	/// local FileSystem.Data.</summary>
 	[Sync] public string GambitName { get; set; }
 
-	/// <summary>
-	/// This player's hovered and selected board square, packed into one int and published
-	/// by the OWNER. −1 = neither (the resting value, and what an unseated player carries).
-	///
-	/// <para><b>The only thing M13 puts on the wire, and the smallest thing that could
-	/// be.</b> Everything else a seated terry does — the pose, the pickup animation, the
-	/// chair's tuck, the tint — is derived locally from state that already replicates. Hover
-	/// and selection are the exception because they have NO other evidence: nothing else in
-	/// the game knows which square you are thinking about. A move, by contrast, is already
-	/// relayed, so every client can drive the same pickup off LastMoveUci without being
-	/// told.</para>
-	///
-	/// <para><b>Owner-synced, not host-authoritative</b>, unlike ChessStation's occupancy: a
-	/// hover is the CLIENT's own truth and the host has no opinion on it.
-	/// <see cref="GambitName"/> is the precedent — a bare [Sync] on a networked,
-	/// player-owned component, published behind an explicit change gate.</para>
-	///
-	/// <para>Bandwidth is a handful of int writes per second per seated player: it changes
-	/// only when the cursor crosses a square boundary, and NOTHING is sent while the cursor
-	/// sits still or nobody is seated. [Sync] diffs anyway; the change gate in
-	/// ChessBoardView is belt-and-braces and matches the house style.</para>
-	///
-	/// <para><b>It survives the lichess seam for free.</b> The payload is a raw square index
-	/// — no game-source knowledge crosses the wire. An observer only needs to know which
-	/// square to float a hand over, and the hovering player derives their own hover from
-	/// their own source. Which is also why a third kind of game gets this by existing.</para></summary>
-	[Sync] public int HandState { get; set; } = -1;
-
-	/// <summary>Pack hover + selection into one int. 7 bits each — 0..64 after the +1 bias,
-	/// so −1 (none) packs cleanly and the whole thing is one comparison to change-gate.</summary>
-	public static int PackHand( int hover, int selected ) =>
-		( hover + 1 ) | ( ( selected + 1 ) << 7 );
-
-	/// <summary>Inverse of <see cref="PackHand"/>. −1 out for "none".</summary>
-	public static void UnpackHand( int packed, out int hover, out int selected )
-	{
-		if ( packed < 0 )
-		{
-			hover = -1;
-			selected = -1;
-			return;
-		}
-
-		hover = ( packed & 0x7F ) - 1;
-		selected = ( ( packed >> 7 ) & 0x7F ) - 1;
-	}
-
 	/// <summary>Name tag height above the player origin (the avatar is ~72 tall).</summary>
 	[Property] public float NameTagHeight { get; set; } = 82f;
 
@@ -429,7 +382,6 @@ public sealed class LobbyPlayer : Component
 			// Only on the transition: once the animator is back on, the controller writes
 			// sit = 0 itself every frame and this would just be saying it twice.
 			ClearSitPose();
-			ClearHandPose();
 		}
 
 		_proxySeated = seated;
@@ -1036,196 +988,6 @@ public sealed class LobbyPlayer : Component
 	const int SitPoseStanding = 0;
 	const int SitPoseChair = 1;
 
-	/// <summary>
-	/// Put this seated citizen's working hand where <see cref="Gambit.Chess.TerryPose"/>
-	/// says it goes. Called by <see cref="SeatedTerry"/> for every seat on every client.
-	///
-	/// <para><b>IK needs no GameObjects.</b> <c>SetIk(name, Transform)</c> takes a Transform
-	/// directly; CitizenAnimationHelper's IkLeftHand/IkRightHand GameObject properties are
-	/// editor sugar over exactly this call. So the target is lerped in code and handed
-	/// straight over — no scene objects to spawn, parent, or clean up.</para>
-	///
-	/// <para><b>SetIk wants a WORLD transform</b> and converts internally
-	/// (<c>tx = WorldTransform.ToLocal(tx)</c>). Handing it a local one silently puts the
-	/// hand somewhere near the floor of the room.</para>
-	///
-	/// <para><b>Right hand works, left hand idles.</b> Chess is played one-handed.</para>
-	/// </summary>
-	public void ApplyHandPose( ChessStation station, ChessSeat seat, Gambit.Chess.HandPose pose )
-	{
-		var r = _bodyRenderer;
-		var ring = ChessRing.Instance;
-		if ( r == null || ring == null || station == null ) return;
-		if ( ring is { TerrySeated: false } ) return;
-
-		// Where the hand would rest with nothing to do: elbows on the table, in the X
-		// margin. CLAUDE.md calls both X margins "kept clear — they are the seat cameras'
-		// sightlines", and this spends one of them ON PURPOSE: the hands ARE the sightline's
-		// subject. The board frame's half-extent is 21.75 and the tabletop's is 30, so 26
-		// lands squarely in the 8.25-wide margin — on the table, clear of the board.
-		float side = seat == ChessSeat.White ? -1f : +1f;
-		var idle = new Vector3( side * ring.HandIdleX, side * ring.HandIdleY, ring.HandIdleZ );
-
-		Vector3 target = idle;
-		if ( pose.OnBoard && pose.Weight > 0f )
-		{
-			// TerryPose deals in square INDICES and scalars precisely so it can be run on a
-			// host with no engine. This is the half that needs Sandbox: turning them into a
-			// place. Square index is rank*8+file, matching ChessBoardView.SquareUnderCursor.
-			var from = SquareLocal( ring, pose.FromSquare );
-
-			// ToTray: the hand is taking a captured piece off the board. TerryPose can't
-			// know where a tray is — it may not know about geometry at all — so it says
-			// "the tray" and this decides which. The VICTIM's, because that is where
-			// ChessBoardView actually puts the piece, and a hand walking it somewhere else
-			// would be a second answer to a settled question. The victim is whatever this
-			// seat isn't.
-			// …and only PART of the way: see HandDiscardReach. The victim's tray is across
-			// the board, well past where an arm goes, and an unreachable IK target doesn't
-			// fail politely — it straightens the arm and drags the shoulder after it.
-			var to = pose.ToTray
-				? Vector3.Lerp( from, ring.TrayHandLocalPosition( white: seat == ChessSeat.Black ),
-					ring.HandDiscardReach )
-				: SquareLocal( ring, pose.ToSquare );
-
-			var on = Vector3.Lerp( from, to, pose.Travel ) + Vector3.Up * ( pose.Height + ring.HandLift );
-
-			// ── The reach clamp ──
-			//
-			// The seated arm is ~20u and the shoulder sits far back (gambit_terry: shoulder at
-			// x −44.6, arm 19.9), so most of a 34-deep board is beyond it. A target past the arm
-			// doesn't fail politely — the IK straightens and drags the shoulder after it. Pull an
-			// out-of-reach target back onto a sphere around the shoulder instead: the hand keeps
-			// POINTING at the true square from as far as the arm honestly goes. The hand is
-			// decoration — it never touches the FEN piece — so reaching toward a far piece reads
-			// better than straining short, and the near half is genuinely reached.
-			if ( ShoulderLocal( station ) is { } shoulder )
-			{
-				var reachOut = on - shoulder;
-				if ( reachOut.Length > ring.HandReach )
-					on = shoulder + reachOut.Normal * ring.HandReach;
-			}
-
-			target = Vector3.Lerp( idle, on, pose.Weight );
-		}
-
-		// ── Chase the target; never teleport to it ──
-		//
-		// What crosses the wire is a SQUARE, so the target jumps a whole square at a time as
-		// the cursor crosses a boundary — and a hand that jumps reads as broken rather than
-		// as thinking. Easing the POSITION is what makes a quantised signal look like a hand
-		// vaguely following a mouse, which is the whole illusion. TerryPose's Weight already
-		// eases the hand on and off the BOARD; this eases it ACROSS the board, which the
-		// weight can't do because both ends are on it.
-		//
-		// Frame-rate independent: 1 − e^(−k·dt), not a raw lerp factor.
-		if ( _handLocal is not { } current )
-			_handLocal = target;                       // first frame: be there
-		else
-			_handLocal = Vector3.Lerp( current, target,
-				1f - MathF.Exp( -ring.HandChaseRate * Time.Delta ) );
-
-		// Fingers down over the board, reaching from this seat's side — so the hand faces
-		// across the table the way the body does.
-		var rot = station.WorldRotation
-			* Rotation.From( ring.HandPitch, seat == ChessSeat.White ? 0f : 180f, 0f );
-
-		// The IK aims a BONE, and the bone is the WRIST — so a target dropped straight on a
-		// square puts the fingers past it and the piece under the palm. Pull the wrist back
-		// along the hand's own axes so the grip lands where the player is looking.
-		// gambit_terry's ruler prints hand_R, which is exactly this bone: tune against it.
-		var world = station.WorldTransform.PointToWorld( _handLocal.Value )
-			+ rot * ring.HandGripOffset;
-
-		LastHandTarget = _handLocal.Value;
-		// The wrist's ACTUAL target (grasp point + grip offset), station-local — so a reach
-		// readout compares the bone against what it was really aimed at, not the grasp point
-		// it sits deliberately back from. Without this a perfect reach reads as ~4 units off.
-		LastHandIkTarget = station.WorldTransform.PointToLocal( world );
-
-		// RIGHT HAND ONLY. Chess is played one-handed, and that is the rule.
-		//
-		// Worth knowing what it costs, because the measurement is unambiguous and someone
-		// will otherwise re-file it as an aiming bug: a1 sits at y +17.1 while White's right
-		// shoulder is near y −6, so reaching it is ~33 units — 23 of them pure sideways —
-		// against an arm of roughly 24. The far rank is ~60 and nothing reaches it. On the
-		// far side of the board the arm runs out and the hand stops short, pointing the
-		// right way from as close as it gets.
-		//
-		// That is a fact about a 39-unit board in front of a 72-unit citizen, not something
-		// a constant here can fix. gambit_terry's reach readout prints the ask beside the
-		// achieved bone exactly so it stays visible as what it is.
-		r.Set( "holdtype", HoldTypeItem );
-		r.Set( "holdtype_handedness", HandednessRight );
-		r.Set( "holdtype_pose_hand", pose.FingerClose );
-		r.SetIk( IkRight, new Transform( world, rot ) );
-	}
-
-	/// <summary>Where the hand was last told to go (station-local) — read by
-	/// <c>gambit_terry</c>, which prints it beside the bone the IK actually achieved. The
-	/// gap between those two IS the reach error, and it is the only way to tell "aiming at
-	/// the wrong square" apart from "aiming right and not getting there" without guessing.
-	/// That distinction already cost a round of tuning.</summary>
-	public Vector3? LastHandTarget { get; private set; }
-
-	/// <summary>Where the WRIST bone was actually aimed (station-local) — the grasp point
-	/// pushed back by <see cref="ChessRing.HandGripOffset"/>. This, not
-	/// <see cref="LastHandTarget"/>, is what to compare <c>hand_R</c> against to read pure
-	/// reach shortfall, since the bone is meant to sit offset from the grasp point.</summary>
-	public Vector3? LastHandIkTarget { get; private set; }
-
-	/// <summary>
-	/// Let the arm go — the whole arm, not just the IK.
-	///
-	/// <para><b>Releasing only the IK is not enough, and this is why a player who stood up
-	/// walked around the lobby with an arm hanging out at nothing.</b> <c>holdtype</c> is
-	/// what poses the arm AROUND an object, and once set to HoldItem <b>nothing in the
-	/// engine ever sets it back</b>: MoveMode.OnUpdateAnimatorState writes sit, b_swim,
-	/// b_climbing, b_grounded and duck — and no holdtype. So the arm keeps its
-	/// carrying-something shape forever, IK or no IK. Both have to be released, and
-	/// holdtype is the one with no owner but us.</para></summary>
-	public void ClearHandPose()
-	{
-		if ( _bodyRenderer == null ) return;
-
-		_bodyRenderer.ClearIk( IkRight );
-		_bodyRenderer.Set( "holdtype", HoldTypeNone );
-		_bodyRenderer.Set( "holdtype_pose_hand", 0f );
-		_handLocal = null;
-		LastHandTarget = null;
-		LastHandIkTarget = null;
-	}
-
-	static Vector3 SquareLocal( ChessRing ring, int square ) =>
-		square < 0 ? Vector3.Zero : ring.SquareLocalPosition( square & 7, square >> 3 );
-
-	/// <summary>The working arm's shoulder pivot (arm_upper_R), station-local — the centre the
-	/// reach clamp measures from. Read fresh so it follows the pose (a lean, a scoot) rather
-	/// than a stale constant; null if the bone can't be resolved, in which case the clamp is
-	/// simply skipped and the raw target stands.</summary>
-	Vector3? ShoulderLocal( ChessStation station )
-	{
-		if ( _bodyRenderer != null && _bodyRenderer.TryGetBoneTransform( "arm_upper_R", out var tx ) )
-			return station.WorldTransform.PointToLocal( tx.Position );
-		return null;
-	}
-
-	/// <summary>citizen.vanmgrph's holdtype enum (none, pistol, rifle, shotgun, holditem, …)
-	/// — HoldItem is the one the finger-blend (holdtype_pose_hand) is wired into.
-	/// Handedness: 2H, RH, LH — so Right is 1.</summary>
-	const int HoldTypeNone = 0;
-	const int HoldTypeItem = 4;
-	const int HandednessRight = 1;
-
-	/// <summary>The animgraph's IK CHAIN name (ik.hand_right.*) — not the bone name, which
-	/// is hand_R. Two different vocabularies for one arm.</summary>
-	const string IkRight = "hand_right";
-
-	/// <summary>The hand's eased station-local position — see ApplyHandPose. Null until the
-	/// first frame it is placed, so it starts where it belongs rather than flying in from
-	/// the station's origin.</summary>
-	Vector3? _handLocal;
-
 	/// <summary>Undo <see cref="TrimSeatedAvatar"/>: put the head back and stop excluding
 	/// our cosmetics. Idempotent, and safe to call when nothing was ever trimmed.</summary>
 	void RestoreSeatedAvatar()
@@ -1458,7 +1220,6 @@ public sealed class LobbyPlayer : Component
 		_hiddenRenderers.Clear();
 		RestoreSeatedAvatar();
 		ClearSitPose();
-		ClearHandPose();
 
 		// Back into the physics world — after the un-plant above, so we land standing where
 		// we stood rather than being resolved out of the table we were sitting at.

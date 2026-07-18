@@ -187,12 +187,6 @@ public sealed class ChessBoardView : Component
 		SyncPieces();
 		AdvanceSlides();
 		UpdateInput();
-		// AFTER UpdateInput, never inside it: UpdateInput early-returns on several paths
-		// (not your turn, promotion picker up, camera still blending) having already reset
-		// _hoverSquare to -1 at the top. Publishing from inside would only ever run on the
-		// paths that reach the bottom, so the synced hand would STICK on the last square you
-		// hovered the moment the turn flipped away from you.
-		PublishHandState();
 		PaintHighlights();
 	}
 
@@ -585,45 +579,6 @@ public sealed class ChessBoardView : Component
 		{
 			ClearSelection();
 		}
-	}
-
-	/// <summary>
-	/// Publish this player's hover + selection so the OTHER clients can float their terry's
-	/// hand over the square they're thinking about (M13).
-	///
-	/// <para><b><c>_hoverSquare</c> already means exactly the right thing</b>, which is why
-	/// there is no new predicate here. It is only assigned once UpdateInput is past its own
-	/// gate — the player's turn or a premove, no promotion picker up, the camera settled —
-	/// so "hovered" already means "a square this player can act on". Everywhere else it is
-	/// −1, and −1 packs to "no hand on the board".</para>
-	///
-	/// <para>Change-gated: one comparison, so a mouse moving WITHIN a square costs nothing
-	/// and a still cursor costs nothing at all. [Sync] diffs anyway — this matches the house
-	/// style (PaintHighlights' hash gate), and it is strictly better than that one, because
-	/// a hash gate skips work while this skips a network write.</para></summary>
-	void PublishHandState()
-	{
-		// MY table only. There is one ChessBoardView per station and they ALL run OnUpdate,
-		// so without this every other table in the ring also writes LobbyPlayer.Local's
-		// HandState — and since UpdateInput bails early for a table you aren't seated at,
-		// they'd all publish "no hand". Whichever view updated last would win, so the hand
-		// would flicker or vanish depending on component order. The change gate can't save
-		// it: the two writers genuinely disagree, so it passes both ways.
-		if ( ChessStation.Active != Station ) return;
-		if ( LobbyPlayer.Local is not { } me ) return;
-
-		int packed = LobbyPlayer.PackHand( _hoverSquare, SquareIndexOf( Selected ) );
-		if ( me.HandState != packed ) me.HandState = packed;
-	}
-
-	/// <summary>Square name ("e4") → the rank*8+file index everything else here uses, or −1.</summary>
-	static int SquareIndexOf( string square )
-	{
-		if ( square is not { Length: >= 2 } ) return -1;
-		int file = square[0] - 'a';
-		int rank = square[1] - '1';
-		if ( file is < 0 or > 7 || rank is < 0 or > 7 ) return -1;
-		return rank * 8 + file;
 	}
 
 	/// <summary>Select a piece and work out where it may go.

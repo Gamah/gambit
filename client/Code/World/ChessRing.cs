@@ -73,10 +73,13 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 	// ══ Seated terries (M13) ══
 	//
+	// The bodies only. The reaching-hand path was cut once it was proven a fixed-size
+	// citizen's ~20u arm can't cross a 34-deep board (SEATED-HANDS-REACH.md); these knobs
+	// now only plant and frame a seated body, not reach a piece.
+	//
 	// EVERY knob in this block is a code default and can only be retuned by editing and
 	// hotloading — ChessRing is NOT in lobby.scene (LobbyRoom self-provisions it), exactly
-	// as CLAUDE.md warns for SpectatorWall. Not a bug; a real ergonomic cost. gambit_terry
-	// prints the whole chain so the loop is at least legible.
+	// as CLAUDE.md warns for SpectatorWall. Not a bug; a real ergonomic cost.
 
 	/// <summary>
 	/// The kill switch, and it is not optional. False restores <c>HideLocalAvatar</c>'s
@@ -103,15 +106,13 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// 72-unit citizen, which could easily be ±2. That is the tightest guess in M13 and the
 	/// reason this must stay tunable.</para>
 	///
-	/// <para><b>CORRECTED from 36 on measurement (gambit_terry).</b> At 36 the shoulder
-	/// (arm_upper_R) sits at station-local x −44.6 — 8.6 BEHIND the plant origin, because a
-	/// seated citizen's shoulders are back over the chair — and the arm is only 19.9u, not the
-	/// ~24 M13 guessed. The nearest square (−17.06) is then 28.7u away: the arm falls 8.8u
-	/// short of reaching ANY square. Scooting to 26 puts the shoulder at −34.6, bringing rank 1
-	/// within reach (e1 → 19.4u ≈ the arm). Bounded by the knees, checked against the real
-	/// bones: at 26 the feet land at x −19.7, still clear of the foot plate (−15). Push lower
-	/// for more reach while watching the knees clip. The far half is beyond a 19.9u arm no
-	/// matter what — that is what HandReach's clamp is for.</para></summary>
+	/// <para><b>26 is a historical reach-tuning, now moot but harmless.</b> It was scooted in
+	/// from 36 to bring rank 1 under the (since-abandoned) reaching hand; with hands cut it
+	/// only decides how close the seated body sits to its own edge. The live bound is still
+	/// the knees: at 26 the feet land at x −19.7, clear of the foot plate (−15); push lower
+	/// and they clip. If the seat framing is ever revisited now that reach is gone
+	/// (SEATED-HANDS-REACH.md notes it cascades into the cameras and ring), this is the
+	/// number to move.</para></summary>
 	[Property] public float SeatSitBack { get; set; } = 26f;
 
 	/// <summary>
@@ -178,95 +179,6 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// update.</para></summary>
 	[Property] public float SeatEyeBack { get; set; } = 36f;
 	[Property] public float SeatEyeHeight { get; set; } = 49f;
-
-	/// <summary>
-	/// Where a seated player's hand rests with nothing to do: elbows on the table.
-	///
-	/// <para><b>X spends a margin this file says is spent, and that is deliberate.</b> The
-	/// tabletop-margin comment above states both X margins are "kept clear — they are the
-	/// seat cameras' sightlines". The hands go there anyway, because the hands ARE the
-	/// sightline's subject: that margin is the only part of the table a seat camera looks
-	/// down over, which is exactly where you would put your elbows. The board frame's
-	/// half-extent is 21.75 and the tabletop's is 30, so 26 lands squarely in the 8.25-wide
-	/// margin — on the table, clear of the board.</para>
-	///
-	/// <para>Y is the offset toward the player's own outside; Z is the tabletop's surface
-	/// plus a little, so a wrist rests ON it rather than in it.</para></summary>
-	[Property] public float HandIdleX { get; set; } = 26f;
-	[Property] public float HandIdleY { get; set; } = 10f;
-	[Property] public float HandIdleZ { get; set; } = 31f;
-
-	/// <summary>
-	/// Extra height on every hand target over the board — the trim for "the hand is too
-	/// close to the pieces".
-	///
-	/// <para><b>It lives here and not in TerryPose because TerryPose cannot read a
-	/// [Property].</b> That file is deliberately Sandbox-free so it can be driven through
-	/// real games in a harness on a host with no engine, which is exactly where its carry
-	/// bug was caught — so its heights are constants and this is the knob that tunes them
-	/// without giving that up. Turn TerryPose's constants for the SHAPE of the motion; turn
-	/// this for how high the whole thing rides.</para></summary>
-	[Property] public float HandLift { get; set; } = 0f;
-
-	/// <summary>
-	/// How fast the hand chases its target, as an exponential rate (higher = snappier).
-	///
-	/// <para><b>This is what makes a square-quantised signal look like a hand.</b> What
-	/// crosses the wire is a SQUARE index, so the target jumps a whole square at a time as
-	/// the cursor crosses a boundary — and a hand that jumps reads as broken rather than as
-	/// thinking. Easing the position turns that into a hand vaguely following a mouse, which
-	/// is the entire illusion. 12 settles a square's worth of travel in about a fifth of a
-	/// second: quick enough to feel attached to the cursor, slow enough to glide.</para></summary>
-	[Property] public float HandChaseRate { get; set; } = 12f;
-
-	/// <summary>
-	/// Offset from the square to where the WRIST goes, in the hand's own rotated frame —
-	/// so the thumb and index end up over the square rather than the wrist.
-	///
-	/// <para><b>IK aims a BONE, and the bone is the wrist.</b> Put hand_R on a square and
-	/// the fingers hang past it; the piece the player is thinking about is under the palm
-	/// at best. This pulls the wrist back and up along the hand's own axes so the grip lands
-	/// on the target instead. Read the real hand_R off a seated citizen with
-	/// <c>gambit_terry</c> and tune against it — the ruler prints exactly this bone.</para></summary>
-	[Property] public Vector3 HandGripOffset { get; set; } = new( -3f, 0f, 3f );
-
-	/// <summary>Pitch of the hand over the board — nose-down, so the fingers point at the
-	/// piece rather than the palm facing it.</summary>
-	[Property, Range( 0f, 90f )] public float HandPitch { get; set; } = 60f;
-
-	/// <summary>
-	/// How far toward the tray a hand actually carries a piece it has taken, 0..1.
-	///
-	/// <para><b>It is not 1, and the arithmetic is why.</b> Each player's losses sit in
-	/// their OWN tray, so taking a black knight means reaching to |y| = 28 — about 29 units
-	/// across from a sitter whose pelvis is at y ≈ −0.9. That is a long way past where an
-	/// arm plausibly goes, and an IK target out of reach doesn't fail politely: it
-	/// straightens the arm and drags the shoulder after it.</para>
-	///
-	/// <para>So the hand lifts the piece, carries it most of the way, and lets go — and
-	/// <see cref="ChessBoardView"/>'s own capture slide (which has been walking pieces to
-	/// their trays since M11) finishes the trip. That is also just what happens when you
-	/// take a piece: you lift it clear and set it down, you don't post it.</para></summary>
-	[Property, Range( 0f, 1f )] public float HandDiscardReach { get; set; } = 0.6f;
-
-	/// <summary>
-	/// The seated arm's usable reach, station units — the radius of the sphere around the
-	/// shoulder (arm_upper_R) that <see cref="LobbyPlayer.ApplyHandPose"/> clamps every hand
-	/// target into.
-	///
-	/// <para><b>This is the load-bearing number, and it is measured, not guessed.</b>
-	/// gambit_terry reads the arm off the real skeleton at 19.9u, and the shoulder sits far
-	/// enough back that most of a 34-deep board is beyond it. An IK target past the arm doesn't
-	/// fail politely — it straightens and drags the shoulder after it (the front-edge fist in
-	/// the bug report). Clamping the target onto this sphere instead keeps the hand POINTING at
-	/// the true square from as far as the arm honestly goes. The hand never touches the FEN
-	/// piece anyway, so reaching toward a far piece reads better than straining short.</para>
-	///
-	/// <para>Default 18 = ~0.9 of the measured 19.9, backed off so the arm isn't at full lock.
-	/// Raise it toward 20 for a longer reach and a straighter arm; drop it for a softer,
-	/// more-bent one. Tune against gambit_terry_probe.</para></summary>
-	[Property] public float HandReach { get; set; } = 18f;
-
 
 	/// <summary>Overhead table spot brightness. Strictly neutral white so the piece
 	/// and square tints read true (MarqueeGlow applies the user multiplier in play).</summary>
@@ -720,16 +632,6 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			sounds.Station = component;
 			sounds.Controller = controller;
 			sounds.Lichess = lichess;
-
-			// The seated players' hands (M13). Beside the sounds and wired identically, for
-			// the identical reason: it resolves the same seam the same way, so what you see,
-			// what you hear and what the hands do are the same game — and a third kind of
-			// game gets hands by existing.
-			var terry = station.AddComponent<SeatedTerry>();
-			terry.Station = component;
-			terry.Controller = controller;
-			terry.Lichess = lichess;
-
 
 			// Floating occupancy sign over the table (blank while the table is
 			// empty). Billboarded per-viewer, so it reads from anywhere in the room.
@@ -1372,8 +1274,8 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// at the FEET — so raising it to meet an 18 pad would lift the feet off the floor. The
 	/// pose already has its feet planted; the chair is what should move.</para>
 	///
-	/// <para>Still a knob, and still the first thing to check: re-run <c>gambit_terry</c>
-	/// seated and compare the pelvis against this number.</para></summary>
+	/// <para>Still a knob, and still the first thing to check: read the seated pelvis bone in
+	/// the editor and compare it against this number.</para></summary>
 	[Property] public float ChairSeatTopZ { get; set; } = 14f;
 
 	/// <summary>Clearance from the armrest's top to the tabletop's underside. See
@@ -1810,18 +1712,6 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// at the station origin, so this works parented to either.</summary>
 	public Vector3 SquareLocalPosition( int file, int rank ) =>
 		CellCenter( rank, file, TableTopZ + FrameThickness + CellThickness ) * TableScale;
-
-	/// <summary>
-	/// Where a hand goes to drop a piece it has just taken: the middle of that piece's
-	/// OWNER's tray — because that is where ChessBoardView actually puts it, and the hand
-	/// following the piece somewhere else would be two answers to one question.
-	///
-	/// <para><paramref name="white"/> is the VICTIM's colour, not the captor's: each
-	/// player's losses sit in their own tray (see TraySlotLocalPosition), so taking a black
-	/// knight means reaching across to Black's side. That is a long reach, and it is also
-	/// what a real player does.</para></summary>
-	public Vector3 TrayHandLocalPosition( bool white ) =>
-		TraySlotLocalPosition( white, TrayRows / 2 );
 
 	/// <summary>Uniform scale ChessBoardView passes to ChessSetBuilder so runtime
 	/// pieces match the ring-built preview set (see BuildPieces).</summary>
