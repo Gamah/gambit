@@ -1,6 +1,12 @@
 # Seated hands can't reach the board — the reality
 
-**Decision (M13):** the reaching-hand idea is **abandoned**, and the hand code is **cut** (see
+> **STATUS (M14, branch `m14-terry-hands-spikes`):** the cut path has been **restored from
+> `terry-hands-final` and put behind runtime levers** so all three approaches can be tested and
+> logged in ONE editor session, then finished in ONE cleanup pass. Nothing is on by default — the
+> shipped world is still bodies-only. See **"M14 scaffolding: the levers"** at the bottom before
+> touching any of it. The reach reality below is unchanged and is why the levers exist.
+
+**Decision (M13):** the reaching-hand idea was **abandoned**, and the hand code was **cut** (see
 "What M13 shipped, and what got cut" below). The seated bodies stay — sitting, gaze and blink
 already work and are the bulk of "two people at a board." This file exists so a future milestone
 does not re-attempt the impossible or re-derive the numbers. **The measurements are from the live
@@ -264,3 +270,46 @@ work. Ordered cheapest-and-most-certain first.
 
 **If M14 does nothing:** that is a legitimate close. The bodies sit, look right, and the game plays;
 "terries playing chess" is already true in every sense except a hand on the wood.
+
+---
+
+## M14 scaffolding: the levers (branch `m14-terry-hands-spikes`)
+
+The cut path is restored and every approach is behind a **runtime lever** — a console-settable
+static in **`client/Code/World/SeatedHandSpikes.cs`**, read live by `LobbyPlayer.ApplyHandPose` /
+`ApplySitPose` and `ChessRing.SquareReachable`. The point of doing it this way: **one editor
+session flips through all the spikes and logs the results; one cleanup pass keeps the winner and
+deletes the scaffolding.** Everything defaults OFF — the shipped world (bodies only,
+`ChessRing.TerrySeated`) is untouched until you pull a lever.
+
+**The rulers (unchanged, read the result):** `gambit_terry` (config dump + bone ruler + geometric
+reach grid — works with hands off), `gambit_terry_probe` (sweeps the hand over all 64 squares and
+prints achieved-vs-asked per square), `gambit_terry_bones` (real bone names), and
+**`gambit_terry_spikes`** (prints the live lever state and this playbook in-console). Two ruler
+bone-name bugs were fixed in this pass — `eyes`→`eye_R` and `arm_lower_R`→`arm_lower_R1` (the arm
+one was silently falling back to a nominal 24u, so the old grid printed plausible-but-fake reach).
+
+| Spike | Levers (console) | What to read, and the decision it drives |
+|---|---|---|
+| **Cross-cut: sit pose** | `gambit_terry_sit 2` | Does `sitting_02` lean the shoulders over the table (free reach)? Run `gambit_terry` under sit 1 then 2 and compare `arm_upper_R`/`spine_2` x. If 2 leans, it changes the math for A and B before either runs. |
+| **A — near-half reach** | `gambit_terry_hands`, then `gambit_terry_probe`; `gambit_terry_band <x>` tunes the edge; `gambit_terry_clamp` flips to the old sphere hack | **A taste call:** does a hand that touches ranks 1–2 and idles for far squares read as *playing* or *broken*? Default band 12 ≈ ranks 1–2. **Gate: if it reads worse than no hand, ship nothing.** |
+| **B — SetBoneOverride lean** | `gambit_terry_lean 10` (0 = off); `gambit_terry_leanbone arm_upper_R` for the direct test | Lean, then `gambit_terry`: did the shoulder line + reach grid move forward? That is whether the two-bone IK **re-solved against the leaned shoulder** — the one thing source couldn't answer. `spine_2` also needs the arm subtree to inherit the override; `arm_upper_R` moves the IK root itself, so if reach still doesn't extend, the IK is definitively ignoring it. **Gate: if it won't compose, fall back to A.** |
+| **C — arm scale** | `gambit_terry_armscale 1.5` (1 = off) | Best-effort — **there is no runtime bone-scale API**; the lever sets `Transform.Scale` on a bone override and hopes native honours it. Read with a cold eye: did `hand_R` *actually* reach farther, or did only the measured arm length grow? **Almost certainly a no-op → decline C with evidence.** |
+
+**Engine facts these levers rest on** (re-derived from `sbox-public`, 2026-07-18):
+`SkinnedModelRenderer.SetBoneTransform(in Bone, Transform)` → `SceneModel.SetBoneOverride` takes a
+**model-space** transform (`WorldTransform.ToLocal(worldTx)`, same conversion `SetIk` does); it is
+the **final** override, applied after the animator, so it is re-applied every frame and cleared with
+`ClearPhysicsBones()` (no per-bone clear exists — fine, the seated citizen is never ragdolled).
+Whether that "final" override is seen by the IK solve or overwrites it is native and **only the
+editor can answer** — which is the whole reason B is a spike and not a knob.
+
+**The cleanup pass (after a verdict):** keep the winning approach's behaviour by folding its lever
+value into a constant (in `ChessRing`/`TerryPose`), or delete the hand path again if the answer is
+"bodies are enough". Then delete `SeatedHandSpikes.cs`, `TerryCommands.cs`, the `SeatedTerry` probe
+block, `ChessRing.SquareReachable`, `LobbyPlayer.ApplyReachSpikes`, and the `SeatedHandSpikes.*`
+reads. That set is the whole rip-out surface, kept deliberately small.
+
+**Info boards:** none of this is player-facing yet (dev levers, off by default), so
+`CenterInfoPanel`/`InfoScreen` stay unchanged — **until the cleanup pass ships a real hand**, at
+which point CLAUDE.md's info-board rule applies and the Welcome/east-wall copy must describe it.
