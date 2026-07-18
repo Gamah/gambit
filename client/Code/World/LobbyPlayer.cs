@@ -1070,6 +1070,7 @@ public sealed class LobbyPlayer : Component
 			ReleaseRiseIk( r );
 			_riseApplied = Vector3.Zero;
 			_leanApplied = Vector3.Zero;
+			_pitchApplied = Vector3.Zero;
 			return;
 		}
 
@@ -1240,7 +1241,7 @@ public sealed class LobbyPlayer : Component
 			// so the compensation can never outrun the bones.
 			ApplyRiseOverrides( r, station, seat );
 			var trueAskWorld = world;
-			world -= _riseApplied + _leanApplied;
+			world -= _riseApplied + _leanApplied + _pitchApplied;
 
 			// ── The closed-loop hand servo ──
 			// The doctor's pipeline dump proved every modelled stage exact: the pelvis and
@@ -1302,12 +1303,13 @@ public sealed class LobbyPlayer : Component
 			// IK and eased state HERE, not only in the lever command — the sweep flips
 			// HalfRiseOn between phases without ClearHandPose, and pinned feet must never
 			// leak into a seated phase's measurement.
-			if ( _riseFeetIk || _riseBraceIk
-				|| _riseApplied != Vector3.Zero || _leanApplied != Vector3.Zero )
+			if ( _riseFeetIk || _riseBraceIk || _riseApplied != Vector3.Zero
+				|| _leanApplied != Vector3.Zero || _pitchApplied != Vector3.Zero )
 			{
 				ReleaseRiseIk( r );
 				_riseApplied = Vector3.Zero;
 				_leanApplied = Vector3.Zero;
+				_pitchApplied = Vector3.Zero;
 			}
 
 			// M14 Approach B/C: bend the skeleton BEFORE the IK solves, so the measurement reads
@@ -1420,6 +1422,11 @@ public sealed class LobbyPlayer : Component
 	/// chain rides pelvis + spine, so the hand compensation subtracts both.</summary>
 	Vector3 _leanApplied;
 
+	/// <summary>The torso pitch's eased shoulder-forward gain VECTOR (world). Its length
+	/// through asin(len/torso) is the applied angle; the same vector is subtracted from the
+	/// hand ask, so the rotation and the compensation cannot drift apart.</summary>
+	Vector3 _pitchApplied;
+
 	bool _riseFeetIk;   // foot_left/foot_right IK currently held
 	bool _riseBraceIk;  // hand_left brace IK currently held
 	float _measuredArm; // live |arm_upper_R→arm_lower_R| + |→hand_R|, 0 until first read
@@ -1470,6 +1477,15 @@ public sealed class LobbyPlayer : Component
 			MaxStep: SeatedHandSpikes.MaxStep,
 			MaxRise: SeatedHandSpikes.MaxRise,
 			RiseLift: SeatedHandSpikes.RiseLift,
+			// The pitch budget in shoulder-forward units, and the table edge the hips may
+			// not pass while the pitch is on (a real body hinges over the edge; only the
+			// torso crosses it). Pitch off → both gates open → the pre-pitch glide.
+			PitchGain: SeatedHandSpikes.TorsoPitchMax > 0f
+				? _measuredTorso * MathF.Sin( SeatedHandSpikes.TorsoPitchMax * ( MathF.PI / 180f ) )
+				: 0f,
+			HipMaxX: SeatedHandSpikes.TorsoPitchMax > 0f
+				? -( ( ring.BoardSize + 3f ) * 0.5f * ring.TableScale + 2f )
+				: -999f,
 			FootMinX: -( ring.FootEdgeX + 1f ),
 			BraceEngage: 6f,
 			BraceMinX: -( ring.TableEdgeX - 6f ),
@@ -1507,7 +1523,7 @@ public sealed class LobbyPlayer : Component
 				+ $"  leg measured {_measuredLeg:0.0} → budget {t.LegReach:0.0}"
 				+ $"{( SeatedHandSpikes.LegReachOverride > 0f ? " (OVERRIDDEN)" : "" )}"
 				+ $"  maxRise {t.MaxRise:0.0}  maxStep {t.MaxStep:0.0}  footMinX {t.FootMinX:0.0}" );
-			Log.Info( $"   plan: lean {plan.Lean:0.0}  rise |Δ|={plan.PelvisDelta.Length:0.0}"
+			Log.Info( $"   plan: lean {plan.Lean:0.0}  pitchGain {plan.PitchGain:0.0}  rise |Δ|={plan.PelvisDelta.Length:0.0}"
 				+ $" Δ=({plan.PelvisDelta.X:0.0},{plan.PelvisDelta.Y:0.0},{plan.PelvisDelta.Z:0.0})"
 				+ $"  hand=({plan.Hand.X:0.0},{plan.Hand.Y:0.0},{plan.Hand.Z:0.0})  residual {plan.Residual:0.0}"
 				+ $"  stepped={plan.Stepped}  feet L=({plan.FootL.X:0.0},{plan.FootL.Y:0.0}) R=({plan.FootR.X:0.0},{plan.FootR.Y:0.0})" );
@@ -1526,11 +1542,12 @@ public sealed class LobbyPlayer : Component
 	/// </summary>
 	void ApplyRiseOverrides( SkinnedModelRenderer r, ChessStation station, ChessSeat seat )
 	{
-		Vector3 wantRise = Vector3.Zero, wantLean = Vector3.Zero;
+		Vector3 wantRise = Vector3.Zero, wantLean = Vector3.Zero, wantPitch = Vector3.Zero;
 		if ( _risePlan is { } plan )
 		{
 			wantRise = station.WorldRotation * FromPlanner( plan.PelvisDelta, seat );
 			wantLean = station.WorldRotation * ( FromPlanner( plan.LeanDir, seat ) * plan.Lean );
+			wantPitch = station.WorldRotation * ( FromPlanner( plan.LeanDir, seat ) * plan.PitchGain );
 		}
 
 		// The same frame-rate-independent chase as the hand — the plan may step (a foot
@@ -1538,12 +1555,15 @@ public sealed class LobbyPlayer : Component
 		float k = 1f - MathF.Exp( -SeatedHandSpikes.RiseChaseRate * Time.Delta );
 		_riseApplied = Vector3.Lerp( _riseApplied, wantRise, k );
 		_leanApplied = Vector3.Lerp( _leanApplied, wantLean, k );
+		_pitchApplied = Vector3.Lerp( _pitchApplied, wantPitch, k );
 
-		bool active = _riseApplied.Length > 0.05f || _leanApplied.Length > 0.05f;
+		bool active = _riseApplied.Length > 0.05f || _leanApplied.Length > 0.05f
+			|| _pitchApplied.Length > 0.05f;
 		if ( !active )
 		{
 			_riseApplied = Vector3.Zero;
 			_leanApplied = Vector3.Zero;
+			_pitchApplied = Vector3.Zero;
 			if ( _reachSpikeApplied ) { r.ClearPhysicsBones(); _reachSpikeApplied = false; }
 			ReleaseRiseIk( r );
 			return;
@@ -1568,11 +1588,27 @@ public sealed class LobbyPlayer : Component
 		// The spine lean rides ON TOP of the rise — its override is absolute, so it must
 		// include the rise too, or it would pin the upper body back at the un-risen spot
 		// and the "lean" would tear the torso from the hips.
-		if ( _leanApplied.Length > 0.05f
+		if ( ( _leanApplied.Length > 0.05f || _pitchApplied.Length > 0.05f )
 			&& model.Bones.GetBone( SeatedHandSpikes.NaturalLeanBone ) is { } leanBone
 			&& r.TryGetBoneTransformAnimation( leanBone, out var lw ) )
 		{
 			lw.Position += _riseApplied + _leanApplied;
+
+			// ── Torso pitch: hinge the chest over the table edge ──
+			// The planner budgeted PitchGain shoulder-forward units; the actual rotation
+			// is asin(gain / torso) about the lateral axis (up × reach bearing), so the
+			// top of the torso tips toward the piece. Whether the rotation carries the
+			// arm subtree exactly is native territory — the servo trues the hand, and
+			// the compensation below subtracts the same eased gain vector, so the two
+			// halves cannot drift apart.
+			if ( _pitchApplied.Length > 0.05f && _measuredTorso > 4f )
+			{
+				var dirP = _pitchApplied.Normal;
+				float s = Math.Clamp( _pitchApplied.Length / _measuredTorso, 0f, 0.9f );
+				float pitchDeg = MathF.Asin( s ) * ( 180f / MathF.PI );
+				var axis = Vector3.Cross( Vector3.Up, dirP ).Normal;
+				lw.Rotation = Rotation.FromAxis( axis, pitchDeg ) * lw.Rotation;
+			}
 
 			// ── Torso yaw: turn the shoulders toward the piece ──
 			// Two-bone IK can never rotate the chest — there is no automation to hope
@@ -1613,7 +1649,7 @@ public sealed class LobbyPlayer : Component
 				var world = station.WorldTransform.PointToWorld( FromPlanner( b, seat ) );
 				var rot = station.WorldRotation
 					* Rotation.From( 80f, seat == ChessSeat.White ? 0f : 180f, 0f );
-				r.SetIk( IkLeft, new Transform( world - _riseApplied - _leanApplied, rot ) );
+				r.SetIk( IkLeft, new Transform( world - _riseApplied - _leanApplied - _pitchApplied, rot ) );
 				_riseBraceIk = true;
 			}
 			else if ( _riseBraceIk )
@@ -1694,12 +1730,21 @@ public sealed class LobbyPlayer : Component
 			new[] { "arm_lower_R1", "arm_lower_R" }, new[] { "hand_R1", "hand_R" } );
 		float leg = ChainLength( r, new[] { "leg_upper_R" },
 			new[] { "leg_lower_R1", "leg_lower_R" }, new[] { "ankle_R" } );
+		float torso = 0f;
+		if ( TryBoneWorld( r, new[] { "pelvis" }, out var pv )
+			&& TryBoneWorld( r, new[] { "arm_upper_R" }, out var sh ) )
+			torso = ( sh - pv ).Length;
+
 		_measuredArm = arm > 4f ? arm : FallbackArm;
 		_measuredLeg = leg > 4f ? leg : FallbackLeg;
+		_measuredTorso = torso > 4f ? torso : FallbackTorso;
 		Log.Info( $"[Gambit] terry limbs measured: arm {arm:0.0} (using {_measuredArm:0.0}), "
-			+ $"leg {leg:0.0} (using {_measuredLeg:0.0}); fallbacks {FallbackArm}/{FallbackLeg}. "
-			+ "Arm should read ~19.9. If leg reads far off ~30, the leg bones misresolved — gambit_terry_leg overrides." );
+			+ $"leg {leg:0.0} (using {_measuredLeg:0.0}), torso {torso:0.0} (using {_measuredTorso:0.0}); "
+			+ "arm should read ~19.9, torso ~20. gambit_terry_leg overrides the leg if it misresolved." );
 	}
+
+	float _measuredTorso;
+	const float FallbackTorso = 20f;
 
 	static string Fmt( Vector3 v ) => $"({v.x:0.0},{v.y:0.0},{v.z:0.0})";
 
@@ -1830,6 +1875,7 @@ public sealed class LobbyPlayer : Component
 		_risePlan = null;
 		_riseApplied = Vector3.Zero;
 		_leanApplied = Vector3.Zero;
+		_pitchApplied = Vector3.Zero;
 		_handServo = Vector3.Zero;
 		_servoTrueAsk = null;
 	}

@@ -94,6 +94,12 @@ public static class SeatedHandSpikes
 	/// eased in with the rise, and trued up by the servo. <c>gambit_terry_yaw</c>.</summary>
 	public static float TorsoYawMax = 30f;
 
+	/// <summary>How far the torso may PITCH over the table, degrees (0 = off — reverts to
+	/// the hip-glide). The pitch takes its reach share BEFORE the hips move, and while it is
+	/// on the hips are capped at the table edge — "the hips shouldn't drive forward; the
+	/// torso hinges over the edge". <c>gambit_terry_pitch</c>.</summary>
+	public static float TorsoPitchMax = 50f;
+
 	/// <summary>One-shot: log the ENTIRE half-rise pipeline for the next planned reach frame —
 	/// planner inputs (live bones, measured chains), plan outputs, eased applied values, and
 	/// each key bone's animation-vs-final position. This is how "the hand stops at rank 2" gets
@@ -269,6 +275,16 @@ public static class SeatedHandSpikes
 		Log.Info( LegReachOverride > 0f
 			? $"[Gambit] leg reach OVERRIDDEN to {LegReachOverride}u (the planner's pelvis→ankle budget)."
 			: "[Gambit] leg reach back to the live chain measurement (gambit_terry_rise_dbg prints it)." );
+	}
+
+	[ConCmd( "gambit_terry_pitch" )]
+	public static void SetPitch( float degrees )
+	{
+		TorsoPitchMax = degrees < 0f ? 0f : degrees;
+		if ( TorsoPitchMax <= 0f ) LobbyPlayer.Local?.ClearHandPose();
+		Log.Info( TorsoPitchMax > 0f
+			? $"[Gambit] torso pitch ON, capped {TorsoPitchMax}° over the table; hips capped at the table edge."
+			: "[Gambit] torso pitch OFF — hips uncapped (the pre-pitch glide, for comparison)." );
 	}
 
 	[ConCmd( "gambit_terry_lift" )]

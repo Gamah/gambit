@@ -71,6 +71,11 @@ public readonly record struct RiseTunables(
 	float RiseLift,       // Z gained per unit of forward rise: hips push UP off the chair as
 	                      //   they go forward, so a deep reach reads as standing into a lean
 	                      //   rather than a seated body gliding horizontally over the table
+	float PitchGain,      // shoulder-forward units the TORSO PITCH may contribute
+	                      //   (runtime computes torsoLen·sin(maxPitch)); 0 disables pitch
+	float HipMaxX,        // the hips may never pass this X: the table edge stops a real body,
+	                      //   and the pitch carries the reach beyond it. −999 = uncapped
+	                      //   (the pre-pitch glide, kept reachable for comparison)
 	float FootMinX,       // feet may never step past this X: the table's foot plate starts there
 	float BraceEngage,    // pelvis forward travel at which the off hand plants on the table
 	float BraceMinX,      // brace X window: the brace tracks the risen pelvis, clamped to the
@@ -81,6 +86,8 @@ public readonly record struct RiseTunables(
 	public static readonly RiseTunables Default = new(
 		Reach: 18f, MaxLean: 12f, LegReach: 30f, MaxStep: 16f, MaxRise: 46f,
 		RiseLift: 0.3f,
+		PitchGain: 15.3f,   // ≈ 20u torso · sin 50°
+		HipMaxX: -23.75f,   // the board frame's near edge, plus a hip's worth
 		FootMinX: -16f,
 		BraceEngage: 6f, BraceMinX: -24f, BraceMaxX: 10f, BraceY: 24f, BraceZ: 30f );
 }
@@ -99,9 +106,11 @@ public readonly record struct RiseTunables(
 /// <param name="Residual">Units the clamped hand still falls short of the true target —
 /// 0 for a genuine reach; the piece-slide fallback covers whatever this reports.</param>
 /// <param name="Rise01">0..1 how deep into the half-rise this frame is (drives blends).</param>
+/// <param name="PitchGain">Shoulder-forward units the torso pitch contributes, along
+/// <paramref name="LeanDir"/> — the runtime converts to an angle via asin(gain/torsoLen).</param>
 public readonly record struct RisePlan(
 	float Lean, V3 LeanDir, V3 PelvisDelta, V3 FootL, V3 FootR, bool Stepped,
-	V3? Brace, V3 Hand, float Residual, float Rise01 );
+	V3? Brace, V3 Hand, float Residual, float Rise01, float PitchGain );
 
 /// <summary>
 /// The half-rise reach planner (M14, the IK half-rise attempt). Pure geometry, Sandbox-free, PROVEN in the dotnet
@@ -132,7 +141,7 @@ public static class HalfRise
 		float deficit = ( target - shoulder ).Length - t.Reach;
 		if ( deficit <= 0f )
 			return new RisePlan( 0f, V3.Zero, V3.Zero, footL, footR, false, null,
-				target, 0f, 0f );
+				target, 0f, 0f, 0f );
 
 		// ── 2. The proven M14 lean first: spine_2 toward the target, capped ──
 		// Horizontal only — a lean is a torso pivot, not a levitation — and along the true
@@ -144,7 +153,7 @@ public static class HalfRise
 		float deficit2 = ( target - shoulderLeaned ).Length - t.Reach;
 		if ( deficit2 <= 0f )
 			return new RisePlan( lean, leanDir, V3.Zero, footL, footR, false, null,
-				target, 0f, 0f );
+				target, 0f, 0f, 0f );
 
 		// ── 3. The half-rise: carry the pelvis (and the shoulder with it) toward the
 		// target until the arm honestly reaches.
@@ -166,7 +175,25 @@ public static class HalfRise
 		var toTarget = target - shoulderLeaned;
 		float horizDist = toTarget.LengthXY;
 		var dir = toTarget.HorizontalNormal;
-		float rise = Min( Max( horizDist - horizReach, 0f ), t.MaxRise );
+		float horizNeed = Max( horizDist - horizReach, 0f );
+
+		// ── 3a. The TORSO PITCH takes its share before the hips move at all. ──
+		// "Hips driving forward is the wrong direction" — right: a real body leaning
+		// across a table hinges the TORSO over the edge; the hips only travel until the
+		// table stops them (HipMaxX below). The pitch's shoulder-forward contribution is
+		// budgeted here in gain units along leanDir; the runtime turns it into an actual
+		// rotation (asin(gain/torsoLen)) and the hand servo absorbs the difference
+		// between this linear budget and the true arc.
+		float pitchGain = Min( horizNeed, t.PitchGain );
+		horizNeed -= pitchGain;
+
+		// ── 3b. What's left is the hips' — capped by the table edge, the legs, MaxRise. ──
+		float rise = Min( horizNeed, t.MaxRise );
+		if ( dir.X > 0.01f )
+		{
+			float hipRoom = Max( ( t.HipMaxX - pelvis.X ) / dir.X, 0f );
+			rise = Min( rise, hipRoom );
+		}
 
 		// The lift: hips gain a little Z as they drive forward, so the motion reads as
 		// pushing up off the chair into a lean, not a seated body gliding over the table
@@ -221,7 +248,7 @@ public static class HalfRise
 		// ── 5. Clamp the hand to the RISEN envelope, exactly as the M14 lean clamped to
 		// the leaned one: the arm must never strain (straighten + drag) at what it cannot
 		// have. Whatever is left after the rise is the slide's job, reported honestly. ──
-		var shoulderRisen = shoulderLeaned + delta;
+		var shoulderRisen = shoulderLeaned + leanDir * pitchGain + delta;
 		var reachOut = target - shoulderRisen;
 		float over = reachOut.Length - t.Reach;
 		var hand = over > 0f ? shoulderRisen + reachOut.Normal * t.Reach : target;
@@ -243,13 +270,13 @@ public static class HalfRise
 				Clamp( pelvis.X + delta.X, t.BraceMinX, t.BraceMaxX ), t.BraceY, t.BraceZ );
 			// Rest left shoulder = right mirrored across the body's own centreline.
 			var leftShoulder = new V3( shoulder.X, -shoulder.Y, shoulder.Z )
-				+ leanDir * lean + delta;
+				+ leanDir * ( lean + pitchGain ) + delta;
 			if ( ( candidate - leftShoulder ).Length <= t.Reach )
 				brace = candidate;
 		}
 
 		return new RisePlan( lean, leanDir, delta, fl, fr, stepped, brace, hand,
-			residual, t.MaxRise <= 0f ? 1f : Min( rise / t.MaxRise, 1f ) );
+			residual, t.MaxRise <= 0f ? 1f : Min( rise / t.MaxRise, 1f ), pitchGain );
 	}
 
 	/// <summary>Slide a planted foot horizontally toward the hips just far enough to bring
