@@ -109,6 +109,11 @@ public static class SeatedHandSpikes
 	/// experiments only; reach never depends on it. <c>gambit_terry_pitch</c>.</summary>
 	public static float TorsoPitchMax = 0f;
 
+	/// <summary>How fast the hand chases its target, 1/s. Was ChessRing.HandChaseRate — a
+	/// code default on a runtime-built component, i.e. untunable — while being the exact
+	/// knob behind "moving between selected squares is overly snappy". Tuned via TerryTuning.</summary>
+	public static float HandChaseRate = 8f;
+
 	// ── The carry (read by ChessBoardView; tuned via TerryTuning) ──
 
 	/// <summary>How far below the wrist bone a held piece's base hangs.</summary>
@@ -118,7 +123,7 @@ public static class SeatedHandSpikes
 	public static float GrabRadius = 9f;
 
 	/// <summary>How long a move-slide waits at its origin for the hand to come and grab it.</summary>
-	public static float HandHoldSeconds = 2.5f;
+	public static float HandHoldSeconds = 1.2f;
 
 	/// <summary>One-shot: log the ENTIRE half-rise pipeline for the next planned reach frame —
 	/// planner inputs (live bones, measured chains), plan outputs, eased applied values, and

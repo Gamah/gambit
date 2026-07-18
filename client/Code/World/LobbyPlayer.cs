@@ -1194,7 +1194,7 @@ public sealed class LobbyPlayer : Component
 			_handLocal = target;                       // first frame: be there
 		else
 			_handLocal = Vector3.Lerp( current, target,
-				1f - MathF.Exp( -ring.HandChaseRate * Time.Delta ) );
+				1f - MathF.Exp( -SeatedHandSpikes.HandChaseRate * Time.Delta ) );
 
 		// Fingers down over the board, reaching ALONG THE ARM — the yaw follows the
 		// shoulder→target bearing rather than the fixed seat-forward it used to be. The

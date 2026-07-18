@@ -9,27 +9,33 @@
 > (**TerryTuning** in lobby.scene, saved values = shipping truth). No hanging objectives.
 >
 > **The next session's job is purely the LOOK.** Start by diffing this branch against
-> master; the goal is "good enough", and the current state is extremely janky. Known
-> jank, in the order it was observed:
-> - the motion quality: everything is exponential-chase easing — no anticipation, no
->   settle, reads robotic; the rise/lean amounts are taste-tunable but the MOTION is not
-> - finger polarity (holdtype_pose_hand open/closed ends) still unverified from M13
-> - a capture's victim slides to the tray on its own, not synced to the hand's
->   clear-the-victim gesture (v1 scope cut, documented below)
-> - the brace hand and foot steps engage/release visibly (eased, but not choreographed)
-> - mirrored lichess boards show no clocks; one unexplained one-off NRE
->   (OnParametersSetAsync, no stack) on a joiner
+> master. The bar, in the owner's words: clipping is fine, weird timing and small jank are
+> fine — right now it looks like a COMPLETELY BUSTED GAME, and "good enough" means it
+> stops looking broken. The jank, RANKED by the owner, with causes where known:
 >
-> **"Better methods for testing and tuning" is the request.** Candidates for the next
-> session's first hour: a `gambit_terry_replay` that loops a scripted move sequence
-> (near/far/capture) at a table so sliders can be tuned against a repeating motion
-> instead of playing games; a fixed spectator camera bookmark; and the doctor pattern
-> extended to score motion (jerk/settle time), not just reach.
+> 1. **Bent elbow.** Cause known: the doctor's margin verdict (8) pulls every ask deep
+>    inside the reach sphere, so the arm never extends. With the servo truing the hand,
+>    margin should drop back to ~2-3 — retest that FIRST, it may be one slider.
+> 2. **Super kinked wrist.** The hand rotation is a fixed HandPitch (60°) + bearing yaw;
+>    it needs to derive from the forearm's actual direction (or soften pitch with reach).
+> 3. **Tempo** — partially fixed at the pause: the gesture clock was retimed from the M13
+>    "slow on purpose" doctrine (proven backwards) to 0.73s moves / 1.21s captures, Rush
+>    still compresses under fast play, and GestureSpeed is a TerryTuning slider. STILL
+>    OPEN inside this item: **the piece moves after the hand starts to reset** — the
+>    release-settle only starts once carry reports stop (after Dropping ends) and covers
+>    whatever distance the clamped hand left; candidate fix is piece-led placement (release
+>    the piece onto its square as Dropping STARTS, quick settle, hand follows it down).
+> 4. **Hover between candidate squares is overly snappy/aggressive** while everything else
+>    is slow — HandChaseRate is now a TerryTuning slider (default dropped 12 → 8); find
+>    the value, then shape if needed.
 >
-> If procedural posing can't reach "good enough", the researched fallback is authored
-> clips via `DirectPlayback.Play(name, target, heading, interpTime)` — the engine
-> supports bespoke reach animations with root-motion retargeting; that is a design fork
-> to decide deliberately, not drift into.
+> **The authored-clips fork is OPEN** ("worth investigating"): `DirectPlayback.Play(name,
+> target, heading, interpTime)` with the agreed concessions — map the board coarsely and
+> always grab at a uniform height (~1.5 squares); fingers may clip/collide. That trades
+> per-square precision for real motion quality, and the servo/carry machinery survives it.
+>
+> **Deferred by choice**: the `gambit_terry_replay` tuning loop — not until the above stop
+> being broken ("probably worth just nuking until the above are in a better state").
 
 **Branch `m14-terry-halfrise-ik`.** The reaching-hand idea was nuked (5fd4157) because a
 SEATED citizen can't reach: ~20u arm, far corner ~35u away, and every seated lever combined

@@ -35,6 +35,10 @@ public sealed class TerryTuning : Component
 	[Property, Group( "Rise" ), Range( 0f, 60f )] public float TorsoYawMax { get; set; } = 30f;
 	[Property, Group( "Rise" ), Range( 0f, 70f )] public float TorsoPitchMax { get; set; } = 0f;
 
+	// ── Tempo ──
+	[Property, Group( "Tempo" ), Range( 0.25f, 4f )] public float GestureSpeed { get; set; } = 1f;
+	[Property, Group( "Tempo" ), Range( 2f, 30f )] public float HandChaseRate { get; set; } = 8f;
+
 	// ── Hand heights (above the board surface) ──
 	[Property, Group( "Hand" ), Range( 6f, 20f )] public float HoverHeight { get; set; } = 12f;
 	[Property, Group( "Hand" ), Range( 4f, 16f )] public float GraspHeight { get; set; } = 10f;
@@ -43,7 +47,7 @@ public sealed class TerryTuning : Component
 	// ── Carry ──
 	[Property, Group( "Carry" ), Range( 0f, 16f )] public float CarryHang { get; set; } = 8f;
 	[Property, Group( "Carry" ), Range( 2f, 16f )] public float GrabRadius { get; set; } = 9f;
-	[Property, Group( "Carry" ), Range( 0f, 5f )] public float HandHoldSeconds { get; set; } = 2.5f;
+	[Property, Group( "Carry" ), Range( 0f, 5f )] public float HandHoldSeconds { get; set; } = 1.2f;
 
 	// ── Switches ──
 	[Property, Group( "Switches" )] public bool HandsOn { get; set; } = true;
@@ -54,7 +58,7 @@ public sealed class TerryTuning : Component
 	// Last-pushed mirrors: a knob only pushes when the INSPECTOR moved it, so the console
 	// levers and the diagnostics' save/force/restore cycles stay authoritative in between.
 	float _maxLean, _riseGrace, _reachMargin, _maxRise, _maxStep, _riseLift, _riseChase,
-		_yaw, _pitch, _hover, _grasp, _lift, _hang, _grab, _hold;
+		_yaw, _pitch, _hover, _grasp, _lift, _hang, _grab, _hold, _speed, _handChase;
 	bool _hands, _rise, _brace, _servo;
 
 	protected override void OnEnabled() => Push( all: true );
@@ -72,6 +76,8 @@ public sealed class TerryTuning : Component
 		if ( all || RiseChaseRate != _riseChase ) SeatedHandSpikes.RiseChaseRate = _riseChase = RiseChaseRate;
 		if ( all || TorsoYawMax != _yaw ) SeatedHandSpikes.TorsoYawMax = _yaw = TorsoYawMax;
 		if ( all || TorsoPitchMax != _pitch ) SeatedHandSpikes.TorsoPitchMax = _pitch = TorsoPitchMax;
+		if ( all || GestureSpeed != _speed ) TerryPose.SpeedScale = _speed = GestureSpeed;
+		if ( all || HandChaseRate != _handChase ) SeatedHandSpikes.HandChaseRate = _handChase = HandChaseRate;
 		if ( all || HoverHeight != _hover ) TerryPose.HoverHeight = _hover = HoverHeight;
 		if ( all || GraspHeight != _grasp ) TerryPose.GraspHeight = _grasp = GraspHeight;
 		if ( all || LiftHeight != _lift ) TerryPose.LiftHeight = _lift = LiftHeight;

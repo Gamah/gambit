@@ -133,40 +133,39 @@ public static class TerryPose
 {
 	// ── The timeline ──
 	//
-	// SLOW, on purpose. A hand that snatches a piece across the board in half a second reads
-	// as a glitch; a hand that picks it up, carries it and sets it down reads as a person.
-	// The whole of a plain move is 1.6s and a capture is 2.8s, against the 0.56s this
-	// started at.
-	//
-	// What makes that affordable is Rush (below): the animation is allowed to be slower than
-	// the game only for as long as the game lets it be.
+	// QUICK. This shipped as "SLOW, on purpose" (1.6s move / 2.8s capture) on the theory
+	// that a fast hand reads as a glitch — and the first watchable two-client builds proved
+	// that theory backwards: once the piece actually rides the hand, slow reads as broken
+	// and snappy reads as a person playing. The standing direction: a move is never more
+	// than a second, and Rush (below) compresses it further the moment the game outpaces
+	// even that. GestureSpeed (TerryTuning) scales the whole clock live.
 	//
 	// The FRONT half of a move — reach, hesitate, close — isn't here at all. It is driven
 	// live from hover/selection, because a move is only observable once it has already been
 	// played. By the time a ply lands, the hand is usually already at the from-square.
 
 	/// <summary>Capture step one: reach the victim's square and close on it.</summary>
-	public const float ClearTime = 0.45f;
+	public const float ClearTime = 0.18f;
 
 	/// <summary>Capture step two: carry the victim to its owner's tray and let go.</summary>
-	public const float DiscardTime = 0.75f;
+	public const float DiscardTime = 0.3f;
 
 	/// <summary>Close on the from-square and lift. For a CAPTURE this is also the trip back
 	/// from the tray — the driver's own easing covers the distance.</summary>
-	public const float LiftTime = 0.45f;
+	public const float LiftTime = 0.18f;
 
 	/// <summary>Carry from-square → to-square.</summary>
-	public const float TravelTime = 0.75f;
+	public const float TravelTime = 0.35f;
 
 	/// <summary>Set down and open the fingers.</summary>
-	public const float DropTime = 0.4f;
+	public const float DropTime = 0.2f;
 
 	/// <summary>A plain move, end to end.</summary>
-	public const float MoveTime = LiftTime + TravelTime + DropTime;              // 1.60
+	public const float MoveTime = LiftTime + TravelTime + DropTime;              // 0.73
 
 	/// <summary>A capture: the victim has to leave the board before the attacker can land
 	/// on its square, and that really is an extra trip.</summary>
-	public const float CaptureTime = ClearTime + DiscardTime + MoveTime;         // 2.80
+	public const float CaptureTime = ClearTime + DiscardTime + MoveTime;         // 1.21
 
 	/// <summary>
 	/// How much faster than 1× the hand may play to catch up, per move it has fallen behind.
@@ -227,8 +226,15 @@ public static class TerryPose
 	/// landing always wins over whatever was being animated. Everything below it is
 	/// reasoning about a game that has not changed since the last frame.</para>
 	/// </summary>
+	/// <summary>Multiplier over the whole gesture clock — fades, timeline, everything.
+	/// 1 = the authored M13 tempo, which the first watchable builds read as "painfully
+	/// slow". Static (not const) so TerryTuning drives it from the inspector; the tempo
+	/// question is a slider now, not a recompile.</summary>
+	public static float SpeedScale = 1f;
+
 	public static HandPose Advance( in HandPose prev, in HandInput input, float dt )
 	{
+		dt *= SpeedScale <= 0f ? 1f : SpeedScale;
 		if ( !input.GameLive )
 			return Idle( prev, input.Ply, dt );
 
