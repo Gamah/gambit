@@ -67,9 +67,127 @@ public sealed class SeatedTerry : Component
 	ulong _whiteId;
 	ulong _blackId;
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// DEBUG PROBE — rip out once the hand path is tuned (M13).
+	//
+	// gambit_terry_probe drives the LOCAL seated hand to a Selected-grasp pose on every
+	// square in turn, so you can WATCH the arm try to reach each one with no game running,
+	// and it logs what the IK actually ACHIEVED vs what it was asked for. That is a better
+	// measurement than the geometric reach grid: it is the solver's real behaviour, not a
+	// distance-vs-arm-length estimate. Delete this block, the two fields, and the concmd
+	// when the lean/clamp lands.
+	// ─────────────────────────────────────────────────────────────────────────────
+
+	/// <summary>Toggled by <c>gambit_terry_probe</c>. Only the ACTIVE (local-seated) station
+	/// acts on it; every other SeatedTerry ignores it.</summary>
+	public static bool Probe;
+
+	bool _probeActive;
+	int _probeSquare = -1;
+	float _probeHeld;
+	bool _probeMeasured;
+	readonly float[] _probeMiss = new float[64];
+
+	const float ProbeHold = 0.6f;    // seconds parked on each square — enough to watch it settle
+	const float ProbeSettle = 0.35f; // measure once the chase easing has arrived
+
+	void ProbeTick( ChessStation station )
+	{
+		var avatar = LobbyPlayer.Local;
+		var seat = ChessStation.ActiveSeat;
+		var ring = ChessRing.Instance;
+		if ( ring == null || !avatar.IsValid() ) return;
+
+		if ( !_probeActive )
+		{
+			_probeActive = true;
+			_probeSquare = 0;
+			_probeHeld = 0f;
+			_probeMeasured = false;
+			for ( int i = 0; i < 64; i++ ) _probeMiss[i] = -1f;
+			Log.Info( "[Gambit] probe: sweeping the hand over all 64 squares at grasp height. "
+				+ "Watch the arm; the miss per square lands in the grid at the end." );
+		}
+
+		_probeHeld += Time.Delta;
+
+		// A Selected-grasp pose on the current square: on the board, full weight, grasp
+		// height and fingers — the exact target the real path uses when you pick a piece.
+		var pose = new HandPose( HandPhase.Selected, _probeSquare, _probeSquare, false, 0f,
+			TerryPose.GraspHeight, TerryPose.FingersGrasping, 1f, 0, false, 0f, 0f );
+		avatar.ApplyHandPose( station, seat, pose );
+
+		if ( !_probeMeasured && _probeHeld >= ProbeSettle )
+		{
+			_probeMeasured = true;
+			var body = avatar.GameObject.GetComponentInChildren<SkinnedModelRenderer>();
+			if ( body != null && body.TryGetBoneTransform( "hand_R", out var tx )
+				&& avatar.LastHandIkTarget is { } asked )
+			{
+				var got = station.WorldTransform.PointToLocal( tx.Position );
+				float miss = ( got - asked ).Length;
+				_probeMiss[_probeSquare] = miss;
+				Log.Info( $"   {(char)( 'a' + ( _probeSquare & 7 ) )}{( _probeSquare >> 3 ) + 1}"
+					+ $"  ask ({asked.x,6:0.#},{asked.y,6:0.#},{asked.z,5:0.#})"
+					+ $"  got ({got.x,6:0.#},{got.y,6:0.#},{got.z,5:0.#})  miss {miss,5:0.0}" );
+			}
+		}
+
+		if ( _probeHeld >= ProbeHold )
+		{
+			_probeSquare++;
+			_probeHeld = 0f;
+			_probeMeasured = false;
+			if ( _probeSquare >= 64 )
+			{
+				ProbeGrid( seat );
+				Probe = false;
+				_probeActive = false;
+				_probeSquare = -1;
+				avatar.ClearHandPose();
+			}
+		}
+	}
+
+	/// <summary>The empirical reach map: how far the IK fell short on each square, as an 8×8
+	/// grid. Under ~2 the hand made it; a big number is where the arm ran out.</summary>
+	void ProbeGrid( ChessSeat seat )
+	{
+		Log.Info( "── probe reach grid (miss units, what the IK ACHIEVED) ──" );
+		Log.Info( seat == ChessSeat.White
+			? "   White at −X; rank 8 (far) top, rank 1 (near) bottom."
+			: "   Black at +X; rank 8 (near) top, rank 1 (far) bottom." );
+		Log.Info( "       a      b      c      d      e      f      g      h" );
+		for ( int rank = 7; rank >= 0; rank-- )
+		{
+			string row = $"   {rank + 1} ";
+			for ( int file = 0; file < 8; file++ )
+			{
+				float m = _probeMiss[rank * 8 + file];
+				row += m < 0f ? "   ?   " : m <= 2f ? "  ok   " : $" {m,5:0.0} ";
+			}
+			Log.Info( row );
+		}
+		Log.Info( "   ok = IK landed it (miss ≤ 2); a number = units short. '?' = never measured." );
+	}
+
 	protected override void OnUpdate()
 	{
 		if ( Station is not { } station ) return;
+
+		// DEBUG PROBE (see above). Only the local-seated station drives it; when it turns
+		// off (or you stand up) release the hand and fall back to the normal path.
+		if ( Probe && ChessStation.Active == station && LobbyPlayer.Local.IsValid() )
+		{
+			ProbeTick( station );
+			return;
+		}
+		if ( _probeActive )
+		{
+			_probeActive = false;
+			_probeSquare = -1;
+			LobbyPlayer.Local?.ClearHandPose();
+		}
 
 		var src = Source;
 

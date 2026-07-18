@@ -20,6 +20,24 @@ namespace Gambit.World;
 /// </summary>
 public static class TerryCommands
 {
+	/// <summary>DEBUG (M13, rip out with the probe): sweep the local seated hand over every
+	/// square so you can watch the arm reach each one with no game running, and log what the
+	/// IK actually achieved vs asked. Toggles — run again to stop early.</summary>
+	[ConCmd( "gambit_terry_probe" )]
+	public static void TerryProbe()
+	{
+		if ( ChessStation.Active == null )
+		{
+			Log.Warning( "[Gambit] probe: sit down first — it drives YOUR seated hand, and nobody is seated." );
+			return;
+		}
+
+		SeatedTerry.Probe = !SeatedTerry.Probe;
+		Log.Info( SeatedTerry.Probe
+			? "[Gambit] probe ON — sweeping all 64 squares (~40s). Run gambit_terry_probe again to stop."
+			: "[Gambit] probe OFF." );
+	}
+
 	[ConCmd( "gambit_terry" )]
 	public static void TerryStatus()
 	{

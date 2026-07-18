@@ -1121,6 +1121,10 @@ public sealed class LobbyPlayer : Component
 			+ rot * ring.HandGripOffset;
 
 		LastHandTarget = _handLocal.Value;
+		// The wrist's ACTUAL target (grasp point + grip offset), station-local — so a reach
+		// readout compares the bone against what it was really aimed at, not the grasp point
+		// it sits deliberately back from. Without this a perfect reach reads as ~4 units off.
+		LastHandIkTarget = station.WorldTransform.PointToLocal( world );
 
 		// RIGHT HAND ONLY. Chess is played one-handed, and that is the rule.
 		//
@@ -1147,6 +1151,12 @@ public sealed class LobbyPlayer : Component
 	/// That distinction already cost a round of tuning.</summary>
 	public Vector3? LastHandTarget { get; private set; }
 
+	/// <summary>Where the WRIST bone was actually aimed (station-local) — the grasp point
+	/// pushed back by <see cref="ChessRing.HandGripOffset"/>. This, not
+	/// <see cref="LastHandTarget"/>, is what to compare <c>hand_R</c> against to read pure
+	/// reach shortfall, since the bone is meant to sit offset from the grasp point.</summary>
+	public Vector3? LastHandIkTarget { get; private set; }
+
 	/// <summary>
 	/// Let the arm go — the whole arm, not just the IK.
 	///
@@ -1166,6 +1176,7 @@ public sealed class LobbyPlayer : Component
 		_bodyRenderer.Set( "holdtype_pose_hand", 0f );
 		_handLocal = null;
 		LastHandTarget = null;
+		LastHandIkTarget = null;
 	}
 
 	static Vector3 SquareLocal( ChessRing ring, int square ) =>
