@@ -68,6 +68,9 @@ public readonly record struct RiseTunables(
 	float LegReach,       // pelvis → ankle, minus a margin — how far the hips may stray from a planted foot
 	float MaxStep,        // how far a planted foot may slide toward the hips when the legs run out
 	float MaxRise,        // hard cap on |pelvis delta| — past this a hover reads as flight
+	float RiseLift,       // Z gained per unit of forward rise: hips push UP off the chair as
+	                      //   they go forward, so a deep reach reads as standing into a lean
+	                      //   rather than a seated body gliding horizontally over the table
 	float FootMinX,       // feet may never step past this X: the table's foot plate starts there
 	float BraceEngage,    // pelvis forward travel at which the off hand plants on the table
 	float BraceMinX,      // brace X window: the brace tracks the risen pelvis, clamped to the
@@ -76,7 +79,8 @@ public readonly record struct RiseTunables(
 	float BraceZ )        // ...on the tabletop surface
 {
 	public static readonly RiseTunables Default = new(
-		Reach: 18f, MaxLean: 6f, LegReach: 30f, MaxStep: 16f, MaxRise: 46f,
+		Reach: 18f, MaxLean: 12f, LegReach: 30f, MaxStep: 16f, MaxRise: 46f,
+		RiseLift: 0.3f,
 		FootMinX: -16f,
 		BraceEngage: 6f, BraceMinX: -24f, BraceMaxX: 10f, BraceY: 24f, BraceZ: 30f );
 }
@@ -163,7 +167,15 @@ public static class HalfRise
 		float horizDist = toTarget.LengthXY;
 		var dir = toTarget.HorizontalNormal;
 		float rise = Min( Max( horizDist - horizReach, 0f ), t.MaxRise );
-		var delta = dir * rise;
+
+		// The lift: hips gain a little Z as they drive forward, so the motion reads as
+		// pushing up off the chair into a lean, not a seated body gliding over the table
+		// — the first screenshot's exact complaint. The horizontal need was computed at
+		// the un-lifted shoulder (conservative: lifting toward grasp height only ever
+		// helps), and the step-5 clamp re-trues the hand against the ACTUAL risen
+		// shoulder, so the lift costs nothing in honesty. The leg triangle sees the
+		// higher hips through the same exact StepFoot arithmetic as everything else.
+		var delta = dir * rise + new V3( 0f, 0f, rise * t.RiseLift );
 
 		// ── 4. The legs are the new boundary. Feet stay planted; when a hip strays past
 		// LegReach of its foot, the foot STEPS toward the hips (people shift a foot to
@@ -189,7 +201,7 @@ public static class HalfRise
 			for ( int i = 24; i >= 0; i-- )
 			{
 				float mid = rise * i / 24f;
-				var h = pelvis + dir * mid;
+				var h = pelvis + dir * mid + new V3( 0f, 0f, mid * t.RiseLift );
 				var sl = StepFoot( footL, h, t );
 				var sr = StepFoot( footR, h, t );
 				if ( ( h - sl ).Length <= t.LegReach + 0.01f && ( h - sr ).Length <= t.LegReach + 0.01f )
@@ -199,7 +211,7 @@ public static class HalfRise
 				}
 			}
 			rise = best;
-			delta = dir * rise;
+			delta = dir * rise + new V3( 0f, 0f, rise * t.RiseLift );
 			hips = pelvis + delta;
 			fl = StepFoot( footL, hips, t );
 			fr = StepFoot( footR, hips, t );

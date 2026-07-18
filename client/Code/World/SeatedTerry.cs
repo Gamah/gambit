@@ -324,16 +324,22 @@ public sealed class SeatedTerry : Component
 	{
 		Log.Info( "── gambit_terry_doctor: the far-rank centre under each reach margin ──" );
 		Log.Info( "   margin  plan|Δ|  resid  applied  shldrX    miss" );
-		int best = 0;
+		// The SMALLEST margin that lands the hand wins, not the minimum miss: a bigger
+		// margin drags the whole body further over the table (the planner rises until the
+		// ask fits the shortened arm), and margin-8's plank was the first screenshot's
+		// complaint. With the servo converged, small margins land clean too.
+		int best = -1, minMiss = 0;
 		for ( int i = 0; i < DocMargins.Length; i++ )
 		{
 			Log.Info( $"   {DocMargins[i],5:0.0}  {_docPlan[i],7:0.0}  {_docResid[i],5:0.0}"
 				+ $"  {_docApplied[i],7:0.0}  {_docShoulder[i],6:0.0}  {_docMiss[i],6:0.0}" );
-			if ( _docMiss[i] > 0f && ( _docMiss[best] <= 0f || _docMiss[i] < _docMiss[best] ) ) best = i;
+			if ( best < 0 && _docMiss[i] > 0f && _docMiss[i] <= 1.5f ) best = i;
+			if ( _docMiss[i] > 0f && ( _docMiss[minMiss] <= 0f || _docMiss[i] < _docMiss[minMiss] ) ) minMiss = i;
 		}
+		if ( best < 0 ) best = minMiss;
 
 		SeatedHandSpikes.ReachMargin = DocMargins[best];
-		Log.Info( $"   VERDICT: margin {DocMargins[best]} wins (miss {_docMiss[best]:0.0}) — APPLIED. "
+		Log.Info( $"   VERDICT: margin {DocMargins[best]} wins (smallest landing the hand; miss {_docMiss[best]:0.0}) — APPLIED. "
 			+ $"({( seat == ChessSeat.White ? "White" : "Black" )} seat; the harness expects plan|Δ|≈35, resid≈3 at this square.)" );
 		Log.Info( "── reading it ──" );
 		Log.Info( "   plan|Δ| far below ~35        → the PLANNER under-asks: read the 'rise debug' inputs above" );

@@ -31,23 +31,23 @@ both seats with the measured M13 skeleton — at **`SeatSitBack = 36`**, the pre
 (see below):
 
 ```
-       a      b      c      d      e      f      g      h
-   8    6.8    6.5    4.7    3.1    3.0    3.0    3.0    4.7
-   7    3.0    1.4   ok     ok     ok     ok     ok     ok
-  1-6                       all ok
+                 a ... h
+   1-8                       all ok  (64/64, residual 0.0)
 ```
 
-**54/64 squares honestly reachable** (M13 seated: 5/64, far rank 30–35 short); worst corner
-6.8u, inside the piece-slide fallback that already ships. Legs never over-extend, feet never
-enter the table base, mirror round-trips exact, no NaNs, no cliffs. Two insights the first
-cuts got wrong, both caught by the harness:
+**64/64 squares honestly reachable, zero residual** — with the LIVE-measured skeleton from
+the doctor dump (pelvis z 16.6, not the guessed 23 — the lower pelvis buys the leg triangle
+far more headroom), the CHOSEN foot plants, `MaxLean 12`, `RiseLift 0.3`. Two earlier grids
+(51/64 then 54/64) predate the live measurements; the doctor's inputs dump is the authority
+for skeleton numbers now. Three insights the earlier cuts got wrong, all caught by
+harness-vs-live disagreement:
 
-- The rise must be **horizontal** — the legs are the scarce resource, and altitude bought
-  from them is altitude the arm's own sphere covers for free. Worth 20 squares.
-- The foot step must be **exact** (leg-triangle arithmetic), not a fudge-factor overshoot —
-  the heuristic made feasibility non-monotone at the a-file corner and the rise search
-  landed on the wrong branch (a 13u pelvis pop). The search is now a descending scan, which
-  doesn't care about monotonicity.
+- The rise must be mostly **horizontal** — leg budget is the scarce resource.
+- The foot step must be **exact** (leg-triangle arithmetic), and the rise search a
+  descending scan (the foot-plate clamp makes feasibility non-monotone in corners).
+- **Never feed the planner the animated ankles**: the sit pose tucks the feet ~25u behind
+  the pelvis, which spends the whole leg budget before any rise. The plants are chosen
+  (pelvis + a step forward), and the foot pins ease there from the tucked pose.
 
 **`SeatSitBack` is back to 36 (M13 scooted it to 26 for seated reach).** The scoot buried
 the seated chest a third of the way into the tabletop — invisible from this host and from

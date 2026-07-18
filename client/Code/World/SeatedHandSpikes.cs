@@ -129,11 +129,17 @@ public static class SeatedHandSpikes
 	/// comparison levers below.</para></summary>
 	public static bool NaturalLean = true;
 
-	/// <summary>The most the terry leans in, world units of shoulder-forward travel. Was 15 when
-	/// the lean was the ONLY reach lever; now the half-rise does the long-haul work, so the
-	/// lean is back to a subtle torso tip layered on top (the harness proof ran at 6).
-	/// <c>gambit_terry_maxlean</c>.</summary>
-	public static float MaxLean = 6f;
+	/// <summary>The most the terry leans in, world units of shoulder-forward travel. The
+	/// LEAN-vs-RISE split is the "pelvis should go back" knob: every unit the spine shear
+	/// carries is a unit the pelvis doesn't travel, and the pelvis gliding deep over the
+	/// table was the first screenshot's exact complaint. 12 leans the torso hard and keeps
+	/// the hips near the chair. <c>gambit_terry_maxlean</c>.</summary>
+	public static float MaxLean = 12f;
+
+	/// <summary>Z the hips gain per unit of forward rise (0 = the old horizontal glide).
+	/// Pushing UP off the chair while driving forward is what makes a deep reach read as
+	/// standing into a lean. <c>gambit_terry_lift</c>.</summary>
+	public static float RiseLift = 0.3f;
 
 	/// <summary>Bone the natural lean translates forward. <c>spine_2</c> tips the shoulders over the
 	/// board (its subtree carries the arm). If it reads as sliding rather than leaning, this is the
@@ -241,11 +247,12 @@ public static class SeatedHandSpikes
 	}
 
 	/// <summary>Slack subtracted from the measured arm before planning (how far inside the reach
-	/// sphere every ask sits). The first probe showed the hand landing a consistent ~6-9u
-	/// short-and-high OF ITS OWN ASK — the signature of a two-bone solver asked at near-full
-	/// extension. Raising this bends the elbow into every reach at the cost of raw coverage.
-	/// <c>gambit_terry_margin</c>.</summary>
-	public static float ReachMargin = 2f;
+	/// sphere every ask sits). Bigger bends the elbow into every reach AND drags the body
+	/// further over the table (the planner rises until the ask fits the shortened arm) — the
+	/// margin-8 doctor verdict is what planked the terry over the board in the first
+	/// screenshot. With the servo killing the solver's constant warp, small margins land
+	/// clean; the doctor now prefers the smallest that does. <c>gambit_terry_margin</c>.</summary>
+	public static float ReachMargin = 4f;
 
 	[ConCmd( "gambit_terry_margin" )]
 	public static void SetReachMargin( float u )
@@ -262,6 +269,13 @@ public static class SeatedHandSpikes
 		Log.Info( LegReachOverride > 0f
 			? $"[Gambit] leg reach OVERRIDDEN to {LegReachOverride}u (the planner's pelvis→ankle budget)."
 			: "[Gambit] leg reach back to the live chain measurement (gambit_terry_rise_dbg prints it)." );
+	}
+
+	[ConCmd( "gambit_terry_lift" )]
+	public static void SetLift( float perUnit )
+	{
+		RiseLift = perUnit < 0f ? 0f : perUnit;
+		Log.Info( $"[Gambit] rise lift = {RiseLift:0.00} Z per unit forward (0 = the horizontal glide; ~0.3 pushes up into the lean)." );
 	}
 
 	[ConCmd( "gambit_terry_servo" )]

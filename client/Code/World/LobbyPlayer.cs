@@ -1469,6 +1469,7 @@ public sealed class LobbyPlayer : Component
 				: _measuredLeg - LegMargin,
 			MaxStep: SeatedHandSpikes.MaxStep,
 			MaxRise: SeatedHandSpikes.MaxRise,
+			RiseLift: SeatedHandSpikes.RiseLift,
 			FootMinX: -( ring.FootEdgeX + 1f ),
 			BraceEngage: 6f,
 			BraceMinX: -( ring.TableEdgeX - 6f ),
