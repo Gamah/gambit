@@ -1,10 +1,12 @@
 # Seated hands can't reach the board — the reality
 
-**Decision (M13):** the reaching-hand idea is **abandoned**. The seated bodies stay — sitting,
-gaze and blink already work and are the bulk of "two people at a board." This file exists so a
-future milestone does not re-attempt the impossible or re-derive the numbers. **The measurements
-are from the live editor** (`gambit_terry` / `gambit_terry_probe`, White seat, station-local);
-**the engine facts are read from `sbox-public` source** with file:line, not recalled.
+**Decision (M13):** the reaching-hand idea is **abandoned**, and the hand code is **cut** (see
+"What M13 shipped, and what got cut" below). The seated bodies stay — sitting, gaze and blink
+already work and are the bulk of "two people at a board." This file exists so a future milestone
+does not re-attempt the impossible or re-derive the numbers. **The measurements are from the live
+editor** (`gambit_terry` / `gambit_terry_probe`, White seat, station-local) — those tools are cut
+too, but recoverable at tag **`terry-hands-final`**; **the engine facts are read from `sbox-public`
+source** with file:line, not recalled.
 
 ---
 

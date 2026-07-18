@@ -652,6 +652,24 @@ have been run here at all.
   first-wins with loser-side reconciliation (**D1**). Seat cameras orbit the board
   center (`SeatOrbitRadius`/`SeatPitch`/`SeatLookDownAngle`). You take the side you
   walk up to; leaving a live game is a two-stage resign (Escape/Leave twice).
+- **Seated bodies are M13's deliverable; reaching hands are geometrically impossible and
+  were CUT.** When you sit, your Citizen is planted at its side facing the board (`LobbyPlayer`
+  sit pose `sit=1`, `SetSeatedPhysics` un-plant so the tabletop can't shove you off your chair,
+  `TrimSeatedAvatar` to keep the seat camera out of your own skull, and `StationChair` under
+  each seat). The whole thing is gated behind **`ChessRing.TerrySeated`** — false is a full
+  revert to the pre-M13 "don't draw the local avatar while seated" world, and it must stay a
+  kill switch (git commit `0f68c91` is why). The seat-plant/chair knobs (`SeatSitBack`,
+  `SeatSitZ`, `SitOffsetHeight`, `ChairSeatTopZ`, …) are **code defaults on a runtime-built
+  `ChessRing`**, so retuning them is an edit-and-hotload loop, not a scene tweak.
+  → **What a fixed-size Citizen CANNOT do is reach a piece.** Its arm is ~20u with no stretch
+  in the animgraph; the board is 34u deep and shared/centred between both seats, so the seated
+  hand reaches ~rank 2 and no lever moves it further. The entire IK/hand-posing path
+  (`ApplyHandPose`, `TerryPose`, the hover-sync, the `gambit_terry` measurement tools) was
+  removed rather than left as dead scaffolding — **the proof, the measured numbers, and the M14
+  plan are in `SEATED-HANDS-REACH.md`**, and the cut code is recoverable at tag
+  **`terry-hands-final`**. Before anyone re-attempts hands: read that doc, do the spike it names
+  FIRST, and know that "the bodies are enough" is a legitimate answer. The bodies are cosmetic —
+  no player-facing copy (`CenterInfoPanel`/`InfoScreen`) describes them, so none went stale.
 - **Wall boards go through `WallBoardGeometry` — all of them.** It owns the size
   (`BoardScale`), the aspect (`Stretch`), and the shared floor anchor (`FloorAnchor`, which
   every board calls per-frame from its own `OnUpdate`). Boards match each other because
