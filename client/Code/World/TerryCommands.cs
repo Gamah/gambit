@@ -67,13 +67,10 @@ public static class TerryCommands
 			Log.Warning( "   NO SeatedTerry components in this scene — the driver itself never reached this "
 				+ "client. That IS the bug: the component (or the whole station snapshot) didn't replicate." );
 
-		Log.Info( "── reading it ──" );
-		Log.Info( "   refs NULL           → the [Property] wiring didn't survive the snapshot to this client." );
-		Log.Info( "   game NULL / ply 0   → this client's game never advanced; the driver has nothing to animate." );
-		Log.Info( "   avatar NOT RESOLVED → occupancy [Sync] vs Network.Owner mismatch on this client." );
-		Log.Info( "   body MISSING        → the proxy's SkinnedModelRenderer wasn't found; IK has nowhere to go." );
-		Log.Info( "   pose Idle w=0 mid-game while everything above reads ok → the state machine never saw the "
-			+ "move: compare 'ply' here against the host's, and check HandState is changing while they hover." );
+		// The verbose per-line reading key lived here until the network path was verified
+		// working (mirror included) in a two-client session — now the dump speaks for
+		// itself and the key is one pointer.
+		Log.Info( "   (key: refs/game/avatar/body must all read ok; a spectator needs mirroring=True. Details: TERRY-HALFRISE.md)" );
 	}
 
 	[ConCmd( "gambit_terry" )]

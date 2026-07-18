@@ -94,11 +94,13 @@ public static class SeatedHandSpikes
 	/// eased in with the rise, and trued up by the servo. <c>gambit_terry_yaw</c>.</summary>
 	public static float TorsoYawMax = 30f;
 
-	/// <summary>How far the torso may PITCH over the table, degrees (0 = off — reverts to
-	/// the hip-glide). The pitch takes its reach share BEFORE the hips move, and while it is
-	/// on the hips are capped at the table edge — "the hips shouldn't drive forward; the
-	/// torso hinges over the edge". <c>gambit_terry_pitch</c>.</summary>
-	public static float TorsoPitchMax = 50f;
+	/// <summary>How far the torso may PITCH over the table, degrees. <b>Default 0 — the
+	/// editor measured the answer</b>: a bone-override ROTATION does not carry child bones
+	/// (the pitch budgeted 15.8u of shoulder travel; ~3 materialised), so pitch buys no
+	/// reach and the doctor's miss grew by exactly the phantom budget. Translations DO
+	/// carry — every rise/lean lands to the decimal. The lever stays for cosmetic
+	/// experiments only; reach never depends on it. <c>gambit_terry_pitch</c>.</summary>
+	public static float TorsoPitchMax = 0f;
 
 	/// <summary>One-shot: log the ENTIRE half-rise pipeline for the next planned reach frame —
 	/// planner inputs (live bones, measured chains), plan outputs, eased applied values, and

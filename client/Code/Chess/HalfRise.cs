@@ -86,8 +86,9 @@ public readonly record struct RiseTunables(
 	public static readonly RiseTunables Default = new(
 		Reach: 18f, MaxLean: 12f, LegReach: 30f, MaxStep: 16f, MaxRise: 46f,
 		RiseLift: 0.3f,
-		PitchGain: 15.3f,   // ≈ 20u torso · sin 50°
-		HipMaxX: -23.75f,   // the board frame's near edge, plus a hip's worth
+		PitchGain: 0f,      // pitch buys NO reach: override rotations do not carry child
+		                    //   bones (measured in-editor: 15.8u budgeted, ~3 materialised)
+		HipMaxX: -19.75f,   // hips may just kiss the board frame's near edge, never cross it
 		FootMinX: -16f,
 		BraceEngage: 6f, BraceMinX: -24f, BraceMaxX: 10f, BraceY: 24f, BraceZ: 30f );
 }

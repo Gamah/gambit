@@ -1196,10 +1196,19 @@ public sealed class LobbyPlayer : Component
 			_handLocal = Vector3.Lerp( current, target,
 				1f - MathF.Exp( -ring.HandChaseRate * Time.Delta ) );
 
-		// Fingers down over the board, reaching from this seat's side — so the hand faces
-		// across the table the way the body does.
-		var rot = station.WorldRotation
-			* Rotation.From( ring.HandPitch, seat == ChessSeat.White ? 0f : 180f, 0f );
+		// Fingers down over the board, reaching ALONG THE ARM — the yaw follows the
+		// shoulder→target bearing rather than the fixed seat-forward it used to be. The
+		// fixed yaw is what cocked the wrist into a claw on any reach that wasn't dead
+		// ahead: a deeply leaned shoulder reaches diagonally, and a hand forced to keep
+		// pointing at the opponent from a diagonal forearm hyper-flexes at the wrist.
+		float handYaw = seat == ChessSeat.White ? 0f : 180f;
+		if ( ShoulderLocal( station ) is { } shForYaw )
+		{
+			var bearing = _handLocal.Value - shForYaw;
+			if ( bearing.WithZ( 0f ).Length > 1f )
+				handYaw = MathF.Atan2( bearing.y, bearing.x ) * ( 180f / MathF.PI );
+		}
+		var rot = station.WorldRotation * Rotation.From( ring.HandPitch, handYaw, 0f );
 
 		// The IK aims a BONE, and the bone is the WRIST — so a target dropped straight on a
 		// square puts the fingers past it and the piece under the palm. Pull the wrist back
@@ -1477,15 +1486,15 @@ public sealed class LobbyPlayer : Component
 			MaxStep: SeatedHandSpikes.MaxStep,
 			MaxRise: SeatedHandSpikes.MaxRise,
 			RiseLift: SeatedHandSpikes.RiseLift,
-			// The pitch budget in shoulder-forward units, and the table edge the hips may
-			// not pass while the pitch is on (a real body hinges over the edge; only the
-			// torso crosses it). Pitch off → both gates open → the pre-pitch glide.
+			// The pitch budget in shoulder-forward units — COSMETIC-only by default: the
+			// editor measured that override rotations do not carry child bones, so a
+			// budget here is reach the plan promises and the skeleton can't deliver.
 			PitchGain: SeatedHandSpikes.TorsoPitchMax > 0f
 				? _measuredTorso * MathF.Sin( SeatedHandSpikes.TorsoPitchMax * ( MathF.PI / 180f ) )
 				: 0f,
-			HipMaxX: SeatedHandSpikes.TorsoPitchMax > 0f
-				? -( ( ring.BoardSize + 3f ) * 0.5f * ring.TableScale + 2f )
-				: -999f,
+			// The hip cap is UNCONDITIONAL — a real body stops at the table; this is what
+			// killed the plank, and it must not disappear with the pitch experiment.
+			HipMaxX: -( ( ring.BoardSize + 3f ) * 0.5f * ring.TableScale - 2f ),
 			FootMinX: -( ring.FootEdgeX + 1f ),
 			BraceEngage: 6f,
 			BraceMinX: -( ring.TableEdgeX - 6f ),

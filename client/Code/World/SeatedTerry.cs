@@ -769,9 +769,7 @@ public sealed class SeatedTerry : Component
 		int mirrorPlies = string.IsNullOrEmpty( Lichess?.MirrorMoves )
 			? 0 : Lichess.MirrorMoves.Split( ' ', System.StringSplitOptions.RemoveEmptyEntries ).Length;
 		Log.Info( $"   lichess: engaged={Lichess?.Engaged}  mirroring={Lichess?.Mirroring}"
-			+ $"  mirrorLive={Lichess?.MirrorLive}  mirrorPlies={mirrorPlies}"
-			+ "  (a spectator needs mirroring=True during someone else's lichess game;"
-			+ " mirrorLive=False there means the participant's reports never reached this client)" );
+			+ $"  mirrorLive={Lichess?.MirrorLive}  mirrorPlies={mirrorPlies}" );
 		Log.Info( $"   seats: W={station.WhiteSteamId} '{station.WhiteName}'  B={station.BlackSteamId} '{station.BlackName}'" );
 		DumpSeat( station, ChessSeat.White, _white );
 		DumpSeat( station, ChessSeat.Black, _black );
