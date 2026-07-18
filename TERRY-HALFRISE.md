@@ -29,6 +29,23 @@
 >    is slow — HandChaseRate is now a TerryTuning slider (default dropped 12 → 8); find
 >    the value, then shape if needed.
 >
+> **The finger choreography, specified by the owner** (replaces the single
+> `holdtype_pose_hand` blend, whose open/closed polarity was never even verified):
+>
+> - Every MOVE is a **thumb+index pinch** — the "okay" hand — from pickup to drop.
+> - A CAPTURE starts with the same "okay" hand travelling to the TAKEN piece, then swaps
+>   to the **modified "okay": index extended, thumb+MIDDLE finger holding the victim**,
+>   held that way until the victim is dropped in the capture tray (then presumably back
+>   to the plain pinch for the attacker's own pickup).
+>
+> Mechanism to investigate, in order: (a) the `FingerAdjustment_{L|R}{1-5}_{Bend|Curl|
+> Roll|Spread}` procedural params (floats −60..60) — documented on the first-person arms
+> graph; UNVERIFIED whether the third-person citizen graph has them; (b) per-bone finger
+> overrides à la the engine's own VrHand (`SetBoneOverride` per phalanx) — remember the
+> measured fact: override ROTATIONS don't carry children, so each phalanx bone needs its
+> own override, which is exactly what VrHand does anyway. TerryPose's `FingerClose` float
+> stays the timeline's signal; the driver maps it to whichever mechanism wins.
+>
 > **The authored-clips fork is OPEN** ("worth investigating"): `DirectPlayback.Play(name,
 > target, heading, interpTime)` with the agreed concessions — map the board coarsely and
 > always grab at a uniform height (~1.5 squares); fingers may clip/collide. That trades
