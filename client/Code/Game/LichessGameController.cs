@@ -738,7 +738,7 @@ public sealed class LichessGameController : Component, IBoardGame
 		_pollBackoff = 0f;   // never let a dead game's backoff gag the next one
 		_reportedResult = false;
 		State = null;
-		Game = null;
+		_game = null;
 		Error = null;
 		_clientGameId = null;
 		_version = 0;
