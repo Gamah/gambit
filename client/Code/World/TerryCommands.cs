@@ -41,6 +41,41 @@ public static class TerryCommands
 			: "[Gambit] probe OFF." );
 	}
 
+	/// <summary>Why doesn't THIS machine see the hand animation? (The gambit_tv /
+	/// gambit_music pattern: dump the whole chain, because a driver that never fires looks
+	/// identical to one that isn't wired up.) Run it on the machine whose view is wrong —
+	/// usually a JOINED client — while a game is on.</summary>
+	[ConCmd( "gambit_terry_net" )]
+	public static void TerryNet()
+	{
+		var scene = Sandbox.Game.ActiveScene;
+		if ( scene == null ) { Log.Warning( "[Gambit] no active scene." ); return; }
+
+		Log.Info( "── gambit_terry_net — the hand chain as THIS machine sees it ──" );
+		Log.Info( $"   statics: ring={( ChessRing.Instance != null ? "ok" : "NULL" )}"
+			+ $"  TerrySeated={ChessRing.Instance?.TerrySeated}"
+			+ $"  HandsOn={SeatedHandSpikes.HandsOn}  HalfRise={SeatedHandSpikes.HalfRiseOn}" );
+
+		int n = 0;
+		foreach ( var terry in scene.GetAllComponents<SeatedTerry>() )
+		{
+			n++;
+			terry.DumpNet();
+		}
+
+		if ( n == 0 )
+			Log.Warning( "   NO SeatedTerry components in this scene — the driver itself never reached this "
+				+ "client. That IS the bug: the component (or the whole station snapshot) didn't replicate." );
+
+		Log.Info( "── reading it ──" );
+		Log.Info( "   refs NULL           → the [Property] wiring didn't survive the snapshot to this client." );
+		Log.Info( "   game NULL / ply 0   → this client's game never advanced; the driver has nothing to animate." );
+		Log.Info( "   avatar NOT RESOLVED → occupancy [Sync] vs Network.Owner mismatch on this client." );
+		Log.Info( "   body MISSING        → the proxy's SkinnedModelRenderer wasn't found; IK has nowhere to go." );
+		Log.Info( "   pose Idle w=0 mid-game while everything above reads ok → the state machine never saw the "
+			+ "move: compare 'ply' here against the host's, and check HandState is changing while they hover." );
+	}
+
 	[ConCmd( "gambit_terry" )]
 	public static void TerryStatus()
 	{

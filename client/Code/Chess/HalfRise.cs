@@ -76,7 +76,7 @@ public readonly record struct RiseTunables(
 	float BraceZ )        // ...on the tabletop surface
 {
 	public static readonly RiseTunables Default = new(
-		Reach: 18f, MaxLean: 6f, LegReach: 30f, MaxStep: 12f, MaxRise: 34f,
+		Reach: 18f, MaxLean: 6f, LegReach: 30f, MaxStep: 16f, MaxRise: 46f,
 		FootMinX: -16f,
 		BraceEngage: 6f, BraceMinX: -24f, BraceMaxX: 10f, BraceY: 24f, BraceZ: 30f );
 }
@@ -175,21 +175,30 @@ public static class HalfRise
 		var fr = StepFoot( footR, hips, t );
 		bool stepped = ( fl - footL ).Length > 0.01f || ( fr - footR ).Length > 0.01f;
 
-		if ( ( hips - fl ).Length > t.LegReach || ( hips - fr ).Length > t.LegReach )
+		if ( ( hips - fl ).Length > t.LegReach + 0.01f || ( hips - fr ).Length > t.LegReach + 0.01f )
 		{
-			float lo = 0f, hi = rise;
-			for ( int i = 0; i < 20; i++ )
+			// Largest workable rise, by scanning DOWN from the full ask. Not a binary
+			// search, deliberately: the foot-plate clamp makes feasibility non-monotone
+			// near the a-file corner (a foot stepping toward the hips gets its X clamped,
+			// so more rise can re-open lateral room), and bisecting a non-monotone
+			// predicate lands on an arbitrary branch — which showed up as a 13u pelvis
+			// pop in the harness continuity sweep. A descending scan finds the largest
+			// sampled-feasible rise unconditionally, and 25 probes of pure arithmetic is
+			// nothing per frame.
+			float best = 0f;
+			for ( int i = 24; i >= 0; i-- )
 			{
-				float mid = ( lo + hi ) * 0.5f;
+				float mid = rise * i / 24f;
 				var h = pelvis + dir * mid;
 				var sl = StepFoot( footL, h, t );
 				var sr = StepFoot( footR, h, t );
-				if ( ( h - sl ).Length <= t.LegReach && ( h - sr ).Length <= t.LegReach )
-					lo = mid;
-				else
-					hi = mid;
+				if ( ( h - sl ).Length <= t.LegReach + 0.01f && ( h - sr ).Length <= t.LegReach + 0.01f )
+				{
+					best = mid;
+					break;
+				}
 			}
-			rise = lo;
+			rise = best;
 			delta = dir * rise;
 			hips = pelvis + delta;
 			fl = StepFoot( footL, hips, t );
@@ -233,18 +242,23 @@ public static class HalfRise
 
 	/// <summary>Slide a planted foot horizontally toward the hips just far enough to bring
 	/// the hip inside <see cref="RiseTunables.LegReach"/>, capped at MaxStep. The foot
-	/// stays ON the floor — only X/Y move — and never steps when it doesn't need to.</summary>
+	/// stays ON the floor — only X/Y move — and never steps when it doesn't need to.
+	/// EXACT, not heuristic: the leg triangle (hip height over the floor vs leg length)
+	/// says how much horizontal distance the leg can span, and the foot steps to exactly
+	/// that. The first version overshot by a fudge factor and that non-exactness is what
+	/// made the rise search misbehave in the corners.</summary>
 	static V3 StepFoot( V3 foot, V3 hips, in RiseTunables t )
 	{
-		float need = ( hips - foot ).Length - t.LegReach;
+		float dz = hips.Z - foot.Z;
+		float allowedSq = t.LegReach * t.LegReach - dz * dz;
+		if ( allowedSq <= 0f ) return foot; // hips higher than the whole leg: no placement helps
+
+		float allowed = Sqrt( allowedSq );
+		float horiz = ( hips - foot ).LengthXY;
+		float need = horiz - allowed;
 		if ( need <= 0f ) return foot;
 
-		var toward = ( hips - foot ).HorizontalNormal;
-		// Horizontal travel buys less than straight-line distance when the hip is high
-		// above the foot; overshoot a little (1.4×) and cap. Exactness is not needed —
-		// the binary search in Plan() owns the hard guarantee.
-		float step = Min( need * 1.4f, t.MaxStep );
-		var stepped = foot + toward * step;
+		var stepped = foot + ( hips - foot ).HorizontalNormal * Min( need, t.MaxStep );
 
 		// The table's foot plate starts at FootMinX: a foot may step toward the table but
 		// never INTO its base. Clamping X (not rejecting the step) keeps whatever lateral

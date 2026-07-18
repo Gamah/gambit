@@ -1603,6 +1603,11 @@ public sealed class LobbyPlayer : Component
 	const string IkFootLeft = "foot_left";
 	const string IkFootRight = "foot_right";
 
+	/// <summary>Diagnostics for <c>gambit_terry_net</c> — is there a renderer to pose, and
+	/// how much rise is actually applied right now on THIS machine.</summary>
+	public bool HasBody => _bodyRenderer != null;
+	public float RiseAppliedDebug => _riseApplied.Length;
+
 	/// <summary>Where the working hand's wrist ACTUALLY is this frame (world, final pose —
 	/// after IK, overrides, everything). This is what a carried piece rides: the rendered
 	/// hand, not the target it was aimed at, so piece and fingers can never disagree even

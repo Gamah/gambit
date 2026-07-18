@@ -566,6 +566,57 @@ public sealed class SeatedTerry : Component
 	ChessBoardView _view;
 
 	/// <summary>
+	/// <c>gambit_terry_net</c>'s per-station dump: the whole hand chain AS THIS MACHINE
+	/// sees it. Exists because "a joined client doesn't see any of the animation" is the
+	/// gambit_tv / gambit_music situation again — none of this chain is visible from
+	/// outside, and a driver that never fires looks identical to one that isn't wired up.
+	/// Run it on the machine whose view is wrong and read which link is dead.
+	/// </summary>
+	public void DumpNet()
+	{
+		string refs = $"refs: Station={( Station != null ? "ok" : "NULL" )}"
+			+ $" Controller={( Controller != null ? "ok" : "NULL" )}"
+			+ $" Lichess={( Lichess != null ? "ok" : "NULL" )}"
+			+ $" view={( _view != null ? "ok" : "unresolved" )}";
+
+		if ( Station is not { } station )
+		{
+			Log.Info( $"── {GameObject.Name}: STATION REF NULL — the [Property] wiring did not reach this client. {refs}" );
+			return;
+		}
+
+		if ( !station.AnySeatTaken )
+		{
+			Log.Info( $"── {GameObject.Name}: empty ({refs})" );
+			return;
+		}
+
+		var src = Source;
+		var game = src?.Game;
+		Log.Info( $"── {GameObject.Name} — {refs}" );
+		Log.Info( $"   source={( src == null ? "NULL" : src.GetType().Name )}"
+			+ $"  game={( game == null ? "NULL" : $"ply {game.MoveCount}, last {game.LastMoveUci ?? "-"}" )}"
+			+ $"  playing={src?.Playing}  latched: lastPly={_lastPly} wMoved={_whiteMoved} cap={_capture}" );
+		Log.Info( $"   seats: W={station.WhiteSteamId} '{station.WhiteName}'  B={station.BlackSteamId} '{station.BlackName}'" );
+		DumpSeat( station, ChessSeat.White, _white );
+		DumpSeat( station, ChessSeat.Black, _black );
+	}
+
+	void DumpSeat( ChessStation station, ChessSeat seat, in HandPose pose )
+	{
+		LobbyPlayer avatar = null;
+		ulong cached = 0;
+		avatar = ResolveAvatar( station, seat, ref avatar, ref cached );
+
+		string who = !avatar.IsValid() ? "NOT RESOLVED"
+			: $"{( avatar.IsProxy ? "proxy" : "local" )}, body={( avatar.HasBody ? "ok" : "MISSING" )},"
+				+ $" HandState={avatar.HandState}, rise={avatar.RiseAppliedDebug:0.0}u";
+		Log.Info( $"   {seat}: id={station.SeatSteamId( seat )}  avatar: {who}" );
+		Log.Info( $"      pose: {pose.Phase} from={pose.FromSquare} to={pose.ToSquare}"
+			+ $" travel={pose.Travel:0.00} w={pose.Weight:0.00} ply={pose.Ply} since={pose.Since:0.00}" );
+	}
+
+	/// <summary>
 	/// Whose avatar is in this seat.
 	///
 	/// <para>The local player is checked FIRST and by <c>ChessStation.Active</c>, not by

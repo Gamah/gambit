@@ -103,16 +103,17 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// 72-unit citizen, which could easily be ±2. That is the tightest guess in M13 and the
 	/// reason this must stay tunable.</para>
 	///
-	/// <para><b>CORRECTED from 36 on measurement (gambit_terry).</b> At 36 the shoulder
-	/// (arm_upper_R) sits at station-local x −44.6 — 8.6 BEHIND the plant origin, because a
-	/// seated citizen's shoulders are back over the chair — and the arm is only 19.9u, not the
-	/// ~24 M13 guessed. The nearest square (−17.06) is then 28.7u away: the arm falls 8.8u
-	/// short of reaching ANY square. Scooting to 26 puts the shoulder at −34.6, bringing rank 1
-	/// within reach (e1 → 19.4u ≈ the arm). Bounded by the knees, checked against the real
-	/// bones: at 26 the feet land at x −19.7, still clear of the foot plate (−15). Push lower
-	/// for more reach while watching the knees clip. The far half is beyond a 19.9u arm no
-	/// matter what — that is what HandReach's clamp is for.</para></summary>
-	[Property] public float SeatSitBack { get; set; } = 26f;
+	/// <para><b>BACK to 36 — the M13 scoot-in (36→26) is undone by the half-rise.</b> The
+	/// scoot bought one rank of seated reach at a real cosmetic price nobody could see from
+	/// this host: at 26 the seated chest sits a third of the way INTO the tabletop, and the
+	/// first joined client to look at a seated terry from outside reported exactly that.
+	/// The half-rise makes the trade unnecessary — the planner reads the live skeleton every
+	/// frame, so a further seat just means a longer rise, and the harness at Back=36 reads
+	/// BETTER than at 26 (54/64 vs 51/64, worst corner 6.8 vs 7.8): the longer horizontal
+	/// run lines the rise up with the far squares. The measurement lore stands: shoulder
+	/// (arm_upper_R) at 36 sits at x −44.6, 8.6 behind the plant origin, arm 19.9u — a
+	/// SEATED arm reaches nothing from here, which is the half-rise's whole reason.</para></summary>
+	[Property] public float SeatSitBack { get; set; } = 36f;
 
 	/// <summary>
 	/// Height a seated avatar's ORIGIN is planted at, station-local. The FLOOR, by default.

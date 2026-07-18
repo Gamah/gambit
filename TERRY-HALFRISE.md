@@ -27,24 +27,33 @@ already proven in-editor.
 ## The proof (dotnet harness, this host)
 
 `Code/Chess/HalfRise.cs` is the whole geometry, Sandbox-free, driven over all 64 squares from
-both seats with the measured M13 skeleton (`scratchpad/halfrise` in the session; re-create
-from the constants in the file header comments):
+both seats with the measured M13 skeleton — at **`SeatSitBack = 36`**, the pre-M13-scoot seat
+(see below):
 
 ```
        a      b      c      d      e      f      g      h
-   8    7.4    7.8    3.1    3.8    2.4    1.9    3.1    4.7
-   7    6.6    3.8    1.5   ok     ok     ok     ok      0.5
-   6   ok      0.1   ok     ok     ok     ok     ok     ok
-   5   ok     ok     ok     ok     ok     ok     ok     ok
-  1-4                       all ok
+   8    6.8    6.5    4.7    3.1    3.0    3.0    3.0    4.7
+   7    3.0    1.4   ok     ok     ok     ok     ok     ok
+  1-6                       all ok
 ```
 
-**51/64 squares honestly reachable** (M13 seated: 5/64, far rank 30–35 short); worst corner
-7.8u, inside the piece-slide fallback that already ships. Legs never over-extend, feet never
-enter the table base, mirror round-trips exact, no NaNs, no cliffs. The key insight the first
-cut got wrong: the rise must be **horizontal** — the legs are the scarce resource, and
-altitude bought from them is altitude the arm's own sphere covers for free. That one change
-was worth 20 squares.
+**54/64 squares honestly reachable** (M13 seated: 5/64, far rank 30–35 short); worst corner
+6.8u, inside the piece-slide fallback that already ships. Legs never over-extend, feet never
+enter the table base, mirror round-trips exact, no NaNs, no cliffs. Two insights the first
+cuts got wrong, both caught by the harness:
+
+- The rise must be **horizontal** — the legs are the scarce resource, and altitude bought
+  from them is altitude the arm's own sphere covers for free. Worth 20 squares.
+- The foot step must be **exact** (leg-triangle arithmetic), not a fudge-factor overshoot —
+  the heuristic made feasibility non-monotone at the a-file corner and the rise search
+  landed on the wrong branch (a 13u pelvis pop). The search is now a descending scan, which
+  doesn't care about monotonicity.
+
+**`SeatSitBack` is back to 36 (M13 scooted it to 26 for seated reach).** The scoot buried
+the seated chest a third of the way into the tabletop — invisible from this host and from
+the seated player's own first-person view; the first joined client to look reported it. The
+half-rise makes the scoot pointless, and the harness reads BETTER at 36 (54 vs 51): the
+longer horizontal run lines the rise up with the far squares.
 
 ## What only the editor can answer (the next session's checklist)
 
@@ -58,6 +67,14 @@ was worth 20 squares.
 
 Levers: `gambit_terry_rise / _maxrise / _step / _risechase / _brace` plus all of M14's.
 Kill chain, three deep: `ChessRing.TerrySeated` → `gambit_terry_hands` → `gambit_terry_rise`.
+
+**OPEN: a joined client reported seeing none of the animation.** The design says it should —
+SeatedTerry runs on every client, driven entirely by state that is already synced (occupancy,
+the game's ply, the packed HandState) — so one link in that chain is dead on joiners, and
+which one is not guessable from here. **`gambit_terry_net`** dumps the whole chain on the
+machine that runs it (statics → per-station refs → source/game ply → per-seat resolved
+avatar/renderer/HandState → the latched pose) with a reading key. Run it on the JOINED
+client mid-game; the dead link names itself.
 
 ## Decisions already made (don't relitigate)
 
