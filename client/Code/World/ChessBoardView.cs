@@ -189,10 +189,24 @@ public sealed class ChessBoardView : Component
 		var piece = _pieces[pose.ToSquare];
 		if ( piece == null ) return;
 
+		// GRAB ON CONTACT. Gluing the piece to a hand that is still travelling — or that
+		// can't reach the square at all (the residual squares the slide finishes) — yanks
+		// it backward off its slide toward a hand somewhere else entirely, which is
+		// exactly the "completely busted" look the first two-client session reported.
+		// Until the hand closes within GrabRadius of the piece, the slide keeps the piece
+		// and the hand merely chases it; once held, it stays held for the whole gesture
+		// (the hand may then swing wide without dropping it).
+		if ( !ReferenceEquals( piece, _carried )
+			&& ( piece.WorldPosition - hand ).Length > GrabRadius ) return;
+
 		_carried = piece;
 		_carryStamp = Time.Now;
 		_carryWorld = hand + Vector3.Down * CarryHang;
 	}
+
+	/// <summary>How close the hand must get to a piece before the piece leaves its slide
+	/// for the hand. Roughly the hand's own grasp envelope; tune in-editor.</summary>
+	const float GrabRadius = 9f;
 
 	// ── Captured pieces ──
 	//

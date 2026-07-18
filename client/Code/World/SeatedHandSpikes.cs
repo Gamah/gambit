@@ -83,6 +83,17 @@ public static class SeatedHandSpikes
 	/// <c>gambit_terry_leg</c>.</summary>
 	public static float LegReachOverride;
 
+	/// <summary>The closed-loop hand correction (default ON): measure the final hand's error
+	/// against the true ask each frame and steer it out — the post-override native warp
+	/// (~5u, procedural bones by elimination) can be measured but not modelled.
+	/// <c>gambit_terry_servo</c>.</summary>
+	public static bool ServoOn = true;
+
+	/// <summary>How far the torso may TURN toward the piece, degrees (0 = off). Two-bone IK
+	/// can never rotate the chest, so the turn is authored on the spine override — capped,
+	/// eased in with the rise, and trued up by the servo. <c>gambit_terry_yaw</c>.</summary>
+	public static float TorsoYawMax = 30f;
+
 	/// <summary>One-shot: log the ENTIRE half-rise pipeline for the next planned reach frame —
 	/// planner inputs (live bones, measured chains), plan outputs, eased applied values, and
 	/// each key bone's animation-vs-final position. This is how "the hand stops at rank 2" gets
@@ -251,6 +262,23 @@ public static class SeatedHandSpikes
 		Log.Info( LegReachOverride > 0f
 			? $"[Gambit] leg reach OVERRIDDEN to {LegReachOverride}u (the planner's pelvis→ankle budget)."
 			: "[Gambit] leg reach back to the live chain measurement (gambit_terry_rise_dbg prints it)." );
+	}
+
+	[ConCmd( "gambit_terry_servo" )]
+	public static void ToggleServo()
+	{
+		ServoOn = !ServoOn;
+		if ( !ServoOn ) LobbyPlayer.Local?.ClearHandPose();
+		Log.Info( $"[Gambit] hand servo {( ServoOn ? "ON" : "OFF" )} — the closed-loop correction for the ~5u post-override warp." );
+	}
+
+	[ConCmd( "gambit_terry_yaw" )]
+	public static void SetYaw( float degrees )
+	{
+		TorsoYawMax = degrees < 0f ? 0f : degrees;
+		Log.Info( TorsoYawMax > 0f
+			? $"[Gambit] torso yaw ON, capped {TorsoYawMax}° toward the piece (eased in with the rise)."
+			: "[Gambit] torso yaw OFF." );
 	}
 
 	[ConCmd( "gambit_terry_rise_dbg" )]

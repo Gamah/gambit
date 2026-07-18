@@ -1239,7 +1239,41 @@ public sealed class LobbyPlayer : Component
 			// target after the override. Δ is the APPLIED (eased) value, not the plan's,
 			// so the compensation can never outrun the bones.
 			ApplyRiseOverrides( r, station, seat );
+			var trueAskWorld = world;
 			world -= _riseApplied + _leanApplied;
+
+			// ── The closed-loop hand servo ──
+			// The doctor's pipeline dump proved every modelled stage exact: the pelvis and
+			// spine overrides land to the decimal, and the animation-domain IK NAILS its
+			// compensated target — yet the FINAL hand still lands ~5u off the true ask.
+			// Some post-override native stage (procedural/twist bones, by elimination)
+			// warps the last hop, and it is not readable from any API we have. So: don't
+			// model it, MEASURE it — integrate last frame's final-hand-vs-true-ask error
+			// into the target. Gated on the ask being stable (a moving target's error is
+			// chase lag, not warp), clamped, decayed when the correction stops earning.
+			// This also absorbs whatever the torso YAW does to the arm-root geometry,
+			// which is what lets the yaw ship without exact modelling.
+			if ( SeatedHandSpikes.ServoOn )
+			{
+				float sk = 1f - MathF.Exp( -ServoRate * Time.Delta );
+				if ( _servoTrueAsk is { } prevAsk && ( prevAsk - trueAskWorld ).Length < 2f
+					&& r.TryGetBoneTransform( "hand_R", out var handNow ) )
+				{
+					var err = prevAsk - handNow.Position;
+					if ( err.Length < 20f ) // never wind toward a wildly wrong bone read
+					{
+						_handServo += err * sk;
+						if ( _handServo.Length > ServoClamp )
+							_handServo = _handServo.Normal * ServoClamp;
+					}
+				}
+				else
+				{
+					_handServo = Vector3.Lerp( _handServo, Vector3.Zero, sk );
+				}
+				_servoTrueAsk = trueAskWorld;
+				world += _handServo;
+			}
 
 			// One-shot pipeline dump, second half: what was ACTUALLY applied and where the
 			// bones ACTUALLY are (animation vs final). Splits "planner under-asked" from
@@ -1395,6 +1429,13 @@ public sealed class LobbyPlayer : Component
 	const float FallbackArm = 19.9f;
 	const float FallbackLeg = 30f;
 
+	/// <summary>Where the half-rise PLANTS the feet, relative to the pelvis (planner
+	/// frame): a step's worth ahead, hip-width apart, on the floor. See PlanRise for why
+	/// the animated ankles must not be used.</summary>
+	const float FootPlantForward = 10f;
+	const float FootPlantSpread = 7f;
+	const float FootPlantZ = 1f;
+
 	/// <summary>Grip/knee slack subtracted from the measured chains before planning, so the
 	/// solver is never asked for a straight-locked limb.</summary>
 	const float ReachMargin = 2f;
@@ -1414,8 +1455,6 @@ public sealed class LobbyPlayer : Component
 
 		if ( ShoulderLocal( station ) is not { } shoulder ) return null;
 		if ( BoneAnimLocal( station, "pelvis" ) is not { } pelvis ) return null;
-		if ( BoneAnimLocal( station, "ankle_L" ) is not { } ankleL ) return null;
-		if ( BoneAnimLocal( station, "ankle_R" ) is not { } ankleR ) return null;
 
 		MeasureLimbs( r );
 
@@ -1438,9 +1477,21 @@ public sealed class LobbyPlayer : Component
 			BraceZ: ring.TableTopSurfaceZ );
 
 		bool black = seat == ChessSeat.Black;
+		var pelvisP = ToPlanner( pelvis, black );
+
+		// CHOSEN plants, never the animated ankles. The sit pose tucks the feet ~25u
+		// BEHIND the pelvis (measured live: ankle x −65 against pelvis −39), which spends
+		// the whole ~30u leg budget before any rise — the doctor's first run showed the
+		// rise collapsing to 11u because of exactly this. The feet are ours to place (the
+		// foot IK pins them wherever we say, and EaseFootPin walks them there from the
+		// tucked pose so nothing teleports): a person about to lean over a table steps
+		// their feet under themselves first.
+		var plantL = new Gambit.Chess.V3( pelvisP.X + FootPlantForward, +FootPlantSpread, FootPlantZ );
+		var plantR = new Gambit.Chess.V3( pelvisP.X + FootPlantForward, -FootPlantSpread, FootPlantZ );
+
 		var plan = Gambit.Chess.HalfRise.Plan(
-			ToPlanner( grasp, black ), ToPlanner( shoulder, black ), ToPlanner( pelvis, black ),
-			ToPlanner( ankleL, black ), ToPlanner( ankleR, black ), t );
+			ToPlanner( grasp, black ), ToPlanner( shoulder, black ), pelvisP,
+			plantL, plantR, t );
 
 		// One-shot pipeline dump (gambit_terry_rise_dbg), first half: what the planner was
 		// GIVEN and what it decided. The second half (applied values, bones) logs at the end
@@ -1449,7 +1500,8 @@ public sealed class LobbyPlayer : Component
 		{
 			Log.Info( "── rise debug: the planner ──" );
 			Log.Info( $"   inputs (station-local, anim pose): grasp={Fmt( grasp )}  shoulder={Fmt( shoulder )}"
-				+ $"  pelvis={Fmt( pelvis )}  ankleL={Fmt( ankleL )}  ankleR={Fmt( ankleR )}" );
+				+ $"  pelvis={Fmt( pelvis )}  plants (chosen, planner frame): "
+				+ $"L=({plantL.X:0.0},{plantL.Y:0.0}) R=({plantR.X:0.0},{plantR.Y:0.0})" );
 			Log.Info( $"   chains: arm measured {_measuredArm:0.0} → reach {t.Reach:0.0}"
 				+ $"  leg measured {_measuredLeg:0.0} → budget {t.LegReach:0.0}"
 				+ $"{( SeatedHandSpikes.LegReachOverride > 0f ? " (OVERRIDDEN)" : "" )}"
@@ -1520,15 +1572,37 @@ public sealed class LobbyPlayer : Component
 			&& r.TryGetBoneTransformAnimation( leanBone, out var lw ) )
 		{
 			lw.Position += _riseApplied + _leanApplied;
+
+			// ── Torso yaw: turn the shoulders toward the piece ──
+			// Two-bone IK can never rotate the chest — there is no automation to hope
+			// for; the turn has to be authored. Rotate the spine override about world-up
+			// toward the reach bearing, capped and eased in with the rise. Whether the
+			// rotation propagates to the arm subtree is an engine unknown — but the hand
+			// SERVO trues the fingertip up either way, so the yaw only has to look right.
+			float yawMax = SeatedHandSpikes.TorsoYawMax;
+			if ( yawMax > 0f && _risePlan is { } yp && yp.LeanDir.Length > 0.1f )
+			{
+				var face = station.WorldRotation
+					* ( seat == ChessSeat.White ? Vector3.Forward : Vector3.Backward );
+				var dirW = station.WorldRotation * FromPlanner( yp.LeanDir, seat );
+				float signed = MathF.Atan2( Vector3.Cross( face, dirW ).z, Vector3.Dot( face, dirW ) )
+					* ( 180f / MathF.PI );
+				float ramp = Math.Min( 1f, _riseApplied.Length / 8f );
+				float yaw = Math.Clamp( signed, -yawMax, yawMax ) * ramp;
+				lw.Rotation = Rotation.FromAxis( Vector3.Up, yaw ) * lw.Rotation;
+			}
+
 			r.SetBoneTransform( leanBone, r.WorldTransform.ToLocal( lw ) );
 		}
 
 		if ( _risePlan is { } p && _riseApplied.Length > 0.05f )
 		{
 			// The feet: pinned to the plan's plants through the engine's own foot IK,
-			// pre-compensated by the rise alone (the legs ride the pelvis, not the spine).
-			PinFoot( r, station, seat, "ankle_L", IkFootLeft, p.FootL );
-			PinFoot( r, station, seat, "ankle_R", IkFootRight, p.FootR );
+			// pre-compensated by the rise alone (the legs ride the pelvis, not the
+			// spine), and EASED from the tucked sit pose so engaging a pin is a step,
+			// never a teleport.
+			EaseFootPin( r, station, seat, "ankle_L", IkFootLeft, p.FootL, ref _footIkL );
+			EaseFootPin( r, station, seat, "ankle_R", IkFootRight, p.FootR, ref _footIkR );
 			_riseFeetIk = true;
 
 			// The off hand braces on the table — planner already guaranteed the left arm
@@ -1556,21 +1630,44 @@ public sealed class LobbyPlayer : Component
 	/// <summary>Pin one foot: the animgraph solves against the UN-risen skeleton, so the
 	/// target is the true plant minus the rise; after the pelvis override carries the leg,
 	/// the foot lands exactly on the plant. Rotation is the foot's own animated one, so
-	/// pinning never twists an ankle.</summary>
-	void PinFoot( SkinnedModelRenderer r, ChessStation station, ChessSeat seat,
-		string ankleBone, string ik, Gambit.Chess.V3 plant )
+	/// pinning never twists an ankle. The target EASES from the foot's actual (tucked)
+	/// position to the plant at the rise's own chase rate — engaging a pin is a step, not
+	/// a teleport.</summary>
+	void EaseFootPin( SkinnedModelRenderer r, ChessStation station, ChessSeat seat,
+		string ankleBone, string ik, Gambit.Chess.V3 plant, ref Vector3? eased )
 	{
 		var rot = Rotation.Identity;
+		Vector3? animPos = null;
 		if ( r.Model?.Bones.GetBone( ankleBone ) is { } bone
 			&& r.TryGetBoneTransformAnimation( bone, out var tx ) )
+		{
 			rot = tx.Rotation;
+			animPos = tx.Position;
+		}
 
-		var world = station.WorldTransform.PointToWorld( FromPlanner( plant, seat ) );
-		r.SetIk( ik, new Transform( world - _riseApplied, rot ) );
+		var desired = station.WorldTransform.PointToWorld( FromPlanner( plant, seat ) );
+		var cur = eased ?? animPos ?? desired;
+		float k = 1f - MathF.Exp( -SeatedHandSpikes.RiseChaseRate * Time.Delta );
+		cur = Vector3.Lerp( cur, desired, k );
+		eased = cur;
+
+		r.SetIk( ik, new Transform( cur - _riseApplied, rot ) );
 	}
+
+	Vector3? _footIkL;
+	Vector3? _footIkR;
+
+	/// <summary>The hand servo's state: the accumulated world-space correction, and the
+	/// previous frame's true ask (stability gate). See the servo block in ApplyHandPose.</summary>
+	Vector3 _handServo;
+	Vector3? _servoTrueAsk;
+	const float ServoRate = 5f;
+	const float ServoClamp = 10f;
 
 	void ReleaseRiseIk( SkinnedModelRenderer r )
 	{
+		_footIkL = null;
+		_footIkR = null;
 		if ( _riseFeetIk )
 		{
 			r.ClearIk( IkFootLeft );
@@ -1732,6 +1829,8 @@ public sealed class LobbyPlayer : Component
 		_risePlan = null;
 		_riseApplied = Vector3.Zero;
 		_leanApplied = Vector3.Zero;
+		_handServo = Vector3.Zero;
+		_servoTrueAsk = null;
 	}
 
 	static Vector3 SquareLocal( ChessRing ring, int square ) =>
