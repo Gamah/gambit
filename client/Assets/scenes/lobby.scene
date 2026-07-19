@@ -644,6 +644,7 @@
      "HandHoldSeconds": 1.2,
      "HandRoll": 45,
      "HandsOn": true,
+     "HoverChaseRate": 2.5,
      "HoverHeight": 12,
      "LiftHeight": 14,
      "MaxLean": 8,

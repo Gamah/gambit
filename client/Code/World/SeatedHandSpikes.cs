@@ -109,10 +109,20 @@ public static class SeatedHandSpikes
 	/// experiments only; reach never depends on it. <c>gambit_terry_pitch</c>.</summary>
 	public static float TorsoPitchMax = 0f;
 
-	/// <summary>How fast the hand chases its target, 1/s. Was ChessRing.HandChaseRate — a
-	/// code default on a runtime-built component, i.e. untunable — while being the exact
-	/// knob behind "moving between selected squares is overly snappy". Tuned via TerryTuning.</summary>
+	/// <summary>How fast the hand chases its target while REPLAYING A COMMITTED MOVE, 1/s —
+	/// the fast tempo. Was ChessRing.HandChaseRate, a code default on a runtime-built
+	/// component. A committed move is a hard, snappy gesture: the hand catches up from wherever
+	/// the lazy hover left it and completes the whole pickup-carry-drop quickly. Tuned via
+	/// TerryTuning. See <see cref="HoverChaseRate"/> for the other tempo.</summary>
 	public static float HandChaseRate = 8f;
+
+	/// <summary>How fast the hand chases the CURSOR while hovering or with a piece merely
+	/// selected, 1/s — the lazy tempo (banner jank #4: "two tempos, not one"). Deciding is not
+	/// moving: the hand may drift, a-file to h-file taking a lazy couple of seconds. Much
+	/// slower than <see cref="HandChaseRate"/> on purpose — a hover that snaps to the cursor
+	/// reads as twitchy, and selecting a piece is NOT a committed move. Tuned via
+	/// TerryTuning.</summary>
+	public static float HoverChaseRate = 2.5f;
 
 	// ── The carry (read by ChessBoardView; tuned via TerryTuning) ──
 

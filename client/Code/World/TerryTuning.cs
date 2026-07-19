@@ -40,6 +40,7 @@ public sealed class TerryTuning : Component
 	// ── Tempo ──
 	[Property, Group( "Tempo" ), Range( 0.25f, 4f )] public float GestureSpeed { get; set; } = 1f;
 	[Property, Group( "Tempo" ), Range( 2f, 30f )] public float HandChaseRate { get; set; } = 8f;
+	[Property, Group( "Tempo" ), Range( 0.5f, 12f )] public float HoverChaseRate { get; set; } = 2.5f;
 
 	// ── Hand heights (above the board surface) ──
 	[Property, Group( "Hand" ), Range( 6f, 20f )] public float HoverHeight { get; set; } = 12f;
@@ -60,7 +61,8 @@ public sealed class TerryTuning : Component
 	// Last-pushed mirrors: a knob only pushes when the INSPECTOR moved it, so the console
 	// levers and the diagnostics' save/force/restore cycles stay authoritative in between.
 	float _maxLean, _riseGrace, _reachMargin, _wristDrop, _handRoll, _maxRise, _maxStep, _riseLift,
-		_riseChase, _yaw, _pitch, _hover, _grasp, _lift, _hang, _grab, _hold, _speed, _handChase;
+		_riseChase, _yaw, _pitch, _hover, _grasp, _lift, _hang, _grab, _hold, _speed, _handChase,
+		_hoverChase;
 	bool _hands, _rise, _brace, _servo;
 
 	protected override void OnEnabled() => Push( all: true );
@@ -82,6 +84,7 @@ public sealed class TerryTuning : Component
 		if ( all || TorsoPitchMax != _pitch ) SeatedHandSpikes.TorsoPitchMax = _pitch = TorsoPitchMax;
 		if ( all || GestureSpeed != _speed ) TerryPose.SpeedScale = _speed = GestureSpeed;
 		if ( all || HandChaseRate != _handChase ) SeatedHandSpikes.HandChaseRate = _handChase = HandChaseRate;
+		if ( all || HoverChaseRate != _hoverChase ) SeatedHandSpikes.HoverChaseRate = _hoverChase = HoverChaseRate;
 		if ( all || HoverHeight != _hover ) TerryPose.HoverHeight = _hover = HoverHeight;
 		if ( all || GraspHeight != _grasp ) TerryPose.GraspHeight = _grasp = GraspHeight;
 		if ( all || LiftHeight != _lift ) TerryPose.LiftHeight = _lift = LiftHeight;

@@ -196,8 +196,40 @@ public sealed class ChessBoardView : Component
 	/// pose is animating (both react to the same ply change).</summary>
 	public void ReportHandCarry( in Gambit.Chess.HandPose pose, LobbyPlayer avatar )
 	{
+		// ── Piece-led placement (banner jank #3) ──
+		//
+		// When the hand starts SETTING THE PIECE DOWN, stop dragging the piece around with
+		// the (clamped, lagging) hand and hand it to a quick settle onto its TRUE square —
+		// the hand then follows it down. Carrying it through the whole Dropping phase left
+		// the piece wherever the short-reaching hand actually landed, and only settled that
+		// gap once the carry reports STOPPED (0.15s later, by which point the hand was
+		// already resetting) — so the piece appeared to slide onto its square on its own,
+		// after the hand had left. Leading it in during the drop fixes the "piece moves after
+		// the hand starts to reset" look.
+		if ( pose.Phase is Gambit.Chess.HandPhase.Dropping )
+		{
+			if ( _carried.IsValid() )
+			{
+				var s = _slides.Find( x => ReferenceEquals( x.Piece, _carried ) );
+				if ( s != null )
+				{
+					s.From = _carried.LocalPosition;   // from where the hand had it
+					s.To = SquareLocal( pose.ToSquare );   // to the true square, not the hand
+					s.Age = 0f;
+					s.Seconds = SettleSeconds;
+					s.Arc = 0f;
+					s.HoldForHand = 0f;
+				}
+				// Release now, and suppress AdvanceSlides' own release path (it would otherwise
+				// re-arm this same slide a frame later from a staler position).
+				_carried = null;
+				_carriedPrev = null;
+			}
+			return;
+		}
+
 		if ( pose.Phase is not ( Gambit.Chess.HandPhase.Lifting
-			or Gambit.Chess.HandPhase.Carrying or Gambit.Chess.HandPhase.Dropping ) ) return;
+			or Gambit.Chess.HandPhase.Carrying ) ) return;
 		if ( pose.ToSquare is < 0 or > 63 ) return;
 		if ( avatar?.HandBoneWorld() is not { } hand ) return;
 

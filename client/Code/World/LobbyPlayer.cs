@@ -1190,11 +1190,17 @@ public sealed class LobbyPlayer : Component
 		// weight can't do because both ends are on it.
 		//
 		// Frame-rate independent: 1 − e^(−k·dt), not a raw lerp factor.
+		//
+		// TWO tempos, not one (banner jank #4). Hovering or merely selecting is DECIDING, and
+		// the hand drifts lazily after the cursor (HoverChaseRate, slow). A committed move is a
+		// hard snappy gesture, so it chases fast (HandChaseRate) — which also catches the hand
+		// up from wherever the lazy drift left it, the "catch-up is part of the budget" rule.
+		float chaseRate = pose.Animating ? SeatedHandSpikes.HandChaseRate : SeatedHandSpikes.HoverChaseRate;
 		if ( _handLocal is not { } current )
 			_handLocal = target;                       // first frame: be there
 		else
 			_handLocal = Vector3.Lerp( current, target,
-				1f - MathF.Exp( -SeatedHandSpikes.HandChaseRate * Time.Delta ) );
+				1f - MathF.Exp( -chaseRate * Time.Delta ) );
 
 		// Fingers down over the board, reaching ALONG THE ARM — the yaw follows the
 		// shoulder→target bearing rather than the fixed seat-forward it used to be. The
