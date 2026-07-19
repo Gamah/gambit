@@ -149,6 +149,32 @@ Check( worst <= 18f, $"worst residual {worst:0.0} — a far corner is out of eve
 	}
 }
 
+// ── 5. TerryPose: the abandon rule's premove exception ──
+// An opponent's reply (their premove firing on our move) advances the ply but must NOT
+// kill our in-flight gesture — our move really happened. A rewind still abandons.
+{
+	var live = new HandInput( 5, "e2e4", true, false, true );
+	var pose = TerryPose.Advance( HandPose.None with { Ply = 4 }, live, 0.05f );
+	Check( pose.Phase == HandPhase.Reaching, $"gesture starts on our move (got {pose.Phase})" );
+
+	var reply = new HandInput( 6, "e7e5", false, true, true ); // opponent's premove reply
+	pose = TerryPose.Advance( pose, reply, 0.05f );
+	Check( pose.Animating && pose.Ply == 6,
+		$"opponent reply does not abandon the gesture (got {pose.Phase} ply {pose.Ply})" );
+
+	for ( int i = 0; i < 100; i++ ) pose = TerryPose.Advance( pose, reply, 0.05f );
+	Check( pose.Phase == HandPhase.Idle && pose.Weight == 0f, "the gesture still runs out and rests" );
+
+	pose = TerryPose.Advance( HandPose.None with { Ply = 4 }, live, 0.05f );
+	pose = TerryPose.Advance( pose, new HandInput( 2, null, false, false, true ), 0.05f );
+	Check( !pose.Animating, "a rewind still abandons" );
+
+	pose = TerryPose.Advance( HandPose.None with { Ply = 4 }, live, 0.05f );
+	pose = TerryPose.Advance( pose, new HandInput( 6, "g8f6", true, false, true ), 0.05f );
+	Check( pose.Phase == HandPhase.Reaching && pose.FromSquare == 62 && pose.Rush > 0f,
+		"our own next move replaces the gesture, rushed" );
+}
+
 Console.WriteLine( failures == 0 ? "ALL CHECKS PASSED" : $"{failures} CHECKS FAILED" );
 return failures == 0 ? 0 : 1;
 

@@ -440,6 +440,15 @@ public sealed class ChessBoardView : Component
 			}
 		}
 
+		// A performed piece that just LEFT the board (captured by the reply — the premove
+		// case — or consumed by a promotion) must stop being anyone's hand target: the
+		// glued wrist would follow it into the tray otherwise. The gesture then finishes
+		// over the true squares via the driver's fallback path.
+		if ( _performedWhite.IsValid() && System.Array.IndexOf( _pieces, _performedWhite ) < 0 )
+			_performedWhite = null;
+		if ( _performedBlack.IsValid() && System.Array.IndexOf( _pieces, _performedBlack ) < 0 )
+			_performedBlack = null;
+
 		SyncTrays( target );
 	}
 

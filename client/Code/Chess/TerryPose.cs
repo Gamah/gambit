@@ -139,11 +139,13 @@ public readonly record struct HandInput(
 /// none of it could have been executed here at all; that is exactly the
 /// <see cref="CapturedMaterial"/> lesson.</para>
 ///
-/// <para><b>The abandon rule: the game is authority, the animation is decoration.</b> No
-/// phase survives a ply change. <see cref="Advance"/> compares <see cref="HandInput.Ply"/>
-/// against the ply the previous pose was resolved at, and on any difference it drops what
-/// was in flight and re-derives from scratch — either a fresh pickup for the move that just
-/// landed, or nothing. It cannot return a carry holding the old move's squares.</para>
+/// <para><b>The abandon rule: the game is authority, the animation is decoration.</b>
+/// <see cref="Advance"/> compares <see cref="HandInput.Ply"/> against the ply the previous
+/// pose was resolved at. This seat's OWN new move replaces the gesture (rushed); a rewind
+/// or reset abandons it. The one ply change that does NOT abandon is the OTHER seat
+/// advancing the game — their premove firing on our move is the canonical case — because
+/// our in-flight gesture is animating a move that really happened, and killing it left the
+/// mover's hand dead in exactly that test.</para>
 /// </summary>
 public static class TerryPose
 {
@@ -265,9 +267,10 @@ public static class TerryPose
 		// A ply that went DOWN (a takeback, a reset, a resync onto a FEN with no history —
 		// see BoardDiff) lands here too and goes idle, which is right: none of those is a
 		// move and none of them should have a hand play one.
-		if ( input.Ply != prev.Ply )
+		var cur = prev;
+		if ( input.Ply != cur.Ply )
 		{
-			if ( input.Ply > prev.Ply && input.SeatMoved
+			if ( input.Ply > cur.Ply && input.SeatMoved
 				&& TryParseUci( input.LastMoveUci, out int from, out int to ) )
 			{
 				// ── Rush ──
@@ -280,30 +283,39 @@ public static class TerryPose
 				// This is what buys the slow timeline. The animation is allowed to take 1.6s
 				// only for as long as the game lets it — the moment it can't, it compresses
 				// rather than falling behind or being dropped mid-gesture.
-				float rush = prev.Animating ? Min( prev.Rush + 1f, MaxRush ) : 0f;
+				float rush = cur.Animating ? Min( cur.Rush + 1f, MaxRush ) : 0f;
 				return Timeline( from, to, input.Capture, since: 0f, ply: input.Ply, rush );
 			}
 
-			return Idle( prev with { Ply = input.Ply }, input.Ply, dt );
+			// The OTHER seat advanced the game (their premove firing on our move is the
+			// canonical case). Our in-flight gesture is animating a move that REALLY
+			// happened — abandoning it left the mover's hand dead in exactly that test
+			// (owner report, 2026-07-19). Carry the ply and let it play out; the parallel
+			// hands each tell their own true story. Everything else — a rewind, a reset,
+			// a resync — still abandons: those un-happen the move.
+			if ( input.Ply > cur.Ply && cur.Animating )
+				cur = cur with { Ply = input.Ply };
+			else
+				return Idle( cur with { Ply = input.Ply }, input.Ply, dt );
 		}
 
-		// A move already in flight, and the game hasn't moved under it: run it out.
-		if ( prev.Animating )
+		// A move already in flight, and the game hasn't moved OUT FROM UNDER it: run it out.
+		if ( cur.Animating )
 		{
 			// Rush scales the CLOCK, not the shape — so a rushed animation is the same
 			// gesture played faster and lands in exactly the same place.
-			float since = prev.Since + dt * ( 1f + prev.Rush );
+			float since = cur.Since + dt * ( 1f + cur.Rush );
 
-			if ( since < ( prev.Capture ? CaptureTime : MoveTime ) )
-				return Timeline( prev.FromSquare, prev.ToSquare, prev.Capture, since,
-					input.Ply, prev.Rush );
+			if ( since < ( cur.Capture ? CaptureTime : MoveTime ) )
+				return Timeline( cur.FromSquare, cur.ToSquare, cur.Capture, since,
+					input.Ply, cur.Rush );
 			// The hand has set the piece down; fall through to the fade back to rest.
 		}
 
 		// Nothing playing: the hand rests on the table. No hover, no selection tracking —
 		// a gesture exists only for a CONFIRMED move (the ply branch above), by owner
 		// decision. The thinking hand was cut wholesale, not gated.
-		return Idle( prev, input.Ply, dt );
+		return Idle( cur, input.Ply, dt );
 	}
 
 	/// <summary>Off the board, fading out SLOWLY (see FadeOutTime). Keeps no square once the
