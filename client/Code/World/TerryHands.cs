@@ -37,6 +37,10 @@ public static class TerryHands
 	/// M13 world). <c>gambit_terry_hands</c>. Default ON: the hands are the M14 deliverable.</summary>
 	public static bool HandsOn = true;
 
+	/// <summary>Flip the seated body 180° so it faces the board (it was shipping backwards, back
+	/// to the board). Default ON = corrected. <c>gambit_terry_face</c>; re-sit to see a change.</summary>
+	public static bool FaceBoardFlip = true;
+
 	/// <summary><b>Phase 2 gate: the move-only half-rise.</b> false = near moves only; a piece
 	/// past the seated arm's reach has the hand trail and the piece finish its slide alone
 	/// (design point 6). Default <b>OFF</b> so Phase 1 is what loads first and is judged on its
@@ -80,8 +84,12 @@ public static class TerryHands
 	public static Vector3 GripOffset = new( -3f, 0f, 0f );
 
 	/// <summary>Where the working hand rests between moves — station-local, WHITE frame (the
-	/// driver mirrors it for Black). In White's near margin, forearm on the table edge.</summary>
-	public static Vector3 RestAnchorLocal = new( -16f, -9f, 34f );
+	/// driver mirrors it for Black). WELL off the board: the board's near edge is at x ≈ −19.5
+	/// (26 × 1.5 span, half is 19.5) and the tabletop edge at x = −30, so this sits in the near
+	/// margin on the player's own side, hand resting on the tabletop (surface z ≈ 30). The old
+	/// (−16,−9,34) put it ON the board (~rank 1–2) floating 4u up. Live-tunable via
+	/// <c>gambit_terry_rest_at x y z</c>.</summary>
+	public static Vector3 RestAnchorLocal = new( -25f, -9f, 31f );
 
 	// ───────────────────────────── Hand rotation (facts #2) ─────────────────────────────
 
@@ -138,8 +146,16 @@ public static class TerryHands
 	[ConCmd( "gambit_terry_rise" )]
 	public static void SetRise( int on ) { HalfRiseOn = on != 0; Log.Info( $"[Gambit] terry half-rise {(HalfRiseOn ? "ON" : "off")}" ); }
 
+	[ConCmd( "gambit_terry_face" )]
+	public static void SetFace( int flip ) { FaceBoardFlip = flip != 0; Log.Info( $"[Gambit] terry face-board flip {(FaceBoardFlip ? "ON" : "off")} — re-sit to apply" ); }
+
 	[ConCmd( "gambit_terry_rest" )]
 	public static void SetRest( int on ) { RestAnchorOn = on != 0; Log.Info( $"[Gambit] terry rest-anchor {(RestAnchorOn ? "ON" : "off")}" ); }
+
+	/// <summary>Move the resting-hand anchor live (station-local, White frame). Off the board is
+	/// more-negative x; x=−30 is the tabletop edge, board near edge ≈ −19.5, surface z ≈ 30.</summary>
+	[ConCmd( "gambit_terry_rest_at" )]
+	public static void SetRestAt( float x, float y, float z ) { RestAnchorLocal = new Vector3( x, y, z ); Log.Info( $"[Gambit] terry rest anchor {RestAnchorLocal}" ); }
 
 	[ConCmd( "gambit_terry_budget" )]
 	public static void SetBudget( float seconds ) { MoveBudget = MathF.Max( seconds, 0.1f ); Log.Info( $"[Gambit] terry move budget {MoveBudget:0.00}s" ); }
@@ -157,7 +173,8 @@ public static class TerryHands
 	{
 		Log.Info( "── gambit_terry ──" );
 		Log.Info( $"  levers: hands={(HandsOn ? "ON" : "off")} rise={(HalfRiseOn ? "ON" : "off")} "
-			+ $"rest={(RestAnchorOn ? "ON" : "off")} servo={(ServoOn ? "ON" : "off")}" );
+			+ $"rest={(RestAnchorOn ? "ON" : "off")} servo={(ServoOn ? "ON" : "off")} "
+			+ $"faceFlip={(FaceBoardFlip ? "ON" : "off")}" );
 		Log.Info( $"  tempo: budget={MoveBudget:0.00}s ×{CaptureBudgetScale:0.00} on capture; "
 			+ $"split {ApproachFrac:0.##}/{CarryFrac:0.##}/{ReleaseFrac:0.##} (approach/carry/release)" );
 		Log.Info( $"  grip: grasp={GraspHeight:0.0}u offset={GripOffset} rest={RestAnchorLocal}" );

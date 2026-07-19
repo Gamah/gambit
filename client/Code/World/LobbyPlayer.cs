@@ -1120,7 +1120,11 @@ public sealed class LobbyPlayer : Component
 			? UpdateServo( r, world ) : Vector3.Zero;
 
 		r.SetIk( IkRight, new Transform( world - ride + servo, rot ) );
-		r.Set( "holdtype", HoldTypeItem );
+		// holdtype ONLY while a move is being animated. At rest the hand is just anchored off
+		// the board (RestAnchorLocal) -- forcing holditem there makes every seated terry grip an
+		// invisible object every frame, which reads as "the sitting pose is broken." Rest =
+		// relaxed open hand (holdtype none); the grip closes over the move via gripClose.
+		r.Set( "holdtype", animating ? HoldTypeItem : HoldTypeNone );
 		r.Set( "holdtype_handedness", HandednessRight );
 		r.Set( "holdtype_pose_hand", gripClose );
 		_handIkActive = true;
@@ -1424,7 +1428,16 @@ public sealed class LobbyPlayer : Component
 
 		WorldPosition = seatPos;
 		if ( toBoard.Length > 0.01f )
-			WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
+		{
+			// The seated citizen was rendering BACKWARDS (back to the board): LookAt aims the
+			// rig's +forward down toBoard, but this citizen sit pose reads as facing the
+			// OPPOSITE way, so add a 180° yaw. Behind a live lever (gambit_terry_face) since
+			// the flip can't be verified on this host; re-sit after toggling to see it.
+			var face = Rotation.LookAt( toBoard, Vector3.Up );
+			if ( TerryHands.FaceBoardFlip )
+				face *= Rotation.FromAxis( Vector3.Up, 180f );
+			WorldRotation = face;
+		}
 	}
 
 	/// <summary>Instant seat change (fallback when anchors aren't built): teleport the
