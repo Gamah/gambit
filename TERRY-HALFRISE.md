@@ -1,5 +1,15 @@
 # The half-rise: terries that pick up the pieces (M14, second attempt)
 
+> **AMENDMENT (2026-07-19, owner decision): the thinking hand is CUT.** Hands rest on the
+> table unless a move has been CONFIRMED (the ply advanced) — no hover tracking, no
+> selected-piece parking, no lazy drift. Removed wholesale, not gated: `TerryPose.Advance`
+> no longer produces Hover/Selected (the enum values stay, probe-only), and the wire state
+> that carried it (`LobbyPlayer.HandState` + Pack/Unpack + `ChessBoardView.PublishHandState`)
+> is deleted — a confirmed move is already relayed, so nothing extra crosses the wire now.
+> Every gesture starts from rest; the driver's fast gesture chase (HandChaseRate) covers the
+> approach and the piece's slide-wait covers the timing. This moots the banner's "lazy
+> hover tempo" half of item 4 below — only the committed-move budget half still applies.
+
 > **MILESTONE PAUSE (2026-07-18) — MVP works, looks janky. Read this first.**
 >
 > The mechanics are DONE and verified across two clients: the terry leans/rises to a

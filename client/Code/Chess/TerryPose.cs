@@ -6,10 +6,13 @@ public enum HandPhase
 	/// <summary>Not on the board — elbows on the table.</summary>
 	Idle,
 
-	/// <summary>Floating over a piece the player could move, never touching it.</summary>
+	/// <summary>Floating over a piece, never touching it. NOT produced by
+	/// <see cref="TerryPose.Advance"/> any more (the thinking hand was cut — hands rest
+	/// unless a move is confirmed); kept because the reach probe/sweep drive it directly.</summary>
 	Hover,
 
-	/// <summary>A piece is picked out: hand down at it, fingers nearly closed.</summary>
+	/// <summary>Hand down at a piece, fingers nearly closed. Same status as
+	/// <see cref="Hover"/>: probe-only since the thinking-hand cut.</summary>
 	Selected,
 
 	/// <summary>A capture, step one: reaching to the TO square and closing on the piece
@@ -89,12 +92,14 @@ public readonly record struct HandPose(
 		or HandPhase.Lifting or HandPhase.Carrying or HandPhase.Dropping;
 }
 
-/// <summary>What the driver observed about this seat this frame.</summary>
-/// <param name="Hover">Square the seated player is hovering, or −1. Already means "a square
-/// this player can act on" — <c>ChessBoardView</c> only assigns it past its own input gate
-/// (their turn or a premove, no promotion picker up, camera settled), so there is no extra
-/// predicate to apply here.</param>
-/// <param name="Selected">Square they have picked out, or −1.</param>
+/// <summary>What the driver observed about this seat this frame.
+///
+/// <para><b>No hover, no selection — by owner decision (2026-07-19).</b> The hand rests on
+/// the table unless a move has been CONFIRMED (the ply advanced). The old thinking-hand —
+/// drifting after the cursor, parking on a selected piece — was cut wholesale; the wire
+/// state that carried it (<c>LobbyPlayer.HandState</c>) went with it. A move is already
+/// relayed, so every client drives the same gesture off LastMoveUci without being told
+/// anything extra.</para></summary>
 /// <param name="Ply">The game's move count.</param>
 /// <param name="LastMoveUci">UCI of the move that produced <paramref name="Ply"/>, or null.</param>
 /// <param name="SeatMoved">That move was played by the seat being animated.</param>
@@ -103,8 +108,6 @@ public readonly record struct HandPose(
 /// from the FEN alone, en passant included.</param>
 /// <param name="GameLive">There is a game to have hands about.</param>
 public readonly record struct HandInput(
-	int Hover,
-	int Selected,
 	int Ply,
 	string LastMoveUci,
 	bool SeatMoved,
@@ -140,9 +143,11 @@ public static class TerryPose
 	// than a second, and Rush (below) compresses it further the moment the game outpaces
 	// even that. GestureSpeed (TerryTuning) scales the whole clock live.
 	//
-	// The FRONT half of a move — reach, hesitate, close — isn't here at all. It is driven
-	// live from hover/selection, because a move is only observable once it has already been
-	// played. By the time a ply lands, the hand is usually already at the from-square.
+	// The FRONT half of a move — the reach from the table to the from-square — isn't a
+	// phase here: the hand starts every gesture from its rest pose (no hover tracking, by
+	// owner decision), and the driver's fast gesture chase (HandChaseRate) carries it to
+	// the pickup while Lifting plays. The piece waits on its square for the hand
+	// (ChessBoardView's slide wait), so a long approach costs a beat, not a desync.
 
 	/// <summary>Capture step one: reach the victim's square and close on it.</summary>
 	public const float ClearTime = 0.18f;
@@ -197,17 +202,11 @@ public static class TerryPose
 	/// high through every move — the first thing the eye catches on a carry.)</summary>
 	public static float LiftHeight = 14f;    // static, not const: TerryTuning drives it from the inspector
 
-	/// <summary>Seconds for the hand to come ON to the board — a cursor lands on a square and
-	/// the hand follows it, so this is quick.</summary>
-	public const float FadeInTime = 0.25f;
-
 	/// <summary>
-	/// Seconds for the hand to go back to rest once there is nothing to hover.
+	/// Seconds for the hand to go back to rest after a move's gesture finishes.
 	///
-	/// <para><b>Much slower than the way in, deliberately.</b> Coming on is a reaction and
-	/// should track the cursor; going off is a hand relaxing, and a hand that snaps back to
-	/// the table the instant the cursor leaves a square reads as a rubber band. The two
-	/// directions are different gestures, so they get different times.</para></summary>
+	/// <para><b>Slow, deliberately.</b> Going off the board is a hand relaxing, and a hand
+	/// that snaps back to the table the instant the piece is down reads as a rubber band.</para></summary>
 	public const float FadeOutTime = 1.2f;
 
 	// Finger poses, as holdtype_pose_hand. POLARITY IS UNVERIFIED — the parameter, its
@@ -257,7 +256,7 @@ public static class TerryPose
 				// We were still animating the LAST move when this one landed, so the hand is
 				// behind the game and the slow timeline is why. Play the new one faster, and
 				// keep stacking while the game keeps outrunning us: a hand that finishes
-				// cleanly resets to 1× on its own (Hover/Idle/Selected all clear it below).
+				// cleanly resets to 1× on its own (Idle clears it below).
 				//
 				// This is what buys the slow timeline. The animation is allowed to take 1.6s
 				// only for as long as the game lets it — the moment it can't, it compresses
@@ -279,29 +278,14 @@ public static class TerryPose
 			if ( since < ( prev.Capture ? CaptureTime : MoveTime ) )
 				return Timeline( prev.FromSquare, prev.ToSquare, prev.Capture, since,
 					input.Ply, prev.Rush );
-			// The hand has set the piece down; fall through to whatever it is doing NOW,
-			// which is usually hovering the square it is still over.
+			// The hand has set the piece down; fall through to the fade back to rest.
 		}
 
-		// Selected beats hover: the hand is on the piece it has picked out, not chasing
-		// the cursor round the board looking for somewhere to put it.
-		if ( input.Selected >= 0 )
-			return Square( HandPhase.Selected, input.Selected, GraspHeight, FingersGrasping,
-				prev, input.Ply, dt );
-
-		if ( input.Hover >= 0 )
-			return Square( HandPhase.Hover, input.Hover, HoverHeight, FingersHovering,
-				prev, input.Ply, dt );
-
+		// Nothing playing: the hand rests on the table. No hover, no selection tracking —
+		// a gesture exists only for a CONFIRMED move (the ply branch above), by owner
+		// decision. The thinking hand was cut wholesale, not gated.
 		return Idle( prev, input.Ply, dt );
 	}
-
-	/// <summary>The hand on a square, fading in from wherever it was. Rush is cleared: a
-	/// hand that is reacting to a cursor is by definition not behind the game.</summary>
-	static HandPose Square( HandPhase phase, int square, float height, float fingers,
-		in HandPose prev, int ply, float dt ) =>
-		new( phase, square, square, false, 0f, height, fingers,
-			Approach( prev.Weight, 1f, dt / FadeInTime ), ply, false, 0f, 0f );
 
 	/// <summary>Off the board, fading out SLOWLY (see FadeOutTime). Keeps no square once the
 	/// weight is spent: the driver reads Weight 0 as "use the elbows-on-table target" and a

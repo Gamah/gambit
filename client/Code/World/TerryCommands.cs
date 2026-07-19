@@ -148,7 +148,6 @@ public static class TerryCommands
 				continue;
 			}
 
-			LobbyPlayer.UnpackHand( avatar.HandState, out int hover, out int selected );
 			var body = avatar.GameObject.GetComponentInChildren<SkinnedModelRenderer>();
 			int sit = body?.GetInt( "sit" ) ?? -1;
 			// EverythingInSelf: Components.Get<T>() skips DISABLED components by default, and a
@@ -161,8 +160,6 @@ public static class TerryCommands
 				+ "PlayerController is stomping it: MoveMode.OnUpdateAnimatorState does Set(\"sit\", 0) every frame" )})"
 				+ $" · controller {( ctrl == null ? "(none)" : ctrl.Enabled ? "enabled" : "disabled" )}"
 				+ $" animator={( ctrl?.UseAnimatorControls.ToString() ?? "?" )}" );
-			Log.Info( $"      HandState={avatar.HandState} -> hover={Name( hover )} selected={Name( selected )}"
-				+ $"{( avatar.IsProxy ? " (over the wire)" : " (ours, published locally)" )}" );
 
 			var local = station.WorldTransform.PointToLocal( avatar.WorldPosition );
 			Log.Info( $"      planted at station-local ({local.x:0.##}, {local.y:0.##}, {local.z:0.##})"
@@ -433,11 +430,5 @@ public static class TerryCommands
 				return p;
 
 		return null;
-	}
-
-	static string Name( int square )
-	{
-		if ( square is < 0 or > 63 ) return "none";
-		return $"{(char)( 'a' + ( square & 7 ) )}{( square >> 3 ) + 1}";
 	}
 }

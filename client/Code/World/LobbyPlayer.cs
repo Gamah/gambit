@@ -33,53 +33,6 @@ public sealed class LobbyPlayer : Component
 	/// local FileSystem.Data.</summary>
 	[Sync] public string GambitName { get; set; }
 
-	/// <summary>
-	/// This player's hovered and selected board square, packed into one int and published
-	/// by the OWNER. −1 = neither (the resting value, and what an unseated player carries).
-	///
-	/// <para><b>The only thing M13 puts on the wire, and the smallest thing that could
-	/// be.</b> Everything else a seated terry does — the pose, the pickup animation, the
-	/// chair's tuck, the tint — is derived locally from state that already replicates. Hover
-	/// and selection are the exception because they have NO other evidence: nothing else in
-	/// the game knows which square you are thinking about. A move, by contrast, is already
-	/// relayed, so every client can drive the same pickup off LastMoveUci without being
-	/// told.</para>
-	///
-	/// <para><b>Owner-synced, not host-authoritative</b>, unlike ChessStation's occupancy: a
-	/// hover is the CLIENT's own truth and the host has no opinion on it.
-	/// <see cref="GambitName"/> is the precedent — a bare [Sync] on a networked,
-	/// player-owned component, published behind an explicit change gate.</para>
-	///
-	/// <para>Bandwidth is a handful of int writes per second per seated player: it changes
-	/// only when the cursor crosses a square boundary, and NOTHING is sent while the cursor
-	/// sits still or nobody is seated. [Sync] diffs anyway; the change gate in
-	/// ChessBoardView is belt-and-braces and matches the house style.</para>
-	///
-	/// <para><b>It survives the lichess seam for free.</b> The payload is a raw square index
-	/// — no game-source knowledge crosses the wire. An observer only needs to know which
-	/// square to float a hand over, and the hovering player derives their own hover from
-	/// their own source. Which is also why a third kind of game gets this by existing.</para></summary>
-	[Sync] public int HandState { get; set; } = -1;
-
-	/// <summary>Pack hover + selection into one int. 7 bits each — 0..64 after the +1 bias,
-	/// so −1 (none) packs cleanly and the whole thing is one comparison to change-gate.</summary>
-	public static int PackHand( int hover, int selected ) =>
-		( hover + 1 ) | ( ( selected + 1 ) << 7 );
-
-	/// <summary>Inverse of <see cref="PackHand"/>. −1 out for "none".</summary>
-	public static void UnpackHand( int packed, out int hover, out int selected )
-	{
-		if ( packed < 0 )
-		{
-			hover = -1;
-			selected = -1;
-			return;
-		}
-
-		hover = ( packed & 0x7F ) - 1;
-		selected = ( ( packed >> 7 ) & 0x7F ) - 1;
-	}
-
 	/// <summary>Name tag height above the player origin (the avatar is ~72 tall).</summary>
 	[Property] public float NameTagHeight { get; set; } = 82f;
 

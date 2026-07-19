@@ -700,12 +700,7 @@ public sealed class SeatedTerry : Component
 			return;
 		}
 
-		var packed = avatar.IsValid() ? avatar.HandState : -1;
-		LobbyPlayer.UnpackHand( packed, out int hover, out int selected );
-
 		pose = TerryPose.Advance( pose, new HandInput(
-			Hover: hover,
-			Selected: selected,
 			Ply: game.MoveCount,
 			LastMoveUci: game.LastMoveUci ?? src.LastMoveUci,
 			SeatMoved: _whiteMoved == ( seat == ChessSeat.White ),
@@ -783,7 +778,7 @@ public sealed class SeatedTerry : Component
 
 		string who = !avatar.IsValid() ? "NOT RESOLVED"
 			: $"{( avatar.IsProxy ? "proxy" : "local" )}, body={( avatar.HasBody ? "ok" : "MISSING" )},"
-				+ $" HandState={avatar.HandState}, rise={avatar.RiseAppliedDebug:0.0}u";
+				+ $" rise={avatar.RiseAppliedDebug:0.0}u";
 		Log.Info( $"   {seat}: id={station.SeatSteamId( seat )}  avatar: {who}" );
 		Log.Info( $"      pose: {pose.Phase} from={pose.FromSquare} to={pose.ToSquare}"
 			+ $" travel={pose.Travel:0.00} w={pose.Weight:0.00} ply={pose.Ply} since={pose.Since:0.00}" );
