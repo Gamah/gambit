@@ -64,6 +64,13 @@ for ( int file = 0; file < 8; file++ )
 	Check( MathF.Abs( ( target - plan.Hand ).Length - plan.Residual ) <= 0.05f,
 		$"{Name( i )}: residual lies ({plan.Residual:0.0} vs {( target - plan.Hand ).Length:0.0})" );
 
+	// The hand never floats above the piece: a clamped hand sits AT the target's own
+	// height (the sphere is sliced at target Z), stopping short horizontally. This is
+	// the 2026-07-19 fix — the sphere clamp hung the hand higher and higher over the
+	// board as the rank grew.
+	Check( MathF.Abs( plan.Hand.Z - target.Z ) <= 0.05f,
+		$"{Name( i )}: hand floats {plan.Hand.Z - target.Z:0.0} above the piece" );
+
 	// The brace, when planted, is within the LEFT arm's reach of the risen left shoulder.
 	if ( plan.Brace is { } brace )
 	{

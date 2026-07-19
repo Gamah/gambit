@@ -1109,7 +1109,18 @@ public sealed class LobbyPlayer : Component
 				var leaned = sh0 + new Vector3( fwd * _pendingLean, 0f, 0f );
 				var reachOut = on - leaned;
 				if ( reachOut.Length > reach )
-					on = leaned + reachOut.Normal * reach;
+				{
+					// Same rule as the half-rise planner's step 5: clamp AT THE TARGET'S
+					// HEIGHT (slice the sphere at its Z, spend the shortfall horizontally),
+					// never onto the raw sphere — a high shoulder puts that point visibly
+					// ABOVE the board and the hand reads as flying up for far ranks.
+					float dz = reachOut.z;
+					float budgetSq = reach * reach - dz * dz;
+					float budget = budgetSq <= 1f ? 1f : MathF.Sqrt( budgetSq );
+					var hdir = reachOut.WithZ( 0f );
+					hdir = hdir.Length < 1e-4f ? new Vector3( fwd, 0f, 0f ) : hdir.Normal;
+					on = new Vector3( leaned.x + hdir.x * budget, leaned.y + hdir.y * budget, on.z );
+				}
 				target = Vector3.Lerp( idle, on, pose.Weight );
 			}
 			else if ( SeatedHandSpikes.UseSphereClamp )

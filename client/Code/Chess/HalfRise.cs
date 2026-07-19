@@ -106,9 +106,12 @@ public readonly record struct RiseTunables(
 /// <param name="Stepped">A foot had to slide — the legs ran out before the reach did.</param>
 /// <param name="Brace">Tabletop point for the off hand, or null while seated low.</param>
 /// <param name="Hand">The clamped hand target: on the reach sphere of the RISEN shoulder, so
-/// the arm never strains or drags. Equal to the true target whenever it is honestly reachable.</param>
+/// the arm never strains or drags — and AT THE TARGET'S OWN HEIGHT, never floating above it
+/// (the sphere is sliced at the target's Z and the shortfall spent horizontally). Equal to
+/// the true target whenever it is honestly reachable.</param>
 /// <param name="Residual">Units the clamped hand still falls short of the true target —
-/// 0 for a genuine reach; the piece-slide fallback covers whatever this reports.</param>
+/// purely horizontal by construction, 0 for a genuine reach; the piece-slide fallback covers
+/// whatever this reports.</param>
 /// <param name="Rise01">0..1 how deep into the half-rise this frame is (drives blends).</param>
 /// <param name="PitchGain">Shoulder-forward units the torso pitch contributes, along
 /// <paramref name="LeanDir"/> — the runtime converts to an angle via asin(gain/torsoLen).</param>
@@ -252,14 +255,39 @@ public static class HalfRise
 			stepped = true;
 		}
 
-		// ── 5. Clamp the hand to the RISEN envelope, exactly as the M14 lean clamped to
-		// the leaned one: the arm must never strain (straighten + drag) at what it cannot
-		// have. Whatever is left after the rise is the slide's job, reported honestly. ──
+		// ── 5. Clamp the hand to the RISEN envelope — AT THE TARGET'S OWN HEIGHT. ──
+		// The first version clamped onto the reach SPHERE along the shoulder→target ray,
+		// and the risen shoulder is high (rise + RiseLift) — so the further the target,
+		// the higher the clamped point hung over the board: the hand visibly flew UP as
+		// the rank grew (owner report, 2026-07-19). A hand that cannot reach a piece
+		// should stop SHORT of it, never ABOVE it. So the hand's Z is pinned to the
+		// target's Z (the piece's own local height) and the whole shortfall is spent
+		// horizontally: slice the reach sphere at the target's height (horizontal budget
+		// = √(reach² − dz²)) and walk that far toward the target. The clamped hand still
+		// sits exactly ON the sphere — the no-strain contract holds — and the residual
+		// is now purely horizontal, so |target − hand| still equals it.
 		var shoulderRisen = shoulderLeaned + leanDir * pitchGain + delta;
 		var reachOut = target - shoulderRisen;
-		float over = reachOut.Length - t.Reach;
-		var hand = over > 0f ? shoulderRisen + reachOut.Normal * t.Reach : target;
-		float residual = Max( over, 0f );
+		V3 hand;
+		float residual;
+		if ( reachOut.Length <= t.Reach )
+		{
+			hand = target;
+			residual = 0f;
+		}
+		else
+		{
+			float dzHand = reachOut.Z;
+			float horizBudgetSq = t.Reach * t.Reach - dzHand * dzHand;
+			// Target further above/below the shoulder than the whole arm: no point at
+			// that height is reachable — degrade to "get almost under/over it".
+			float horizBudget = horizBudgetSq <= 1f ? 1f : Sqrt( horizBudgetSq );
+			var hdir = reachOut.HorizontalNormal;
+			if ( hdir == V3.Zero ) hdir = leanDir; // target dead above/below: fall back to the lean bearing
+			hand = new V3( shoulderRisen.X + hdir.X * horizBudget,
+				shoulderRisen.Y + hdir.Y * horizBudget, target.Z );
+			residual = ( target - hand ).Length;
+		}
 
 		// ── 6. The off hand braces on the table once the body is genuinely over it —
 		// both because that is what a person does and because it explains the pose. It
