@@ -25,7 +25,8 @@ public sealed class TerryTuning : Component
 	// ── Reach ──
 	[Property, Group( "Reach" ), Range( 0f, 20f )] public float MaxLean { get; set; } = 8f;
 	[Property, Group( "Reach" ), Range( 0f, 12f )] public float RiseGrace { get; set; } = 4f;
-	[Property, Group( "Reach" ), Range( 0f, 10f )] public float ReachMargin { get; set; } = 4f;
+	[Property, Group( "Reach" ), Range( 0f, 10f )] public float ReachMargin { get; set; } = 2.5f;
+	[Property, Group( "Reach" ), Range( 0f, 60f )] public float WristDrop { get; set; } = 25f;
 
 	// ── Rise ──
 	[Property, Group( "Rise" ), Range( 0f, 50f )] public float MaxRise { get; set; } = 46f;
@@ -57,7 +58,7 @@ public sealed class TerryTuning : Component
 
 	// Last-pushed mirrors: a knob only pushes when the INSPECTOR moved it, so the console
 	// levers and the diagnostics' save/force/restore cycles stay authoritative in between.
-	float _maxLean, _riseGrace, _reachMargin, _maxRise, _maxStep, _riseLift, _riseChase,
+	float _maxLean, _riseGrace, _reachMargin, _wristDrop, _maxRise, _maxStep, _riseLift, _riseChase,
 		_yaw, _pitch, _hover, _grasp, _lift, _hang, _grab, _hold, _speed, _handChase;
 	bool _hands, _rise, _brace, _servo;
 
@@ -70,6 +71,7 @@ public sealed class TerryTuning : Component
 		if ( all || MaxLean != _maxLean ) SeatedHandSpikes.MaxLean = _maxLean = MaxLean;
 		if ( all || RiseGrace != _riseGrace ) SeatedHandSpikes.RiseGrace = _riseGrace = RiseGrace;
 		if ( all || ReachMargin != _reachMargin ) SeatedHandSpikes.ReachMargin = _reachMargin = ReachMargin;
+		if ( all || WristDrop != _wristDrop ) SeatedHandSpikes.WristDrop = _wristDrop = WristDrop;
 		if ( all || MaxRise != _maxRise ) SeatedHandSpikes.MaxRise = _maxRise = MaxRise;
 		if ( all || MaxStep != _maxStep ) SeatedHandSpikes.MaxStep = _maxStep = MaxStep;
 		if ( all || RiseLift != _riseLift ) SeatedHandSpikes.RiseLift = _riseLift = RiseLift;

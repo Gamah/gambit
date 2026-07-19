@@ -286,8 +286,14 @@ public static class SeatedHandSpikes
 	/// further over the table (the planner rises until the ask fits the shortened arm) — the
 	/// margin-8 doctor verdict is what planked the terry over the board in the first
 	/// screenshot. With the servo killing the solver's constant warp, small margins land
-	/// clean; the doctor now prefers the smallest that does. <c>gambit_terry_margin</c>.</summary>
-	public static float ReachMargin = 4f;
+	/// clean; the doctor now prefers the smallest that does. <c>gambit_terry_margin</c>.
+	///
+	/// <para><b>Dropped 4 → 2.5 in the LOOK pass (M14).</b> The banner's #1 jank was a
+	/// permanently bent elbow: every ask sat deep inside the reach sphere, so the two-bone IK
+	/// never extended the arm. The servo trues the final hand regardless, so pushing the ask
+	/// out toward the sphere edge (a longer honest arm) costs no accuracy and straightens the
+	/// elbow. Slide it back up toward the old doctor verdict if a reach starts straining.</para></summary>
+	public static float ReachMargin = 2.5f;
 
 	[ConCmd( "gambit_terry_margin" )]
 	public static void SetReachMargin( float u )
@@ -295,6 +301,23 @@ public static class SeatedHandSpikes
 		ReachMargin = u < 0f ? 0f : u;
 		Log.Info( $"[Gambit] reach margin = {ReachMargin}u inside the measured arm. Bigger = bent-elbow asks the "
 			+ "solver actually lands; smaller = longer reach the solver may undercut. Re-run gambit_terry_probe." );
+	}
+
+	/// <summary>Extra nose-down the HAND is pitched, on top of the forearm's own declination
+	/// (banner jank #2, the "super kinked wrist"). The wrist rotation used to be a FIXED 60°
+	/// nose-down + bearing yaw — but a far reach flattens the forearm toward horizontal, and a
+	/// hand forced to keep pointing 60° down off a near-horizontal forearm hyper-flexes at the
+	/// wrist. So the pitch now TRACKS the shoulder→hand bearing (≈ the forearm) and this knob
+	/// is only the grasp curl added past it, capped at <c>ChessRing.HandPitch</c>. Setting it
+	/// to the cap reproduces the old fixed-pitch behaviour exactly. <c>gambit_terry_wristdrop</c>.</summary>
+	public static float WristDrop = 25f;
+
+	[ConCmd( "gambit_terry_wristdrop" )]
+	public static void SetWristDrop( float deg )
+	{
+		WristDrop = deg < 0f ? 0f : deg;
+		Log.Info( $"[Gambit] wrist drop = {WristDrop}° of grasp curl past the forearm bearing "
+			+ "(capped at ring.HandPitch). Lower = flatter hand on far reaches; = the cap restores the old fixed pitch." );
 	}
 
 	[ConCmd( "gambit_terry_leg" )]

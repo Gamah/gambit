@@ -1201,14 +1201,30 @@ public sealed class LobbyPlayer : Component
 		// fixed yaw is what cocked the wrist into a claw on any reach that wasn't dead
 		// ahead: a deeply leaned shoulder reaches diagonally, and a hand forced to keep
 		// pointing at the opponent from a diagonal forearm hyper-flexes at the wrist.
+		//
+		// PITCH follows the bearing too now (banner jank #2). It used to be a FIXED
+		// ring.HandPitch (60°) nose-down, which on a far reach — where the forearm flattens
+		// toward horizontal — forced the wrist to hyper-flex to keep pointing that far down.
+		// So the effective pitch = the forearm's own declination below horizontal + a grasp
+		// curl (SeatedHandSpikes.WristDrop), capped at ring.HandPitch. A steep near reach
+		// keeps the full nose-down; a flat far reach relaxes toward the curl alone. Setting
+		// WristDrop to the cap restores the old fixed-pitch behaviour exactly.
 		float handYaw = seat == ChessSeat.White ? 0f : 180f;
+		float handPitch = ring.HandPitch;
 		if ( ShoulderLocal( station ) is { } shForYaw )
 		{
 			var bearing = _handLocal.Value - shForYaw;
-			if ( bearing.WithZ( 0f ).Length > 1f )
+			float horiz = bearing.WithZ( 0f ).Length;
+			if ( horiz > 1f )
 				handYaw = MathF.Atan2( bearing.y, bearing.x ) * ( 180f / MathF.PI );
+
+			// Declination: how far below horizontal the arm points at the target (0 when the
+			// hand is at or above shoulder height, positive reaching down). max(0,·) so a
+			// slight reach-up never pitches the hand UPward past the curl.
+			float decl = MathF.Atan2( -bearing.z, MathF.Max( horiz, 0.001f ) ) * ( 180f / MathF.PI );
+			handPitch = MathF.Min( ring.HandPitch, MathF.Max( decl, 0f ) + SeatedHandSpikes.WristDrop );
 		}
-		var rot = station.WorldRotation * Rotation.From( ring.HandPitch, handYaw, 0f );
+		var rot = station.WorldRotation * Rotation.From( handPitch, handYaw, 0f );
 
 		// The IK aims a BONE, and the bone is the WRIST — so a target dropped straight on a
 		// square puts the fingers past it and the piece under the palm. Pull the wrist back

@@ -654,13 +654,14 @@
      "OnComponentFixedUpdate": null,
      "OnComponentStart": null,
      "OnComponentUpdate": null,
-     "ReachMargin": 4,
+     "ReachMargin": 2.5,
      "RiseChaseRate": 6,
      "RiseGrace": 4,
      "RiseLift": 0.3,
      "ServoOn": true,
      "TorsoPitchMax": 0,
-     "TorsoYawMax": 30
+     "TorsoYawMax": 30,
+     "WristDrop": 25
     }
    ]
   }
