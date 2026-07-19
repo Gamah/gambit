@@ -975,6 +975,12 @@ public sealed class LobbyPlayer : Component
 		r.Set( "b_swim", false );
 		r.Set( "duck", false );
 
+		// Re-assert the board-facing every frame so gambit_terry_face turns terry LIVE (and so a
+		// proxy uses THIS machine's FaceYaw while you tune). Skipped mid-schwoop by ordering, not
+		// a flag: the local seat-switch's UpdateSeatSwitch runs after this and wins until it lands.
+		if ( SeatedAt is { } s )
+			ApplySeatedFacing( s.Station, s.Seat );
+
 		// M14: the working hand. Called from here because ApplySitPose is the one per-frame
 		// pose write that runs for BOTH the local player and every seated proxy — so every
 		// terry animates its own move the same way, "everyone sees the hand including the
@@ -1420,22 +1426,30 @@ public sealed class LobbyPlayer : Component
 			? station.SeatWorldPosition( seat )
 			: station.SeatSitWorldPosition( seat );
 
+		WorldPosition = seatPos;
+		ApplySeatedFacing( station, seat );
+	}
+
+	/// <summary>Point the seated body at the board. Split out of <see cref="PlantOnSeat"/> and
+	/// re-run EVERY FRAME from <see cref="ApplySitPose"/> (local and proxy) so
+	/// <c>gambit_terry_face</c> turns terry LIVE — no re-sit. During a seat-switch schwoop this
+	/// is harmless: UpdateSeatSwitch runs after ApplySitPose and overrides the rotation until it
+	/// lands. LookAt aims the rig at the board; TerryHands.FaceYaw is the model-forward offset
+	/// (0 = raw LookAt, matches the shipped M13 baseline), which can only be settled in-engine.</summary>
+	void ApplySeatedFacing( ChessStation station, ChessSeat seat )
+	{
+		if ( station == null ) return;
+
 		// Yaw at the board, level — a flat look, so the pitch of the line from the chair up
 		// to the board can't tip the whole body forward.
+		var seatPos = WorldPosition;
 		var boardFlat = station.WorldPosition;
 		boardFlat.z = seatPos.z;
 		var toBoard = boardFlat - seatPos;
+		if ( toBoard.Length < 0.01f ) return;
 
-		WorldPosition = seatPos;
-		if ( toBoard.Length > 0.01f )
-		{
-			// The seated citizen was rendering BACKWARDS (back to the board): LookAt aims the
-			// rig's +forward down toBoard, but the citizen's VISUAL front reads the opposite way.
-			// TerryHands.FaceYaw (default 180°) corrects it; it's a live lever (gambit_terry_face)
-			// because the model's forward convention can't be verified on this host. Re-sit to apply.
-			WorldRotation = Rotation.LookAt( toBoard, Vector3.Up )
-				* Rotation.FromAxis( Vector3.Up, TerryHands.FaceYaw );
-		}
+		WorldRotation = Rotation.LookAt( toBoard, Vector3.Up )
+			* Rotation.FromAxis( Vector3.Up, TerryHands.FaceYaw );
 	}
 
 	/// <summary>Instant seat change (fallback when anchors aren't built): teleport the

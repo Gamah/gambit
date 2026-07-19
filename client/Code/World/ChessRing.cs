@@ -106,14 +106,13 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// 72-unit citizen, which could easily be ±2. That is the tightest guess in M13 and the
 	/// reason this must stay tunable.</para>
 	///
-	/// <para><b>26 is a historical reach-tuning, now moot but harmless.</b> It was scooted in
-	/// from 36 to bring rank 1 under the (since-abandoned) reaching hand; with hands cut it
-	/// only decides how close the seated body sits to its own edge. The live bound is still
-	/// the knees: at 26 the feet land at x −19.7, clear of the foot plate (−15); push lower
-	/// and they clip. If the seat framing is ever revisited now that reach is gone
-	/// (SEATED-HANDS-REACH.md notes it cascades into the cameras and ring), this is the
-	/// number to move.</para></summary>
-	[Property] public float SeatSitBack { get; set; } = 26f;
+	/// <para><b>Restored to 36 for M14.</b> It had been scooted forward to 26 to bring rank 1
+	/// under a since-abandoned reaching hand — but at 26 the belly is well forward of the ~34
+	/// line and the citizen sits INSIDE the tabletop slab ("sitting inside the board"). M14's
+	/// hands don't need the body scooted in (near moves rest OFF the board, far moves use the
+	/// half-rise), so this goes back to the documented centre of the working band, 36, which
+	/// seats terry back on his chair.</para></summary>
+	[Property] public float SeatSitBack { get; set; } = 36f;
 
 	/// <summary>
 	/// Height a seated avatar's ORIGIN is planted at, station-local. The FLOOR, by default.

@@ -41,10 +41,10 @@ public static class TerryHands
 	/// "terry sits backwards" bug. PlantOnSeat aims the rig at the board with LookAt; whether the
 	/// citizen's VISUAL front then points at the board depends on the model's forward-axis
 	/// convention, which can't be checked on a host with no engine — so this is a live knob, not
-	/// a guess. 0 = raw LookAt (what shipped, and was reported backwards); 180 flips him to face
-	/// the board. If he ends up side-on instead, try 90 / −90. <c>gambit_terry_face &lt;deg&gt;</c>;
-	/// re-sit to apply.</summary>
-	public static float FaceYaw = 180f;
+	/// a guess. 0 = raw LookAt (identical to the shipped M13 baseline); 180 flips him to face the
+	/// other way; 90 / −90 if he lands side-on. Re-applied every frame, so
+	/// <c>gambit_terry_face &lt;deg&gt;</c> turns him LIVE with no re-sit.</summary>
+	public static float FaceYaw = 0f;
 
 	/// <summary><b>Phase 2 gate: the move-only half-rise.</b> false = near moves only; a piece
 	/// past the seated arm's reach has the hand trail and the piece finish its slide alone
@@ -152,7 +152,7 @@ public static class TerryHands
 	public static void SetRise( int on ) { HalfRiseOn = on != 0; Log.Info( $"[Gambit] terry half-rise {(HalfRiseOn ? "ON" : "off")}" ); }
 
 	[ConCmd( "gambit_terry_face" )]
-	public static void SetFace( float deg ) { FaceYaw = deg; Log.Info( $"[Gambit] terry face yaw {FaceYaw:0}° — re-sit to apply" ); }
+	public static void SetFace( float deg ) { FaceYaw = deg; Log.Info( $"[Gambit] terry face yaw {FaceYaw:0}° (live)" ); }
 
 	[ConCmd( "gambit_terry_rest" )]
 	public static void SetRest( int on ) { RestAnchorOn = on != 0; Log.Info( $"[Gambit] terry rest-anchor {(RestAnchorOn ? "ON" : "off")}" ); }
