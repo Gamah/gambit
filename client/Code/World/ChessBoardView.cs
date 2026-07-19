@@ -236,15 +236,19 @@ public sealed class ChessBoardView : Component
 		var piece = _pieces[pose.ToSquare];
 		if ( piece == null ) return;
 
-		// GRAB ON CONTACT. Gluing the piece to a hand that is still travelling — or that
-		// can't reach the square at all (the residual squares the slide finishes) — yanks
-		// it backward off its slide toward a hand somewhere else entirely, which is
-		// exactly the "completely busted" look the first two-client session reported.
-		// Until the hand closes within GrabRadius of the piece, the slide keeps the piece
-		// and the hand merely chases it; once held, it stays held for the whole gesture
-		// (the hand may then swing wide without dropping it).
+		// GRAB ON CONTACT — but HORIZONTAL contact, not 3D. The hand hovers ABOVE the piece
+		// by design (grasp height then lift height, ~10–14u over the board) while the piece
+		// sits ON the board, so the full 3D hand-to-piece distance is essentially ALWAYS
+		// bigger than any sane GrabRadius (9u) — the grab could never fire. The piece then
+		// waited out HandHoldSeconds and slid to its square on its OWN, after the arm had
+		// finished: the live bug "the piece doesn't even begin to move until the arm is done".
+		// The hand being over the square in the board plane IS the pickup; the vertical hover
+		// gap is intentional (the piece then hangs CarryHang below the wrist). A hand that
+		// can't reach a far square still stops short HORIZONTALLY, so this keeps the original
+		// guard — don't yank a piece backward toward a distant/unreachable hand — which is all
+		// the 3D check was ever really enforcing.
 		if ( !ReferenceEquals( piece, _carried )
-			&& ( piece.WorldPosition - hand ).Length > SeatedHandSpikes.GrabRadius ) return;
+			&& ( piece.WorldPosition - hand ).WithZ( 0f ).Length > SeatedHandSpikes.GrabRadius ) return;
 
 		_carried = piece;
 		_carryStamp = Time.Now;
