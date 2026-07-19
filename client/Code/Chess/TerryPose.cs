@@ -333,6 +333,14 @@ public static class TerryPose
 	{
 		const float w = 1f; // a hand holding a piece is never partly on the board
 
+		// ── ONE height for the whole gesture (owner decision, 2026-07-19). ──
+		// The hand floats in to piece height and is then COMPLETELY LOCKED in Z:
+		// every phase below runs at GraspHeight — no Grasp→Lift→Grasp profile, no
+		// height lerps. Pick-up / put-down height variance is an explicit LATER
+		// (add it back per-phase when the flat version reads right in the editor).
+		// LiftHeight/HoverHeight no longer drive the timeline; their TerryTuning
+		// sliders are inert until that variance returns.
+
 		// `since` stays ABSOLUTE — time since this move began — everywhere, including in
 		// what gets stored. `t` is the offset into the plain-move part. Keeping the two
 		// apart is what lets a pose be re-derived from its own clock.
@@ -345,7 +353,7 @@ public static class TerryPose
 			{
 				float u = Div( t, ClearTime );
 				return new HandPose( HandPhase.Clearing, to, to, false, 0f,
-					Lerp( HoverHeight, GraspHeight, u ),
+					GraspHeight,
 					Lerp( FingersHovering, FingersHolding, u ), w, ply, true, since, rush );
 			}
 
@@ -358,8 +366,7 @@ public static class TerryPose
 				float fingers = u < 0.8f ? FingersHolding
 					: Lerp( FingersHolding, FingersReleased, Div( u - 0.8f, 0.2f ) );
 				return new HandPose( HandPhase.Discarding, to, to, true, Smoothstep( u ),
-					Lerp( GraspHeight, LiftHeight, Smoothstep( Min( u * 2f, 1f ) ) ),
-					fingers, w, ply, true, since, rush );
+					GraspHeight, fingers, w, ply, true, since, rush );
 			}
 
 			t -= ClearTime + DiscardTime;
@@ -367,22 +374,21 @@ public static class TerryPose
 
 		if ( t < LiftTime )
 		{
-			float u = Div( t, LiftTime );
 			return new HandPose( HandPhase.Lifting, from, to, false, 0f,
-				Lerp( GraspHeight, LiftHeight, u ), FingersHolding, w, ply, capture, since, rush );
+				GraspHeight, FingersHolding, w, ply, capture, since, rush );
 		}
 
 		if ( t < LiftTime + TravelTime )
 		{
 			float u = Div( t - LiftTime, TravelTime );
 			return new HandPose( HandPhase.Carrying, from, to, false, Smoothstep( u ),
-				LiftHeight, FingersHolding, w, ply, capture, since, rush );
+				GraspHeight, FingersHolding, w, ply, capture, since, rush );
 		}
 
 		float d = Clamp01( Div( t - LiftTime - TravelTime, DropTime ) );
 		// Travel 1: the hand is over the DESTINATION. Same pair of squares, arrived.
 		return new HandPose( HandPhase.Dropping, from, to, false, 1f,
-			Lerp( LiftHeight, GraspHeight, d ), Lerp( FingersHolding, FingersReleased, d ),
+			GraspHeight, Lerp( FingersHolding, FingersReleased, d ),
 			w, ply, capture, since, rush );
 	}
 

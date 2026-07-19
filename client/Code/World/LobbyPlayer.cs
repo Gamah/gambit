@@ -1316,6 +1316,34 @@ public sealed class LobbyPlayer : Component
 			ApplyReachSpikes( r, station, seat );
 		}
 
+		// ── The final, solver-domain reach clamp — Z-LOCKED (owner report #2, 2026-07-19). ──
+		// The planner clamps its ask against the PLAN's fully-risen shoulder, but the bones
+		// only EASE toward the rise (RiseChaseRate) — so mid-move the ask can sit outside the
+		// arm the solver actually has this frame, and the engine's own two-bone IK clamps the
+		// wrist onto its REAL reach sphere along the shoulder→ask ray. That ray leaves a high
+		// shoulder, so the wrist rode UP it: the "bumping against some sphere" float. The
+		// engine's clamp is the one clamp we cannot re-aim — so never let it engage: pull the
+		// ask inside the CURRENT animation-pose arm ourselves, slicing the sphere at the ask's
+		// own Z (the piece height the timeline now locks), spending any transient shortfall
+		// horizontally. As the body rises the budget grows and the hand extends outward — at
+		// piece height the whole way. The servo keeps truing the residual native warp on top.
+		if ( ShoulderLocal( station ) is { } shLocal )
+		{
+			var shWorld = station.WorldTransform.PointToWorld( shLocal );
+			float arm = ( _measuredArm > 0f ? _measuredArm : FallbackArm ) - SeatedHandSpikes.ReachMargin;
+			var outWorld = world - shWorld;
+			if ( outWorld.Length > arm )
+			{
+				float dz = outWorld.z;
+				float budgetSq = arm * arm - dz * dz;
+				float budget = budgetSq <= 1f ? 1f : MathF.Sqrt( budgetSq );
+				var flat = outWorld.WithZ( 0f );
+				if ( flat.Length > 1e-4f )
+					world = new Vector3( shWorld.x + flat.Normal.x * budget,
+						shWorld.y + flat.Normal.y * budget, world.z );
+			}
+		}
+
 		r.SetIk( IkRight, new Transform( world, rot ) );
 	}
 
