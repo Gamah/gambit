@@ -1,0 +1,15 @@
+/home/ai/gambit/scripts/halfrise_harness/bin/Debug/net10.0/halfrise
+/home/ai/gambit/scripts/halfrise_harness/bin/Debug/net10.0/halfrise.deps.json
+/home/ai/gambit/scripts/halfrise_harness/bin/Debug/net10.0/halfrise.runtimeconfig.json
+/home/ai/gambit/scripts/halfrise_harness/bin/Debug/net10.0/halfrise.dll
+/home/ai/gambit/scripts/halfrise_harness/bin/Debug/net10.0/halfrise.pdb
+/home/ai/gambit/scripts/halfrise_harness/obj/Debug/net10.0/halfrise.GeneratedMSBuildEditorConfig.editorconfig
+/home/ai/gambit/scripts/halfrise_harness/obj/Debug/net10.0/halfrise.AssemblyInfoInputs.cache
+/home/ai/gambit/scripts/halfrise_harness/obj/Debug/net10.0/halfrise.AssemblyInfo.cs
+/home/ai/gambit/scripts/halfrise_harness/obj/Debug/net10.0/halfrise.csproj.CoreCompileInputs.cache
+/home/ai/gambit/scripts/halfrise_harness/obj/Debug/net10.0/halfrise.sourcelink.json
+/home/ai/gambit/scripts/halfrise_harness/obj/Debug/net10.0/halfrise.dll
+/home/ai/gambit/scripts/halfrise_harness/obj/Debug/net10.0/refint/halfrise.dll
+/home/ai/gambit/scripts/halfrise_harness/obj/Debug/net10.0/halfrise.pdb
+/home/ai/gambit/scripts/halfrise_harness/obj/Debug/net10.0/halfrise.genruntimeconfig.cache
+/home/ai/gambit/scripts/halfrise_harness/obj/Debug/net10.0/ref/halfrise.dll
