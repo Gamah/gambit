@@ -382,6 +382,7 @@ public sealed class LobbyPlayer : Component
 			// Only on the transition: once the animator is back on, the controller writes
 			// sit = 0 itself every frame and this would just be saying it twice.
 			ClearSitPose();
+			ClearHandPose();
 		}
 
 		_proxySeated = seated;
@@ -954,6 +955,7 @@ public sealed class LobbyPlayer : Component
 		if ( ChessRing.Instance is { TerrySeated: false } )
 		{
 			ClearSitPose();
+			ClearHandPose();
 			return;
 		}
 
@@ -972,6 +974,12 @@ public sealed class LobbyPlayer : Component
 		r.Set( "b_climbing", false );
 		r.Set( "b_swim", false );
 		r.Set( "duck", false );
+
+		// M14: the working hand. Called from here because ApplySitPose is the one per-frame
+		// pose write that runs for BOTH the local player and every seated proxy — so every
+		// terry animates its own move the same way, "everyone sees the hand including the
+		// mover" (design point 9) for free. It self-gates on TerryHands.HandsOn.
+		ApplyHandPose();
 	}
 
 	/// <summary>Stand the citizen back up. Pairs with <see cref="ApplySitPose"/>; the
@@ -987,6 +995,297 @@ public sealed class LobbyPlayer : Component
 	/// names for identical values.</summary>
 	const int SitPoseStanding = 0;
 	const int SitPoseChair = 1;
+
+	// ─────────────────────────────── M14: the working hand ───────────────────────────────
+	//
+	// Drives the seated terry's RIGHT hand (chess is one-handed) via the four game-facing IK
+	// chains. Phase 1 is the whole feature in miniature: the hand rests at a fixed anchor, and
+	// on a committed move by this seat it travels to the piece, tracks it across the board, and
+	// returns -- all from the ONE clock ChessBoardView owns (ActiveHandMove). Phase 2 adds the
+	// move-only half-rise so far pieces come inside the arm; a piece past even the risen arm has
+	// the hand trail and the piece finish its own slide (design point 6).
+	//
+	// This is called from ApplySitPose, so it runs identically for the local player and every
+	// seated proxy -- everyone animates their own move (design point 9). It reads the global
+	// TerryHands statics, so one tuning slider moves every terry at once.
+
+	const string IkRight = "hand_right";      // the animgraph IK CHAIN name -- NOT the bone (hand_R)
+	const string IkFootLeft = "foot_left";
+	const string IkFootRight = "foot_right";
+
+	// citizen.vanmgrph enums: holdtype (none, …, holditem) is what the finger-blend
+	// (holdtype_pose_hand) is wired into; handedness 2H/RH/LH, so Right = 1.
+	const int HoldTypeNone = 0;
+	const int HoldTypeItem = 4;
+	const int HandednessRight = 1;
+
+	bool _handIkActive;              // IK + holdtype currently written -- must be cleared on stand-up
+	bool _riseActive;               // pelvis/spine overrides + foot pins currently applied
+	float _measuredArm;             // live |arm_upper_R → hand_R1|, 0 until first read
+	Vector3 _riseApplied;           // world pelvis-override translation this frame; the foot pins
+	                                //   pre-compensate by this (the arm pre-comps by the full ride)
+	Vector3 _handServo;             // closed-loop correction for the ~5u native warp (fact #4)
+	Vector3? _servoTrueAsk;         // last frame's true world ask, to detect a new move
+
+	/// <summary>Is there a citizen renderer to pose? (gambit_terry)</summary>
+	public bool HasBody => _bodyRenderer != null;
+	/// <summary>Live-measured arm length (gambit_terry).</summary>
+	public float MeasuredArmDebug => _measuredArm;
+	/// <summary>How much half-rise is actually applied on THIS machine right now (gambit_terry).</summary>
+	public float RiseAppliedDebug => _riseApplied.Length;
+
+	/// <summary>
+	/// Place the working hand for this frame. Self-gates on the kill switches and the seat; when
+	/// off or not-seated it releases any prior IK so a stood-up player never walks away with an
+	/// arm frozen mid-reach (the attempt-2 "arm hanging out at nothing" bug -- holdtype has no
+	/// owner but us, so it must be cleared explicitly).
+	/// </summary>
+	void ApplyHandPose()
+	{
+		var r = _bodyRenderer;
+		if ( r == null ) return;
+
+		if ( !TerryHands.HandsOn || ChessRing.Instance is not { TerrySeated: true }
+			|| SeatedAt is not { } seated || seated.Station == null )
+		{
+			if ( _handIkActive ) ClearHandPose();
+			return;
+		}
+		var station = seated.Station;
+		var seat = seated.Seat;
+
+		// The station's board view owns the move clock. Is a move being hand-animated on OUR seat?
+		var view = station.GameObject.Components.Get<ChessBoardView>();
+		var move = view?.ActiveHandMove;
+		bool animating = move is { } m && m.MoverSeat == seat;
+
+		if ( !animating && !TerryHands.RestAnchorOn )
+		{
+			// Nothing to do and no anchored rest wanted: let the arm hang in the raw sit pose.
+			if ( _handIkActive ) ClearHandPose();
+			return;
+		}
+
+		UpdateMeasuredArm( r, station );
+
+		// The grasp target the wrist aims at, station-local. Rest anchor (mirrored for Black),
+		// blended toward the piece's grasp point by the gesture's HandWeight during a move. The
+		// blend is what makes the hand TRAVEL to the piece over Approach rather than snap to it.
+		Vector3 restLocal = SeatMirror( seat, TerryHands.RestAnchorLocal );
+		Vector3 graspLocal = restLocal;
+		float gripClose = 0f;
+		if ( animating )
+		{
+			var mv = move.Value;
+			var pieceLocal = station.WorldTransform.PointToLocal( mv.PieceWorld )
+				+ new Vector3( 0f, 0f, TerryHands.GraspHeight );
+			graspLocal = Vector3.Lerp( restLocal, pieceLocal, mv.HandWeight );
+			gripClose = mv.GripClose;
+		}
+
+		// Phase 2: the move-only half-rise. Returns the world override translation the ARM will
+		// ride (pelvis + spine), which the IK target is pre-compensated by -- the animgraph solves
+		// IK BEFORE the override applies, so aim at (true - ride) and the override carries it home.
+		Vector3 ride = Vector3.Zero;
+		if ( animating && TerryHands.HalfRiseOn )
+			ride = ApplyHalfRise( r, station, seat, graspLocal );
+		else if ( _riseActive )
+			ReleaseHalfRise( r );
+
+		// Hand rotation (facts #2): yaw along the shoulder→target bearing (a fixed yaw claws the
+		// wrist on a diagonal reach); pitch from the forearm's own declination + a curl (a fixed
+		// nose-down pitch hyper-flexes a flat far reach); roll swings the elbow OUT of the torso
+		// (0 traps the arm in a vertical plane -- the t-rex arm). Roll is mirrored for Black.
+		float handYaw = seat == ChessSeat.White ? 0f : 180f;
+		float handPitch = TerryHands.HandPitchCap;
+		if ( BoneLocalAnim( r, station, "arm_upper_R" ) is { } shoulder )
+		{
+			var bearing = graspLocal - shoulder;
+			float horiz = bearing.WithZ( 0f ).Length;
+			if ( horiz > 1f )
+				handYaw = MathF.Atan2( bearing.y, bearing.x ) * ( 180f / MathF.PI );
+			float decl = MathF.Atan2( -bearing.z, MathF.Max( horiz, 0.001f ) ) * ( 180f / MathF.PI );
+			handPitch = MathF.Min( TerryHands.HandPitchCap, MathF.Max( decl, 0f ) + TerryHands.WristDrop );
+		}
+		float roll = seat == ChessSeat.White ? TerryHands.HandRoll : -TerryHands.HandRoll;
+		var rot = station.WorldRotation * Rotation.From( handPitch, handYaw, roll );
+
+		// The IK aims the WRIST; pull it back along the hand axes so the fingers -- not the palm
+		// -- land on the piece (tune against gambit_terry's hand_R readout).
+		var world = station.WorldTransform.PointToWorld( graspLocal ) + rot * TerryHands.GripOffset;
+
+		// The servo (fact #4): only meaningful while the half-rise bends the skeleton. Steer the
+		// residual native warp out by measuring last frame's hand_R vs the true ask.
+		Vector3 servo = ( TerryHands.ServoOn && animating && TerryHands.HalfRiseOn )
+			? UpdateServo( r, world ) : Vector3.Zero;
+
+		r.SetIk( IkRight, new Transform( world - ride + servo, rot ) );
+		r.Set( "holdtype", HoldTypeItem );
+		r.Set( "holdtype_handedness", HandednessRight );
+		r.Set( "holdtype_pose_hand", gripClose );
+		_handIkActive = true;
+	}
+
+	/// <summary>Let the whole arm go -- both the IK and holdtype (holdtype has no owner but us,
+	/// so releasing only the IK leaves the arm posed around an invisible item forever), plus any
+	/// half-rise overrides. Idempotent.</summary>
+	void ClearHandPose()
+	{
+		var r = _bodyRenderer;
+		if ( r == null ) { _handIkActive = false; return; }
+
+		r.ClearIk( IkRight );
+		r.Set( "holdtype", HoldTypeNone );
+		r.Set( "holdtype_pose_hand", 0f );
+		if ( _riseActive ) ReleaseHalfRise( r );
+		_handIkActive = false;
+	}
+
+	/// <summary>The move-only half-rise: carry the pelvis (and the shoulder on it) toward the
+	/// grasp target until the arm honestly reaches, bounded by the legs. Returns the world
+	/// translation the ARM rides (pelvis + spine) so the caller can pre-compensate the IK. Any
+	/// missing bone read degrades gracefully to Phase 1 (no rise, the hand trails). Everything
+	/// is planned in <see cref="Gambit.Chess.HandReach"/>'s White frame and mirrored back.</summary>
+	Vector3 ApplyHalfRise( SkinnedModelRenderer r, ChessStation station, ChessSeat seat, Vector3 graspLocal )
+	{
+		if ( BoneLocalAnim( r, station, "arm_upper_R" ) is not { } shoulderL
+			|| BoneLocalAnim( r, station, "pelvis" ) is not { } pelvisL )
+		{
+			if ( _riseActive ) ReleaseHalfRise( r );
+			return Vector3.Zero;
+		}
+
+		// CHOOSE the foot plants (fact: never feed the planner the animated ankles -- the sit
+		// pose tucks them ~25u behind the pelvis, spending the whole leg budget before any rise).
+		// Plants are the pelvis projected to the floor, hip-width apart, a touch forward; the
+		// foot pins below ease the real ankles onto them.
+		var pelvisWhite = SeatMirror( seat, pelvisL );
+		const float footFwd = 6f, hipHalf = 6f;
+		var footLW = new Gambit.Chess.R3( pelvisWhite.x + footFwd, pelvisWhite.y + hipHalf, 0f );
+		var footRW = new Gambit.Chess.R3( pelvisWhite.x + footFwd, pelvisWhite.y - hipHalf, 0f );
+
+		var t = TerryHands.Reach( _measuredArm > 0f ? _measuredArm : 18f );
+		var plan = Gambit.Chess.HandReach.Plan(
+			ToR3( SeatMirror( seat, graspLocal ) ),
+			ToR3( SeatMirror( seat, shoulderL ) ),
+			ToR3( pelvisWhite ), footLW, footRW, t );
+
+		if ( plan.PelvisDelta.Length < 0.01f && plan.Lean < 0.01f )
+		{
+			if ( _riseActive ) ReleaseHalfRise( r );
+			return Vector3.Zero;
+		}
+
+		// Mirror the plan back to the seat frame, then to world directions.
+		Vector3 pelvisDeltaWorld = station.WorldRotation * SeatMirror( seat, ToV3( plan.PelvisDelta ) );
+		Vector3 leanWorld = station.WorldRotation * SeatMirror( seat, ToV3( plan.LeanDir * plan.Lean ) );
+		_riseApplied = pelvisDeltaWorld;   // set BEFORE the foot pins, which pre-compensate by it
+		_riseActive = true;
+
+		var model = r.Model;
+		if ( model?.Bones.GetBone( "pelvis" ) is { } pelvisBone && r.TryGetBoneTransformAnimation( pelvisBone, out var pw ) )
+		{
+			pw.Position += pelvisDeltaWorld;
+			r.SetBoneTransform( pelvisBone, r.WorldTransform.ToLocal( pw ) );
+		}
+		if ( model?.Bones.GetBone( "spine_2" ) is { } spineBone && r.TryGetBoneTransformAnimation( spineBone, out var sw ) )
+		{
+			sw.Position += leanWorld;
+			r.SetBoneTransform( spineBone, r.WorldTransform.ToLocal( sw ) );
+		}
+
+		PinFoot( r, station, seat, "ankle_L", IkFootLeft, plan.FootL );
+		PinFoot( r, station, seat, "ankle_R", IkFootRight, plan.FootR );
+
+		return pelvisDeltaWorld + leanWorld;
+	}
+
+	/// <summary>Pin one foot to the planner's plant. The foot rides ONLY the pelvis override, so
+	/// its IK target is pre-compensated by the pelvis delta alone (not the spine lean).</summary>
+	void PinFoot( SkinnedModelRenderer r, ChessStation station, ChessSeat seat, string ankleBone,
+		string ikName, Gambit.Chess.R3 footWhite )
+	{
+		var footWorld = station.WorldTransform.PointToWorld( SeatMirror( seat, ToV3( footWhite ) ) ) - _riseApplied;
+		var rot = Rotation.Identity;
+		if ( r.TryGetBoneTransform( ankleBone, out var tx ) )
+			rot = tx.Rotation;
+		r.SetIk( ikName, new Transform( footWorld, rot ) );
+	}
+
+	/// <summary>Drop the half-rise: clear the bone overrides and foot pins, zero the eased state
+	/// so the next reach starts from the chair rather than a stale mid-rise.</summary>
+	void ReleaseHalfRise( SkinnedModelRenderer r )
+	{
+		if ( !_riseActive ) return;
+		r.ClearPhysicsBones();
+		r.ClearIk( IkFootLeft );
+		r.ClearIk( IkFootRight );
+		_riseApplied = Vector3.Zero;
+		_handServo = Vector3.Zero;
+		_servoTrueAsk = null;
+		_riseActive = false;
+	}
+
+	/// <summary>Closed-loop hand servo: measure last frame's rendered hand_R against the true
+	/// world ask, integrate the error, clamp and decay. Steers out the ~5u post-override native
+	/// warp no API can read (fact #4).</summary>
+	Vector3 UpdateServo( SkinnedModelRenderer r, Vector3 worldAsk )
+	{
+		float k = 1f - MathF.Exp( -TerryHands.ServoRate * Time.Delta );
+		if ( _servoTrueAsk is { } prev && ( prev - worldAsk ).Length < 20f
+			&& r.TryGetBoneTransform( "hand_R", out var handNow ) )
+		{
+			var err = worldAsk - handNow.Position;
+			_handServo += err * k;
+			if ( _handServo.Length > TerryHands.ServoClamp )
+				_handServo = _handServo.Normal * TerryHands.ServoClamp;
+		}
+		else
+		{
+			// New move (big jump) or no bone: decay toward zero rather than snap.
+			_handServo = Vector3.Lerp( _handServo, Vector3.Zero, k );
+		}
+		_servoTrueAsk = worldAsk;
+		return _handServo;
+	}
+
+	/// <summary>Measure the working arm's length off the bones (fact #9: the reach numbers must
+	/// come from the live skeleton, not a guess). Sum of the two proximal segments.</summary>
+	void UpdateMeasuredArm( SkinnedModelRenderer r, ChessStation station )
+	{
+		if ( BoneWorld( r, "arm_upper_R" ) is { } a && BoneWorld( r, "arm_lower_R1" ) is { } b
+			&& BoneWorld( r, "hand_R1" ) is { } c )
+			_measuredArm = ( b - a ).Length + ( c - b ).Length;
+	}
+
+	/// <summary>A bone's ANIMATION-pose position (pre-override), station-local. Reading the
+	/// animation pose -- not the final, already-leaned one -- keeps the reach deficit from
+	/// feeding back into the lean that produced it and oscillating.</summary>
+	Vector3? BoneLocalAnim( SkinnedModelRenderer r, ChessStation station, string bone )
+	{
+		if ( r.Model?.Bones.GetBone( bone ) is { } b && r.TryGetBoneTransformAnimation( b, out var tx ) )
+			return station.WorldTransform.PointToLocal( tx.Position );
+		return null;
+	}
+
+	/// <summary>A bone's final rendered world position (for measuring the arm). Uses the
+	/// by-name overload of TryGetBoneTransform (the one attempt 2 verified).</summary>
+	Vector3? BoneWorld( SkinnedModelRenderer r, string bone )
+	{
+		if ( r.TryGetBoneTransform( bone, out var tx ) )
+			return tx.Position;
+		return null;
+	}
+
+	/// <summary>Mirror a station-local vector through the station centre for the Black seat (a
+	/// 180° Z rotation -- negate X and Y, keep Z). White is the planner's native frame, so this
+	/// is identity for White and the whole Black-seat story for Black. Works for both points
+	/// (station-local) and direction vectors, since it is linear.</summary>
+	static Vector3 SeatMirror( ChessSeat seat, Vector3 v ) =>
+		seat == ChessSeat.White ? v : new Vector3( -v.x, -v.y, v.z );
+
+	static Gambit.Chess.R3 ToR3( Vector3 v ) => new( v.x, v.y, v.z );
+	static Vector3 ToV3( Gambit.Chess.R3 v ) => new( v.X, v.Y, v.Z );
 
 	/// <summary>Undo <see cref="TrimSeatedAvatar"/>: put the head back and stop excluding
 	/// our cosmetics. Idempotent, and safe to call when nothing was ever trimmed.</summary>
@@ -1220,6 +1519,7 @@ public sealed class LobbyPlayer : Component
 		_hiddenRenderers.Clear();
 		RestoreSeatedAvatar();
 		ClearSitPose();
+		ClearHandPose();
 
 		// Back into the physics world — after the un-plant above, so we land standing where
 		// we stood rather than being resolved out of the table we were sitting at.

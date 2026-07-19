@@ -146,6 +146,40 @@ public sealed class ChessBoardView : Component
 
 	readonly List<Slide> _slides = new();
 
+	// ── The terry hand-move (M14) ──
+	//
+	// One move at a time can be "hand-driven": instead of the piece sliding itself across
+	// the board, the ONE clock (MoveGesture) gates it — frozen on its origin while the seated
+	// terry's hand travels to it (Approach), then sliding flat while the hand tracks it
+	// (Carry), then resting on the square while the hand returns (Release). ChessBoardView
+	// owns the clock and the piece's path; LobbyPlayer reads ActiveHandMove to place the hand.
+	// This is the reconciliation of "the hand moves the piece" and "the hand IK derives from
+	// the piece" — the piece's slide is authoritative, the hand rides it (see MoveGesture).
+	sealed class HandMove
+	{
+		public GameObject Piece;
+		public Vector3 From, To;      // station-local
+		public int FromSquare, ToSquare;
+		public ChessSeat MoverSeat;
+		public bool Capture;
+		public float Since;           // seconds since the move landed
+		public float Budget;          // rest-to-rest duration (capture-scaled)
+	}
+
+	HandMove _handMove;
+
+	/// <summary>What one seated player's working hand should be doing this frame, or null when
+	/// no move is being hand-animated at this table. Read by <see cref="LobbyPlayer"/> (which
+	/// drives the IK on every avatar it renders — the mover's and the spectator's alike). The
+	/// piece's world position is the grasp anchor; the hand rides above it.</summary>
+	public readonly record struct HandMoveState(
+		ChessSeat MoverSeat, Vector3 PieceWorld, int FromSquare, int ToSquare,
+		MoveGesture.Phase Phase, float HandWeight, float GripClose, bool Capture );
+
+	/// <summary>The active hand-move for this table, refreshed every frame by
+	/// <see cref="AdvanceHandMove"/>. Null between moves.</summary>
+	public HandMoveState? ActiveHandMove { get; private set; }
+
 	// ── Captured pieces ──
 	//
 	// Each player's losses sit in a tray on their own side of the table. Two rules
@@ -186,6 +220,7 @@ public sealed class ChessBoardView : Component
 
 		SyncPieces();
 		AdvanceSlides();
+		AdvanceHandMove();
 		UpdateInput();
 		PaintHighlights();
 	}
@@ -302,7 +337,8 @@ public sealed class ChessBoardView : Component
 				// rather than destroy it, so it can walk off the board. Read
 				// _rendered[toSquare] BEFORE the overwrite below: it is still the
 				// victim's char here, and is the only record of what died.
-				if ( _pieces[toSquare] != null )
+				bool wasCapture = _pieces[toSquare] != null;
+				if ( wasCapture )
 				{
 					_captured.Add( ( _rendered[toSquare], _pieces[toSquare] ) );
 					_pieces[toSquare] = null;
@@ -313,15 +349,21 @@ public sealed class ChessBoardView : Component
 				// A piece can move again while still sliding (fast play, resync)
 				// — the stale slide would keep overwriting the new one's target
 				_slides.RemoveAll( s => s.Piece == piece );
-				_slides.Add( new Slide
-				{
-					Piece = piece,
-					From = piece.LocalPosition,
-					To = SquareLocal( toSquare ),
-					Age = 0f,
-					Seconds = MoveSeconds,
-					Arc = MoveArc,
-				} );
+
+				// M14: if this is THE move a seated terry just played, the hand drives it (see
+				// TryStartHandMove) and it gets NO plain slide -- the gesture clock owns the
+				// piece instead. Everything else (the castling rook, a resync, a table with no
+				// seated mover) slides exactly as before.
+				if ( !TryStartHandMove( from, toSquare, piece, c, wasCapture ) )
+					_slides.Add( new Slide
+					{
+						Piece = piece,
+						From = piece.LocalPosition,
+						To = SquareLocal( toSquare ),
+						Age = 0f,
+						Seconds = MoveSeconds,
+						Arc = MoveArc,
+					} );
 			}
 		}
 
@@ -488,6 +530,89 @@ public sealed class ChessBoardView : Component
 				slide.Piece.LocalPosition = slide.To;
 				_slides.RemoveAt( i );
 			}
+		}
+	}
+
+	// ── Input ──
+
+	// ── The terry hand-move (M14) ──
+
+	/// <summary>Claim a just-played move for the seated terry's hand, if it qualifies. The
+	/// qualification is deliberately narrow so a resync, a late joiner's first fill, or a table
+	/// nobody is sitting at never triggers a phantom reach:
+	/// <list type="bullet">
+	/// <item>the hands feature is on and this world seats terries;</item>
+	/// <item>the paired from->to matches <c>LastMoveUci</c> exactly -- which a FEN resync (no
+	/// move history, null/stale uci) and a multi-piece diff both fail, so only a real single
+	/// move ever claims a hand;</item>
+	/// <item>the mover's seat is actually occupied -- otherwise there is no avatar to animate
+	/// (e.g. the remote side of a lichess game), and the piece just slides.</item>
+	/// </list>
+	/// Returns true when it took the piece (the caller then skips the plain slide).</summary>
+	bool TryStartHandMove( int fromSquare, int toSquare, GameObject piece, char movedChar, bool capture )
+	{
+		if ( !TerryHands.HandsOn ) return false;
+		if ( ChessRing.Instance is not { TerrySeated: true } ) return false;
+		if ( Station == null || piece == null ) return false;
+
+		// Must be THE move just played, not a resync artifact.
+		var uci = Source?.Game?.LastMoveUci;
+		if ( uci is not { Length: >= 4 } ) return false;
+		int uFrom = ( uci[1] - '1' ) * 8 + ( uci[0] - 'a' );
+		int uTo = ( uci[3] - '1' ) * 8 + ( uci[2] - 'a' );
+		if ( uFrom != fromSquare || uTo != toSquare ) return false;
+
+		// The moving piece's colour is the seat that must be occupied to animate it.
+		var moverSeat = char.IsUpper( movedChar ) ? ChessSeat.White : ChessSeat.Black;
+		if ( Station.SeatSteamId( moverSeat ) == 0 ) return false;
+
+		// A move landing while an earlier one is still animating (fast play): finish the old one
+		// instantly onto its square, then take over -- one hand, one piece at a time.
+		if ( _handMove is { } prev && prev.Piece.IsValid() )
+			prev.Piece.LocalPosition = prev.To;
+
+		_handMove = new HandMove
+		{
+			Piece = piece,
+			From = piece.LocalPosition,
+			To = SquareLocal( toSquare ),
+			FromSquare = fromSquare,
+			ToSquare = toSquare,
+			MoverSeat = moverSeat,
+			Capture = capture,
+			Since = 0f,
+			Budget = MoveGesture.Duration( TerryHands.MoveBudget, capture, TerryHands.CaptureBudgetScale ),
+		};
+		return true;
+	}
+
+	/// <summary>Drive the hand-move's piece from the one clock: frozen on its origin through
+	/// Approach, sliding flat through Carry, resting on the square through Release. Publishes
+	/// <see cref="ActiveHandMove"/> for LobbyPlayer to place the hand against. Flat -- no arc --
+	/// because for v1 the piece stays on the board surface and the hand rides just above it
+	/// (design point 4).</summary>
+	void AdvanceHandMove()
+	{
+		if ( _handMove is not { } m ) { ActiveHandMove = null; return; }
+		if ( !m.Piece.IsValid() ) { _handMove = null; ActiveHandMove = null; return; }
+
+		m.Since += Time.Delta;
+		var s = MoveGesture.SampleAt( m.Since, m.Budget,
+			TerryHands.ApproachFrac, TerryHands.CarryFrac, TerryHands.ReleaseFrac );
+
+		// The piece's authoritative path: flat lerp origin -> destination by PieceProgress
+		// (0 through Approach, so it is frozen while the hand travels to it).
+		m.Piece.LocalPosition = Vector3.Lerp( m.From, m.To, s.PieceProgress );
+
+		ActiveHandMove = new HandMoveState(
+			m.MoverSeat, m.Piece.WorldPosition, m.FromSquare, m.ToSquare,
+			s.Phase, s.HandWeight, s.GripClose, m.Capture );
+
+		if ( s.Done )
+		{
+			m.Piece.LocalPosition = m.To;   // land exactly on the square
+			_handMove = null;
+			ActiveHandMove = null;
 		}
 	}
 
