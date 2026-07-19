@@ -151,6 +151,15 @@ public sealed class ChessBoardView : Component
 		public float HoldForHand;
 	}
 
+	/// <summary>Wall seconds until the gesturing hand is over the from-square: the
+	/// Reaching + Lifting deadlines through the speed slider, plus a small breath. The
+	/// piece's wait (HoldForHand) is this by construction — see the slide comment.</summary>
+	static float HandArrivalSeconds()
+	{
+		float speed = Gambit.Chess.TerryPose.SpeedScale <= 0f ? 1f : Gambit.Chess.TerryPose.SpeedScale;
+		return ( Gambit.Chess.TerryPose.ReachTime + Gambit.Chess.TerryPose.LiftTime ) / speed + 0.1f;
+	}
+
 	/// <summary>Is a seated terry going to perform the moving side's move at this table?
 	/// Mirrors the gate SeatedTerry itself animates under.</summary>
 	bool HandWillPerform( char moverPiece )
@@ -430,7 +439,16 @@ public sealed class ChessBoardView : Component
 					Age = 0f,
 					Seconds = MoveSeconds,
 					Arc = MoveArc,
-					HoldForHand = HandWillPerform( c ) ? SeatedHandSpikes.HandHoldSeconds : 0f,
+					// DERIVED from the gesture timeline, never a free knob: the hold only
+					// exists so the hand can arrive, and the hand arrives on the Reaching/
+					// Lifting deadlines — so the piece waits exactly that long (plus a
+					// breath) and not an instant more. The old fixed 1.2s was the "a
+					// far capture takes over 2 seconds" bug: an out-of-reach piece never
+					// gets grabbed, so it sat out the WHOLE hold before its fallback
+					// slide even started. Now the fallback begins right when the hand
+					// has provably done its best, and the total stays inside the move
+					// budget whether the grab fires or not.
+					HoldForHand = HandWillPerform( c ) ? HandArrivalSeconds() : 0f,
 				} );
 			}
 		}

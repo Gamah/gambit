@@ -1284,15 +1284,27 @@ public sealed class LobbyPlayer : Component
 						_handServo = Vector3.Lerp( _handServo, Vector3.Zero, sk );
 					}
 
-					// VERTICAL channel — ALWAYS on (owner report #3: far ranks still
-					// floated DURING moves). The timeline locks the ask's Z for the whole
-					// gesture, so vertical error is native warp by definition even while
-					// the ask sweeps horizontally — the stability gate that protects the
-					// horizontal channel was exactly what left the warp uncorrected
-					// mid-move, and the warp grows with the override magnitude, i.e. with
-					// rank distance. Same wild-read guard, own clamp.
-					if ( MathF.Abs( err.z ) < 20f )
-						_servoZ = Math.Clamp( _servoZ + err.z * sk, -ServoClamp, ServoClamp );
+					// VERTICAL channel — on whenever the ask's Z is genuinely locked
+					// (owner report #3: far ranks still floated DURING moves). Through
+					// Lifting/Carrying/Dropping — and at rest — the ask's Z is a
+					// constant, so vertical error is native warp by definition even while
+					// the ask sweeps horizontally; the stability gate that protects the
+					// horizontal channel was exactly what left that warp uncorrected
+					// mid-move. But during REACHING the Z is still ramping up from the
+					// table, so vertical error there is chase lag — integrating it wound
+					// the servo into a visible wobble (the jitter report): decay instead.
+					// Softer rate than the horizontal channel plus a small deadband, so
+					// the one-frame-delayed bone read can't hunt; same wild-read guard.
+					float zk = 1f - MathF.Exp( -ServoZRate * Time.Delta );
+					if ( pose.Phase is not Gambit.Chess.HandPhase.Reaching )
+					{
+						if ( MathF.Abs( err.z ) is < 20f and > 0.3f )
+							_servoZ = Math.Clamp( _servoZ + err.z * zk, -ServoClamp, ServoClamp );
+					}
+					else
+					{
+						_servoZ *= 1f - zk;
+					}
 				}
 				else
 				{
@@ -1759,6 +1771,11 @@ public sealed class LobbyPlayer : Component
 	Vector3? _servoTrueAsk;
 	const float ServoRate = 5f;
 	const float ServoClamp = 10f;
+
+	/// <summary>The vertical channel's own, softer rate: it runs while the hand is in
+	/// motion (the horizontal channel doesn't), where the bone read is one frame stale —
+	/// integrating that at the full rate hunts visibly.</summary>
+	const float ServoZRate = 3f;
 
 	void ReleaseRiseIk( SkinnedModelRenderer r )
 	{
