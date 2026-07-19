@@ -1008,7 +1008,8 @@ public sealed class LobbyPlayer : Component
 	///
 	/// <para><b>Right hand works, left hand idles.</b> Chess is played one-handed.</para>
 	/// </summary>
-	public void ApplyHandPose( ChessStation station, ChessSeat seat, Gambit.Chess.HandPose pose )
+	public void ApplyHandPose( ChessStation station, ChessSeat seat, Gambit.Chess.HandPose pose,
+		GameObject gesturePiece = null )
 	{
 		var r = _bodyRenderer;
 		var ring = ChessRing.Instance;
@@ -1059,7 +1060,18 @@ public sealed class LobbyPlayer : Component
 					ring.HandDiscardReach )
 				: SquareLocal( ring, pose.ToSquare );
 
-			var on = Vector3.Lerp( from, to, pose.Travel ) + Vector3.Up * ( pose.Height + ring.HandLift );
+			// ── The wrist is a CHILD of the PIECE (owner decision, 2026-07-19). ──
+			// When the view supplied the performed piece's live GameObject, the board-space
+			// target IS its position (plus the grasp hover) — the square/Travel math below
+			// is only the fallback for a missing/destroyed piece (promotion, resync, probe
+			// poses). The piece holds its origin through the approach and slides on its own
+			// clock; deriving the hand from it every frame is what makes desync impossible
+			// rather than merely tuned away — the one-clock rule, finally applied to the
+			// thing it was invented for.
+			var on = gesturePiece.IsValid()
+				? station.WorldTransform.PointToLocal( gesturePiece.WorldPosition )
+					+ Vector3.Up * ( pose.Height + ring.HandLift )
+				: Vector3.Lerp( from, to, pose.Travel ) + Vector3.Up * ( pose.Height + ring.HandLift );
 
 			// ── Out-of-reach handling: Approach A (default) vs the cut M13 sphere clamp ──
 			//
@@ -1162,6 +1174,17 @@ public sealed class LobbyPlayer : Component
 		if ( _handLocal is not { } current )
 		{
 			_handLocal = target;                       // first frame: be there
+		}
+		else if ( pose.Animating && gesturePiece.IsValid()
+			&& pose.Phase is not Gambit.Chess.HandPhase.Reaching )
+		{
+			// GLUED: past the approach, the wrist is the piece's child — no easing, no
+			// deadline, no lag to tear open. Continuous by construction: the deadline
+			// below put the hand exactly here as Reaching ended, and the piece's own
+			// position is continuous (it holds, then slides). Reach limits still apply
+			// downstream — a hand that can't have the piece shadows it from as close as
+			// the arm gets, at piece height.
+			_handLocal = target;
 		}
 		else if ( pose.Animating )
 		{
@@ -1897,9 +1920,8 @@ public sealed class LobbyPlayer : Component
 	public Gambit.Chess.RisePlan? RisePlanDebug => _risePlan;
 
 	/// <summary>Where the working hand's wrist ACTUALLY is this frame (world, final pose —
-	/// after IK, overrides, everything). This is what a carried piece rides: the rendered
-	/// hand, not the target it was aimed at, so piece and fingers can never disagree even
-	/// while the IK is mid-chase or the arm is clamped short.</summary>
+	/// after IK, overrides, everything). Diagnostics only since the carry layer was cut
+	/// (the wrist derives from the piece now, never the reverse).</summary>
 	public Vector3? HandBoneWorld()
 	{
 		if ( _bodyRenderer != null && _bodyRenderer.TryGetBoneTransform( "hand_R", out var tx ) )

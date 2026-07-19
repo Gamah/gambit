@@ -709,23 +709,23 @@ public sealed class SeatedTerry : Component
 
 		if ( avatar.IsValid() )
 		{
-			avatar.ApplyHandPose( station, seat, pose );
-
-			// The piece rides the hand (M14): while this pose is replaying a move, tell
-			// the view so the moved piece tracks the hand bone instead of its own slide.
-			// Gated on the hands actually RENDERING — a piece must never ride a hand the
-			// kill switches turned invisible.
-			if ( pose.Animating && SeatedHandSpikes.HandsOn
-				&& ChessRing.Instance is { TerrySeated: true } )
+			// The hand is a CHILD of the piece (M14, owner decision): while this pose is
+			// replaying a move, hand the driver the live performed-piece GameObject and
+			// the wrist derives from ITS position — approaching while the piece holds,
+			// glued above it while it slides. The old reverse channel (ReportHandCarry:
+			// the piece riding the hand bone) is gone; the view's slide is the one clock.
+			GameObject piece = null;
+			if ( pose.Animating )
 			{
 				_view ??= station.GameObject.GetComponent<ChessBoardView>();
-				_view?.ReportHandCarry( pose, avatar );
+				piece = _view?.PerformedPiece( seat == ChessSeat.White );
 			}
+			avatar.ApplyHandPose( station, seat, pose, piece );
 		}
 	}
 
-	/// <summary>The board view on this same station, resolved lazily — it is the other
-	/// half of the hand-carry handshake (see <see cref="ChessBoardView.ReportHandCarry"/>).</summary>
+	/// <summary>The board view on this same station, resolved lazily — the source of the
+	/// performed piece the hand rides (see <see cref="ChessBoardView.PerformedPiece"/>).</summary>
 	ChessBoardView _view;
 
 	/// <summary>

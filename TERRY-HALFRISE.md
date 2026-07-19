@@ -23,6 +23,19 @@
 >   gesture as a move, CaptureTime == MoveTime); the victim lerps to its tray on its own,
 >   simultaneously, the moment the move starts (the view already ran the victim's tray
 >   slide with no hand-hold — only the hand's shuttle was cut).
+> - **THE WRIST IS A CHILD OF THE PIECE — the carry layer is deleted, not tuned.** The
+>   owner named the fundamental disconnect: piece slides and hand timeline were two
+>   independent authorities glued by grab-on-contact / ReportHandCarry (piece riding the
+>   hand bone) / piece-led placement / the release settle, and every look-pass timing bug
+>   was that glue tearing. Now there is ONE clock — the view's hold-then-slide (the hold
+>   derived from the hand's approach deadlines) — and the hand derives from the live
+>   performed-piece GameObject every frame (`ChessBoardView.PerformedPiece` →
+>   `ApplyHandPose`): deadline-approach while the piece holds, HARD-glued above it while
+>   it slides, ease home after it lands. Reach limits still clamp downstream (a hand that
+>   can't have a far piece shadows it from as close as the arm gets, at piece height).
+>   CarryHang/GrabRadius/HandHoldSeconds sliders are inert. Gesture stages are budgeted
+>   deadlines (Reach 0.25 + Lift 0.18 + Carry 0.35 + Drop 0.2 ≈ 1s): stages when there is
+>   time, a snap when there isn't, reality always wins.
 
 > **MILESTONE PAUSE (2026-07-18) — MVP works, looks janky. Read this first.**
 >

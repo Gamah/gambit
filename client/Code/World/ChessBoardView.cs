@@ -172,96 +172,29 @@ public sealed class ChessBoardView : Component
 
 	readonly List<Slide> _slides = new();
 
-	// ── The hand carry (M14): the piece rides the terry's hand ──
+	// ── The performed piece (M14): the WRIST is a child of the PIECE ──
 	//
-	// While a seated terry's hand is replaying a move (TerryPose Lifting/Carrying/
-	// Dropping), the moved piece is positioned at the HAND BONE each frame instead of
-	// running its own slide clock — that is what turns "a hand gesturing near a sliding
-	// piece" into "a terry picking up and moving a piece". SeatedTerry reports the carry
-	// per frame (it owns which avatar and which pose); this view owns which GameObject
-	// that means and what happens when the carry ends.
-	//
-	// The report is VOLATILE by design — good for a fraction of a second, re-asserted
-	// every frame. The abandon rule (a ply landing mid-animation), a hand toggled off, a
-	// player standing up: all of them simply stop the reports, and the piece falls back
-	// to its slide from wherever the hand left it (a short settle, below). Nothing here
-	// has to know WHY a carry ended. The spectator wall is untouched: SpectatorBoard3D
-	// never had hands and keeps the plain slide, per the design decision.
-	GameObject _carried;       // piece riding a hand right now (the mover; a capture's victim keeps its tray slide)
-	GameObject _carriedPrev;   // last frame's, to detect release and hand the slide back
-	float _carryStamp = -1f;
-	Vector3 _carryWorld;       // world position for the piece's base this frame
+	// ONE clock. The piece runs its hold-then-slide (this view owns it, and the hold is
+	// derived from the hand's approach deadlines); the seated terry's wrist is DERIVED
+	// from the live piece GameObject every frame — approaching while the piece holds,
+	// glued above it while it slides, easing home after it lands. There is no reverse
+	// channel any more: the old carry layer (the piece riding the hand bone, the grab
+	// radius, piece-led placement, the release settle) was two independent authorities
+	// glued together, and every timing bug in the look pass was that glue tearing.
+	// Deleted, not tuned (owner decision, 2026-07-19). The spectator wall is untouched:
+	// SpectatorBoard3D never had hands and keeps the plain slide.
+	GameObject _performedWhite;
+	GameObject _performedBlack;
 
-	// CarryHang/GrabRadius/HandHoldSeconds live on SeatedHandSpikes (inspector: TerryTuning).
-
-	/// <summary>The short settle a released piece plays from wherever the hand left it to
-	/// its true square — covers both a finished drop (hand is already over the square, so
-	/// this is invisible polish) and an abandoned carry (the piece must not teleport).</summary>
-	const float SettleSeconds = 0.18f;
-
-	/// <summary>Called by <see cref="SeatedTerry"/> every frame a seat's hand is replaying
-	/// a move on this board. Attacker only: the destination square owns the mover's
-	/// GameObject once SyncPieces has applied the FEN, which it always has by the time a
-	/// pose is animating (both react to the same ply change).</summary>
-	public void ReportHandCarry( in Gambit.Chess.HandPose pose, LobbyPlayer avatar )
+	/// <summary>The piece this colour's seated hand should be riding right now, or null.
+	/// Set when a performed slide is created; read live by <see cref="SeatedTerry"/> each
+	/// frame and fed to the hand driver, which derives the wrist from its position. Never
+	/// cleared on a schedule — the hand's own pose clock decides when it stops caring, and
+	/// a destroyed piece (promotion, resync) reads as null via IsValid.</summary>
+	public GameObject PerformedPiece( bool white )
 	{
-		// ── Piece-led placement (banner jank #3) ──
-		//
-		// When the hand starts SETTING THE PIECE DOWN, stop dragging the piece around with
-		// the (clamped, lagging) hand and hand it to a quick settle onto its TRUE square —
-		// the hand then follows it down. Carrying it through the whole Dropping phase left
-		// the piece wherever the short-reaching hand actually landed, and only settled that
-		// gap once the carry reports STOPPED (0.15s later, by which point the hand was
-		// already resetting) — so the piece appeared to slide onto its square on its own,
-		// after the hand had left. Leading it in during the drop fixes the "piece moves after
-		// the hand starts to reset" look.
-		if ( pose.Phase is Gambit.Chess.HandPhase.Dropping )
-		{
-			if ( _carried.IsValid() )
-			{
-				var s = _slides.Find( x => ReferenceEquals( x.Piece, _carried ) );
-				if ( s != null )
-				{
-					s.From = _carried.LocalPosition;   // from where the hand had it
-					s.To = SquareLocal( pose.ToSquare );   // to the true square, not the hand
-					s.Age = 0f;
-					s.Seconds = SettleSeconds;
-					s.Arc = 0f;
-					s.HoldForHand = 0f;
-				}
-				// Release now, and suppress AdvanceSlides' own release path (it would otherwise
-				// re-arm this same slide a frame later from a staler position).
-				_carried = null;
-				_carriedPrev = null;
-			}
-			return;
-		}
-
-		if ( pose.Phase is not ( Gambit.Chess.HandPhase.Lifting
-			or Gambit.Chess.HandPhase.Carrying ) ) return;
-		if ( pose.ToSquare is < 0 or > 63 ) return;
-		if ( avatar?.HandBoneWorld() is not { } hand ) return;
-
-		var piece = _pieces[pose.ToSquare];
-		if ( piece == null ) return;
-
-		// GRAB ON CONTACT — but HORIZONTAL contact, not 3D. The hand hovers ABOVE the piece
-		// by design (grasp height then lift height, ~10–14u over the board) while the piece
-		// sits ON the board, so the full 3D hand-to-piece distance is essentially ALWAYS
-		// bigger than any sane GrabRadius (9u) — the grab could never fire. The piece then
-		// waited out HandHoldSeconds and slid to its square on its OWN, after the arm had
-		// finished: the live bug "the piece doesn't even begin to move until the arm is done".
-		// The hand being over the square in the board plane IS the pickup; the vertical hover
-		// gap is intentional (the piece then hangs CarryHang below the wrist). A hand that
-		// can't reach a far square still stops short HORIZONTALLY, so this keeps the original
-		// guard — don't yank a piece backward toward a distant/unreachable hand — which is all
-		// the 3D check was ever really enforcing.
-		if ( !ReferenceEquals( piece, _carried )
-			&& ( piece.WorldPosition - hand ).WithZ( 0f ).Length > SeatedHandSpikes.GrabRadius ) return;
-
-		_carried = piece;
-		_carryStamp = Time.Now;
-		_carryWorld = hand + Vector3.Down * SeatedHandSpikes.CarryHang;
+		var go = white ? _performedWhite : _performedBlack;
+		return go.IsValid() ? go : null;
 	}
 
 	// ── Captured pieces ──
@@ -341,6 +274,8 @@ public sealed class ChessBoardView : Component
 		_trayBlack.Clear();
 		_captured.Clear();
 		_slides.Clear();
+		_performedWhite = null;
+		_performedBlack = null;
 		_ready = true;
 		return true;
 	}
@@ -431,6 +366,7 @@ public sealed class ChessBoardView : Component
 				// A piece can move again while still sliding (fast play, resync)
 				// — the stale slide would keep overwriting the new one's target
 				_slides.RemoveAll( s => s.Piece == piece );
+				bool performed = HandWillPerform( c );
 				_slides.Add( new Slide
 				{
 					Piece = piece,
@@ -442,14 +378,17 @@ public sealed class ChessBoardView : Component
 					// DERIVED from the gesture timeline, never a free knob: the hold only
 					// exists so the hand can arrive, and the hand arrives on the Reaching/
 					// Lifting deadlines — so the piece waits exactly that long (plus a
-					// breath) and not an instant more. The old fixed 1.2s was the "a
-					// far capture takes over 2 seconds" bug: an out-of-reach piece never
-					// gets grabbed, so it sat out the WHOLE hold before its fallback
-					// slide even started. Now the fallback begins right when the hand
-					// has provably done its best, and the total stays inside the move
-					// budget whether the grab fires or not.
-					HoldForHand = HandWillPerform( c ) ? HandArrivalSeconds() : 0f,
+					// breath) and not an instant more. (The old fixed 1.2s was the
+					// "a far capture takes over 2 seconds" bug.)
+					HoldForHand = performed ? HandArrivalSeconds() : 0f,
 				} );
+				// The mover this colour's hand should ride — the wrist derives from this
+				// GameObject live (see the performed-piece block above).
+				if ( performed )
+				{
+					if ( char.IsUpper( c ) ) _performedWhite = piece;
+					else _performedBlack = piece;
+				}
 			}
 		}
 
@@ -589,35 +528,6 @@ public sealed class ChessBoardView : Component
 
 	void AdvanceSlides()
 	{
-		// ── The hand carry, resolved before any slide advances ──
-		bool carryFresh = _carried.IsValid() && Time.Now - _carryStamp < 0.15f;
-
-		// Release: the carry ended (or switched pieces) since last frame. Hand the piece
-		// back to its slide FROM WHERE IT IS — a finished drop settles invisibly onto its
-		// square; an abandoned one glides there instead of teleporting.
-		if ( _carriedPrev.IsValid() && ( !carryFresh || !ReferenceEquals( _carried, _carriedPrev ) ) )
-		{
-			var s = _slides.Find( x => x.Piece == _carriedPrev );
-			if ( s != null )
-			{
-				s.From = _carriedPrev.LocalPosition;
-				s.Age = 0f;
-				s.Seconds = SettleSeconds;
-				s.Arc = 0f;
-			}
-			_carriedPrev = null;
-		}
-
-		if ( carryFresh )
-		{
-			_carriedPrev = _carried;
-			_carried.WorldPosition = _carryWorld;
-		}
-		else
-		{
-			_carried = null;
-		}
-
 		for ( int i = _slides.Count - 1; i >= 0; i-- )
 		{
 			var slide = _slides[i];
@@ -627,17 +537,10 @@ public sealed class ChessBoardView : Component
 				continue;
 			}
 
-			// A carried piece's slide neither ages nor writes position — the hand owns
-			// the piece, and the slide is only kept alive as the fallback the release
-			// path above re-arms. Grabbing also ends any hold: the wait was FOR this.
-			if ( carryFresh && ReferenceEquals( slide.Piece, _carried ) )
-			{
-				slide.HoldForHand = 0f;
-				continue;
-			}
-
-			// Waiting for the hand: the piece sits on its origin square until the grab
-			// (above) or the hold expires and the plain slide takes over.
+			// Waiting for the hand: the piece sits on its origin square while the hand's
+			// approach deadlines run (HoldForHand is derived from exactly them), then the
+			// slide plays and the glued hand rides it. No grab, no early release — the
+			// piece is the authority and the hand follows it, never the reverse.
 			if ( slide.HoldForHand > 0f )
 			{
 				slide.HoldForHand -= Time.Delta;
