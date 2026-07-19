@@ -652,31 +652,41 @@ have been run here at all.
   first-wins with loser-side reconciliation (**D1**). Seat cameras orbit the board
   center (`SeatOrbitRadius`/`SeatPitch`/`SeatLookDownAngle`). You take the side you
   walk up to; leaving a live game is a two-stage resign (Escape/Leave twice).
-- **Seated bodies are M13's deliverable; reaching hands are geometrically impossible and
-  were CUT.** When you sit, your Citizen is planted at its side facing the board (`LobbyPlayer`
-  sit pose `sit=1`, `SetSeatedPhysics` un-plant so the tabletop can't shove you off your chair,
-  `TrimSeatedAvatar` to keep the seat camera out of your own skull, and `StationChair` under
-  each seat). The whole thing is gated behind **`ChessRing.TerrySeated`** — false is a full
-  revert to the pre-M13 "don't draw the local avatar while seated" world, and it must stay a
-  kill switch (git commit `0f68c91` is why). The seat-plant/chair knobs (`SeatSitBack`,
-  `SeatSitZ`, `SitOffsetHeight`, `ChairSeatTopZ`, …) are **code defaults on a runtime-built
-  `ChessRing`**, so retuning them is an edit-and-hotload loop, not a scene tweak.
-  → **What a fixed-size SEATED Citizen cannot do is reach a piece.** Its arm is ~20u with no
-  stretch in the animgraph; the board is 34u deep and shared/centred, so the seated hand tops
-  out ~rank 2 and no seated lever moves it further (a graded torso lean and a per-bone scale
-  were both prototyped in-editor and confirmed this — and the reach-waived attempt 4 rediscovered
-  it in-editor: two-bone IK cannot move the shoulder, so "lean/clip through the board" was never
-  going to happen). The answer is the **half-rise, with the one assumption removed: the pelvis
-  need not stay on the chair.** It overrides the PELVIS (translation overrides carry the whole
-  subtree exactly; rotations do NOT carry children), bounded by the legs — feet planted via the
-  engine's own `foot_left`/`foot_right` IK (four game-facing IK targets exist, not two), every
-  IK target pre-compensated by the override its chain rides (the animgraph solves IK BEFORE
-  overrides apply), plus a closed-loop servo for the residual ~5u native warp. Geometry in
-  `Code/Chess/HalfRise.cs`, harness-proven 64/64 with the live-measured skeleton; the moved
-  piece rides the rendered hand bone. Reach, pick-up, the spectator mirror and inspector tuning
-  were **verified across two clients**; what remains is the LOOK pass (partially done: elbow,
-  wrist, HandRoll, tempo, the grab fix). **`TERRY-HALFRISE.md` is the live doc**; `M14.md`
-  holds the other attempts' history. The bodies are cosmetic — no player-facing copy
+- **Seated bodies are M13's deliverable; the hands that play the moves are M14's — MVP
+  passed by the owner 2026-07-19.** When you sit, your Citizen is planted at its side facing
+  the board (`LobbyPlayer` sit pose `sit=1`, `SetSeatedPhysics` un-plant so the tabletop
+  can't shove you off your chair, `TrimSeatedAvatar` to keep the seat camera out of your own
+  skull, and `StationChair` under each seat). Gated behind **`ChessRing.TerrySeated`** —
+  false is a full revert to the pre-M13 "don't draw the local avatar while seated" world,
+  and it must stay a kill switch (git commit `0f68c91` is why); the hands add
+  `gambit_terry_hands` → `gambit_terry_rise` under it. The seat/chair knobs are **code
+  defaults on a runtime-built `ChessRing`** (edit-and-hotload, not scene tweaks); the hand
+  knobs live on **TerryTuning in lobby.scene** — scene values RULE there, so a new code
+  default on a serialized slider silently does nothing.
+  → **Reach**: a seated Citizen's ~20u arm tops out ~rank 2 on a 34u shared board and no
+  seated lever moves it further (torso lean and per-bone scale both prototyped in-editor;
+  the reach-waived attempt 4 re-proved it — two-bone IK cannot move the shoulder). The
+  answer is the **half-rise**: a PELVIS translation override (translations carry the whole
+  subtree exactly; rotations do NOT carry children) bounded by the legs — feet planted via
+  the engine's own `foot_left`/`foot_right` IK, every IK target pre-compensated by the
+  override its chain rides (the animgraph solves IK BEFORE overrides apply), plus a
+  closed-loop servo for the residual ~5u native warp (horizontal channel gated on a stable
+  ask; vertical channel always on — the ask's Z is locked, so vertical error IS warp).
+  Geometry in `Code/Chess/HalfRise.cs`, harness-proven, reach sphere always sliced at the
+  target's Z (a hand that can't reach stops SHORT, never floats ABOVE).
+  → **The architecture that survived the look pass, each point an owner decision:** hands
+  rest on the table unless a move is CONFIRMED (no hover/selection tracking — that wire
+  state is deleted); **ONE clock** — the view's hold-then-slide is the only authority and
+  the **wrist is a CHILD of the piece** (derived live from the performed piece's GO; the
+  old carry/grab/piece-led-placement glue is deleted, not tuned); gestures are **budgeted
+  deadline stages** (Reach/Lift/Carry/Drop ≈ 0.85s — arrive per stage or snap; grasp
+  height comes from the piece's own bounds top); a capture is the same gesture as a move
+  (the victim slides to its tray on its own, in parallel); and **reality always wins** — a
+  new diff snaps stale board slides forward, a premove reply does NOT abandon the trigger
+  move's gesture (the one ply change that continues), and a same-frame collapse fires BOTH
+  hands via `ChessGame.UciFromEnd`. **What remains is TUNING** (timing/positions —
+  PLAN.md's row); **`TERRY-HALFRISE.md` is the mechanism doc**, `M14.md` the attempts'
+  history. The bodies and hands are cosmetic — no player-facing copy
   (`CenterInfoPanel`/`InfoScreen`) describes them, so none went stale.
 - **Wall boards go through `WallBoardGeometry` — all of them.** It owns the size
   (`BoardScale`), the aspect (`Stretch`), and the shared floor anchor (`FloorAnchor`, which

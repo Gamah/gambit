@@ -1,4 +1,28 @@
-# The half-rise: terries that pick up the pieces (M14, second attempt)
+# The half-rise: terries that play the moves (M14 — SHIPPED as the mechanism doc)
+
+> **MVP PASSED (owner judgment, 2026-07-19). M14 stays as a feature; what remains is
+> TUNING — timing and positions — tracked as a PLAN.md row.** Five in-editor rounds of
+> owner reports drove the final shape; the amendment stack below records each decision and
+> its why, and the ARCHITECTURE IS SETTLED — tune knobs, don't re-litigate the shape:
+>
+> - **Hands rest unless a move is confirmed** (thinking hand cut; nothing on the wire).
+> - **One clock; the wrist is a CHILD of the piece** (carry/grab glue deleted, not tuned).
+> - **Z locked to the piece's own bounds top** (+ GraspClearance); the reach sphere is
+>   always sliced at the target's Z — a short hand stops SHORT, never floats ABOVE.
+> - **Budgeted deadline stages** — Reach 0.12 + Lift 0.18 + Carry 0.35 + Drop 0.2 ≈ 0.85s,
+>   arrive per stage or snap; return fast (FadeOutTime 0.45, ReturnChaseRate).
+> - **A capture is a plain gesture**; the victim tray-slides in parallel on its own.
+> - **Reality always wins**: a new diff snaps stale board slides forward; a premove reply
+>   does not abandon the trigger gesture; a same-frame collapse fires BOTH hands
+>   (`ChessGame.UciFromEnd`).
+>
+> **Tuning surface** (the PLAN row's detail): `TerryPose` stage consts + `GestureSpeed`;
+> `ReturnChaseRate` / `GraspClearance` (LobbyPlayer consts); rest anchors `HandIdleX/Y/Z`;
+> rise feel (`RiseChaseRate`, `MaxRise`, `RiseGrace`); roll/wrist sliders. **Scene rule:**
+> TerryTuning sliders serialize in `lobby.scene` and scene values RULE — a new code
+> default on a serialized slider does nothing. Inert sliders (prunable): `HoverChaseRate`,
+> `HandChaseRate`, `HandHoldSeconds`, `CarryHang`, `GrabRadius`, `LiftHeight`,
+> `HoverHeight`.
 
 > **AMENDMENT (2026-07-19, owner decision): the thinking hand is CUT.** Hands rest on the
 > table unless a move has been CONFIRMED (the ply advanced) — no hover tracking, no
