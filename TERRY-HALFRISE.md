@@ -9,6 +9,20 @@
 > Every gesture starts from rest; the driver's fast gesture chase (HandChaseRate) covers the
 > approach and the piece's slide-wait covers the timing. This moots the banner's "lazy
 > hover tempo" half of item 4 below — only the committed-move budget half still applies.
+>
+> **Further owner decisions, same date:**
+> - **The hand is LOCKED in Z for the whole gesture** (float in to piece height, then flat;
+>   pick-up/put-down height variance is an explicit later). Three mechanisms enforce it: the
+>   timeline runs entirely at GraspHeight (LiftHeight/HoverHeight sliders inert), the
+>   planner and the final solver-domain clamp slice the reach sphere at the target's Z and
+>   spend every shortfall horizontally (so neither our clamp nor the ENGINE's own two-bone
+>   clamp can lift the wrist), and the servo's vertical channel now runs UN-gated during
+>   moves (a locked-Z ask makes vertical error warp by definition).
+> - **The capture choreography below is SUPERSEDED**: no Clearing/Discarding prologue, no
+>   DropAndSwap exchange. The hand follows only the TAKING piece (a capture is the same
+>   gesture as a move, CaptureTime == MoveTime); the victim lerps to its tray on its own,
+>   simultaneously, the moment the move starts (the view already ran the victim's tray
+>   slide with no hand-hold — only the hand's shuttle was cut).
 
 > **MILESTONE PAUSE (2026-07-18) — MVP works, looks janky. Read this first.**
 >

@@ -149,14 +149,7 @@ public static class TerryPose
 	// the pickup while Lifting plays. The piece waits on its square for the hand
 	// (ChessBoardView's slide wait), so a long approach costs a beat, not a desync.
 
-	/// <summary>Capture step one: reach the victim's square and close on it.</summary>
-	public const float ClearTime = 0.18f;
-
-	/// <summary>Capture step two: carry the victim to its owner's tray and let go.</summary>
-	public const float DiscardTime = 0.3f;
-
-	/// <summary>Close on the from-square and lift. For a CAPTURE this is also the trip back
-	/// from the tray — the driver's own easing covers the distance.</summary>
+	/// <summary>Close on the from-square and lift.</summary>
 	public const float LiftTime = 0.18f;
 
 	/// <summary>Carry from-square → to-square.</summary>
@@ -168,9 +161,14 @@ public static class TerryPose
 	/// <summary>A plain move, end to end.</summary>
 	public const float MoveTime = LiftTime + TravelTime + DropTime;              // 0.73
 
-	/// <summary>A capture: the victim has to leave the board before the attacker can land
-	/// on its square, and that really is an extra trip.</summary>
-	public const float CaptureTime = ClearTime + DiscardTime + MoveTime;         // 1.21
+	/// <summary>A capture is the SAME hand gesture as a move now (owner decision,
+	/// 2026-07-19): the hand follows only the TAKING piece, and the victim lerps to its
+	/// tray on its own, simultaneously, the moment the move starts. The old prologue —
+	/// hand flies to the victim, carries it to the tray, comes back for the attacker
+	/// (Clearing/Discarding, +0.48s) — read as the hand doing a weird shuttle between the
+	/// two pieces, and is cut. The banner's fuller capture choreography (attacker-first +
+	/// the DropAndSwap exchange beat) is superseded by this simpler rule.</summary>
+	public const float CaptureTime = MoveTime;
 
 	/// <summary>
 	/// How much faster than 1× the hand may play to catch up, per move it has fallen behind.
@@ -344,33 +342,11 @@ public static class TerryPose
 		// `since` stays ABSOLUTE — time since this move began — everywhere, including in
 		// what gets stored. `t` is the offset into the plain-move part. Keeping the two
 		// apart is what lets a pose be re-derived from its own clock.
+		//
+		// No capture prologue: the hand plays the attacker's Lift/Carry/Drop and nothing
+		// else (see CaptureTime). The `capture` flag still rides the pose — the abandon/
+		// replay rule needs the true timeline length, and finger styling may want it later.
 		float t = since;
-
-		if ( capture )
-		{
-			// Step one: reach the victim's square and close on it.
-			if ( t < ClearTime )
-			{
-				float u = Div( t, ClearTime );
-				return new HandPose( HandPhase.Clearing, to, to, false, 0f,
-					GraspHeight,
-					Lerp( FingersHovering, FingersHolding, u ), w, ply, true, since, rush );
-			}
-
-			// Step two: take it off the board. ToTray — the driver owns where that IS,
-			// because a tray is geometry and this file may not know about geometry.
-			if ( t < ClearTime + DiscardTime )
-			{
-				float u = Div( t - ClearTime, DiscardTime );
-				// Open the fingers only at the very end, over the tray.
-				float fingers = u < 0.8f ? FingersHolding
-					: Lerp( FingersHolding, FingersReleased, Div( u - 0.8f, 0.2f ) );
-				return new HandPose( HandPhase.Discarding, to, to, true, Smoothstep( u ),
-					GraspHeight, fingers, w, ply, true, since, rush );
-			}
-
-			t -= ClearTime + DiscardTime;
-		}
 
 		if ( t < LiftTime )
 		{

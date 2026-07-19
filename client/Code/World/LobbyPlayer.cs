@@ -1255,23 +1255,42 @@ public sealed class LobbyPlayer : Component
 			if ( SeatedHandSpikes.ServoOn )
 			{
 				float sk = 1f - MathF.Exp( -ServoRate * Time.Delta );
-				if ( _servoTrueAsk is { } prevAsk && ( prevAsk - trueAskWorld ).Length < 2f
-					&& r.TryGetBoneTransform( "hand_R", out var handNow ) )
+				bool boneOk = r.TryGetBoneTransform( "hand_R", out var handNow );
+				if ( _servoTrueAsk is { } prevAsk && boneOk )
 				{
 					var err = prevAsk - handNow.Position;
-					if ( err.Length < 20f ) // never wind toward a wildly wrong bone read
+
+					// HORIZONTAL channel — gated on the ask being stable: a moving
+					// target's horizontal error is chase lag, not warp, and winding
+					// toward it would overshoot every gesture.
+					if ( ( prevAsk - trueAskWorld ).Length < 2f && err.Length < 20f )
 					{
-						_handServo += err * sk;
+						_handServo += err.WithZ( 0f ) * sk;
 						if ( _handServo.Length > ServoClamp )
 							_handServo = _handServo.Normal * ServoClamp;
 					}
+					else
+					{
+						_handServo = Vector3.Lerp( _handServo, Vector3.Zero, sk );
+					}
+
+					// VERTICAL channel — ALWAYS on (owner report #3: far ranks still
+					// floated DURING moves). The timeline locks the ask's Z for the whole
+					// gesture, so vertical error is native warp by definition even while
+					// the ask sweeps horizontally — the stability gate that protects the
+					// horizontal channel was exactly what left the warp uncorrected
+					// mid-move, and the warp grows with the override magnitude, i.e. with
+					// rank distance. Same wild-read guard, own clamp.
+					if ( MathF.Abs( err.z ) < 20f )
+						_servoZ = Math.Clamp( _servoZ + err.z * sk, -ServoClamp, ServoClamp );
 				}
 				else
 				{
 					_handServo = Vector3.Lerp( _handServo, Vector3.Zero, sk );
+					_servoZ *= 1f - sk;
 				}
 				_servoTrueAsk = trueAskWorld;
-				world += _handServo;
+				world += _handServo + Vector3.Up * _servoZ;
 			}
 
 			// One-shot pipeline dump, second half: what was ACTUALLY applied and where the
@@ -1721,9 +1740,12 @@ public sealed class LobbyPlayer : Component
 	Vector3? _footIkL;
 	Vector3? _footIkR;
 
-	/// <summary>The hand servo's state: the accumulated world-space correction, and the
-	/// previous frame's true ask (stability gate). See the servo block in ApplyHandPose.</summary>
+	/// <summary>The hand servo's state: the accumulated correction (horizontal, gated on a
+	/// stable ask), the always-on vertical channel (the ask's Z is locked mid-gesture, so
+	/// vertical error is warp by definition), and the previous frame's true ask (the
+	/// horizontal channel's stability gate). See the servo block in ApplyHandPose.</summary>
 	Vector3 _handServo;
+	float _servoZ;
 	Vector3? _servoTrueAsk;
 	const float ServoRate = 5f;
 	const float ServoClamp = 10f;
@@ -1904,6 +1926,7 @@ public sealed class LobbyPlayer : Component
 		_leanApplied = Vector3.Zero;
 		_pitchApplied = Vector3.Zero;
 		_handServo = Vector3.Zero;
+		_servoZ = 0f;
 		_servoTrueAsk = null;
 	}
 
