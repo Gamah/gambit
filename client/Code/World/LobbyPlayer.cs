@@ -33,6 +33,53 @@ public sealed class LobbyPlayer : Component
 	/// local FileSystem.Data.</summary>
 	[Sync] public string GambitName { get; set; }
 
+	/// <summary>
+	/// This player's hovered and selected board square, packed into one int and published
+	/// by the OWNER. −1 = neither (the resting value, and what an unseated player carries).
+	///
+	/// <para><b>The only thing M13 puts on the wire, and the smallest thing that could
+	/// be.</b> Everything else a seated terry does — the pose, the pickup animation, the
+	/// chair's tuck, the tint — is derived locally from state that already replicates. Hover
+	/// and selection are the exception because they have NO other evidence: nothing else in
+	/// the game knows which square you are thinking about. A move, by contrast, is already
+	/// relayed, so every client can drive the same pickup off LastMoveUci without being
+	/// told.</para>
+	///
+	/// <para><b>Owner-synced, not host-authoritative</b>, unlike ChessStation's occupancy: a
+	/// hover is the CLIENT's own truth and the host has no opinion on it.
+	/// <see cref="GambitName"/> is the precedent — a bare [Sync] on a networked,
+	/// player-owned component, published behind an explicit change gate.</para>
+	///
+	/// <para>Bandwidth is a handful of int writes per second per seated player: it changes
+	/// only when the cursor crosses a square boundary, and NOTHING is sent while the cursor
+	/// sits still or nobody is seated. [Sync] diffs anyway; the change gate in
+	/// ChessBoardView is belt-and-braces and matches the house style.</para>
+	///
+	/// <para><b>It survives the lichess seam for free.</b> The payload is a raw square index
+	/// — no game-source knowledge crosses the wire. An observer only needs to know which
+	/// square to float a hand over, and the hovering player derives their own hover from
+	/// their own source. Which is also why a third kind of game gets this by existing.</para></summary>
+	[Sync] public int HandState { get; set; } = -1;
+
+	/// <summary>Pack hover + selection into one int. 7 bits each — 0..64 after the +1 bias,
+	/// so −1 (none) packs cleanly and the whole thing is one comparison to change-gate.</summary>
+	public static int PackHand( int hover, int selected ) =>
+		( hover + 1 ) | ( ( selected + 1 ) << 7 );
+
+	/// <summary>Inverse of <see cref="PackHand"/>. −1 out for "none".</summary>
+	public static void UnpackHand( int packed, out int hover, out int selected )
+	{
+		if ( packed < 0 )
+		{
+			hover = -1;
+			selected = -1;
+			return;
+		}
+
+		hover = ( packed & 0x7F ) - 1;
+		selected = ( ( packed >> 7 ) & 0x7F ) - 1;
+	}
+
 	/// <summary>Name tag height above the player origin (the avatar is ~72 tall).</summary>
 	[Property] public float NameTagHeight { get; set; } = 82f;
 
@@ -382,6 +429,7 @@ public sealed class LobbyPlayer : Component
 			// Only on the transition: once the animator is back on, the controller writes
 			// sit = 0 itself every frame and this would just be saying it twice.
 			ClearSitPose();
+			ClearHandPose();
 		}
 
 		_proxySeated = seated;
@@ -957,7 +1005,11 @@ public sealed class LobbyPlayer : Component
 			return;
 		}
 
-		r.Set( "sit", SitPoseChair );
+		// M14 cross-cutting spike: SitPoseChair (1 = sitting_01) is the shipped default;
+		// SeatedHandSpikes.SitPose lets the editor flip to sitting_02 live to see whether it
+		// leans the shoulders over the table for free. Read every frame, so a console flip
+		// takes effect next frame on this sitter and every proxy.
+		r.Set( "sit", SeatedHandSpikes.SitPoseClamped );
 
 		// INCHES, hard-clamped to ±12 by the graph. The pose carries its own seat height
 		// above the avatar's origin (which is at the FEET — see SeatSitWorldPosition); this
@@ -987,6 +1039,914 @@ public sealed class LobbyPlayer : Component
 	/// names for identical values.</summary>
 	const int SitPoseStanding = 0;
 	const int SitPoseChair = 1;
+
+	/// <summary>
+	/// Put this seated citizen's working hand where <see cref="Gambit.Chess.TerryPose"/>
+	/// says it goes. Called by <see cref="SeatedTerry"/> for every seat on every client.
+	///
+	/// <para><b>IK needs no GameObjects.</b> <c>SetIk(name, Transform)</c> takes a Transform
+	/// directly; CitizenAnimationHelper's IkLeftHand/IkRightHand GameObject properties are
+	/// editor sugar over exactly this call. So the target is lerped in code and handed
+	/// straight over — no scene objects to spawn, parent, or clean up.</para>
+	///
+	/// <para><b>SetIk wants a WORLD transform</b> and converts internally
+	/// (<c>tx = WorldTransform.ToLocal(tx)</c>). Handing it a local one silently puts the
+	/// hand somewhere near the floor of the room.</para>
+	///
+	/// <para><b>Right hand works, left hand idles.</b> Chess is played one-handed.</para>
+	/// </summary>
+	public void ApplyHandPose( ChessStation station, ChessSeat seat, Gambit.Chess.HandPose pose )
+	{
+		var r = _bodyRenderer;
+		var ring = ChessRing.Instance;
+		if ( r == null || ring == null || station == null ) return;
+		if ( ring is { TerrySeated: false } ) return;
+
+		// M14: the hands are a SPIKE, off by default — the shipped world is bodies only. The
+		// bodies stay on their own gate (TerrySeated) above; this is the independent hand switch.
+		if ( !SeatedHandSpikes.HandsOn )
+		{
+			if ( _reachSpikeApplied ) { r.ClearPhysicsBones(); _reachSpikeApplied = false; }
+			ReleaseRiseIk( r );
+			_riseApplied = Vector3.Zero;
+			_leanApplied = Vector3.Zero;
+			_pitchApplied = Vector3.Zero;
+			return;
+		}
+
+		// Where the hand would rest with nothing to do: elbows on the table, in the X
+		// margin. CLAUDE.md calls both X margins "kept clear — they are the seat cameras'
+		// sightlines", and this spends one of them ON PURPOSE: the hands ARE the sightline's
+		// subject. The board frame's half-extent is 21.75 and the tabletop's is 30, so 26
+		// lands squarely in the 8.25-wide margin — on the table, clear of the board.
+		float side = seat == ChessSeat.White ? -1f : +1f;
+		var idle = new Vector3( side * ring.HandIdleX, side * ring.HandIdleY, ring.HandIdleZ );
+
+		_pendingLean = 0f;
+		_risePlan = null; // re-planned (or not) below; a frame with no plan eases the rise out
+		Vector3 target = idle;
+		if ( pose.OnBoard && pose.Weight > 0f )
+		{
+			// TerryPose deals in square INDICES and scalars precisely so it can be run on a
+			// host with no engine. This is the half that needs Sandbox: turning them into a
+			// place. Square index is rank*8+file, matching ChessBoardView.SquareUnderCursor.
+			var from = SquareLocal( ring, pose.FromSquare );
+
+			// ToTray: the hand is taking a captured piece off the board. TerryPose can't
+			// know where a tray is — it may not know about geometry at all — so it says
+			// "the tray" and this decides which. The VICTIM's, because that is where
+			// ChessBoardView actually puts the piece, and a hand walking it somewhere else
+			// would be a second answer to a settled question. The victim is whatever this
+			// seat isn't.
+			// …and only PART of the way: see HandDiscardReach. The victim's tray is across
+			// the board, well past where an arm goes, and an unreachable IK target doesn't
+			// fail politely — it straightens the arm and drags the shoulder after it.
+			var to = pose.ToTray
+				? Vector3.Lerp( from, ring.TrayHandLocalPosition( white: seat == ChessSeat.Black ),
+					ring.HandDiscardReach )
+				: SquareLocal( ring, pose.ToSquare );
+
+			var on = Vector3.Lerp( from, to, pose.Travel ) + Vector3.Up * ( pose.Height + ring.HandLift );
+
+			// ── Out-of-reach handling: Approach A (default) vs the cut M13 sphere clamp ──
+			//
+			// The seated arm is ~20u and the shoulder sits far back (gambit_terry: shoulder at
+			// x −44.6, arm 19.9), so most of a 34-deep board is beyond it. A target past the arm
+			// doesn't fail politely — the IK straightens and drags the shoulder after it.
+			//
+			// M14 Approach A (SeatedHandSpikes.UseSphereClamp == false): a square outside the
+			// honest reach band just IDLES the hand — no reach animated — and ChessBoardView's
+			// piece-slide finishes far moves as it has since M11. The taste call the doc asks for
+			// is exactly this: does "touches near pieces, rests for far ones" read as playing?
+			//
+			// The old M13 sphere clamp is kept behind the lever ONLY to compare the two failure
+			// modes live. It collapses the far ranks onto ~rank 2 (the frozen-hand trap the doc
+			// documents) — flip gambit_terry_clamp to see it.
+			//
+			// ── M14 second attempt: the half-rise (default) ──
+			// The planner owns the WHOLE reach story: the proven M14 lean first, then rising the
+			// pelvis off the chair toward the target, bounded by the legs (planted feet that may
+			// step) instead of the chair. Everything it returns is applied in
+			// ApplyRiseOverrides; here we only take the clamped hand target — which equals the
+			// true target for the 51/64 squares the harness proves honestly reachable, and sits
+			// on the risen reach sphere (never straining) for the far corners the piece-slide
+			// still finishes. Geometry: Code/Chess/HalfRise.cs, proven in the dotnet harness.
+			if ( SeatedHandSpikes.HalfRiseOn && PlanRise( station, seat, on ) is { } risePlan )
+			{
+				_risePlan = risePlan;
+				_pendingLean = 0f; // the plan carries its own lean; the M14 path must not double it
+				target = Vector3.Lerp( idle, FromPlanner( risePlan.Hand, seat ), pose.Weight );
+			}
+			else if ( SeatedHandSpikes.NaturalLean && ShoulderLocal( station ) is { } sh0 )
+			{
+				// ── Reach like a person: lean in only as far as needed, then reach ──
+				//
+				// A seated player reaches a far piece by leaning from the waist, not by growing the
+				// arm. Lean the torso toward the target by the shortfall (capped at MaxLean) —
+				// ApplyReachSpikes turns _pendingLean into the actual bone override that moves the
+				// shoulder forward. Then clamp the reach to the LEANED envelope so the arm never
+				// straightens or drags (the thing that read as broken). ChessBoardView's piece-slide
+				// covers any residual for the farthest squares — which is just sliding a piece you
+				// can't quite place. Near squares: deficit ≤ 0, no lean, upright, exact reach.
+				float reach = ring.HandReach;
+				float deficit = ( on - sh0 ).Length - reach;
+				_pendingLean = deficit > 0f ? Math.Min( deficit, SeatedHandSpikes.MaxLean ) : 0f;
+
+				float fwd = seat == ChessSeat.White ? +1f : -1f;
+				var leaned = sh0 + new Vector3( fwd * _pendingLean, 0f, 0f );
+				var reachOut = on - leaned;
+				if ( reachOut.Length > reach )
+					on = leaned + reachOut.Normal * reach;
+				target = Vector3.Lerp( idle, on, pose.Weight );
+			}
+			else if ( SeatedHandSpikes.UseSphereClamp )
+			{
+				// Comparison lever: the cut M13 static sphere clamp (no lean — collapses far ranks).
+				if ( ShoulderLocal( station ) is { } shoulder )
+				{
+					var reachOut = on - shoulder;
+					if ( reachOut.Length > ring.HandReach )
+						on = shoulder + reachOut.Normal * ring.HandReach;
+				}
+				target = Vector3.Lerp( idle, on, pose.Weight );
+			}
+			else if ( ring.SquareReachable( seat, pose.FromSquare ) )
+			{
+				target = Vector3.Lerp( idle, on, pose.Weight );
+			}
+			else
+			{
+				target = idle; // isolated Approach A: out of band → rest
+			}
+		}
+
+		// ── Chase the target; never teleport to it ──
+		//
+		// What crosses the wire is a SQUARE, so the target jumps a whole square at a time as
+		// the cursor crosses a boundary — and a hand that jumps reads as broken rather than
+		// as thinking. Easing the POSITION is what makes a quantised signal look like a hand
+		// vaguely following a mouse, which is the whole illusion. TerryPose's Weight already
+		// eases the hand on and off the BOARD; this eases it ACROSS the board, which the
+		// weight can't do because both ends are on it.
+		//
+		// Frame-rate independent: 1 − e^(−k·dt), not a raw lerp factor.
+		//
+		// TWO tempos, not one (banner jank #4). Hovering or merely selecting is DECIDING, and
+		// the hand drifts lazily after the cursor (HoverChaseRate, slow). A committed move is a
+		// hard snappy gesture, so it chases fast (HandChaseRate) — which also catches the hand
+		// up from wherever the lazy drift left it, the "catch-up is part of the budget" rule.
+		float chaseRate = pose.Animating ? SeatedHandSpikes.HandChaseRate : SeatedHandSpikes.HoverChaseRate;
+		if ( _handLocal is not { } current )
+			_handLocal = target;                       // first frame: be there
+		else
+			_handLocal = Vector3.Lerp( current, target,
+				1f - MathF.Exp( -chaseRate * Time.Delta ) );
+
+		// Fingers down over the board, reaching ALONG THE ARM — the yaw follows the
+		// shoulder→target bearing rather than the fixed seat-forward it used to be. The
+		// fixed yaw is what cocked the wrist into a claw on any reach that wasn't dead
+		// ahead: a deeply leaned shoulder reaches diagonally, and a hand forced to keep
+		// pointing at the opponent from a diagonal forearm hyper-flexes at the wrist.
+		//
+		// PITCH follows the bearing too now (banner jank #2). It used to be a FIXED
+		// ring.HandPitch (60°) nose-down, which on a far reach — where the forearm flattens
+		// toward horizontal — forced the wrist to hyper-flex to keep pointing that far down.
+		// So the effective pitch = the forearm's own declination below horizontal + a grasp
+		// curl (SeatedHandSpikes.WristDrop), capped at ring.HandPitch. A steep near reach
+		// keeps the full nose-down; a flat far reach relaxes toward the curl alone. Setting
+		// WristDrop to the cap restores the old fixed-pitch behaviour exactly.
+		float handYaw = seat == ChessSeat.White ? 0f : 180f;
+		float handPitch = ring.HandPitch;
+		if ( ShoulderLocal( station ) is { } shForYaw )
+		{
+			var bearing = _handLocal.Value - shForYaw;
+			float horiz = bearing.WithZ( 0f ).Length;
+			if ( horiz > 1f )
+				handYaw = MathF.Atan2( bearing.y, bearing.x ) * ( 180f / MathF.PI );
+
+			// Declination: how far below horizontal the arm points at the target (0 when the
+			// hand is at or above shoulder height, positive reaching down). max(0,·) so a
+			// slight reach-up never pitches the hand UPward past the curl.
+			float decl = MathF.Atan2( -bearing.z, MathF.Max( horiz, 0.001f ) ) * ( 180f / MathF.PI );
+			handPitch = MathF.Min( ring.HandPitch, MathF.Max( decl, 0f ) + SeatedHandSpikes.WristDrop );
+		}
+		// Roll swings the elbow OUT of the torso — the t-rex fix. The hand IK is fed a full
+		// rotation, so the elbow pole follows this barrel-twist; 0 traps the arm in a vertical
+		// plane and the elbow just drops. See SeatedHandSpikes.HandRoll (sign unverified).
+		var rot = station.WorldRotation * Rotation.From( handPitch, handYaw, SeatedHandSpikes.HandRoll );
+
+		// The IK aims a BONE, and the bone is the WRIST — so a target dropped straight on a
+		// square puts the fingers past it and the piece under the palm. Pull the wrist back
+		// along the hand's own axes so the grip lands where the player is looking.
+		// gambit_terry's ruler prints hand_R, which is exactly this bone: tune against it.
+		var world = station.WorldTransform.PointToWorld( _handLocal.Value )
+			+ rot * ring.HandGripOffset;
+
+		LastHandTarget = _handLocal.Value;
+		// The wrist's ACTUAL target (grasp point + grip offset), station-local — so a reach
+		// readout compares the bone against what it was really aimed at, not the grasp point
+		// it sits deliberately back from. Without this a perfect reach reads as ~4 units off.
+		LastHandIkTarget = station.WorldTransform.PointToLocal( world );
+
+		// RIGHT HAND ONLY. Chess is played one-handed, and that is the rule.
+		//
+		// Worth knowing what it costs, because the measurement is unambiguous and someone
+		// will otherwise re-file it as an aiming bug: a1 sits at y +17.1 while White's right
+		// shoulder is near y −6, so reaching it is ~33 units — 23 of them pure sideways —
+		// against an arm of roughly 24. The far rank is ~60 and nothing reaches it. On the
+		// far side of the board the arm runs out and the hand stops short, pointing the
+		// right way from as close as it gets.
+		//
+		// That is a fact about a 39-unit board in front of a 72-unit citizen, not something
+		// a constant here can fix. gambit_terry's reach readout prints the ask beside the
+		// achieved bone exactly so it stays visible as what it is.
+		r.Set( "holdtype", HoldTypeItem );
+		r.Set( "holdtype_handedness", HandednessRight );
+		r.Set( "holdtype_pose_hand", pose.FingerClose );
+
+		if ( SeatedHandSpikes.HalfRiseOn )
+		{
+			// The half-rise path: ease + apply the pelvis/lean overrides and the foot/brace
+			// IK, then PRE-COMPENSATE the right hand's target. The animgraph IK solves
+			// BEFORE bone overrides apply, and the arm's chain rides the pelvis + spine
+			// subtree — so an override translating that subtree by Δ carries the solved
+			// hand by Δ too. Aiming at (true − Δ) is what lands the hand ON the true
+			// target after the override. Δ is the APPLIED (eased) value, not the plan's,
+			// so the compensation can never outrun the bones.
+			ApplyRiseOverrides( r, station, seat );
+			var trueAskWorld = world;
+			world -= _riseApplied + _leanApplied + _pitchApplied;
+
+			// ── The closed-loop hand servo ──
+			// The doctor's pipeline dump proved every modelled stage exact: the pelvis and
+			// spine overrides land to the decimal, and the animation-domain IK NAILS its
+			// compensated target — yet the FINAL hand still lands ~5u off the true ask.
+			// Some post-override native stage (procedural/twist bones, by elimination)
+			// warps the last hop, and it is not readable from any API we have. So: don't
+			// model it, MEASURE it — integrate last frame's final-hand-vs-true-ask error
+			// into the target. Gated on the ask being stable (a moving target's error is
+			// chase lag, not warp), clamped, decayed when the correction stops earning.
+			// This also absorbs whatever the torso YAW does to the arm-root geometry,
+			// which is what lets the yaw ship without exact modelling.
+			if ( SeatedHandSpikes.ServoOn )
+			{
+				float sk = 1f - MathF.Exp( -ServoRate * Time.Delta );
+				if ( _servoTrueAsk is { } prevAsk && ( prevAsk - trueAskWorld ).Length < 2f
+					&& r.TryGetBoneTransform( "hand_R", out var handNow ) )
+				{
+					var err = prevAsk - handNow.Position;
+					if ( err.Length < 20f ) // never wind toward a wildly wrong bone read
+					{
+						_handServo += err * sk;
+						if ( _handServo.Length > ServoClamp )
+							_handServo = _handServo.Normal * ServoClamp;
+					}
+				}
+				else
+				{
+					_handServo = Vector3.Lerp( _handServo, Vector3.Zero, sk );
+				}
+				_servoTrueAsk = trueAskWorld;
+				world += _handServo;
+			}
+
+			// One-shot pipeline dump, second half: what was ACTUALLY applied and where the
+			// bones ACTUALLY are (animation vs final). Splits "planner under-asked" from
+			// "bones under-moved" from "solver missed the compensated target".
+			if ( SeatedHandSpikes.RiseDebug )
+			{
+				Log.Info( "── rise debug: the skeleton ──" );
+				Log.Info( $"   applied: rise=({_riseApplied.x:0.0},{_riseApplied.y:0.0},{_riseApplied.z:0.0})"
+					+ $" |{_riseApplied.Length:0.0}|  lean=|{_leanApplied.Length:0.0}|"
+					+ $"  feetIk={_riseFeetIk}  braceIk={_riseBraceIk}" );
+				DumpBone( r, station, "pelvis" );
+				DumpBone( r, station, SeatedHandSpikes.NaturalLeanBone );
+				DumpBone( r, station, "arm_upper_R" );
+				DumpBone( r, station, "hand_R" );
+				Log.Info( $"   right-hand IK asked (station-local, post-compensation): "
+					+ $"{Fmt( station.WorldTransform.PointToLocal( world ) )}  true ask: "
+					+ $"{( LastHandIkTarget is { } ask ? Fmt( ask ) : "-" )}" );
+				Log.Info( "   → 'final' should equal 'anim + applied' for pelvis and the lean bone; if it doesn't, the"
+					+ " override isn't landing. hand_R final should equal the TRUE ask; short = the solver/compensation." );
+				SeatedHandSpikes.RiseDebug = false;
+			}
+		}
+		else
+		{
+			// Half-rise just switched off (a lever, or a sweep phase): release its foot/brace
+			// IK and eased state HERE, not only in the lever command — the sweep flips
+			// HalfRiseOn between phases without ClearHandPose, and pinned feet must never
+			// leak into a seated phase's measurement.
+			if ( _riseFeetIk || _riseBraceIk || _riseApplied != Vector3.Zero
+				|| _leanApplied != Vector3.Zero || _pitchApplied != Vector3.Zero )
+			{
+				ReleaseRiseIk( r );
+				_riseApplied = Vector3.Zero;
+				_leanApplied = Vector3.Zero;
+				_pitchApplied = Vector3.Zero;
+			}
+
+			// M14 Approach B/C: bend the skeleton BEFORE the IK solves, so the measurement reads
+			// whether the two-bone IK re-derives against the changed shoulder. No-op unless a lever
+			// is pulled; self-clears when they are all neutral.
+			ApplyReachSpikes( r, station, seat );
+		}
+
+		r.SetIk( IkRight, new Transform( world, rot ) );
+	}
+
+	/// <summary>Whether we currently hold a bone override (natural lean / spike lean / arm-scale),
+	/// so the off-paths know to clear it exactly once rather than every frame.</summary>
+	bool _reachSpikeApplied;
+
+	/// <summary>How far the natural lean wants the torso forward THIS frame (world units), computed
+	/// in <see cref="ApplyHandPose"/> from the reach shortfall and applied in
+	/// <see cref="ApplyReachSpikes"/>. 0 = upright (target within reach, or lean off).</summary>
+	float _pendingLean;
+
+	/// <summary>
+	/// M14 reach spikes, applied per frame just before the hand IK — <b>scaffolding, deleted with
+	/// <see cref="SeatedHandSpikes"/> in the cleanup pass.</b>
+	///
+	/// <para><b>Approach B (lean):</b> override a bone (default <c>spine_2</c>, or
+	/// <c>arm_upper_R</c> to test the IK root directly) forward toward the board each frame via
+	/// <c>SetBoneTransform</c> → <c>SetBoneOverride</c>. The gating unknown the doc names — does the
+	/// two-bone IK re-solve against this "final" override or the animator's original pose — is what
+	/// the editor answers. We read the bone's world transform, shove it forward in the station's
+	/// frame, and hand it back in model space (<c>WorldTransform.ToLocal</c>, exactly as
+	/// <c>SetIk</c> does internally).</para>
+	///
+	/// <para><b>Approach C (arm scale):</b> best-effort — there is no runtime bone-scale API, so we
+	/// set <c>Transform.Scale</c> on an override of the arm bones and let the editor say whether the
+	/// native IK honours it as extra segment length. Almost certainly a no-op; run to prove it.</para>
+	///
+	/// <para><b>Clear-then-set every frame</b> is the pattern the engine's own physics-bone
+	/// consumers use (<c>PhysicsBones.Update</c>): the override is persistent native state, so a
+	/// stale one outlives its lever otherwise. The seated citizen is never ragdolled, so wiping the
+	/// shared physics-bone slot costs nothing.</para>
+	/// </summary>
+	void ApplyReachSpikes( SkinnedModelRenderer r, ChessStation station, ChessSeat seat )
+	{
+		// The natural lean (default) drives the bone from _pendingLean; the manual Approach-B lean
+		// lever is only live when the natural path is off, so the two never fight over the bone.
+		bool natural = SeatedHandSpikes.NaturalLean && _pendingLean > 0.01f;
+		bool manualLean = !SeatedHandSpikes.NaturalLean
+			&& SeatedHandSpikes.LeanOn && SeatedHandSpikes.LeanForward != 0f;
+		bool scale = SeatedHandSpikes.ArmScale != 1f;
+
+		if ( !natural && !manualLean && !scale )
+		{
+			if ( _reachSpikeApplied ) { r.ClearPhysicsBones(); _reachSpikeApplied = false; }
+			return;
+		}
+
+		if ( r.Model is not { } model ) return;
+
+		r.ClearPhysicsBones();
+		_reachSpikeApplied = true;
+
+		// READ THE ANIMATION POSE, not the final one. TryGetBoneTransform returns the FINAL
+		// transform — which already includes LAST frame's override — so offsetting/scaling that
+		// compounds every frame and the bone flies off to thousands of units (it did: the first
+		// sweep read 712 → 1702 → 3e14). TryGetBoneTransformAnimation is the post-animation,
+		// pre-override pose, so a fixed offset/scale on it is stable frame to frame.
+		if ( natural || manualLean )
+		{
+			string boneName = natural ? SeatedHandSpikes.NaturalLeanBone : SeatedHandSpikes.LeanBone;
+			float amount = natural ? _pendingLean : SeatedHandSpikes.LeanForward;
+			var bone = model.Bones.GetBone( boneName );
+			if ( bone is not null && r.TryGetBoneTransformAnimation( bone, out var world ) )
+			{
+				// "Forward" = toward the board = station +X for White (who sits at −X), −X for Black.
+				float fwd = seat == ChessSeat.White ? +1f : -1f;
+				world.Position += station.WorldRotation * new Vector3( fwd * amount, 0f, 0f );
+				r.SetBoneTransform( bone, r.WorldTransform.ToLocal( world ) );
+			}
+		}
+
+		if ( scale )
+		{
+			// The IK chain is arm_upper_R → arm_lower_R1 → hand_R1; scale the two proximal segments.
+			foreach ( var name in ArmScaleBones )
+			{
+				var b = model.Bones.GetBone( name );
+				if ( b is null || !r.TryGetBoneTransformAnimation( b, out var w ) ) continue;
+				w.Scale *= SeatedHandSpikes.ArmScale;
+				r.SetBoneTransform( b, r.WorldTransform.ToLocal( w ) );
+			}
+		}
+	}
+
+	static readonly string[] ArmScaleBones = { "arm_upper_R", "arm_lower_R1" };
+
+	// ───────────────────────────── M14: the half-rise runtime ─────────────────────────────
+
+	/// <summary>This frame's plan from <see cref="Gambit.Chess.HalfRise"/> (planner frame:
+	/// station-local, White-seat orientation), or null when the hand is idle / the target is
+	/// seated-reachable with no rise. Written by ApplyHandPose, consumed by
+	/// <see cref="ApplyRiseOverrides"/> in the same call.</summary>
+	Gambit.Chess.RisePlan? _risePlan;
+
+	/// <summary>The pelvis translation ACTUALLY applied this frame (world space, eased toward
+	/// the plan) — also exactly what the IK pre-compensation subtracts, which is why it is
+	/// stored rather than recomputed: the bones and the compensation must never disagree.</summary>
+	Vector3 _riseApplied;
+
+	/// <summary>The spine-lean translation actually applied (world space, eased) — the arm
+	/// chain rides pelvis + spine, so the hand compensation subtracts both.</summary>
+	Vector3 _leanApplied;
+
+	/// <summary>The torso pitch's eased shoulder-forward gain VECTOR (world). Its length
+	/// through asin(len/torso) is the applied angle; the same vector is subtracted from the
+	/// hand ask, so the rotation and the compensation cannot drift apart.</summary>
+	Vector3 _pitchApplied;
+
+	bool _riseFeetIk;   // foot_left/foot_right IK currently held
+	bool _riseBraceIk;  // hand_left brace IK currently held
+	float _measuredArm; // live |arm_upper_R→arm_lower_R| + |→hand_R|, 0 until first read
+	float _measuredLeg; // live |leg_upper_R→leg_lower_R| + |→ankle_R|
+
+	/// <summary>Fallbacks when the skeleton can't be read (M13's measured citizen).</summary>
+	const float FallbackArm = 19.9f;
+	const float FallbackLeg = 30f;
+
+	/// <summary>Where the half-rise PLANTS the feet, relative to the pelvis (planner
+	/// frame): a step's worth ahead, hip-width apart, on the floor. See PlanRise for why
+	/// the animated ankles must not be used.</summary>
+	const float FootPlantForward = 10f;
+	const float FootPlantSpread = 7f;
+	const float FootPlantZ = 1f;
+
+	/// <summary>Grip/knee slack subtracted from the measured chains before planning, so the
+	/// solver is never asked for a straight-locked limb.</summary>
+	const float ReachMargin = 2f;
+	const float LegMargin = 2f;
+
+	/// <summary>
+	/// Read the live skeleton, mirror everything into the planner's White frame, and plan
+	/// this frame's reach. Null when any bone is unreadable — the caller then falls through
+	/// to the seated M14 lean, so a missing bone degrades to the old world, never to a
+	/// missing hand.
+	/// </summary>
+	Gambit.Chess.RisePlan? PlanRise( ChessStation station, ChessSeat seat, Vector3 grasp )
+	{
+		var r = _bodyRenderer;
+		var ring = ChessRing.Instance;
+		if ( r?.Model == null || ring == null ) return null;
+
+		if ( ShoulderLocal( station ) is not { } shoulder ) return null;
+		if ( BoneAnimLocal( station, "pelvis" ) is not { } pelvis ) return null;
+
+		MeasureLimbs( r );
+
+		// Feet may step toward the table but never INTO its base; the brace lands in the
+		// player's left side margin on the tabletop. All derived from the ring's real
+		// geometry rather than typed twice.
+		var t = new Gambit.Chess.RiseTunables(
+			Reach: _measuredArm - SeatedHandSpikes.ReachMargin,
+			MaxLean: SeatedHandSpikes.MaxLean,
+			RiseGrace: SeatedHandSpikes.RiseGrace,
+			LegReach: SeatedHandSpikes.LegReachOverride > 0f
+				? SeatedHandSpikes.LegReachOverride
+				: _measuredLeg - LegMargin,
+			MaxStep: SeatedHandSpikes.MaxStep,
+			MaxRise: SeatedHandSpikes.MaxRise,
+			RiseLift: SeatedHandSpikes.RiseLift,
+			// The pitch budget in shoulder-forward units — COSMETIC-only by default: the
+			// editor measured that override rotations do not carry child bones, so a
+			// budget here is reach the plan promises and the skeleton can't deliver.
+			PitchGain: SeatedHandSpikes.TorsoPitchMax > 0f
+				? _measuredTorso * MathF.Sin( SeatedHandSpikes.TorsoPitchMax * ( MathF.PI / 180f ) )
+				: 0f,
+			// The hip cap is UNCONDITIONAL — a real body stops at the table; this is what
+			// killed the plank, and it must not disappear with the pitch experiment.
+			HipMaxX: -( ( ring.BoardSize + 3f ) * 0.5f * ring.TableScale - 2f ),
+			FootMinX: -( ring.FootEdgeX + 1f ),
+			BraceEngage: 6f,
+			BraceMinX: -( ring.TableEdgeX - 6f ),
+			BraceMaxX: 10f,
+			BraceY: ( ring.BoardSize + 3f ) * 0.5f * ring.TableScale + 2.5f,
+			BraceZ: ring.TableTopSurfaceZ );
+
+		bool black = seat == ChessSeat.Black;
+		var pelvisP = ToPlanner( pelvis, black );
+
+		// CHOSEN plants, never the animated ankles. The sit pose tucks the feet ~25u
+		// BEHIND the pelvis (measured live: ankle x −65 against pelvis −39), which spends
+		// the whole ~30u leg budget before any rise — the doctor's first run showed the
+		// rise collapsing to 11u because of exactly this. The feet are ours to place (the
+		// foot IK pins them wherever we say, and EaseFootPin walks them there from the
+		// tucked pose so nothing teleports): a person about to lean over a table steps
+		// their feet under themselves first.
+		var plantL = new Gambit.Chess.V3( pelvisP.X + FootPlantForward, +FootPlantSpread, FootPlantZ );
+		var plantR = new Gambit.Chess.V3( pelvisP.X + FootPlantForward, -FootPlantSpread, FootPlantZ );
+
+		var plan = Gambit.Chess.HalfRise.Plan(
+			ToPlanner( grasp, black ), ToPlanner( shoulder, black ), pelvisP,
+			plantL, plantR, t );
+
+		// One-shot pipeline dump (gambit_terry_rise_dbg), first half: what the planner was
+		// GIVEN and what it decided. The second half (applied values, bones) logs at the end
+		// of ApplyHandPose once the overrides for this frame are down.
+		if ( SeatedHandSpikes.RiseDebug )
+		{
+			Log.Info( "── rise debug: the planner ──" );
+			Log.Info( $"   inputs (station-local, anim pose): grasp={Fmt( grasp )}  shoulder={Fmt( shoulder )}"
+				+ $"  pelvis={Fmt( pelvis )}  plants (chosen, planner frame): "
+				+ $"L=({plantL.X:0.0},{plantL.Y:0.0}) R=({plantR.X:0.0},{plantR.Y:0.0})" );
+			Log.Info( $"   chains: arm measured {_measuredArm:0.0} → reach {t.Reach:0.0}"
+				+ $"  leg measured {_measuredLeg:0.0} → budget {t.LegReach:0.0}"
+				+ $"{( SeatedHandSpikes.LegReachOverride > 0f ? " (OVERRIDDEN)" : "" )}"
+				+ $"  maxRise {t.MaxRise:0.0}  maxStep {t.MaxStep:0.0}  footMinX {t.FootMinX:0.0}" );
+			Log.Info( $"   plan: lean {plan.Lean:0.0}  pitchGain {plan.PitchGain:0.0}  rise |Δ|={plan.PelvisDelta.Length:0.0}"
+				+ $" Δ=({plan.PelvisDelta.X:0.0},{plan.PelvisDelta.Y:0.0},{plan.PelvisDelta.Z:0.0})"
+				+ $"  hand=({plan.Hand.X:0.0},{plan.Hand.Y:0.0},{plan.Hand.Z:0.0})  residual {plan.Residual:0.0}"
+				+ $"  stepped={plan.Stepped}  feet L=({plan.FootL.X:0.0},{plan.FootL.Y:0.0}) R=({plan.FootR.X:0.0},{plan.FootR.Y:0.0})" );
+			Log.Info( "   → if |Δ| here is far below the harness's ~35 for a far square, the LIVE leg triangle is"
+				+ " the collapse: check 'leg measured' and the pelvis/ankle Z inputs above. gambit_terry_leg <u> overrides it." );
+		}
+
+		return plan;
+	}
+
+	/// <summary>
+	/// Turn the plan into the skeleton: ease the pelvis/lean toward it, override the bones,
+	/// and pin the feet (and maybe the off hand) with pre-compensated IK targets. Runs every
+	/// frame the hand is active, INCLUDING frames with no plan — that is how the rise eases
+	/// back down instead of snapping when the reach ends.
+	/// </summary>
+	void ApplyRiseOverrides( SkinnedModelRenderer r, ChessStation station, ChessSeat seat )
+	{
+		Vector3 wantRise = Vector3.Zero, wantLean = Vector3.Zero, wantPitch = Vector3.Zero;
+		if ( _risePlan is { } plan )
+		{
+			wantRise = station.WorldRotation * FromPlanner( plan.PelvisDelta, seat );
+			wantLean = station.WorldRotation * ( FromPlanner( plan.LeanDir, seat ) * plan.Lean );
+			wantPitch = station.WorldRotation * ( FromPlanner( plan.LeanDir, seat ) * plan.PitchGain );
+		}
+
+		// The same frame-rate-independent chase as the hand — the plan may step (a foot
+		// commits, the leg constraint engages) and the bones must not.
+		float k = 1f - MathF.Exp( -SeatedHandSpikes.RiseChaseRate * Time.Delta );
+		_riseApplied = Vector3.Lerp( _riseApplied, wantRise, k );
+		_leanApplied = Vector3.Lerp( _leanApplied, wantLean, k );
+		_pitchApplied = Vector3.Lerp( _pitchApplied, wantPitch, k );
+
+		bool active = _riseApplied.Length > 0.05f || _leanApplied.Length > 0.05f
+			|| _pitchApplied.Length > 0.05f;
+		if ( !active )
+		{
+			_riseApplied = Vector3.Zero;
+			_leanApplied = Vector3.Zero;
+			_pitchApplied = Vector3.Zero;
+			if ( _reachSpikeApplied ) { r.ClearPhysicsBones(); _reachSpikeApplied = false; }
+			ReleaseRiseIk( r );
+			return;
+		}
+
+		if ( r.Model is not { } model ) return;
+
+		// Clear-then-set every frame — the engine's own physics-bone pattern, and the M14
+		// lesson: always offset the ANIMATION pose (TryGetBoneTransformAnimation), never the
+		// final one, or last frame's override compounds and the bone flies off to thousands
+		// of units (it did: 712 → 1702 → 3e14).
+		r.ClearPhysicsBones();
+		_reachSpikeApplied = true;
+
+		if ( model.Bones.GetBone( "pelvis" ) is { } pelvisBone
+			&& r.TryGetBoneTransformAnimation( pelvisBone, out var pw ) )
+		{
+			pw.Position += _riseApplied;
+			r.SetBoneTransform( pelvisBone, r.WorldTransform.ToLocal( pw ) );
+		}
+
+		// The spine lean rides ON TOP of the rise — its override is absolute, so it must
+		// include the rise too, or it would pin the upper body back at the un-risen spot
+		// and the "lean" would tear the torso from the hips.
+		if ( ( _leanApplied.Length > 0.05f || _pitchApplied.Length > 0.05f )
+			&& model.Bones.GetBone( SeatedHandSpikes.NaturalLeanBone ) is { } leanBone
+			&& r.TryGetBoneTransformAnimation( leanBone, out var lw ) )
+		{
+			lw.Position += _riseApplied + _leanApplied;
+
+			// ── Torso pitch: hinge the chest over the table edge ──
+			// The planner budgeted PitchGain shoulder-forward units; the actual rotation
+			// is asin(gain / torso) about the lateral axis (up × reach bearing), so the
+			// top of the torso tips toward the piece. Whether the rotation carries the
+			// arm subtree exactly is native territory — the servo trues the hand, and
+			// the compensation below subtracts the same eased gain vector, so the two
+			// halves cannot drift apart.
+			if ( _pitchApplied.Length > 0.05f && _measuredTorso > 4f )
+			{
+				var dirP = _pitchApplied.Normal;
+				float s = Math.Clamp( _pitchApplied.Length / _measuredTorso, 0f, 0.9f );
+				float pitchDeg = MathF.Asin( s ) * ( 180f / MathF.PI );
+				var axis = Vector3.Cross( Vector3.Up, dirP ).Normal;
+				lw.Rotation = Rotation.FromAxis( axis, pitchDeg ) * lw.Rotation;
+			}
+
+			// ── Torso yaw: turn the shoulders toward the piece ──
+			// Two-bone IK can never rotate the chest — there is no automation to hope
+			// for; the turn has to be authored. Rotate the spine override about world-up
+			// toward the reach bearing, capped and eased in with the rise. Whether the
+			// rotation propagates to the arm subtree is an engine unknown — but the hand
+			// SERVO trues the fingertip up either way, so the yaw only has to look right.
+			float yawMax = SeatedHandSpikes.TorsoYawMax;
+			if ( yawMax > 0f && _risePlan is { } yp && yp.LeanDir.Length > 0.1f )
+			{
+				var face = station.WorldRotation
+					* ( seat == ChessSeat.White ? Vector3.Forward : Vector3.Backward );
+				var dirW = station.WorldRotation * FromPlanner( yp.LeanDir, seat );
+				float signed = MathF.Atan2( Vector3.Cross( face, dirW ).z, Vector3.Dot( face, dirW ) )
+					* ( 180f / MathF.PI );
+				float ramp = Math.Min( 1f, _riseApplied.Length / 8f );
+				float yaw = Math.Clamp( signed, -yawMax, yawMax ) * ramp;
+				lw.Rotation = Rotation.FromAxis( Vector3.Up, yaw ) * lw.Rotation;
+			}
+
+			r.SetBoneTransform( leanBone, r.WorldTransform.ToLocal( lw ) );
+		}
+
+		if ( _risePlan is { } p && _riseApplied.Length > 0.05f )
+		{
+			// The feet: pinned to the plan's plants through the engine's own foot IK,
+			// pre-compensated by the rise alone (the legs ride the pelvis, not the
+			// spine), and EASED from the tucked sit pose so engaging a pin is a step,
+			// never a teleport.
+			EaseFootPin( r, station, seat, "ankle_L", IkFootLeft, p.FootL, ref _footIkL );
+			EaseFootPin( r, station, seat, "ankle_R", IkFootRight, p.FootR, ref _footIkR );
+			_riseFeetIk = true;
+
+			// The off hand braces on the table — planner already guaranteed the left arm
+			// honestly reaches it, or gave none.
+			if ( SeatedHandSpikes.BraceOn && p.Brace is { } b )
+			{
+				var world = station.WorldTransform.PointToWorld( FromPlanner( b, seat ) );
+				var rot = station.WorldRotation
+					* Rotation.From( 80f, seat == ChessSeat.White ? 0f : 180f, 0f );
+				r.SetIk( IkLeft, new Transform( world - _riseApplied - _leanApplied - _pitchApplied, rot ) );
+				_riseBraceIk = true;
+			}
+			else if ( _riseBraceIk )
+			{
+				r.ClearIk( IkLeft );
+				_riseBraceIk = false;
+			}
+		}
+		else
+		{
+			ReleaseRiseIk( r );
+		}
+	}
+
+	/// <summary>Pin one foot: the animgraph solves against the UN-risen skeleton, so the
+	/// target is the true plant minus the rise; after the pelvis override carries the leg,
+	/// the foot lands exactly on the plant. Rotation is the foot's own animated one, so
+	/// pinning never twists an ankle. The target EASES from the foot's actual (tucked)
+	/// position to the plant at the rise's own chase rate — engaging a pin is a step, not
+	/// a teleport.</summary>
+	void EaseFootPin( SkinnedModelRenderer r, ChessStation station, ChessSeat seat,
+		string ankleBone, string ik, Gambit.Chess.V3 plant, ref Vector3? eased )
+	{
+		var rot = Rotation.Identity;
+		Vector3? animPos = null;
+		if ( r.Model?.Bones.GetBone( ankleBone ) is { } bone
+			&& r.TryGetBoneTransformAnimation( bone, out var tx ) )
+		{
+			rot = tx.Rotation;
+			animPos = tx.Position;
+		}
+
+		var desired = station.WorldTransform.PointToWorld( FromPlanner( plant, seat ) );
+		var cur = eased ?? animPos ?? desired;
+		float k = 1f - MathF.Exp( -SeatedHandSpikes.RiseChaseRate * Time.Delta );
+		cur = Vector3.Lerp( cur, desired, k );
+		eased = cur;
+
+		r.SetIk( ik, new Transform( cur - _riseApplied, rot ) );
+	}
+
+	Vector3? _footIkL;
+	Vector3? _footIkR;
+
+	/// <summary>The hand servo's state: the accumulated world-space correction, and the
+	/// previous frame's true ask (stability gate). See the servo block in ApplyHandPose.</summary>
+	Vector3 _handServo;
+	Vector3? _servoTrueAsk;
+	const float ServoRate = 5f;
+	const float ServoClamp = 10f;
+
+	void ReleaseRiseIk( SkinnedModelRenderer r )
+	{
+		_footIkL = null;
+		_footIkR = null;
+		if ( _riseFeetIk )
+		{
+			r.ClearIk( IkFootLeft );
+			r.ClearIk( IkFootRight );
+			_riseFeetIk = false;
+		}
+		if ( _riseBraceIk )
+		{
+			r.ClearIk( IkLeft );
+			_riseBraceIk = false;
+		}
+	}
+
+	/// <summary>Measure the working arm and leg off the LIVE skeleton once (they never change
+	/// under a fixed avatar), with M13's measured numbers as the fallback — so a bone-name
+	/// drift degrades the plan's inputs, never NaNs it. Logged once, because a silently wrong
+	/// chain (a twist/helper bone resolving where the real one should) collapses the whole
+	/// leg triangle and reads as "the terry won't rise" with nothing else visibly wrong.</summary>
+	void MeasureLimbs( SkinnedModelRenderer r )
+	{
+		if ( _measuredArm > 0f ) return;
+		float arm = ChainLength( r, new[] { "arm_upper_R" },
+			new[] { "arm_lower_R1", "arm_lower_R" }, new[] { "hand_R1", "hand_R" } );
+		float leg = ChainLength( r, new[] { "leg_upper_R" },
+			new[] { "leg_lower_R1", "leg_lower_R" }, new[] { "ankle_R" } );
+		float torso = 0f;
+		if ( TryBoneWorld( r, new[] { "pelvis" }, out var pv )
+			&& TryBoneWorld( r, new[] { "arm_upper_R" }, out var sh ) )
+			torso = ( sh - pv ).Length;
+
+		_measuredArm = arm > 4f ? arm : FallbackArm;
+		_measuredLeg = leg > 4f ? leg : FallbackLeg;
+		_measuredTorso = torso > 4f ? torso : FallbackTorso;
+		Log.Info( $"[Gambit] terry limbs measured: arm {arm:0.0} (using {_measuredArm:0.0}), "
+			+ $"leg {leg:0.0} (using {_measuredLeg:0.0}), torso {torso:0.0} (using {_measuredTorso:0.0}); "
+			+ "arm should read ~19.9, torso ~20. gambit_terry_leg overrides the leg if it misresolved." );
+	}
+
+	float _measuredTorso;
+	const float FallbackTorso = 20f;
+
+	static string Fmt( Vector3 v ) => $"({v.x:0.0},{v.y:0.0},{v.z:0.0})";
+
+	/// <summary>Rise-debug: one bone's animation position vs its final one, station-local —
+	/// the difference IS the override actually landing (or not).</summary>
+	void DumpBone( SkinnedModelRenderer r, ChessStation station, string boneName )
+	{
+		string anim = "-", final_ = "-";
+		if ( r.Model?.Bones.GetBone( boneName ) is { } bone )
+		{
+			if ( r.TryGetBoneTransformAnimation( bone, out var a ) )
+				anim = Fmt( station.WorldTransform.PointToLocal( a.Position ) );
+			if ( r.TryGetBoneTransform( boneName, out var f ) )
+				final_ = Fmt( station.WorldTransform.PointToLocal( f.Position ) );
+		}
+		Log.Info( $"   bone {boneName,-12} anim {anim}  final {final_}" );
+	}
+
+	static float ChainLength( SkinnedModelRenderer r,
+		string[] root, string[] mid, string[] end )
+	{
+		if ( !TryBoneWorld( r, root, out var a ) || !TryBoneWorld( r, mid, out var b )
+			|| !TryBoneWorld( r, end, out var c ) )
+			return 0f;
+		return ( a - b ).Length + ( b - c ).Length;
+	}
+
+	static bool TryBoneWorld( SkinnedModelRenderer r, string[] names, out Vector3 pos )
+	{
+		foreach ( var n in names )
+		{
+			if ( r.TryGetBoneTransform( n, out var tx ) )
+			{
+				pos = tx.Position;
+				return true;
+			}
+		}
+		pos = default;
+		return false;
+	}
+
+	/// <summary>A bone's ANIMATION (pre-override) position, station-local — the same
+	/// feedback-proof read as <see cref="ShoulderLocal"/>, for the same reason: the rise
+	/// moves these bones, and planning against the moved pose would oscillate.</summary>
+	Vector3? BoneAnimLocal( ChessStation station, string boneName )
+	{
+		if ( _bodyRenderer?.Model?.Bones.GetBone( boneName ) is { } bone
+			&& _bodyRenderer.TryGetBoneTransformAnimation( bone, out var tx ) )
+			return station.WorldTransform.PointToLocal( tx.Position );
+		return null;
+	}
+
+	/// <summary>Station frame → planner frame (rotate Black's world 180° about Z so the
+	/// planner only ever reasons about White's seat; chirality survives, so Black's right
+	/// hand stays its right hand).</summary>
+	static Gambit.Chess.V3 ToPlanner( Vector3 v, bool black ) =>
+		black ? new Gambit.Chess.V3( -v.x, -v.y, v.z ) : new Gambit.Chess.V3( v.x, v.y, v.z );
+
+	/// <summary>Planner frame → station frame, the inverse of <see cref="ToPlanner"/>.</summary>
+	static Vector3 FromPlanner( Gambit.Chess.V3 v, ChessSeat seat ) =>
+		seat == ChessSeat.Black ? new Vector3( -v.X, -v.Y, v.Z ) : new Vector3( v.X, v.Y, v.Z );
+
+	/// <summary>The animgraph's foot IK chains — citizen.vanmgrph declares exactly four
+	/// game-facing IK targets (hand_left/right, foot_left/right); these are the other two.</summary>
+	const string IkLeft = "hand_left";
+	const string IkFootLeft = "foot_left";
+	const string IkFootRight = "foot_right";
+
+	/// <summary>Diagnostics for <c>gambit_terry_net</c> / <c>gambit_terry_doctor</c> — is
+	/// there a renderer to pose, how much rise is actually applied on THIS machine, and
+	/// what the planner last decided.</summary>
+	public bool HasBody => _bodyRenderer != null;
+	public float RiseAppliedDebug => _riseApplied.Length;
+	public Gambit.Chess.RisePlan? RisePlanDebug => _risePlan;
+
+	/// <summary>Where the working hand's wrist ACTUALLY is this frame (world, final pose —
+	/// after IK, overrides, everything). This is what a carried piece rides: the rendered
+	/// hand, not the target it was aimed at, so piece and fingers can never disagree even
+	/// while the IK is mid-chase or the arm is clamped short.</summary>
+	public Vector3? HandBoneWorld()
+	{
+		if ( _bodyRenderer != null && _bodyRenderer.TryGetBoneTransform( "hand_R", out var tx ) )
+			return tx.Position;
+		return null;
+	}
+
+	/// <summary>Where the hand was last told to go (station-local) — read by
+	/// <c>gambit_terry</c>, which prints it beside the bone the IK actually achieved. The
+	/// gap between those two IS the reach error, and it is the only way to tell "aiming at
+	/// the wrong square" apart from "aiming right and not getting there" without guessing.
+	/// That distinction already cost a round of tuning.</summary>
+	public Vector3? LastHandTarget { get; private set; }
+
+	/// <summary>Where the WRIST bone was actually aimed (station-local) — the grasp point
+	/// pushed back by <see cref="ChessRing.HandGripOffset"/>. This, not
+	/// <see cref="LastHandTarget"/>, is what to compare <c>hand_R</c> against to read pure
+	/// reach shortfall, since the bone is meant to sit offset from the grasp point.</summary>
+	public Vector3? LastHandIkTarget { get; private set; }
+
+	/// <summary>
+	/// Let the arm go — the whole arm, not just the IK.
+	///
+	/// <para><b>Releasing only the IK is not enough, and this is why a player who stood up
+	/// walked around the lobby with an arm hanging out at nothing.</b> <c>holdtype</c> is
+	/// what poses the arm AROUND an object, and once set to HoldItem <b>nothing in the
+	/// engine ever sets it back</b>: MoveMode.OnUpdateAnimatorState writes sit, b_swim,
+	/// b_climbing, b_grounded and duck — and no holdtype. So the arm keeps its
+	/// carrying-something shape forever, IK or no IK. Both have to be released, and
+	/// holdtype is the one with no owner but us.</para></summary>
+	public void ClearHandPose()
+	{
+		if ( _bodyRenderer == null ) return;
+
+		_bodyRenderer.ClearIk( IkRight );
+		_bodyRenderer.Set( "holdtype", HoldTypeNone );
+		_bodyRenderer.Set( "holdtype_pose_hand", 0f );
+		_handLocal = null;
+		LastHandTarget = null;
+		LastHandIkTarget = null;
+
+		// M14: drop any Approach B/C bone override too, so standing up (or toggling a spike off)
+		// doesn't leave a leaned or scaled skeleton frozen in place.
+		if ( _reachSpikeApplied ) { _bodyRenderer.ClearPhysicsBones(); _reachSpikeApplied = false; }
+
+		// The half-rise: release the foot pins and the brace, and zero the eased state so
+		// the next reach starts from the chair rather than from a stale mid-rise.
+		ReleaseRiseIk( _bodyRenderer );
+		_risePlan = null;
+		_riseApplied = Vector3.Zero;
+		_leanApplied = Vector3.Zero;
+		_pitchApplied = Vector3.Zero;
+		_handServo = Vector3.Zero;
+		_servoTrueAsk = null;
+	}
+
+	static Vector3 SquareLocal( ChessRing ring, int square ) =>
+		square < 0 ? Vector3.Zero : ring.SquareLocalPosition( square & 7, square >> 3 );
+
+	/// <summary>The working arm's shoulder pivot (arm_upper_R), station-local — the centre the
+	/// reach measures from. Reads the ANIMATION pose (post-sit, pre-override), NOT the final one:
+	/// the natural lean moves the shoulder via a bone override, so reading the final (already-leaned)
+	/// shoulder to compute this frame's lean would feed the lean back into itself and oscillate. The
+	/// animation pose is the un-leaned shoulder, so the deficit — and the lean it drives — is stable.
+	/// Null if the bone can't be resolved, in which case the reach clamp is skipped.</summary>
+	Vector3? ShoulderLocal( ChessStation station )
+	{
+		if ( _bodyRenderer?.Model?.Bones.GetBone( "arm_upper_R" ) is { } bone
+			&& _bodyRenderer.TryGetBoneTransformAnimation( bone, out var tx ) )
+			return station.WorldTransform.PointToLocal( tx.Position );
+		return null;
+	}
+
+	/// <summary>citizen.vanmgrph's holdtype enum (none, pistol, rifle, shotgun, holditem, …)
+	/// — HoldItem is the one the finger-blend (holdtype_pose_hand) is wired into.
+	/// Handedness: 2H, RH, LH — so Right is 1.</summary>
+	const int HoldTypeNone = 0;
+	const int HoldTypeItem = 4;
+	const int HandednessRight = 1;
+
+	/// <summary>The animgraph's IK CHAIN name (ik.hand_right.*) — not the bone name, which
+	/// is hand_R. Two different vocabularies for one arm.</summary>
+	const string IkRight = "hand_right";
+
+	/// <summary>The hand's eased station-local position — see ApplyHandPose. Null until the
+	/// first frame it is placed, so it starts where it belongs rather than flying in from
+	/// the station's origin.</summary>
+	Vector3? _handLocal;
 
 	/// <summary>Undo <see cref="TrimSeatedAvatar"/>: put the head back and stop excluding
 	/// our cosmetics. Idempotent, and safe to call when nothing was ever trimmed.</summary>
@@ -1220,6 +2180,7 @@ public sealed class LobbyPlayer : Component
 		_hiddenRenderers.Clear();
 		RestoreSeatedAvatar();
 		ClearSitPose();
+		ClearHandPose();
 
 		// Back into the physics world — after the un-plant above, so we land standing where
 		// we stood rather than being resolved out of the table we were sitting at.

@@ -60,12 +60,115 @@ public sealed class LichessGameController : Component, IBoardGame
 
 	// ── IBoardGame ──
 
-	/// <summary>Position rebuilt from lichess's move list. Null until the first
-	/// live state lands.</summary>
-	public ChessGame Game { get; private set; }
+	/// <summary>Position rebuilt from lichess's move list — the participant's own
+	/// (<see cref="_game"/>) while <see cref="Engaged"/>, the relayed spectator copy
+	/// (<see cref="_mirrorGame"/>) while <see cref="Mirroring"/>. Null until either lands.</summary>
+	public ChessGame Game => Engaged ? _game : _mirrorGame;
 
-	/// <summary>A lichess game is live at this table right now.</summary>
-	public bool Playing => Engaged && State != null && State.status == "live" && !State.finished;
+	ChessGame _game;
+
+	/// <summary>A lichess game is live at this table right now — ours (polled), or
+	/// someone else's (mirrored). Spectator-side participant gates all also check
+	/// <c>LocalSeat</c>, so exposing Playing for a mirrored game enables the seam
+	/// consumers (view, sounds, hands) without enabling any move/offer path.</summary>
+	public bool Playing => Engaged
+		? State != null && State.status == "live" && !State.finished
+		: Mirroring;
+
+	// ── The spectator mirror (M14) ──
+	//
+	// A lichess game was INVISIBLE to every non-participant by construction: nothing
+	// about it was networked — each participant polls gamchess privately, a solo flow
+	// (seek / challenge / shareable link) starts no local game at all, and Engaged only
+	// ever goes true on the client that asked. So a bystander (and every joined client)
+	// saw a frozen board, heard nothing, and the seated terries never moved — which
+	// surfaced as "the joiner sees no animation" the first time two clients watched a
+	// real lichess game. The room seeing the game IS the product; this is the relay.
+	//
+	// Shape: the same trust story as NetChessMove. The PARTICIPANT reports the observed
+	// move list to the host ([Rpc.Host]); the host folds it into [Sync] fields; every
+	// non-engaged client rebuilds a display-only ChessGame from the synced list, exactly
+	// as Rebuild() does from the poll (rebuild-from-scratch, no incremental drift), and
+	// exposes it through the SAME IBoardGame seam — so the view, the sounds and the
+	// hands all light up for spectators with zero per-feature work, and a late joiner
+	// gets the whole game off the snapshot for free. lichess stays the only authority:
+	// this list is display, never archived, never moved-on, and both paired
+	// participants reporting the same list is idempotent by the longer-list-wins fold.
+
+	/// <summary>The relayed UCI move list of the lichess game at this table, folded by
+	/// the host from participant reports. Null/empty when no lichess game is on.</summary>
+	[Sync( SyncFlags.FromHost )] public string MirrorMoves { get; set; }
+
+	/// <summary>The relayed game is live right now (drops false when it finishes or
+	/// the participant stands down).</summary>
+	[Sync( SyncFlags.FromHost )] public bool MirrorLive { get; set; }
+
+	/// <summary>This client is showing someone ELSE's lichess game from the relay.
+	/// Mutually exclusive with <see cref="Engaged"/> by construction.</summary>
+	public bool Mirroring => !Engaged && MirrorLive && _mirrorGame != null;
+
+	ChessGame _mirrorGame;
+	string _mirrorRendered;   // the move list _mirrorGame was built from
+	string _mirrorLastUci;
+	string _reportedMoves;    // participant-side: last list/liveness sent to the host,
+	bool _reportedLive;       // so the RPC fires per change, not per frame
+
+	/// <summary>Participant → host: fold the observed game into the synced mirror.
+	/// Longer-list-wins makes the two paired participants' identical reports
+	/// idempotent, and keeps a straggler's stale short list from rewinding the board.</summary>
+	[Rpc.Host]
+	void ReportMirror( string moves, bool live )
+	{
+		moves ??= "";
+		if ( moves.Length > ( MirrorMoves?.Length ?? -1 ) ) MirrorMoves = moves;
+		MirrorLive = live;
+	}
+
+	/// <summary>Participant side, every frame while engaged: keep the host's mirror
+	/// current. One RPC per change (a move landing, the game going live/finished).</summary>
+	void MaintainMirrorReport()
+	{
+		if ( !Engaged ) return;
+
+		string moves = _renderedMoves ?? "";
+		bool live = State != null && State.status == "live" && !State.finished;
+		if ( moves == _reportedMoves && live == _reportedLive ) return;
+
+		_reportedMoves = moves;
+		_reportedLive = live;
+		ReportMirror( moves, live );
+	}
+
+	/// <summary>Spectator side, every frame: keep the display game in step with the
+	/// synced list. Same rebuild-from-scratch as <see cref="Rebuild"/>, same refusal
+	/// to render a move our rules won't take.</summary>
+	void MaintainMirrorGame()
+	{
+		if ( Engaged || !MirrorLive || string.IsNullOrEmpty( MirrorMoves ) )
+		{
+			_mirrorGame = null;
+			_mirrorRendered = null;
+			_mirrorLastUci = null;
+			return;
+		}
+
+		if ( MirrorMoves == _mirrorRendered && _mirrorGame != null ) return;
+		_mirrorRendered = MirrorMoves;
+
+		var game = new ChessGame();
+		string last = null;
+		foreach ( var uci in MirrorMoves.Split( ' ', StringSplitOptions.RemoveEmptyEntries ) )
+		{
+			if ( !game.ApplyUci( uci ) )
+			{
+				Log.Warning( $"[Gambit] mirrored lichess move refused ({uci}) — spectator board frozen" );
+				return;
+			}
+			last = uci;
+		}
+		_mirrorGame = game;
+		_mirrorLastUci = last;
+	}
 
 	/// <summary>lichess says this game is over and we're still showing it.
 	///
@@ -180,7 +283,7 @@ public sealed class LichessGameController : Component, IBoardGame
 		&& Game.WhiteToMove == ( seat == ChessSeat.White ) && !_moveInFlight;
 
 	/// <summary>UCI of the last move, for the last-move highlight.</summary>
-	public string LastMoveUci => _lastMoveUci;
+	public string LastMoveUci => Engaged ? _lastMoveUci : _mirrorLastUci;
 
 	string _lastMoveUci;
 
@@ -617,6 +720,16 @@ public sealed class LichessGameController : Component, IBoardGame
 	/// and hands the board back to the local controller.</summary>
 	public void Clear()
 	{
+		// Tell the room the show is over BEFORE forgetting we were in it — a participant
+		// standing down (game finished, table reset, player left) is exactly when the
+		// spectators' mirrored board must stop claiming a live game.
+		if ( Engaged && _reportedLive )
+		{
+			_reportedLive = false;
+			ReportMirror( _reportedMoves ?? "", false );
+		}
+		_reportedMoves = null;
+
 		Engaged = false;
 		Seeking = false;
 		Challenging = false;
@@ -625,7 +738,7 @@ public sealed class LichessGameController : Component, IBoardGame
 		_pollBackoff = 0f;   // never let a dead game's backoff gag the next one
 		_reportedResult = false;
 		State = null;
-		Game = null;
+		_game = null;
 		Error = null;
 		_clientGameId = null;
 		_version = 0;
@@ -640,6 +753,18 @@ public sealed class LichessGameController : Component, IBoardGame
 	protected override void OnUpdate()
 	{
 		AutoEngage();
+
+		// The spectator mirror runs on EVERY client every frame — the participant half
+		// keeps the host's synced copy current, the spectator half keeps the display
+		// game in step with it, and the host retires a mirror whose table has emptied
+		// (belt-and-braces for a participant that vanished without a live=false).
+		MaintainMirrorReport();
+		MaintainMirrorGame();
+		if ( Networking.IsHost && MirrorLive && Station is { AnySeatTaken: false } )
+		{
+			MirrorLive = false;
+			MirrorMoves = null;
+		}
 
 		if ( !Engaged || string.IsNullOrEmpty( _clientGameId ) ) return;
 
@@ -852,7 +977,7 @@ public sealed class LichessGameController : Component, IBoardGame
 	void Rebuild( string moves )
 	{
 		moves ??= "";
-		if ( moves == _renderedMoves && Game != null ) return;
+		if ( moves == _renderedMoves && _game != null ) return;
 		_renderedMoves = moves;
 
 		var game = new ChessGame();
@@ -873,7 +998,7 @@ public sealed class LichessGameController : Component, IBoardGame
 				_lastMoveUci = uci;
 			}
 		}
-		Game = game;
+		_game = game;
 	}
 
 	// ── Endings ──

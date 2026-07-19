@@ -661,14 +661,22 @@ have been run here at all.
   kill switch (git commit `0f68c91` is why). The seat-plant/chair knobs (`SeatSitBack`,
   `SeatSitZ`, `SitOffsetHeight`, `ChairSeatTopZ`, …) are **code defaults on a runtime-built
   `ChessRing`**, so retuning them is an edit-and-hotload loop, not a scene tweak.
-  → **What a fixed-size seated Citizen CANNOT do is reach the far half of the board with its
-  arm.** Its arm is ~20u with no stretch in the animgraph; the board is 34u deep and
-  shared/centred between both seats, so the seated hand reaches ~rank 2 and no lever moves it
-  further (a graded torso lean and a per-bone scale were both prototyped in-editor and confirmed
-  this — nothing reaches the far half without distorting the body). **Two hands attempts were
-  built and abandoned** (the reaching hand, then the IK half-rise); the fresh plan that learns
-  from both is **`M14.md`** — read it before re-attempting anything, and do NOT restore the
-  abandoned branches' files. The bodies are cosmetic — no player-facing copy
+  → **What a fixed-size SEATED Citizen cannot do is reach a piece.** Its arm is ~20u with no
+  stretch in the animgraph; the board is 34u deep and shared/centred, so the seated hand tops
+  out ~rank 2 and no seated lever moves it further (a graded torso lean and a per-bone scale
+  were both prototyped in-editor and confirmed this — and the reach-waived attempt 4 rediscovered
+  it in-editor: two-bone IK cannot move the shoulder, so "lean/clip through the board" was never
+  going to happen). The answer is the **half-rise, with the one assumption removed: the pelvis
+  need not stay on the chair.** It overrides the PELVIS (translation overrides carry the whole
+  subtree exactly; rotations do NOT carry children), bounded by the legs — feet planted via the
+  engine's own `foot_left`/`foot_right` IK (four game-facing IK targets exist, not two), every
+  IK target pre-compensated by the override its chain rides (the animgraph solves IK BEFORE
+  overrides apply), plus a closed-loop servo for the residual ~5u native warp. Geometry in
+  `Code/Chess/HalfRise.cs`, harness-proven 64/64 with the live-measured skeleton; the moved
+  piece rides the rendered hand bone. Reach, pick-up, the spectator mirror and inspector tuning
+  were **verified across two clients**; what remains is the LOOK pass (partially done: elbow,
+  wrist, HandRoll, tempo, the grab fix). **`TERRY-HALFRISE.md` is the live doc**; `M14.md`
+  holds the other attempts' history. The bodies are cosmetic — no player-facing copy
   (`CenterInfoPanel`/`InfoScreen`) describes them, so none went stale.
 - **Wall boards go through `WallBoardGeometry` — all of them.** It owns the size
   (`BoardScale`), the aspect (`Stretch`), and the shared floor anchor (`FloorAnchor`, which
@@ -769,7 +777,7 @@ construction** — the host freezes that controller's clocks and its `ChessGame`
 | Controller | Networked? | What it does |
 |---|---|---|
 | `LocalGameController` | host-folded `[Sync] BoardFen`/`Phase`/`ClientGameId` | the two-seat game at a table, and the archive upload (**D7**) |
-| `LichessGameController` | **no** — each client polls gamchess for itself | a real lichess game on this table (**M8**). Adjudicates nothing — lichess is the only authority, and the position is rebuilt from the UCI list it sends — but it DOES run the ticking seat's clock down locally between moves (**M12**), because lichess only sends a clock on a move and a frozen clock reads as a stopped game. Same countdown machinery as `LichessTvSource`, house rule and all; a local clock hitting 0 clamps and waits for lichess to call the flag |
+| `LichessGameController` | **participants poll; spectators MIRROR (M14)** — each participant polls gamchess for itself and `[Rpc.Host]`-reports its observed move list into `[Sync] MirrorMoves/MirrorLive`, from which every non-engaged client rebuilds a display game (`Mirroring`, same IBoardGame seam). Before this a lichess game was INVISIBLE to every non-participant — solo flows (seek/challenge/link) especially | a real lichess game on this table (**M8**). Adjudicates nothing — lichess is the only authority, and the position is rebuilt from the UCI list it sends — but it DOES run the ticking seat's clock down locally between moves (**M12**), because lichess only sends a clock on a move and a frozen clock reads as a stopped game. Same countdown machinery as `LichessTvSource`, house rule and all; a local clock hitting 0 clamps and waits for lichess to call the flag |
 | `SpectatorController` | reads the host-folded FEN; **polls gamchess for TV** | north wall: cycles live tables, then lichess TV (**M9**) |
 
 **While a lichess game runs, the local controller is a shell** holding the seats and the

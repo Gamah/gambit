@@ -142,9 +142,118 @@ public sealed class ChessBoardView : Component
 		public float Age;
 		public float Seconds;
 		public float Arc;
+
+		/// <summary>Seconds this slide WAITS at its origin for a terry's hand to come and
+		/// pick the piece up — the remote-client giveaway was the piece departing the
+		/// instant the FEN landed while the hand was still a second away. Zero for slides
+		/// nobody is going to perform (no seated terry, tray walks, resyncs); expiring
+		/// degrades to the plain slide, so a missing hand costs nothing but the wait.</summary>
+		public float HoldForHand;
+	}
+
+	/// <summary>Is a seated terry going to perform the moving side's move at this table?
+	/// Mirrors the gate SeatedTerry itself animates under.</summary>
+	bool HandWillPerform( char moverPiece )
+	{
+		if ( ChessRing.Instance is not { TerrySeated: true } ) return false;
+		if ( !SeatedHandSpikes.HandsOn ) return false;
+		if ( Station is not { } st ) return false;
+		return st.SeatTaken( char.IsUpper( moverPiece ) ? ChessSeat.White : ChessSeat.Black );
 	}
 
 	readonly List<Slide> _slides = new();
+
+	// ── The hand carry (M14): the piece rides the terry's hand ──
+	//
+	// While a seated terry's hand is replaying a move (TerryPose Lifting/Carrying/
+	// Dropping), the moved piece is positioned at the HAND BONE each frame instead of
+	// running its own slide clock — that is what turns "a hand gesturing near a sliding
+	// piece" into "a terry picking up and moving a piece". SeatedTerry reports the carry
+	// per frame (it owns which avatar and which pose); this view owns which GameObject
+	// that means and what happens when the carry ends.
+	//
+	// The report is VOLATILE by design — good for a fraction of a second, re-asserted
+	// every frame. The abandon rule (a ply landing mid-animation), a hand toggled off, a
+	// player standing up: all of them simply stop the reports, and the piece falls back
+	// to its slide from wherever the hand left it (a short settle, below). Nothing here
+	// has to know WHY a carry ended. The spectator wall is untouched: SpectatorBoard3D
+	// never had hands and keeps the plain slide, per the design decision.
+	GameObject _carried;       // piece riding a hand right now (the mover; a capture's victim keeps its tray slide)
+	GameObject _carriedPrev;   // last frame's, to detect release and hand the slide back
+	float _carryStamp = -1f;
+	Vector3 _carryWorld;       // world position for the piece's base this frame
+
+	// CarryHang/GrabRadius/HandHoldSeconds live on SeatedHandSpikes (inspector: TerryTuning).
+
+	/// <summary>The short settle a released piece plays from wherever the hand left it to
+	/// its true square — covers both a finished drop (hand is already over the square, so
+	/// this is invisible polish) and an abandoned carry (the piece must not teleport).</summary>
+	const float SettleSeconds = 0.18f;
+
+	/// <summary>Called by <see cref="SeatedTerry"/> every frame a seat's hand is replaying
+	/// a move on this board. Attacker only: the destination square owns the mover's
+	/// GameObject once SyncPieces has applied the FEN, which it always has by the time a
+	/// pose is animating (both react to the same ply change).</summary>
+	public void ReportHandCarry( in Gambit.Chess.HandPose pose, LobbyPlayer avatar )
+	{
+		// ── Piece-led placement (banner jank #3) ──
+		//
+		// When the hand starts SETTING THE PIECE DOWN, stop dragging the piece around with
+		// the (clamped, lagging) hand and hand it to a quick settle onto its TRUE square —
+		// the hand then follows it down. Carrying it through the whole Dropping phase left
+		// the piece wherever the short-reaching hand actually landed, and only settled that
+		// gap once the carry reports STOPPED (0.15s later, by which point the hand was
+		// already resetting) — so the piece appeared to slide onto its square on its own,
+		// after the hand had left. Leading it in during the drop fixes the "piece moves after
+		// the hand starts to reset" look.
+		if ( pose.Phase is Gambit.Chess.HandPhase.Dropping )
+		{
+			if ( _carried.IsValid() )
+			{
+				var s = _slides.Find( x => ReferenceEquals( x.Piece, _carried ) );
+				if ( s != null )
+				{
+					s.From = _carried.LocalPosition;   // from where the hand had it
+					s.To = SquareLocal( pose.ToSquare );   // to the true square, not the hand
+					s.Age = 0f;
+					s.Seconds = SettleSeconds;
+					s.Arc = 0f;
+					s.HoldForHand = 0f;
+				}
+				// Release now, and suppress AdvanceSlides' own release path (it would otherwise
+				// re-arm this same slide a frame later from a staler position).
+				_carried = null;
+				_carriedPrev = null;
+			}
+			return;
+		}
+
+		if ( pose.Phase is not ( Gambit.Chess.HandPhase.Lifting
+			or Gambit.Chess.HandPhase.Carrying ) ) return;
+		if ( pose.ToSquare is < 0 or > 63 ) return;
+		if ( avatar?.HandBoneWorld() is not { } hand ) return;
+
+		var piece = _pieces[pose.ToSquare];
+		if ( piece == null ) return;
+
+		// GRAB ON CONTACT — but HORIZONTAL contact, not 3D. The hand hovers ABOVE the piece
+		// by design (grasp height then lift height, ~10–14u over the board) while the piece
+		// sits ON the board, so the full 3D hand-to-piece distance is essentially ALWAYS
+		// bigger than any sane GrabRadius (9u) — the grab could never fire. The piece then
+		// waited out HandHoldSeconds and slid to its square on its OWN, after the arm had
+		// finished: the live bug "the piece doesn't even begin to move until the arm is done".
+		// The hand being over the square in the board plane IS the pickup; the vertical hover
+		// gap is intentional (the piece then hangs CarryHang below the wrist). A hand that
+		// can't reach a far square still stops short HORIZONTALLY, so this keeps the original
+		// guard — don't yank a piece backward toward a distant/unreachable hand — which is all
+		// the 3D check was ever really enforcing.
+		if ( !ReferenceEquals( piece, _carried )
+			&& ( piece.WorldPosition - hand ).WithZ( 0f ).Length > SeatedHandSpikes.GrabRadius ) return;
+
+		_carried = piece;
+		_carryStamp = Time.Now;
+		_carryWorld = hand + Vector3.Down * SeatedHandSpikes.CarryHang;
+	}
 
 	// ── Captured pieces ──
 	//
@@ -187,6 +296,12 @@ public sealed class ChessBoardView : Component
 		SyncPieces();
 		AdvanceSlides();
 		UpdateInput();
+		// AFTER UpdateInput, never inside it: UpdateInput early-returns on several paths
+		// (not your turn, promotion picker up, camera still blending) having already reset
+		// _hoverSquare to -1 at the top. Publishing from inside would only ever run on the
+		// paths that reach the bottom, so the synced hand would STICK on the last square you
+		// hovered the moment the turn flipped away from you.
+		PublishHandState();
 		PaintHighlights();
 	}
 
@@ -321,6 +436,7 @@ public sealed class ChessBoardView : Component
 					Age = 0f,
 					Seconds = MoveSeconds,
 					Arc = MoveArc,
+					HoldForHand = HandWillPerform( c ) ? SeatedHandSpikes.HandHoldSeconds : 0f,
 				} );
 			}
 		}
@@ -461,12 +577,59 @@ public sealed class ChessBoardView : Component
 
 	void AdvanceSlides()
 	{
+		// ── The hand carry, resolved before any slide advances ──
+		bool carryFresh = _carried.IsValid() && Time.Now - _carryStamp < 0.15f;
+
+		// Release: the carry ended (or switched pieces) since last frame. Hand the piece
+		// back to its slide FROM WHERE IT IS — a finished drop settles invisibly onto its
+		// square; an abandoned one glides there instead of teleporting.
+		if ( _carriedPrev.IsValid() && ( !carryFresh || !ReferenceEquals( _carried, _carriedPrev ) ) )
+		{
+			var s = _slides.Find( x => x.Piece == _carriedPrev );
+			if ( s != null )
+			{
+				s.From = _carriedPrev.LocalPosition;
+				s.Age = 0f;
+				s.Seconds = SettleSeconds;
+				s.Arc = 0f;
+			}
+			_carriedPrev = null;
+		}
+
+		if ( carryFresh )
+		{
+			_carriedPrev = _carried;
+			_carried.WorldPosition = _carryWorld;
+		}
+		else
+		{
+			_carried = null;
+		}
+
 		for ( int i = _slides.Count - 1; i >= 0; i-- )
 		{
 			var slide = _slides[i];
 			if ( !slide.Piece.IsValid() )
 			{
 				_slides.RemoveAt( i );
+				continue;
+			}
+
+			// A carried piece's slide neither ages nor writes position — the hand owns
+			// the piece, and the slide is only kept alive as the fallback the release
+			// path above re-arms. Grabbing also ends any hold: the wait was FOR this.
+			if ( carryFresh && ReferenceEquals( slide.Piece, _carried ) )
+			{
+				slide.HoldForHand = 0f;
+				continue;
+			}
+
+			// Waiting for the hand: the piece sits on its origin square until the grab
+			// (above) or the hold expires and the plain slide takes over.
+			if ( slide.HoldForHand > 0f )
+			{
+				slide.HoldForHand -= Time.Delta;
+				slide.Piece.LocalPosition = slide.From;
 				continue;
 			}
 
@@ -579,6 +742,45 @@ public sealed class ChessBoardView : Component
 		{
 			ClearSelection();
 		}
+	}
+
+	/// <summary>
+	/// Publish this player's hover + selection so the OTHER clients can float their terry's
+	/// hand over the square they're thinking about (M13).
+	///
+	/// <para><b><c>_hoverSquare</c> already means exactly the right thing</b>, which is why
+	/// there is no new predicate here. It is only assigned once UpdateInput is past its own
+	/// gate — the player's turn or a premove, no promotion picker up, the camera settled —
+	/// so "hovered" already means "a square this player can act on". Everywhere else it is
+	/// −1, and −1 packs to "no hand on the board".</para>
+	///
+	/// <para>Change-gated: one comparison, so a mouse moving WITHIN a square costs nothing
+	/// and a still cursor costs nothing at all. [Sync] diffs anyway — this matches the house
+	/// style (PaintHighlights' hash gate), and it is strictly better than that one, because
+	/// a hash gate skips work while this skips a network write.</para></summary>
+	void PublishHandState()
+	{
+		// MY table only. There is one ChessBoardView per station and they ALL run OnUpdate,
+		// so without this every other table in the ring also writes LobbyPlayer.Local's
+		// HandState — and since UpdateInput bails early for a table you aren't seated at,
+		// they'd all publish "no hand". Whichever view updated last would win, so the hand
+		// would flicker or vanish depending on component order. The change gate can't save
+		// it: the two writers genuinely disagree, so it passes both ways.
+		if ( ChessStation.Active != Station ) return;
+		if ( LobbyPlayer.Local is not { } me ) return;
+
+		int packed = LobbyPlayer.PackHand( _hoverSquare, SquareIndexOf( Selected ) );
+		if ( me.HandState != packed ) me.HandState = packed;
+	}
+
+	/// <summary>Square name ("e4") → the rank*8+file index everything else here uses, or −1.</summary>
+	static int SquareIndexOf( string square )
+	{
+		if ( square is not { Length: >= 2 } ) return -1;
+		int file = square[0] - 'a';
+		int rank = square[1] - '1';
+		if ( file is < 0 or > 7 || rank is < 0 or > 7 ) return -1;
+		return rank * 8 + file;
 	}
 
 	/// <summary>Select a piece and work out where it may go.
