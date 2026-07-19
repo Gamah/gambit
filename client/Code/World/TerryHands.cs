@@ -37,9 +37,14 @@ public static class TerryHands
 	/// M13 world). <c>gambit_terry_hands</c>. Default ON: the hands are the M14 deliverable.</summary>
 	public static bool HandsOn = true;
 
-	/// <summary>Flip the seated body 180° so it faces the board (it was shipping backwards, back
-	/// to the board). Default ON = corrected. <c>gambit_terry_face</c>; re-sit to see a change.</summary>
-	public static bool FaceBoardFlip = true;
+	/// <summary>Yaw (degrees) added to the seated body's board-facing rotation, to correct the
+	/// "terry sits backwards" bug. PlantOnSeat aims the rig at the board with LookAt; whether the
+	/// citizen's VISUAL front then points at the board depends on the model's forward-axis
+	/// convention, which can't be checked on a host with no engine — so this is a live knob, not
+	/// a guess. 0 = raw LookAt (what shipped, and was reported backwards); 180 flips him to face
+	/// the board. If he ends up side-on instead, try 90 / −90. <c>gambit_terry_face &lt;deg&gt;</c>;
+	/// re-sit to apply.</summary>
+	public static float FaceYaw = 180f;
 
 	/// <summary><b>Phase 2 gate: the move-only half-rise.</b> false = near moves only; a piece
 	/// past the seated arm's reach has the hand trail and the piece finish its slide alone
@@ -147,7 +152,7 @@ public static class TerryHands
 	public static void SetRise( int on ) { HalfRiseOn = on != 0; Log.Info( $"[Gambit] terry half-rise {(HalfRiseOn ? "ON" : "off")}" ); }
 
 	[ConCmd( "gambit_terry_face" )]
-	public static void SetFace( int flip ) { FaceBoardFlip = flip != 0; Log.Info( $"[Gambit] terry face-board flip {(FaceBoardFlip ? "ON" : "off")} — re-sit to apply" ); }
+	public static void SetFace( float deg ) { FaceYaw = deg; Log.Info( $"[Gambit] terry face yaw {FaceYaw:0}° — re-sit to apply" ); }
 
 	[ConCmd( "gambit_terry_rest" )]
 	public static void SetRest( int on ) { RestAnchorOn = on != 0; Log.Info( $"[Gambit] terry rest-anchor {(RestAnchorOn ? "ON" : "off")}" ); }
@@ -174,7 +179,7 @@ public static class TerryHands
 		Log.Info( "── gambit_terry ──" );
 		Log.Info( $"  levers: hands={(HandsOn ? "ON" : "off")} rise={(HalfRiseOn ? "ON" : "off")} "
 			+ $"rest={(RestAnchorOn ? "ON" : "off")} servo={(ServoOn ? "ON" : "off")} "
-			+ $"faceFlip={(FaceBoardFlip ? "ON" : "off")}" );
+			+ $"faceYaw={FaceYaw:0}°" );
 		Log.Info( $"  tempo: budget={MoveBudget:0.00}s ×{CaptureBudgetScale:0.00} on capture; "
 			+ $"split {ApproachFrac:0.##}/{CarryFrac:0.##}/{ReleaseFrac:0.##} (approach/carry/release)" );
 		Log.Info( $"  grip: grasp={GraspHeight:0.0}u offset={GripOffset} rest={RestAnchorLocal}" );

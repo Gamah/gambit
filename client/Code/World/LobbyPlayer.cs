@@ -1430,13 +1430,11 @@ public sealed class LobbyPlayer : Component
 		if ( toBoard.Length > 0.01f )
 		{
 			// The seated citizen was rendering BACKWARDS (back to the board): LookAt aims the
-			// rig's +forward down toBoard, but this citizen sit pose reads as facing the
-			// OPPOSITE way, so add a 180° yaw. Behind a live lever (gambit_terry_face) since
-			// the flip can't be verified on this host; re-sit after toggling to see it.
-			var face = Rotation.LookAt( toBoard, Vector3.Up );
-			if ( TerryHands.FaceBoardFlip )
-				face *= Rotation.FromAxis( Vector3.Up, 180f );
-			WorldRotation = face;
+			// rig's +forward down toBoard, but the citizen's VISUAL front reads the opposite way.
+			// TerryHands.FaceYaw (default 180°) corrects it; it's a live lever (gambit_terry_face)
+			// because the model's forward convention can't be verified on this host. Re-sit to apply.
+			WorldRotation = Rotation.LookAt( toBoard, Vector3.Up )
+				* Rotation.FromAxis( Vector3.Up, TerryHands.FaceYaw );
 		}
 	}
 
