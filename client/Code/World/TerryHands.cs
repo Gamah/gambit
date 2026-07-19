@@ -185,7 +185,23 @@ public static class TerryHands
 			return;
 		}
 		Log.Info( $"  seated: station={seatedAt.Station.GameObject.Name} seat={seatedAt.Seat} "
-			+ $"hasBody={lp.HasBody} measuredArm={lp.MeasuredArmDebug:0.0}u riseApplied={lp.RiseAppliedDebug:0.0}u" );
+			+ $"hasBody={lp.HasBody} proxy={lp.IsProxyDebug} measuredArm={lp.MeasuredArmDebug:0.0}u riseApplied={lp.RiseAppliedDebug:0.0}u" );
+
+		// Facing probe: run gambit_terry on the HOST and on the CLIENT, compare these four yaws.
+		//   want   = the facing PlantOnSeat should have written (LookAt at the board)
+		//   root   = what the player-root actually carries now
+		//   body   = the render body's yaw (differs from root => the Body child GO is rotated)
+		//   station= the seat's table yaw (differs host vs client => station transform desynced)
+		// A clean 90° gap isolates the layer: root≠want => facing overwritten; body≠root => render
+		// body offset (e.g. frozen pre-sit heading); station differs across machines => replication.
+		FacingLine( "self ", lp );
+
+		// Every OTHER seated body as THIS machine renders it — so one gambit_terry on the host
+		// shows the client's proxy right beside the host's own, and the yaws can be compared in
+		// one place instead of across two consoles.
+		foreach ( var other in Sandbox.Game.ActiveScene.GetAllComponents<LobbyPlayer>() )
+			if ( other != lp && other.SeatedAt is not null )
+				FacingLine( "other", other );
 
 		var view = seatedAt.Station.GameObject.Components.Get<ChessBoardView>();
 		if ( view?.ActiveHandMove is { } m )
@@ -193,6 +209,23 @@ public static class TerryHands
 				+ $"phase={m.Phase} handWeight={m.HandWeight:0.00} grip={m.GripClose:0.00} capture={m.Capture}" );
 		else
 			Log.Info( "  MOVE: none (hand at rest anchor)" );
+	}
+
+	/// <summary>One facing line for a seated player, as THIS machine sees it.
+	///   want   = the facing PlantOnSeat should have written (LookAt at the board)
+	///   root   = the player-root's actual yaw now
+	///   body   = the render body's yaw (differs from root => the Body child GO is rotated)
+	///   station= the seat's table yaw (differs host-vs-client => station transform desynced)
+	/// A clean 90° gap isolates the layer.</summary>
+	static void FacingLine( string tag, LobbyPlayer p )
+	{
+		if ( p.SeatedAt is not { } s ) return;
+		var seatPos = s.Station.SeatSitWorldPosition( s.Seat );
+		var boardFlat = s.Station.WorldPosition; boardFlat.z = seatPos.z;
+		var toBoard = boardFlat - seatPos;
+		float wantYaw = toBoard.Length > 0.01f ? Rotation.LookAt( toBoard, Vector3.Up ).Angles().yaw : 0f;
+		Log.Info( $"  FACING[{tag}] seat={s.Seat} proxy={p.IsProxyDebug} want={wantYaw:0.0}° "
+			+ $"root={p.RootYawDebug:0.0}° body={p.BodyYawDebug:0.0}° station={s.Station.WorldRotation.Angles().yaw:0.0}°" );
 	}
 
 	static string SquareName( int sq ) =>

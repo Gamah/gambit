@@ -1033,6 +1033,13 @@ public sealed class LobbyPlayer : Component
 	public float MeasuredArmDebug => _measuredArm;
 	/// <summary>How much half-rise is actually applied on THIS machine right now (gambit_terry).</summary>
 	public float RiseAppliedDebug => _riseApplied.Length;
+	/// <summary>The player ROOT's world yaw — what PlantOnSeat wrote (gambit_terry facing probe).</summary>
+	public float RootYawDebug => WorldRotation.Angles().yaw;
+	/// <summary>The RENDER body's world yaw. If this differs from the root, the Body child GO
+	/// carries a local rotation the root's facing doesn't account for (gambit_terry facing probe).</summary>
+	public float BodyYawDebug => _bodyRenderer?.WorldRotation.Angles().yaw ?? RootYawDebug;
+	/// <summary>Is this a proxy (someone else's avatar on this machine)? (gambit_terry).</summary>
+	public bool IsProxyDebug => IsProxy;
 
 	/// <summary>
 	/// Place the working hand for this frame. Self-gates on the kill switches and the seat; when
