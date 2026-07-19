@@ -1224,7 +1224,10 @@ public sealed class LobbyPlayer : Component
 			float decl = MathF.Atan2( -bearing.z, MathF.Max( horiz, 0.001f ) ) * ( 180f / MathF.PI );
 			handPitch = MathF.Min( ring.HandPitch, MathF.Max( decl, 0f ) + SeatedHandSpikes.WristDrop );
 		}
-		var rot = station.WorldRotation * Rotation.From( handPitch, handYaw, 0f );
+		// Roll swings the elbow OUT of the torso — the t-rex fix. The hand IK is fed a full
+		// rotation, so the elbow pole follows this barrel-twist; 0 traps the arm in a vertical
+		// plane and the elbow just drops. See SeatedHandSpikes.HandRoll (sign unverified).
+		var rot = station.WorldRotation * Rotation.From( handPitch, handYaw, SeatedHandSpikes.HandRoll );
 
 		// The IK aims a BONE, and the bone is the WRIST — so a target dropped straight on a
 		// square puts the fingers past it and the piece under the palm. Pull the wrist back

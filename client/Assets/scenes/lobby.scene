@@ -642,6 +642,7 @@
      "HalfRiseOn": true,
      "HandChaseRate": 8,
      "HandHoldSeconds": 1.2,
+     "HandRoll": 45,
      "HandsOn": true,
      "HoverHeight": 12,
      "LiftHeight": 14,

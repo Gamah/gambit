@@ -320,6 +320,28 @@ public static class SeatedHandSpikes
 			+ "(capped at ring.HandPitch). Lower = flatter hand on far reaches; = the cap restores the old fixed pitch." );
 	}
 
+	/// <summary>Roll (barrel-twist about the pointing axis) applied to the hand IK target —
+	/// the lever that fixes the "t-rex arm" (banner jank, reported live). The citizen's
+	/// two-bone hand IK is fed a full hand ROTATION, so the elbow pole follows it: with roll
+	/// 0 the arm is trapped in a vertical plane and the elbow just drops (tucked, low). Rolling
+	/// the hand swings the shoulder/elbow OUT away from the torso and tilts the wrist
+	/// left/right instead of up/down — a person reaching across a table pronates like this.
+	///
+	/// <para><b>Sign is UNVERIFIED</b> (same footing as the finger-polarity constants): if the
+	/// elbow swings INTO the body instead of out, negate this. Applied identically to both
+	/// seats — the two hands point 180° apart, so one roll about each one's own forward axis
+	/// abducts both symmetrically; if Black turns out mirrored, that's the next thing to try.
+	/// <c>gambit_terry_roll</c>.</para></summary>
+	public static float HandRoll = 45f;
+
+	[ConCmd( "gambit_terry_roll" )]
+	public static void SetHandRoll( float deg )
+	{
+		HandRoll = deg;
+		Log.Info( $"[Gambit] hand roll = {HandRoll}° — swings the elbow out of the torso (t-rex fix). "
+			+ "Negate if the elbow goes the WRONG way (into the body); 0 = the old vertical-plane arm." );
+	}
+
 	[ConCmd( "gambit_terry_leg" )]
 	public static void SetLegReach( float u )
 	{
