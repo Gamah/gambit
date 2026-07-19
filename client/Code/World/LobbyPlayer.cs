@@ -1062,16 +1062,29 @@ public sealed class LobbyPlayer : Component
 
 			// ── The wrist is a CHILD of the PIECE (owner decision, 2026-07-19). ──
 			// When the view supplied the performed piece's live GameObject, the board-space
-			// target IS its position (plus the grasp hover) — the square/Travel math below
-			// is only the fallback for a missing/destroyed piece (promotion, resync, probe
-			// poses). The piece holds its origin through the approach and slides on its own
-			// clock; deriving the hand from it every frame is what makes desync impossible
-			// rather than merely tuned away — the one-clock rule, finally applied to the
-			// thing it was invented for.
-			var on = gesturePiece.IsValid()
-				? station.WorldTransform.PointToLocal( gesturePiece.WorldPosition )
-					+ Vector3.Up * ( pose.Height + ring.HandLift )
-				: Vector3.Lerp( from, to, pose.Travel ) + Vector3.Up * ( pose.Height + ring.HandLift );
+			// target IS its position — the square/Travel math below is only the fallback
+			// for a missing/destroyed piece (promotion, resync, probe poses). The piece
+			// holds its origin through the approach and slides on its own clock; deriving
+			// the hand from it every frame is what makes desync impossible rather than
+			// merely tuned away — the one-clock rule.
+			//
+			// Height comes from THE PIECE'S OWN TOP (bounds), not a board-surface constant:
+			// GraspHeight (10, "brush the king's 9.6") measured from the board put the
+			// wrist a whole pawn above a pawn — a gap the deleted carry used to mask by
+			// lifting the piece up to the hand. Bounds track the slide arc for free; the
+			// max() guards a degenerate bounds read back to the base position.
+			Vector3 on;
+			if ( gesturePiece.IsValid() )
+			{
+				var p = gesturePiece.WorldPosition;
+				float topZ = MathF.Max( gesturePiece.GetBounds().Maxs.z, p.z );
+				on = station.WorldTransform.PointToLocal( new Vector3( p.x, p.y, topZ ) )
+					+ Vector3.Up * ( GraspClearance + ring.HandLift );
+			}
+			else
+			{
+				on = Vector3.Lerp( from, to, pose.Travel ) + Vector3.Up * ( pose.Height + ring.HandLift );
+			}
 
 			// ── Out-of-reach handling: Approach A (default) vs the cut M13 sphere clamp ──
 			//
@@ -1195,8 +1208,11 @@ public sealed class LobbyPlayer : Component
 		}
 		else
 		{
+			// The return to rest — quick (owner: "accelerate from the piece much faster").
+			// A dedicated rate, not the old HoverChaseRate slider: hover is dead, and the
+			// scene-serialized slider value would silently override any new default here.
 			_handLocal = Vector3.Lerp( current, target,
-				1f - MathF.Exp( -SeatedHandSpikes.HoverChaseRate * Time.Delta ) );
+				1f - MathF.Exp( -ReturnChaseRate * Time.Delta ) );
 		}
 
 		// Fingers down over the board, reaching ALONG THE ARM — the yaw follows the
@@ -1799,6 +1815,14 @@ public sealed class LobbyPlayer : Component
 	/// motion (the horizontal channel doesn't), where the bone read is one frame stale —
 	/// integrating that at the full rate hunts visibly.</summary>
 	const float ServoZRate = 3f;
+
+	/// <summary>How the hand eases back to rest after a gesture (exponential rate). Fast:
+	/// the lingering return read as loitering over the board.</summary>
+	const float ReturnChaseRate = 9f;
+
+	/// <summary>Wrist clearance above the performed piece's bounds TOP while gesturing —
+	/// the grasp height is piece-relative now, never a board-surface constant.</summary>
+	const float GraspClearance = 1.5f;
 
 	void ReleaseRiseIk( SkinnedModelRenderer r )
 	{

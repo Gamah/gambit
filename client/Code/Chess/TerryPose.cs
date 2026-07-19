@@ -166,8 +166,9 @@ public static class TerryPose
 	/// <summary>The approach: rest pose → over the from-square. A budgeted stage of the
 	/// move, NOT a rate — the driver spends exactly this long however far the reach is,
 	/// so a cross-board approach is fast and a near one is gentle, and the hand is
-	/// guaranteed over the piece when it ends.</summary>
-	public const float ReachTime = 0.25f;
+	/// guaranteed over the piece when it ends. 0.12 by owner request ("accelerate to the
+	/// piece much faster") — a dart, not a stroll.</summary>
+	public const float ReachTime = 0.12f;
 
 	/// <summary>Close on the from-square and lift.</summary>
 	public const float LiftTime = 0.18f;
@@ -223,9 +224,9 @@ public static class TerryPose
 	/// <summary>
 	/// Seconds for the hand to go back to rest after a move's gesture finishes.
 	///
-	/// <para><b>Slow, deliberately.</b> Going off the board is a hand relaxing, and a hand
-	/// that snaps back to the table the instant the piece is down reads as a rubber band.</para></summary>
-	public const float FadeOutTime = 1.2f;
+	/// <para>Was 1.2s ("a hand relaxing"); owner verdict on seeing it: much faster — the
+	/// lingering hand read as loitering over the board, not relaxing.</para></summary>
+	public const float FadeOutTime = 0.45f;
 
 	// Finger poses, as holdtype_pose_hand. POLARITY IS UNVERIFIED — the parameter, its
 	// 0..1 range and its finger role are all read off citizen.vanmgrph, but which end is
