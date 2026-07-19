@@ -149,6 +149,11 @@ public sealed class ChessBoardView : Component
 		/// nobody is going to perform (no seated terry, tray walks, resyncs); expiring
 		/// degrades to the plain slide, so a missing hand costs nothing but the wait.</summary>
 		public float HoldForHand;
+
+		/// <summary>This slide's destination is a BOARD square (the pairing pass made it)
+		/// rather than a tray. Board slides are reality-lagging — a new diff fast-forwards
+		/// them (see SyncPieces); tray trips are pure cosmetics and play out.</summary>
+		public bool ToBoard;
 	}
 
 	/// <summary>Wall seconds until the gesturing hand is over the from-square: the
@@ -324,6 +329,23 @@ public sealed class ChessBoardView : Component
 		}
 		if ( removed == null && added == null ) return;
 
+		// ── Jump to reality: a NEW diff obsoletes every board slide still playing. ──
+		// The hand-hold pins a mover at its ORIGIN for ~0.4s, and a premove replies
+		// within a few frames of the move it was armed against — so without this, the
+		// reply's diff found the just-moved piece still sitting on its origin square and
+		// (on a premove CAPTURE) adopted it into the tray from there: the move never
+		// rendered on any machine. Snap held/in-flight board slides to their
+		// destinations BEFORE diffing forward — the new pairing then reads true
+		// positions for its Froms, and a captured mover walks to the tray from the
+		// square it actually reached. Tray trips keep playing: they lag nothing.
+		for ( int i = _slides.Count - 1; i >= 0; i-- )
+		{
+			var s = _slides[i];
+			if ( !s.ToBoard ) continue;
+			if ( s.Piece.IsValid() ) s.Piece.LocalPosition = s.To;
+			_slides.RemoveAt( i );
+		}
+
 		// Any position change invalidates the current selection — and a pending
 		// promotion (a diff can only arrive under one via resync or a new game;
 		// our own promotion move clears PendingPromotion before it applies).
@@ -381,6 +403,7 @@ public sealed class ChessBoardView : Component
 					// breath) and not an instant more. (The old fixed 1.2s was the
 					// "a far capture takes over 2 seconds" bug.)
 					HoldForHand = performed ? HandArrivalSeconds() : 0f,
+					ToBoard = true,
 				} );
 				// The mover this colour's hand should ride — the wrist derives from this
 				// GameObject live (see the performed-piece block above).
