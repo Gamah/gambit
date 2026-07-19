@@ -1144,27 +1144,37 @@ public sealed class LobbyPlayer : Component
 			}
 		}
 
-		// ── Chase the target; never teleport to it ──
+		// ── Reach the target ON A DEADLINE during a gesture; ease at a rate otherwise ──
 		//
-		// What crosses the wire is a SQUARE, so the target jumps a whole square at a time as
-		// the cursor crosses a boundary — and a hand that jumps reads as broken rather than
-		// as thinking. Easing the POSITION is what makes a quantised signal look like a hand
-		// vaguely following a mouse, which is the whole illusion. TerryPose's Weight already
-		// eases the hand on and off the BOARD; this eases it ACROSS the board, which the
-		// weight can't do because both ends are on it.
+		// A gesture's stages are a fixed budget (owner, 2026-07-19): the hand must be over
+		// the piece when Reaching ends, at the destination when Carrying ends — however far
+		// the reach. A RATE (1 − e^(−k·dt)) can't promise that: it lags in proportion to
+		// distance, which is exactly the reported bug — on far reaches the timeline and the
+		// piece holds expired while the hand was still commuting, both pieces finished on
+		// their own slides, and the hand visibly "caught up" afterwards. So while a move is
+		// animating, each frame covers dt / time-left of the remaining gap: arrival lands
+		// exactly on the phase deadline, and when no time remains it degrades to the snap
+		// the owner accepts. PhaseRemaining is timeline-units; wall seconds divide out the
+		// rush and the speed slider — the same factors Advance scaled dt up by.
 		//
-		// Frame-rate independent: 1 − e^(−k·dt), not a raw lerp factor.
-		//
-		// TWO tempos, not one (banner jank #4). Hovering or merely selecting is DECIDING, and
-		// the hand drifts lazily after the cursor (HoverChaseRate, slow). A committed move is a
-		// hard snappy gesture, so it chases fast (HandChaseRate) — which also catches the hand
-		// up from wherever the lazy drift left it, the "catch-up is part of the budget" rule.
-		float chaseRate = pose.Animating ? SeatedHandSpikes.HandChaseRate : SeatedHandSpikes.HoverChaseRate;
+		// Off a gesture (the fade back to rest) the old gentle rate remains — relaxing is
+		// the one motion with no deadline. HandChaseRate no longer drives gestures.
 		if ( _handLocal is not { } current )
+		{
 			_handLocal = target;                       // first frame: be there
-		else
+		}
+		else if ( pose.Animating )
+		{
+			float speed = Gambit.Chess.TerryPose.SpeedScale <= 0f ? 1f : Gambit.Chess.TerryPose.SpeedScale;
+			float remain = pose.PhaseRemaining / ( ( 1f + pose.Rush ) * speed );
 			_handLocal = Vector3.Lerp( current, target,
-				1f - MathF.Exp( -chaseRate * Time.Delta ) );
+				Math.Clamp( Time.Delta / MathF.Max( remain, Time.Delta ), 0f, 1f ) );
+		}
+		else
+		{
+			_handLocal = Vector3.Lerp( current, target,
+				1f - MathF.Exp( -SeatedHandSpikes.HoverChaseRate * Time.Delta ) );
+		}
 
 		// Fingers down over the board, reaching ALONG THE ARM — the yaw follows the
 		// shoulder→target bearing rather than the fixed seat-forward it used to be. The

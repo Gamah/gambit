@@ -561,8 +561,10 @@ public static class SeatedHandSpikes
 		float spd = TerryPose.SpeedScale <= 0f ? 1f : TerryPose.SpeedScale;
 		Log.Info( $"   Posture — reachMargin {ReachMargin}u  wristDrop {WristDrop}°  handRoll {HandRoll}° "
 			+ "(gambit_terry_margin / _wristdrop / _roll)" );
-		Log.Info( $"   Tempo — hover chase {HoverChaseRate}/s (lazy)  move chase {HandChaseRate}/s (snappy)  "
-			+ $"gestureSpeed {TerryPose.SpeedScale}× → move≈{TerryPose.MoveTime / spd:0.00}s capture≈{TerryPose.CaptureTime / spd:0.00}s" );
+		Log.Info( $"   Tempo — gestures run on PHASE DEADLINES (reach {TerryPose.ReachTime}s + lift {TerryPose.LiftTime}s"
+			+ $" + carry {TerryPose.TravelTime}s + drop {TerryPose.DropTime}s; hand arrives per stage or snaps)  "
+			+ $"idle-return chase {HoverChaseRate}/s  gestureSpeed {TerryPose.SpeedScale}× → move≈{TerryPose.MoveTime / spd:0.00}s"
+			+ $" (capture = same gesture; victim slides to its tray on its own)" );
 		Log.Info( "   The DEFAULT is the half-rise: past the leaned arm the terry rises off the chair toward the piece, "
 			+ "feet planted (they may step), off hand braced on the table, and PICKS THE PIECE UP (it rides the hand)." );
 		Log.Info( "── run it ──" );

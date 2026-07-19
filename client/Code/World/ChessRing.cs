@@ -210,17 +210,6 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	[Property] public float HandLift { get; set; } = 0f;
 
 	/// <summary>
-	/// How fast the hand chases its target, as an exponential rate (higher = snappier).
-	///
-	/// <para><b>This is what makes a square-quantised signal look like a hand.</b> What
-	/// crosses the wire is a SQUARE index, so the target jumps a whole square at a time as
-	/// the cursor crosses a boundary — and a hand that jumps reads as broken rather than as
-	/// thinking. Easing the position turns that into a hand vaguely following a mouse, which
-	/// is the entire illusion. 12 settles a square's worth of travel in about a fifth of a
-	/// second: quick enough to feel attached to the cursor, slow enough to glide.</para></summary>
-	[Property] public float HandChaseRate { get; set; } = 12f;
-
-	/// <summary>
 	/// Offset from the square to where the WRIST goes, in the hand's own rotated frame —
 	/// so the thumb and index end up over the square rather than the wrist.
 	///
