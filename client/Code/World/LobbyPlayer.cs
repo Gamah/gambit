@@ -975,15 +975,6 @@ public sealed class LobbyPlayer : Component
 		r.Set( "b_swim", false );
 		r.Set( "duck", false );
 
-		// Re-assert the board-facing every frame on the OWNER only, so gambit_terry_face turns
-		// terry LIVE. A proxy must NOT recompute it: the owner is the sole authority on its body's
-		// facing and it networks via the transform — recomputing locally on every machine (as an
-		// earlier pass did) overrode that networked value with a per-client local guess, so host
-		// and client disagreed (one 90° off). Skipped mid-schwoop by ordering, not a flag: the
-		// local seat-switch's UpdateSeatSwitch runs after this and wins until it lands.
-		if ( !IsProxy && SeatedAt is { } s )
-			ApplySeatedFacing( s.Station, s.Seat );
-
 		// M14: the working hand. Called from here because ApplySitPose is the one per-frame
 		// pose write that runs for BOTH the local player and every seated proxy — so every
 		// terry animates its own move the same way, "everyone sees the hand including the
@@ -1429,30 +1420,19 @@ public sealed class LobbyPlayer : Component
 			? station.SeatWorldPosition( seat )
 			: station.SeatSitWorldPosition( seat );
 
-		WorldPosition = seatPos;
-		ApplySeatedFacing( station, seat );
-	}
-
-	/// <summary>Point the seated body at the board. Split out of <see cref="PlantOnSeat"/> and
-	/// re-run EVERY FRAME from <see cref="ApplySitPose"/> (local and proxy) so
-	/// <c>gambit_terry_face</c> turns terry LIVE — no re-sit. During a seat-switch schwoop this
-	/// is harmless: UpdateSeatSwitch runs after ApplySitPose and overrides the rotation until it
-	/// lands. LookAt aims the rig at the board; TerryHands.FaceYaw is the model-forward offset
-	/// (0 = raw LookAt, matches the shipped M13 baseline), which can only be settled in-engine.</summary>
-	void ApplySeatedFacing( ChessStation station, ChessSeat seat )
-	{
-		if ( station == null ) return;
-
-		// Yaw at the board, level — a flat look, so the pitch of the line from the chair up
-		// to the board can't tip the whole body forward.
-		var seatPos = WorldPosition;
+		// Yaw at the board, level — a flat look, so the pitch of the line from the chair up to
+		// the board can't tip the whole body forward. Set ONCE here and networked via the
+		// transform: the citizen's Forward is what LookAt aims, so plain LookAt(toBoard) faces
+		// the board with no offset (confirmed in-editor — the host sat correctly this way).
+		// NOT re-applied per frame: doing that let every machine recompute a proxy's rotation
+		// locally and disagree with the owner (the host/client 90° split).
 		var boardFlat = station.WorldPosition;
 		boardFlat.z = seatPos.z;
 		var toBoard = boardFlat - seatPos;
-		if ( toBoard.Length < 0.01f ) return;
 
-		WorldRotation = Rotation.LookAt( toBoard, Vector3.Up )
-			* Rotation.FromAxis( Vector3.Up, TerryHands.FaceYaw );
+		WorldPosition = seatPos;
+		if ( toBoard.Length > 0.01f )
+			WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
 	}
 
 	/// <summary>Instant seat change (fallback when anchors aren't built): teleport the

@@ -37,15 +37,6 @@ public static class TerryHands
 	/// M13 world). <c>gambit_terry_hands</c>. Default ON: the hands are the M14 deliverable.</summary>
 	public static bool HandsOn = true;
 
-	/// <summary>Yaw (degrees) added to the seated body's board-facing rotation, to correct the
-	/// "terry sits backwards" bug. PlantOnSeat aims the rig at the board with LookAt; whether the
-	/// citizen's VISUAL front then points at the board depends on the model's forward-axis
-	/// convention, which can't be checked on a host with no engine — so this is a live knob, not
-	/// a guess. 0 = raw LookAt (identical to the shipped M13 baseline); 180 flips him to face the
-	/// other way; 90 / −90 if he lands side-on. Re-applied every frame, so
-	/// <c>gambit_terry_face &lt;deg&gt;</c> turns him LIVE with no re-sit.</summary>
-	public static float FaceYaw = 0f;
-
 	/// <summary><b>Phase 2 gate: the move-only half-rise.</b> false = near moves only; a piece
 	/// past the seated arm's reach has the hand trail and the piece finish its slide alone
 	/// (design point 6). Default <b>OFF</b> so Phase 1 is what loads first and is judged on its
@@ -151,9 +142,6 @@ public static class TerryHands
 	[ConCmd( "gambit_terry_rise" )]
 	public static void SetRise( int on ) { HalfRiseOn = on != 0; Log.Info( $"[Gambit] terry half-rise {(HalfRiseOn ? "ON" : "off")}" ); }
 
-	[ConCmd( "gambit_terry_face" )]
-	public static void SetFace( float deg ) { FaceYaw = deg; Log.Info( $"[Gambit] terry face yaw {FaceYaw:0}° (live)" ); }
-
 	[ConCmd( "gambit_terry_rest" )]
 	public static void SetRest( int on ) { RestAnchorOn = on != 0; Log.Info( $"[Gambit] terry rest-anchor {(RestAnchorOn ? "ON" : "off")}" ); }
 
@@ -178,8 +166,7 @@ public static class TerryHands
 	{
 		Log.Info( "── gambit_terry ──" );
 		Log.Info( $"  levers: hands={(HandsOn ? "ON" : "off")} rise={(HalfRiseOn ? "ON" : "off")} "
-			+ $"rest={(RestAnchorOn ? "ON" : "off")} servo={(ServoOn ? "ON" : "off")} "
-			+ $"faceYaw={FaceYaw:0}°" );
+			+ $"rest={(RestAnchorOn ? "ON" : "off")} servo={(ServoOn ? "ON" : "off")}" );
 		Log.Info( $"  tempo: budget={MoveBudget:0.00}s ×{CaptureBudgetScale:0.00} on capture; "
 			+ $"split {ApproachFrac:0.##}/{CarryFrac:0.##}/{ReleaseFrac:0.##} (approach/carry/release)" );
 		Log.Info( $"  grip: grasp={GraspHeight:0.0}u offset={GripOffset} rest={RestAnchorLocal}" );
