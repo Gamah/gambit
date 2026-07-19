@@ -975,10 +975,13 @@ public sealed class LobbyPlayer : Component
 		r.Set( "b_swim", false );
 		r.Set( "duck", false );
 
-		// Re-assert the board-facing every frame so gambit_terry_face turns terry LIVE (and so a
-		// proxy uses THIS machine's FaceYaw while you tune). Skipped mid-schwoop by ordering, not
-		// a flag: the local seat-switch's UpdateSeatSwitch runs after this and wins until it lands.
-		if ( SeatedAt is { } s )
+		// Re-assert the board-facing every frame on the OWNER only, so gambit_terry_face turns
+		// terry LIVE. A proxy must NOT recompute it: the owner is the sole authority on its body's
+		// facing and it networks via the transform — recomputing locally on every machine (as an
+		// earlier pass did) overrode that networked value with a per-client local guess, so host
+		// and client disagreed (one 90° off). Skipped mid-schwoop by ordering, not a flag: the
+		// local seat-switch's UpdateSeatSwitch runs after this and wins until it lands.
+		if ( !IsProxy && SeatedAt is { } s )
 			ApplySeatedFacing( s.Station, s.Seat );
 
 		// M14: the working hand. Called from here because ApplySitPose is the one per-frame
