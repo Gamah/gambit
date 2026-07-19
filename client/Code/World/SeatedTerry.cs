@@ -666,6 +666,7 @@ public sealed class SeatedTerry : Component
 
 		string fen = game.Fen;
 		int ply = game.MoveCount;
+		int plyBefore = _lastPly;
 
 		var change = BoardDiff.Between( _lastFen, _lastPly, fen, ply,
 			out bool whiteMoved, out bool capture );
@@ -679,7 +680,19 @@ public sealed class SeatedTerry : Component
 
 		_whiteMoved = whiteMoved;
 		_capture = capture;
+
+		// A ≥2-ply jump means BOTH seats moved inside one observation — the canonical case
+		// is a premove firing on the very frame its trigger move applies, which happens ON
+		// THE PREMOVER'S OWN MACHINE (the other machine sees the plies a network-gap
+		// apart). LastMoveUci only names the reply, so without this the TRIGGER move's
+		// hand never fired there (owner report: host never saw Black's arm). Latch the
+		// earlier move for the other seat; Drive feeds it as that seat's own move.
+		_prevUci = ply - plyBefore >= 2 ? game.UciFromEnd( 1 ) : null;
 	}
+
+	/// <summary>The OTHER seat's move when the last classify jumped ≥2 plies (see
+	/// Classify), else null.</summary>
+	string _prevUci;
 
 	/// <summary>Take the source's ply as read, silently — so a hand never animates a move
 	/// that was already played when we started watching. TableSounds.Baseline's rule, and
@@ -700,11 +713,16 @@ public sealed class SeatedTerry : Component
 			return;
 		}
 
+		// This seat played either the LAST classified move, or — on a ≥2-ply jump (a
+		// premove firing the frame its trigger applies) — the EARLIER one (_prevUci).
+		// Each seat gets its own move as its own gesture; the capture flag belongs to
+		// the last move only (the reply is what took the piece).
+		bool seatIsLast = _whiteMoved == ( seat == ChessSeat.White );
 		pose = TerryPose.Advance( pose, new HandInput(
 			Ply: game.MoveCount,
-			LastMoveUci: game.LastMoveUci ?? src.LastMoveUci,
-			SeatMoved: _whiteMoved == ( seat == ChessSeat.White ),
-			Capture: _capture,
+			LastMoveUci: seatIsLast ? game.LastMoveUci ?? src.LastMoveUci : _prevUci,
+			SeatMoved: seatIsLast || _prevUci != null,
+			Capture: seatIsLast && _capture,
 			GameLive: src.Playing ), Time.Delta );
 
 		if ( avatar.IsValid() )

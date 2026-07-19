@@ -162,6 +162,17 @@ public sealed class ChessGame
 	/// games start with null and rely on the relayed lastMoveUci instead.</summary>
 	public string LastMoveUci => _lastMoveUci;
 
+	/// <summary>UCI of the move <paramref name="back"/> plies before the last (0 = the
+	/// last move, 1 = the one before it), or null when history doesn't reach. Exists for
+	/// the seated hands: a premove reply can land in the same observation as the move it
+	/// answers, and the 2-ply jump's EARLIER move — the one LastMoveUci no longer names —
+	/// is the one the other seat's hand still has to play.</summary>
+	public string UciFromEnd( int back )
+	{
+		int i = _board.ExecutedMoves.Count - 1 - back;
+		return back >= 0 && i >= 0 ? UciOf( _board.ExecutedMoves[i] ) : null;
+	}
+
 	void OnBoardMutated( string uci )
 	{
 		_fen = null;
