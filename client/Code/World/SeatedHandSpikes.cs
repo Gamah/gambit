@@ -1,3 +1,4 @@
+using Gambit.Chess;
 using Sandbox;
 
 namespace Gambit.World;
@@ -556,6 +557,12 @@ public static class SeatedHandSpikes
 			+ $"SitPose={SitPoseClamped}  Lean={( NaturalLean ? $"{MaxLean}u/'{NaturalLeanBone}'" : "off" )}" );
 		Log.Info( $"   Comparison levers — OutOfReach(rise+nat off)={( UseSphereClamp ? "sphere clamp" : $"idle band {ReachBandX}" )}  "
 			+ $"ManualLean(B)={( LeanOn ? $"{LeanForward}u/{LeanBone}" : "off" )}  ArmScale(C)={ArmScale}" );
+		// LIVE tempo + posture knobs — if these lines are here at all, the look-pass build is loaded.
+		float spd = TerryPose.SpeedScale <= 0f ? 1f : TerryPose.SpeedScale;
+		Log.Info( $"   Posture — reachMargin {ReachMargin}u  wristDrop {WristDrop}°  handRoll {HandRoll}° "
+			+ "(gambit_terry_margin / _wristdrop / _roll)" );
+		Log.Info( $"   Tempo — hover chase {HoverChaseRate}/s (lazy)  move chase {HandChaseRate}/s (snappy)  "
+			+ $"gestureSpeed {TerryPose.SpeedScale}× → move≈{TerryPose.MoveTime / spd:0.00}s capture≈{TerryPose.CaptureTime / spd:0.00}s" );
 		Log.Info( "   The DEFAULT is the half-rise: past the leaned arm the terry rises off the chair toward the piece, "
 			+ "feet planted (they may step), off hand braced on the table, and PICKS THE PIECE UP (it rides the hand)." );
 		Log.Info( "── run it ──" );
