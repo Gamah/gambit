@@ -1,5 +1,6 @@
 using System.Linq;
 using Sandbox;
+using Sandbox.UI;
 
 namespace Gambit.World;
 
@@ -74,5 +75,34 @@ public static class WallBoardGeometry
 		var pos = board.LocalPosition;
 		pos.z = floorClearance + contentHeight - rootHalf;
 		board.LocalPosition = pos;
+	}
+
+	/// <summary>
+	/// Uniformly scale <paramref name="content"/> DOWN so its natural height fits within
+	/// <paramref name="availableHeight"/> (the same pixel space as the content's own Box).
+	/// Shared by both info surfaces: the engaged InfoScreen fits its card to the viewport,
+	/// and the wall boards fit their content to the board's own rect, so neither can clip
+	/// vertically. It never scales UP (clamped to 1), so content that already fits is left
+	/// untouched.
+	///
+	/// <para>Safe to call every frame: an s&amp;box transform is visual-only and does not
+	/// change <c>Box.Rect</c>, so the measured natural height is stable frame to frame and
+	/// cannot feed back on itself. The scaled element sets its own <c>transform-origin</c>
+	/// (centre for a viewport-centred card; bottom for a floor-anchored wall board) so the
+	/// shrink happens about the right point.</para>
+	/// </summary>
+	public static void FitToHeight( Panel content, float availableHeight,
+		float margin = 0.96f, float minScale = 0.4f )
+	{
+		if ( content is null ) return;
+
+		float natural = content.Box.Rect.Height;
+		if ( natural <= 0f || availableHeight <= 0f ) return;
+
+		float scale = MathX.Clamp( availableHeight * margin / natural, minScale, 1f );
+
+		var t = new PanelTransform();
+		t.AddScale( scale );
+		content.Style.Transform = t;
 	}
 }

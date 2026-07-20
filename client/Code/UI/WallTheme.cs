@@ -42,6 +42,13 @@ public static class WallTheme
 		}
 	}
 
+	/// <summary>Brand strings shared by every info surface — the east-wall signpost
+	/// (CenterInfoPanel) and the engaged InfoScreen — so the name and tagline live in one
+	/// place. BODY copy is deliberately NOT shared: the wall is a signpost, the screen is
+	/// the page (see CenterInfoPanel's header and CLAUDE.md — duplicated copy rots).</summary>
+	public const string BrandTitle = "TERRY'S GAMBIT";
+	public const string Tagline    = "Chess in the lobby";
+
 	// Derived palette — the accent is scaled/mixed so a light accent (the white default)
 	// yields a near-black background with white text/borders, and a coloured accent tints
 	// the same dark UI.

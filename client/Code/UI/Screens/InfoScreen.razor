@@ -1,5 +1,6 @@
 @using System;
 @using System.Collections.Generic;
+@using System.Linq;
 @using Sandbox;
 @using Sandbox.UI;
 @using Gambit.Api;
@@ -97,8 +98,8 @@
 		}
 		else
 		{
-			<div class="title" style="color:@WallTheme.Text;">Welcome to TERRY'S GAMBIT</div>
-			<div class="tagline" style="color:@WallTheme.TextFaint;">Chess in the lobby</div>
+			<div class="title" style="color:@WallTheme.Text;">Welcome to @WallTheme.BrandTitle</div>
+			<div class="tagline" style="color:@WallTheme.TextFaint;">@WallTheme.Tagline</div>
 
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
@@ -212,6 +213,10 @@
 		padding: 24px 34px;
 		gap: 8px;
 		pointer-events: all;
+		/* Shrink about the centre when FitToHeight scales the card down to the viewport
+		   (see OnUpdate) — the card is flex-centred by .screen-fit, so a centre origin
+		   keeps it centred. */
+		transform-origin: 50% 50%;
 	}
 
 	.info-fit > div {
@@ -427,6 +432,14 @@
 	{
 		if ( InfoStation.Active?.Kind == InfoStation.StationKind.Lichess )
 			LichessLinkState.Poll();
+
+		// Fit the engaged card to the viewport height so the tall Welcome page never clips
+		// off-screen on a short/wide viewport. Scale, not scroll: the card has click-to-copy
+		// controls and a scroll panel fights the clicks (CLAUDE.md), and the point is to see
+		// all of it at once. root's first child is .screen-fit, whose first child is .info-fit.
+		var card = Panel?.Children.FirstOrDefault()?.Children.FirstOrDefault();
+		if ( card is not null )
+			WallBoardGeometry.FitToHeight( card, Panel.Box.Rect.Height );
 	}
 
 	protected override int BuildHash() =>

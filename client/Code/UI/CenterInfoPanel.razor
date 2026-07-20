@@ -22,8 +22,8 @@
 
 <root>
 	<div class="board" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
-		<div class="title" style="color:@WallTheme.Text;">TERRY'S GAMBIT</div>
-		<div class="tagline" style="color:@WallTheme.TextFaint;">Chess in the lobby</div>
+		<div class="title" style="color:@WallTheme.Text;">@WallTheme.BrandTitle</div>
+		<div class="tagline" style="color:@WallTheme.TextFaint;">@WallTheme.Tagline</div>
 
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
@@ -58,6 +58,9 @@
 		border-radius: 7.5px;
 		font-family: $wall-font;
 		gap: 4px;
+		/* Shrink toward the floor-anchored BOTTOM edge (see FitToHeight in OnUpdate) so a
+		   down-scale keeps FloorAnchor accurate. No-op at today's three lines. */
+		transform-origin: 50% 100%;
 	}
 
 	/* Fixed-height flex column: without this, items shrink to ~one line and
@@ -116,5 +119,14 @@
 		// Every wall board anchors the same way, from one place — see
 		// WallBoardGeometry. Do not re-derive this here.
 		Gambit.World.WallBoardGeometry.FloorAnchor( this, FloorClearance );
+
+		// Keep the signpost within its own board rect — sized by the board's vertical
+		// space, not by content overflowing it. A no-op at today's three lines (scale 1);
+		// it only engages if the board ever grows past its rect. Same fit helper the
+		// engaged InfoScreen uses; bottom transform-origin (see .board) keeps FloorAnchor
+		// accurate under a shrink.
+		var board = Panel?.Children.FirstOrDefault();
+		if ( board is not null )
+			Gambit.World.WallBoardGeometry.FitToHeight( board, Panel.Box.Rect.Height );
 	}
 }
