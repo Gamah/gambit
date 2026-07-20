@@ -361,8 +361,11 @@ public static class SeatedHandSpikes
 	/// <para>Was a <c>const 1.5</c> on <see cref="LobbyPlayer"/> — promoted to a live static so
 	/// TerryTuning can drive it from the inspector and <c>gambit_terry_scholars</c> can dial the
 	/// placement without a recompile. Same footing as <see cref="WristDrop"/>/<see cref="HandRoll"/>:
-	/// a runtime-only value the scene surface pushes into.</para></summary>
-	public static float GraspClearance = 1.5f;
+	/// a runtime-only value the scene surface pushes into.</para>
+	///
+	/// <para>Dropped 1.5 → 0 (wrist AT the piece's top, a natural grasp) after the look pass read
+	/// the hand as floating a bit high off the set — nudge with <c>gambit_terry_grasp</c>.</para></summary>
+	public static float GraspClearance = 0f;
 
 	[ConCmd( "gambit_terry_grasp" )]
 	public static void SetGraspClearance( float u )

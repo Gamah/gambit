@@ -51,7 +51,7 @@ public sealed class TerryTuning : Component
 	// knob for "where the hand ends up relative to the piece it is moving" (watch it with
 	// gambit_terry_scholars). Unlike the three above (inert on the piece-child path today), this
 	// one is live for every real move.
-	[Property, Group( "Hand" ), Range( -4f, 10f )] public float GraspClearance { get; set; } = 1.5f;
+	[Property, Group( "Hand" ), Range( -4f, 10f )] public float GraspClearance { get; set; } = 0f;
 
 	// ── Carry ──
 	[Property, Group( "Carry" ), Range( 0f, 16f )] public float CarryHang { get; set; } = 8f;

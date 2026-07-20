@@ -1277,6 +1277,18 @@ public sealed class LobbyPlayer : Component
 		r.Set( "holdtype_handedness", HandednessRight );
 		r.Set( "holdtype_pose_hand", pose.FingerClose );
 
+		// The gesture's arrival deadline, in wall seconds — the SAME value the hand's own reach
+		// lerp uses (PhaseRemaining, un-scaled by rush and the speed slider). RiseChaseK reads it
+		// so the pelvis rise and foot pins land with the hand instead of lagging it. −1 off a
+		// gesture, where the rise eases out on a rate.
+		if ( pose.Animating )
+		{
+			float sp = Gambit.Chess.TerryPose.SpeedScale <= 0f ? 1f : Gambit.Chess.TerryPose.SpeedScale;
+			_gestureRemain = pose.PhaseRemaining / ( ( 1f + pose.Rush ) * sp );
+		}
+		else
+			_gestureRemain = -1f;
+
 		if ( SeatedHandSpikes.HalfRiseOn )
 		{
 			// The half-rise path: ease + apply the pelvis/lean overrides and the foot/brace
@@ -1397,9 +1409,10 @@ public sealed class LobbyPlayer : Component
 		}
 
 		// ── The final, solver-domain reach clamp — Z-LOCKED (owner report #2, 2026-07-19). ──
-		// The planner clamps its ask against the PLAN's fully-risen shoulder, but the bones
-		// only EASE toward the rise (RiseChaseRate) — so mid-move the ask can sit outside the
-		// arm the solver actually has this frame, and the engine's own two-bone IK clamps the
+		// The planner clamps its ask against the PLAN's fully-risen shoulder, but the bones only
+		// EASE toward the rise (RiseChaseK — now the gesture deadline, which shrinks this transient
+		// but doesn't erase it: the rise still ramps over a phase's first frames) — so mid-move the
+		// ask can sit outside the arm the solver actually has this frame, and the engine's own two-bone IK clamps the
 		// wrist onto its REAL reach sphere along the shoulder→ask ray. That ray leaves a high
 		// shoulder, so the wrist rode UP it: the "bumping against some sphere" float. The
 		// engine's clamp is the one clamp we cannot re-aim — so never let it engage: pull the
@@ -1523,6 +1536,31 @@ public sealed class LobbyPlayer : Component
 	/// the plan) — also exactly what the IK pre-compensation subtracts, which is why it is
 	/// stored rather than recomputed: the bones and the compensation must never disagree.</summary>
 	Vector3 _riseApplied;
+
+	/// <summary>Wall-seconds left in the current gesture phase (the hand's own arrival deadline),
+	/// or −1 when no move is animating. Set each frame in <see cref="ApplyHandPose"/> and read by
+	/// <see cref="RiseChaseK"/> so the pelvis rise and foot pins converge on the SAME deadline the
+	/// hand does — see that helper for why a fixed rate was wrong.</summary>
+	float _gestureRemain = -1f;
+
+	/// <summary>How fast the rise (pelvis + foot pins) chases its target THIS frame.
+	///
+	/// <para><b>During a gesture it is a DEADLINE, not a rate</b> — the same one the hand reaches
+	/// on. The hand darts to a piece in <see cref="Gambit.Chess.TerryPose.ReachTime"/> (0.12s) but
+	/// the rise used to ease in on <c>RiseChaseRate</c> (~0.75s to settle): the body-lift the arm
+	/// depends on lagged the reach, so on a far square the hand arrived SHORT and only extended as
+	/// the rise caught up — the piece, already sliding, pulled away (owner report: "lerp on a
+	/// lerp"). Converging the rise on the gesture's own phase deadline lands the lift WITH the
+	/// hand, so the arm reaches as far as it honestly can immediately (the envelope ceiling is
+	/// unchanged; this removes the lag, not the limit). The feet ride the same k so a fast pelvis
+	/// can't tear a planted foot.</para>
+	///
+	/// <para>Off a gesture (relaxing back onto the chair) the old <c>RiseChaseRate</c> rate
+	/// remains — a return has no deadline, exactly like the hand's own ease-out.</para></summary>
+	float RiseChaseK() =>
+		_gestureRemain >= 0f
+			? Math.Clamp( Time.Delta / MathF.Max( _gestureRemain, Time.Delta ), 0f, 1f )
+			: 1f - MathF.Exp( -SeatedHandSpikes.RiseChaseRate * Time.Delta );
 
 	/// <summary>The spine-lean translation actually applied (world space, eased) — the arm
 	/// chain rides pelvis + spine, so the hand compensation subtracts both.</summary>
@@ -1657,9 +1695,10 @@ public sealed class LobbyPlayer : Component
 			wantPitch = station.WorldRotation * ( FromPlanner( plan.LeanDir, seat ) * plan.PitchGain );
 		}
 
-		// The same frame-rate-independent chase as the hand — the plan may step (a foot
-		// commits, the leg constraint engages) and the bones must not.
-		float k = 1f - MathF.Exp( -SeatedHandSpikes.RiseChaseRate * Time.Delta );
+		// The same frame-rate-independent chase as the hand — and now the same DEADLINE while a
+		// move animates (see RiseChaseK): the plan may step (a foot commits, the leg constraint
+		// engages) and the bones must not, but they must also not lag the reach.
+		float k = RiseChaseK();
 		_riseApplied = Vector3.Lerp( _riseApplied, wantRise, k );
 		_leanApplied = Vector3.Lerp( _leanApplied, wantLean, k );
 		_pitchApplied = Vector3.Lerp( _pitchApplied, wantPitch, k );
@@ -1791,7 +1830,9 @@ public sealed class LobbyPlayer : Component
 
 		var desired = station.WorldTransform.PointToWorld( FromPlanner( plant, seat ) );
 		var cur = eased ?? animPos ?? desired;
-		float k = 1f - MathF.Exp( -SeatedHandSpikes.RiseChaseRate * Time.Delta );
+		// Same k as the pelvis rise (RiseChaseK) — deadline while a move animates — so a foot pin
+		// can't lag a fast-rising pelvis and lift off the plant.
+		float k = RiseChaseK();
 		cur = Vector3.Lerp( cur, desired, k );
 		eased = cur;
 
