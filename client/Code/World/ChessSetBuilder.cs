@@ -209,7 +209,7 @@ public static class ChessSetBuilder
 			Log.Warning( "[Gambit] 2D mode: shaders/chess_glyph.shader failed to load — falling back to 3D pieces." );
 			return null;
 		}
-		mat.Set( "Color", _flatAtlas );
+		mat.Set( "GlyphAtlas", _flatAtlas );
 		_flatMaterial = mat;
 		return _flatMaterial;
 	}

@@ -200,11 +200,31 @@ public sealed class LobbyPlayer : Component
 		// sitting back in depth behind the player.
 		tag.AddComponent<WorldPanel>().LookAtCamera = true;
 		tag.AddComponent<Gambit.UI.NameTagPanel>().Player = this;
+		_nameTag = tag;
+	}
+
+	// The name-tag GO (a WorldPanel above the head), kept so 2D play mode can hide it.
+	GameObject _nameTag;
+
+	/// <summary>Hide seated players' name tags while the LOCAL player is seated in 2D (M16). The
+	/// tag is a WorldPanel, not a ModelRenderer, so the body-hide doesn't take it — from the
+	/// top-down camera it would otherwise float in the middle of the board over the pieces, with no
+	/// body under it. Runs for every avatar this client draws (local and proxy), so both seats at
+	/// your table clear; roaming players and 3D modes are untouched.</summary>
+	void UpdateNameTagVisibility()
+	{
+		if ( _nameTag == null ) return;
+		bool localNadir = ChessStation.Active != null
+			&& Gambit.Game.PlayerData.ClampPlayMode( Gambit.Game.PlayerData.Load()?.PlayMode ) == "2d";
+		bool show = !( localNadir && SeatedAt != null );
+		if ( _nameTag.Enabled != show )
+			_nameTag.Enabled = show;
 	}
 
 	protected override void OnUpdate()
 	{
 		UpdateSeatedAt();
+		UpdateNameTagVisibility();   // every avatar (local + proxy), before the proxy early-return
 
 		if ( IsProxy )
 		{

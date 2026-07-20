@@ -4,7 +4,7 @@
 // The flat-board play mode renders every piece as a top-down glyph sprite instead of a
 // lathed 3D body. ChessSetBuilder.BuildFlatPiece builds a single quad per (type, colour)
 // with its UVs baked to that piece's cell in the 6×2 colour atlas (chess_glyphs_2d.png,
-// set as the "Color" attribute), so ONE atlas and ONE material serve all 12 pieces.
+// set as the "GlyphAtlas" attribute), so ONE atlas and ONE material serve all 12 pieces.
 //
 // UNLIT and ALPHA-CLIPPED, deliberately:
 //   - Unlit — the atlas already carries fill AND a contrasting outline per colour (the
@@ -60,15 +60,27 @@ PS
 {
     #include "common/pixel.hlsl"
 
-    Texture2D Color < Attribute( "Color" ); >;   // the 6×2 filled+outlined glyph atlas
+    Texture2D GlyphAtlas < Attribute( "GlyphAtlas" ); >;   // the 6×2 filled+outlined glyph atlas
     SamplerState BilinearClamp < Filter( Bilinear ); AddressU( Clamp ); AddressV( Clamp ); >;
 
     float4 MainPs( PixelInput i ) : SV_Target0
     {
-        float4 c = Color.Sample( BilinearClamp, i.vTextureCoords.xy );
+        float4 c = GlyphAtlas.Sample( BilinearClamp, i.vTextureCoords.xy );
         // Alpha-clip: outside the glyph the atlas is fully transparent, so drop those
         // fragments and let the board square show through. No blend, no sort.
         if ( c.a < 0.5 ) discard;
-        return float4( c.rgb, 1.0 );   // unlit; the atlas is the final colour
+
+        // Go through the standard shading model (a Forward pass must — returning a bare
+        // float4 does not link, which rendered the error/pink material). Unlit is faked the
+        // usual way: zero albedo so lighting adds nothing, the atlas colour in Emission so
+        // the glyph reads as its baked fill+outline regardless of the room light.
+        Material m = Material::Init( i );
+        m.Albedo = float3( 0.0, 0.0, 0.0 );
+        m.Emission = c.rgb;
+        m.Opacity = 1.0;
+        m.Roughness = 1.0;
+        m.Metalness = 0.0;
+        m.AmbientOcclusion = 1.0;
+        return ShadingModelStandard::Shade( m );
     }
 }
