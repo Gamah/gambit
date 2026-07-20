@@ -977,6 +977,29 @@ public sealed class LobbyPlayer : Component
 		r.Set( "b_climbing", false );
 		r.Set( "b_swim", false );
 		r.Set( "duck", false );
+
+		// Re-assert the seated facing onto the body renderer whenever the animator is FROZEN
+		// (UseAnimatorControls off — a seated PROXY). This is the actual fix for "seated terries
+		// face random directions", and the M13 assumption it corrects is worth stating.
+		//
+		// M13 froze the proxy body (UseAnimatorControls = false) on the theory that a frozen
+		// renderer would INHERIT the parent GameObject's board-facing yaw (PlantOnSeat). It does
+		// not. PlayerController.OnRotateRenderBody — the only writer of renderer.WorldRotation —
+		// writes an ABSOLUTE WORLD rotation of FromYaw(EyeAngles.yaw), overwriting any inheritance;
+		// freezing merely stops it UPDATING, it doesn't reset the child's local rotation. So the
+		// body stays pinned at whatever world yaw it last held: the owner's EyeAngles, which are
+		// [Sync]'d to every proxy and — because the owner DISABLES its controller when it sits
+		// (BeginEngage) — are frozen at the ROAMING look direction from the instant E was pressed,
+		// not the board. It only ever looked right because you're usually facing the table when you
+		// sit; approach from an angle and the terry faces that angle instead. Nothing on the parent
+		// transform or the snapshot enters into it — this is live, on every already-joined client.
+		//
+		// So point the body at the board directly, from the seat geometry, every frame. Only while
+		// frozen: an OWNER at a chess seat also has its controller disabled, but its own reach view
+		// was tuned against that near-board eye yaw, so leave that path untouched.
+		if ( _controller is { UseAnimatorControls: false }
+			&& SeatedAt is { } s && SeatFacing( s.Station, s.Seat ) is { } face )
+			r.WorldRotation = face;
 	}
 
 	/// <summary>Stand the citizen back up. Pairs with <see cref="ApplySitPose"/>; the
@@ -2207,15 +2230,31 @@ public sealed class LobbyPlayer : Component
 			? station.SeatWorldPosition( seat )
 			: station.SeatSitWorldPosition( seat );
 
-		// Yaw at the board, level — a flat look, so the pitch of the line from the chair up
-		// to the board can't tip the whole body forward.
+		WorldPosition = seatPos;
+		if ( SeatFacing( station, seat ) is { } face )
+			WorldRotation = face;
+	}
+
+	/// <summary>The world rotation a body seated on <paramref name="seat"/> should face:
+	/// yawed level at the board, so the pitch of the line from the chair up to the board
+	/// can't tip the whole body forward. Null when the seat and board coincide (never in
+	/// practice — the guard is for a degenerate build).
+	///
+	/// <para>Shared by <see cref="PlantOnSeat"/> (which yaws the parent GameObject) and
+	/// <see cref="ApplySitPose"/> (which writes it straight onto the FROZEN body renderer,
+	/// because that renderer does NOT inherit the parent yaw — see ApplySitPose for why).
+	/// Deriving both from one place is what stops the two disagreeing.</para></summary>
+	static Rotation? SeatFacing( ChessStation station, ChessSeat seat )
+	{
+		var seatPos = ChessRing.Instance is { TerrySeated: false }
+			? station.SeatWorldPosition( seat )
+			: station.SeatSitWorldPosition( seat );
+
 		var boardFlat = station.WorldPosition;
 		boardFlat.z = seatPos.z;
 		var toBoard = boardFlat - seatPos;
 
-		WorldPosition = seatPos;
-		if ( toBoard.Length > 0.01f )
-			WorldRotation = Rotation.LookAt( toBoard, Vector3.Up );
+		return toBoard.Length > 0.01f ? Rotation.LookAt( toBoard, Vector3.Up ) : null;
 	}
 
 	/// <summary>Instant seat change (fallback when anchors aren't built): teleport the
