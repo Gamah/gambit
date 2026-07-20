@@ -13,7 +13,11 @@
 *@
 
 <root>
-	@if ( _station != null && ( _station.WhiteSteamId != 0 || _station.BlackSteamId != 0 ) )
+	@* Hidden while the local player is seated in 2D (M16): from the top-down camera this sign
+	   projects onto the board (the ⬜/⬛ render as big square blocks, the names sprawl across the
+	   pieces). You already have the seat names on the HUD there. *@
+	@if ( _station != null && ( _station.WhiteSteamId != 0 || _station.BlackSteamId != 0 )
+		&& !ChessStation.LocalNadir )
 	{
 		<div class="frame seats">
 			<div class="seat">⬜ @( _station.WhiteName ?? "—" )</div>
@@ -81,5 +85,5 @@
 
 	protected override int BuildHash() =>
 		System.HashCode.Combine( _station?.WhiteSteamId, _station?.WhiteName,
-			_station?.BlackSteamId, _station?.BlackName, StatusLine() );
+			_station?.BlackSteamId, _station?.BlackName, StatusLine(), ChessStation.LocalNadir );
 }

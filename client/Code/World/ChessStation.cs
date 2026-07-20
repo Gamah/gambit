@@ -61,6 +61,13 @@ public sealed class ChessStation : Component
 	public string SeatName( ChessSeat seat ) =>
 		seat == ChessSeat.White ? WhiteName : BlackName;
 
+	/// <summary>The local player is seated AND in 2D play mode, so the top-down (nadir) camera is
+	/// active (M16). Any floating world panel at table/head height — the occupancy sign, name tags,
+	/// the board number — then projects straight down onto the board and clutters it, so those panels
+	/// hide themselves on this condition. Client-global (Active + FlatMode are both client-local
+	/// facts); panels read it live so sitting/standing takes effect immediately.</summary>
+	public static bool LocalNadir => Active != null && ChessSetBuilder.FlatMode;
+
 	public GameObject SeatAnchor( ChessSeat seat ) =>
 		seat == ChessSeat.White ? WhiteAnchor : BlackAnchor;
 

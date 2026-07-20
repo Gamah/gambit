@@ -13,13 +13,18 @@
 *@
 
 <root>
-	<div class="tag">
-		<div class="steam">@SteamName()</div>
-		@if ( ShowGambitName() )
-		{
-			<div class="rota">@GambitLine()</div>
-		}
-	</div>
+	@* Hidden while the LOCAL player is seated in 2D (M16): a joined client's tag hovers at head
+	   height and, under the top-down camera, projects onto the board over the pieces. *@
+	@if ( !ChessStation.LocalNadir )
+	{
+		<div class="tag">
+			<div class="steam">@SteamName()</div>
+			@if ( ShowGambitName() )
+			{
+				<div class="rota">@GambitLine()</div>
+			}
+		</div>
+	}
 </root>
 
 <style>
@@ -71,5 +76,5 @@
 		Player?.GambitName ?? "";
 
 	protected override int BuildHash() =>
-		HashCode.Combine( SteamName(), Player?.GambitName );
+		HashCode.Combine( SteamName(), Player?.GambitName, ChessStation.LocalNadir );
 }
