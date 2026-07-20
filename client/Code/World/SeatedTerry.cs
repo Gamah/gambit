@@ -957,7 +957,7 @@ public sealed class SeatedTerry : Component
 	/// <summary>
 	/// <c>gambit_terry_net</c>'s per-station dump: the whole hand chain AS THIS MACHINE
 	/// sees it. Exists because "a joined client doesn't see any of the animation" is the
-	/// gambit_tv / gambit_music situation again — none of this chain is visible from
+	/// gambit_tv situation again — none of this chain is visible from
 	/// outside, and a driver that never fires looks identical to one that isn't wired up.
 	/// Run it on the machine whose view is wrong and read which link is dead.
 	/// </summary>

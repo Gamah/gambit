@@ -163,6 +163,78 @@ lands mid-board (the old SEATED-HANDS-REACH.md, recoverable at `origin/m14-terry
 has the proof). This attempt keeps everything M14 *proved* and removes the one assumption that
 killed it: **that the pelvis stays on the chair.**
 
+## Console commands (`gambit_terry_*`)
+
+The 35 `gambit_terry_*` console commands are the M14 hand-tuning harness — the
+edit-and-hotload lever set that drove the five in-editor rounds. They are **dev tools, not
+player-facing**: every value knob mutates a session-local static on `SeatedHandSpikes` (the
+shipped values live on `TerryTuning` in `lobby.scene`, which RULES — see the scene rule up
+top), and every diagnostic just dumps or drives the local seated hand. They persist for the
+session only and carry no network authority (mutations re-apply on local + proxies, so at
+worst a client reshapes how seated arms look *on its own screen*). Kept in-tree because
+"remaining work is TUNING"; gate or drop them (`Application.IsEditor`, the repo's runtime
+idiom — there is no `#if DEBUG` precedent) before a public ship. Sit down first — they drive
+YOUR seated hand.
+
+**Master switches** (the kill chain is `ChessRing.TerrySeated` → `_hands` → `_rise`):
+
+| Command | Effect |
+|---|---|
+| `gambit_terry_hands` | toggle the seated hands on/off (`HandsOn`) — off is the shipped bodies-only world |
+| `gambit_terry_rise` | toggle the half-rise (default ON); off = seated lean only, reach ceiling ~rank 2 |
+| `gambit_terry_natural` | toggle natural lean (default ON); off falls back to the isolated A/sphere levers |
+| `gambit_terry_servo` | toggle the closed-loop correction for the ~5u post-override solver warp |
+| `gambit_terry_brace` | toggle the off-hand table brace |
+| `gambit_terry_clamp` | out-of-reach mode: OLD M13 sphere clamp ⇄ Approach-A idle band (compare only) |
+
+**Rise / lean value knobs:**
+
+| Command | Value |
+|---|---|
+| `gambit_terry_maxrise <u>` | max pelvis rise (harness plans ~24 for the far rank) |
+| `gambit_terry_step <u>` | max foot step (0 = feet welded, the rise shrinks instead) |
+| `gambit_terry_risechase <k>` | rise chase rate /s (lower = statelier) |
+| `gambit_terry_grace <u>` | slack left to the slide before the body rises (bigger = lazier) |
+| `gambit_terry_lift <k>` | Z rise per unit forward (0 = horizontal glide) |
+| `gambit_terry_maxlean <u>` | max natural-lean shoulder travel (~15 = a real lean; higher looks like a dive) |
+| `gambit_terry_natlbone <bone>` | natural-lean bone (`spine_2` default; lower spine hinges from the waist) |
+| `gambit_terry_leg <u>` | override the pelvis→ankle leg budget (0 = live chain measurement) |
+| `gambit_terry_margin <u>` | reach margin inside the measured arm (bigger = bent-elbow asks the solver lands) |
+| `gambit_terry_band <x>` | Approach-A reach band \|x\| ≥ (station-local) |
+| `gambit_terry_pitch <deg>` | torso pitch cap over the table (0 = uncapped glide) |
+| `gambit_terry_yaw <deg>` | torso yaw cap toward the piece |
+
+**Hand / wrist posture:**
+
+| Command | Value |
+|---|---|
+| `gambit_terry_wristdrop <deg>` | grasp curl past the forearm bearing (capped at `ring.HandPitch`) |
+| `gambit_terry_roll <deg>` | hand roll — swings the elbow out of the torso (the t-rex fix); 0 = old vertical-plane arm |
+| `gambit_terry_grasp <u>` | wrist clearance above the moved piece's own top (negative sinks into it) |
+
+**Comparison spikes** (the declined/alternative approaches, kept to re-measure):
+
+| Command | Value |
+|---|---|
+| `gambit_terry_lean <u>` | Approach B: manual torso lean on `LeanBone` each frame |
+| `gambit_terry_leanbone <bone>` | Approach B lean bone (`spine_2` torso vs `arm_upper_R` IK-root test) |
+| `gambit_terry_armscale <k>` | Approach C: best-effort bone-scale on the arm (no runtime scale API — measures if IK reads it) |
+| `gambit_terry_sit <1-3>` | sit pose (1 = sitting_01 shipped; 2 = does it lean the shoulders forward?) |
+
+**Diagnostics & harness drivers** (dump or auto-drive; no persistent knob):
+
+| Command | What it prints / does |
+|---|---|
+| `gambit_terry` | the seated-hand chain as this machine sees it: kill switch, camera, plant, chair, hands, spike state |
+| `gambit_terry_net` | the same chain from the NETWORK angle — refs/game/avatar/body per `SeatedTerry`; a spectator needs `mirroring=True` |
+| `gambit_terry_bones` | list the citizen's real bone names (seated → station-local numbers) |
+| `gambit_terry_rise_dbg` | arm a one-shot full-pipeline dump (inputs → plan → applied → bones) on the next far reach |
+| `gambit_terry_probe` | sweep all 64 squares (~40s, forces hands ON) — which squares the arm actually lands |
+| `gambit_terry_scholars` | play the Scholar's Mate with Terry's hand (e2e4 · f1c4 · d1h5 · h5xf7) to tune placement live |
+| `gambit_terry_doctor` | ~6s of automated reach trials at the far rank → one verdict table, applies the winner |
+| `gambit_terry_sweep` | ~7s running every quantitative spike (baseline/sit2/lean/armscale) → one verdict table |
+| `gambit_terry_spikes` | the playbook: live lever state + which lever to pull for which reading |
+
 ## The mechanism, in one paragraph
 
 When a square is past even the leaned arm, the terry **half-rises**: the pelvis bone is

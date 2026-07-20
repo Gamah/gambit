@@ -542,7 +542,7 @@ public sealed class ChessGame
 	/// <summary>Full PGN (headers + SAN movetext + result) for POST /api/import.</summary>
 	public string Pgn => _board.ToPgn();
 
-	// ── Perft (correctness gate — see PerftCommand) ──
+	// ── Perft (correctness gate — CLAUDE.md D2; run via the dotnet harness) ──
 
 	/// <summary>Leaf-node count of the legal move tree at the given depth.</summary>
 	public long Perft( int depth )

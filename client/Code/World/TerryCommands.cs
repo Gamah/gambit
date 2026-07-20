@@ -5,8 +5,8 @@ using Sandbox;
 namespace Gambit.World;
 
 /// <summary>
-/// Why is the seated terry doing that? (M13.) Same rationale as <c>gambit_tv</c> and
-/// <c>gambit_music</c>: a feature that never fires looks exactly like one that isn't wired
+/// Why is the seated terry doing that? (M13.) Same rationale as <c>gambit_tv</c>:
+/// a feature that never fires looks exactly like one that isn't wired
 /// up, and NONE of this chain is visible from outside — which avatar resolved, what its
 /// seat thinks, what crossed the wire, what the state machine made of it.
 ///
@@ -95,8 +95,8 @@ public static class TerryCommands
 		Log.Info( "[Gambit] scholars ON — playing e2e4 · f1c4 · d1h5 · h5xf7. Run gambit_terry_scholars again to stop." );
 	}
 
-	/// <summary>Why doesn't THIS machine see the hand animation? (The gambit_tv /
-	/// gambit_music pattern: dump the whole chain, because a driver that never fires looks
+	/// <summary>Why doesn't THIS machine see the hand animation? (The gambit_tv
+	/// pattern: dump the whole chain, because a driver that never fires looks
 	/// identical to one that isn't wired up.) Run it on the machine whose view is wrong —
 	/// usually a JOINED client — while a game is on.</summary>
 	[ConCmd( "gambit_terry_net" )]

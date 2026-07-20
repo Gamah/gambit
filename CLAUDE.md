@@ -542,8 +542,8 @@ Verify by careful review + grep; the user tests in their editor.
   LichessTable.cs`, the client's copy of lichess's speed floors.
 
 **Sandbox-free C# is genuinely testable here**, and worth reaching for: `dotnet` (10.x) is
-installed, and everything under `Code/Chess/` except `PerftCommand.cs` — plus
-`Code/Game/TimeControl.cs` — has no engine dependency. A scratch csproj that `<Compile
+installed, and everything under `Code/Chess/` — plus `Code/Game/TimeControl.cs` — has no
+engine dependency. A scratch csproj that `<Compile
 Include>`s those files runs real games, real PGN, real perft. Two settings matter:
 `<TargetFramework>net10.0` (net8 builds but won't launch — only the 10.x runtime is here)
 and `<ImplicitUsings>enable`, because the vendored library leans on s&box's global usings
@@ -729,7 +729,9 @@ have been run here at all.
   `Fen`/`LastMoveUci`/`MoveCount` between moves so per-frame polling is free.
   `TryFromPgnAtPly(pgn, ply)` / `TryFromPgn(pgn)` reconstruct a position from movetext.
   `SetMoveComment(ply, text)` / `ClkField(seconds)` write the clock annotations.
-- `gambit_perft [depth]` re-proves the rules in-sandbox — run it before trusting a gate.
+- Re-prove the rules before trusting a gate via the dotnet harness or `chess_js_perft.mjs`
+  (`ChessGame.Perft` is still there; only the in-sandbox `gambit_perft` console command was
+  dropped for ship).
 
 ### PGN clock annotations (`%clk`)
 
@@ -821,7 +823,6 @@ must read the lichess source, not `ctrl`.
   winner; known limitation.
 
 ### Dev console commands
-`gambit_perft [depth]` — re-prove the chess rules in-sandbox.
 `gambit_gamchess_ping` — is gamchess up?
 `gambit_gamchess_signin` — mint an FP token and prove the auth round-trip.
 `gambit_gamchess_games` — list your archived games.
@@ -832,12 +833,15 @@ the channel, what the wall thinks it's showing, and gamchess's raw state. Exists
 "nothing is showing" was twice diagnosed by guesswork and once wrongly — none of the chain
 is visible from outside, and a feature that never fires looks exactly like one that isn't
 wired up.
-`gambit_music` — where does every music component live, and on which GameObject? One line
-per ScreenPanel / SkafinityPlayer / SkafinityMusicPanel / MusicBoardScreen with the GO's
-name, NetworkMode, flags and the panel's Enabled/IsOpen. Run it on a joined client: a music
-component on anything but the `LocalMusic` (Never, NotSaved) GO means that machine is
-running the pre-#12-fix scene or a stale build — the question three screenshot diagnoses
-couldn't answer.
+The 35 `gambit_terry_*` commands are the M14 hand-tuning harness — **dev tools, not
+player-facing** (session-local knobs on `SeatedHandSpikes`; the shipped values live on
+`TerryTuning` in `lobby.scene`). Full reference table in **`TERRY-HALFRISE.md`**; gate or drop
+them before a public ship.
+
+**Dropped for public ship** (recover from git history if needed): `gambit_perft` —
+the in-sandbox perft gate is gone; re-prove the rules via the dotnet harness or
+`chess_js_perft.mjs` instead (see "Three things DO run here"). `gambit_music` — the issue-#12
+music-topology dump; recover from git if that leak resurfaces.
 
 ---
 
