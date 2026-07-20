@@ -353,6 +353,26 @@ public static class SeatedHandSpikes
 			+ "Negate if the elbow goes the WRONG way (into the body); 0 = the old vertical-plane arm." );
 	}
 
+	/// <summary>Wrist clearance above the moved PIECE'S OWN TOP while gesturing — THE knob for
+	/// "where the hand ends up relative to the piece it is moving". The wrist target is
+	/// <c>piece.bounds.top + GraspClearance + ChessRing.HandLift</c>, so raising this floats the
+	/// hand off the piece and lowering it sinks the wrist toward (or into) the piece.
+	///
+	/// <para>Was a <c>const 1.5</c> on <see cref="LobbyPlayer"/> — promoted to a live static so
+	/// TerryTuning can drive it from the inspector and <c>gambit_terry_scholars</c> can dial the
+	/// placement without a recompile. Same footing as <see cref="WristDrop"/>/<see cref="HandRoll"/>:
+	/// a runtime-only value the scene surface pushes into.</para></summary>
+	public static float GraspClearance = 1.5f;
+
+	[ConCmd( "gambit_terry_grasp" )]
+	public static void SetGraspClearance( float u )
+	{
+		GraspClearance = u;
+		Log.Info( $"[Gambit] grasp clearance = {GraspClearance}u above the moved piece's top "
+			+ "(wrist rides piece-top + this + ring.HandLift). Higher = hand floats above the piece; "
+			+ "lower/negative = wrist sinks toward it. Watch it live with gambit_terry_scholars." );
+	}
+
 	[ConCmd( "gambit_terry_leg" )]
 	public static void SetLegReach( float u )
 	{

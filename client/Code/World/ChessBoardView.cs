@@ -202,6 +202,18 @@ public sealed class ChessBoardView : Component
 		return go.IsValid() ? go : null;
 	}
 
+	/// <summary>The piece GameObject currently rendered on <paramref name="square"/> (rank*8+file),
+	/// or null. DEBUG-only seam for <c>gambit_terry_scholars</c>, which drives a fake gesture demo
+	/// on an idle board: it needs the real piece meshes so the hand rides a genuine piece (the
+	/// bounds-top grasp path), and this hands them over without exposing the internal array.
+	/// The demo tracks and restores positions itself — this view stays FEN-authoritative.</summary>
+	public GameObject PieceAt( int square )
+	{
+		if ( square < 0 || square >= 64 ) return null;
+		var go = _pieces[square];
+		return go.IsValid() ? go : null;
+	}
+
 	// ── Captured pieces ──
 	//
 	// Each player's losses sit in a tray on their own side of the table. Two rules

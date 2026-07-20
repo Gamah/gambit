@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Gambit.Chess;
 using Gambit.Game;
 using Sandbox;
@@ -559,9 +560,216 @@ public sealed class SeatedTerry : Component
 		return false;
 	}
 
+	// ─────────────────────────────────────────────────────────────────────────────
+	// SCHOLAR'S MATE DEMO — gambit_terry_scholars (M14 tuning aid).
+	//
+	// Drive THIS seat's own hand through White's four mating moves (e2e4 · f1c4 · d1h5 ·
+	// h5xf7) on an idle board, then snap the board back a few seconds after the mate. Unlike
+	// a real game this ignores turns, colours and legality — the point is to WATCH the hand
+	// land relative to the moved piece, and to run the same four reaches from EITHER seat
+	// (the Black seat is the hard reach). It reuses the shipping gesture machine (TerryPose)
+	// and rides a REAL piece each move (the bounds-top grasp path the placement knobs tune),
+	// so what you see is exactly what a real move does — only the trigger is fake.
+	//
+	// The board view is FEN-authoritative and dormant on an idle board, so we borrow its
+	// piece meshes (PieceAt), track the moves in our OWN square map, and restore every piece
+	// and un-hide every victim on the way out. Rip out with the rest of the M14 spikes.
+	// ─────────────────────────────────────────────────────────────────────────────
+
+	/// <summary>Toggled by <c>gambit_terry_scholars</c>. Local-seated station only.</summary>
+	public static bool Scholars;
+
+	static readonly (string Uci, bool Capture)[] ScholarsMoves =
+	{
+		("e2e4", false), ("f1c4", false), ("d1h5", false), ("h5f7", true),
+	};
+	const float ScholarsPause = 0.6f;  // rest between moves so each reads as its own gesture
+	const float ScholarsHold = 2.5f;   // hold the mate before the board resets ("a few seconds after")
+
+	bool _scActive;
+	int _scMove;                       // moves completed / index into ScholarsMoves
+	HandPose _scPose;
+	GameObject[] _scBoard;             // our own square→piece map (the view's is FEN-only)
+	readonly Dictionary<GameObject, Vector3> _scHome = new();   // original local pos of every touched piece
+	readonly List<GameObject> _scHidden = new();                // victims disabled during the demo
+	GameObject _scPiece;               // the piece the current move carries
+	Vector3 _scFrom, _scTo;            // its local endpoints
+	bool _scMoveStarted;               // the current move's gesture has begun animating
+	float _scPauseHeld, _scHoldHeld;
+	bool _scSavedHands;
+
+	void ScholarsTick( ChessStation station )
+	{
+		var avatar = LobbyPlayer.Local;
+		var seat = ChessStation.ActiveSeat;
+		var ring = ChessRing.Instance;
+		if ( ring == null || !avatar.IsValid() ) return;
+
+		_view ??= station.GameObject.GetComponent<ChessBoardView>();
+		if ( _view == null ) { StopScholars( "no board view on this station" ); return; }
+
+		if ( !_scActive )
+		{
+			// e2 pawn (index 12) present = the view has built its piece set. Wait a frame if not.
+			if ( _view.PieceAt( 12 ) == null ) return;
+
+			_scActive = true;
+			_scMove = 0;
+			_scPose = HandPose.None;
+			_scMoveStarted = false;
+			_scPauseHeld = 0f;
+			_scHoldHeld = 0f;
+			_scHome.Clear();
+			_scHidden.Clear();
+			_scBoard = new GameObject[64];
+			for ( int i = 0; i < 64; i++ ) _scBoard[i] = _view.PieceAt( i );
+
+			_scSavedHands = SeatedHandSpikes.HandsOn;
+			SeatedHandSpikes.HandsOn = true; // the demo drives the hand; the IK must be live
+
+			LogScholarsKnobs( ring );
+			BeginScholarsMove( ring );
+		}
+
+		// All four moves played: hold the mate, hand back on the table, then snap the board back.
+		if ( _scMove >= ScholarsMoves.Length )
+		{
+			_scHoldHeld += Time.Delta;
+			_scPose = TerryPose.Advance( _scPose, new HandInput( _scMove, null, false, false, true ), Time.Delta );
+			avatar.ApplyHandPose( station, seat, _scPose );
+			if ( _scHoldHeld >= ScholarsHold )
+				StopScholars( "done — board reset" );
+			return;
+		}
+
+		// Ply = move index + 1 fires a fresh Timeline the frame the index advances; SeatMoved is
+		// always true so the gesture plays on THIS seat whatever colour legally moves — that is
+		// the whole point of running it from the Black seat.
+		var (uci, capture) = ScholarsMoves[_scMove];
+		_scPose = TerryPose.Advance( _scPose,
+			new HandInput( _scMove + 1, uci, SeatMoved: true, Capture: capture, GameLive: true ), Time.Delta );
+
+		if ( _scPose.Animating )
+		{
+			_scMoveStarted = true;
+			// Slide the real piece along the gesture's own Travel and let the wrist ride it — the
+			// piece-child grasp path, which is exactly what the placement knobs tune.
+			if ( _scPiece.IsValid() )
+				_scPiece.LocalPosition = Vector3.Lerp( _scFrom, _scTo, _scPose.Travel );
+			avatar.ApplyHandPose( station, seat, _scPose, _scPiece );
+			return;
+		}
+
+		// Gesture finished (or not yet started this move): hand eases back, then — once it HAS
+		// run — settle the piece exactly, pause a beat, and advance to the next move.
+		avatar.ApplyHandPose( station, seat, _scPose );
+		if ( !_scMoveStarted ) return;
+
+		if ( _scPiece.IsValid() ) _scPiece.LocalPosition = _scTo;
+
+		_scPauseHeld += Time.Delta;
+		if ( _scPauseHeld < ScholarsPause ) return;
+
+		_scMove++;
+		_scPauseHeld = 0f;
+		_scMoveStarted = false;
+		if ( _scMove < ScholarsMoves.Length )
+			BeginScholarsMove( ring );
+	}
+
+	/// <summary>Set up the piece for <c>ScholarsMoves[_scMove]</c>: find it in our own map, record
+	/// its home for the reset, hide any victim, and re-point the map — the view's array is never
+	/// touched.</summary>
+	void BeginScholarsMove( ChessRing ring )
+	{
+		var (uci, capture) = ScholarsMoves[_scMove];
+		if ( !TerryPose.TryParseUci( uci, out int from, out int to ) ) { _scPiece = null; return; }
+
+		_scPiece = _scBoard[from];
+		if ( !_scPiece.IsValid() )
+		{
+			Log.Warning( $"[Gambit] scholars: no piece on {uci[..2]} to move — the board isn't at the start position." );
+			_scPiece = null;
+			return;
+		}
+
+		if ( !_scHome.ContainsKey( _scPiece ) ) _scHome[_scPiece] = _scPiece.LocalPosition;
+		_scFrom = _scPiece.LocalPosition;
+		_scTo = ring.SquareLocalPosition( to & 7, to >> 3 );
+
+		// A capture: hide the victim so the mover doesn't land on top of it (restored on reset).
+		if ( capture && _scBoard[to].IsValid() )
+		{
+			var victim = _scBoard[to];
+			if ( !_scHome.ContainsKey( victim ) ) _scHome[victim] = victim.LocalPosition;
+			victim.Enabled = false;
+			_scHidden.Add( victim );
+		}
+
+		_scBoard[to] = _scPiece;
+		_scBoard[from] = null;
+	}
+
+	/// <summary>End the demo: put every moved piece back, un-hide every victim, release the hand,
+	/// and restore the hands switch. Safe to call from any exit — toggle-off, standing up, or the
+	/// natural finish — because the idle view will not do any of it for us.</summary>
+	void StopScholars( string why )
+	{
+		foreach ( var kv in _scHome )
+			if ( kv.Key.IsValid() ) kv.Key.LocalPosition = kv.Value;
+		foreach ( var go in _scHidden )
+			if ( go.IsValid() ) go.Enabled = true;
+		_scHome.Clear();
+		_scHidden.Clear();
+		_scBoard = null;
+		_scPiece = null;
+
+		SeatedHandSpikes.HandsOn = _scSavedHands;
+		LobbyPlayer.Local?.ClearHandPose();
+
+		Scholars = false;
+		_scActive = false;
+		if ( why != null ) Log.Info( $"[Gambit] scholars: {why}." );
+	}
+
+	/// <summary>The whole point of the command: name every knob that decides where the hand ends
+	/// up relative to the moved piece, its live value, and WHERE to edit it. Printed once at the
+	/// start so it's on screen while the demo plays and you drag.</summary>
+	static void LogScholarsKnobs( ChessRing ring )
+	{
+		Log.Info( "── gambit_terry_scholars: Terry plays the Scholar's Mate (his hand only) ──" );
+		Log.Info( "   e2e4 · f1c4 · d1h5 · h5xf7 on THIS seat's hand — real pieces, real gesture, no" );
+		Log.Info( "   turns/legality. Run it from the BLACK seat to test the far reach. Board resets after." );
+		Log.Info( "── where the hand ends up RELATIVE TO THE MOVED PIECE ──" );
+		Log.Info( "   wrist target while carrying = piece-bounds-TOP + GraspClearance + HandLift," );
+		Log.Info( "   pulled back by HandGripOffset, angled by WristDrop/HandRoll. Tune these:" );
+		Log.Info( "   EDITOR SLIDERS — TerryTuning GO in lobby.scene (drag live while this runs):" );
+		Log.Info( $"     GraspClearance = {SeatedHandSpikes.GraspClearance:0.##}u   ← THE vertical offset above the piece's top" );
+		Log.Info( $"     WristDrop      = {SeatedHandSpikes.WristDrop:0.#}°    grasp curl past the forearm bearing (cap {ring.HandPitch:0.#}°)" );
+		Log.Info( $"     HandRoll       = {SeatedHandSpikes.HandRoll:0.#}°    elbow-out barrel twist (t-rex fix)" );
+		Log.Info( $"     GestureSpeed   = {TerryPose.SpeedScale:0.##}×    whole-gesture tempo" );
+		Log.Info( "   CODE DEFAULTS — ChessRing is runtime-built, so edit + hotload (not the inspector):" );
+		Log.Info( $"     ring.HandLift       = {ring.HandLift:0.##}u   extra lift added on top of GraspClearance" );
+		Log.Info( $"     ring.HandGripOffset = {ring.HandGripOffset}   wrist pull-back so the GRIP, not the palm, lands on the piece" );
+		Log.Info( $"     ring.HandPitch      = {ring.HandPitch:0.#}°   nose-down cap WristDrop rides under" );
+		Log.Info( "   NOTE: GraspHeight/HoverHeight/LiftHeight are INERT for a real move (grasp height is" );
+		Log.Info( "   piece-relative, not board-surface) — don't chase them here. Consoles: gambit_terry_grasp" );
+		Log.Info( "   <u> · gambit_terry_wristdrop <deg> · gambit_terry_roll <deg>." );
+	}
+
 	protected override void OnUpdate()
 	{
 		if ( Station is not { } station ) return;
+
+		// SCHOLAR'S MATE DEMO (gambit_terry_scholars): scripted hand demo on an idle board. Same
+		// local-seated gate as the others; StopScholars restores the board on any exit.
+		if ( Scholars && ChessStation.Active == station && LobbyPlayer.Local.IsValid() )
+		{
+			ScholarsTick( station );
+			return;
+		}
+		if ( _scActive )
+			StopScholars( "stopped" );
 
 		// THE DOCTOR (gambit_terry_doctor): the one-command knob turner. Same gates as the sweep.
 		if ( Doctor && ChessStation.Active == station && LobbyPlayer.Local.IsValid() )

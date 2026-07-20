@@ -1,4 +1,5 @@
 using Gambit.Chess;
+using Gambit.Game;
 using Sandbox;
 
 namespace Gambit.World;
@@ -39,6 +40,59 @@ public static class TerryCommands
 				+ "With Approach A (default) far squares now IDLE rather than clamp — that is the new behaviour to watch, "
 				+ "not an all-ok grid. gambit_terry_clamp flips to the old sphere clamp to compare."
 			: "[Gambit] probe OFF." );
+	}
+
+	/// <summary>DEBUG (M14 tuning aid): Terry plays the Scholar's Mate — his four White moves only
+	/// (e2e4 · f1c4 · d1h5 · h5xf7), on YOUR seated hand, on an idle board. Ignores turns, colours
+	/// and legality on purpose: it exists to watch where the hand lands relative to the piece it
+	/// moves, and to run those four reaches from EITHER seat (the Black seat is the hard one). A
+	/// few seconds after the mate the board snaps back to the start. Toggles — run again to stop
+	/// early. Prints the placement knobs (and where to edit each) at the start.</summary>
+	[ConCmd( "gambit_terry_scholars" )]
+	public static void TerryScholars()
+	{
+		// Turning it OFF is always allowed — let the tick's cleanup restore the board.
+		if ( SeatedTerry.Scholars )
+		{
+			SeatedTerry.Scholars = false;
+			Log.Info( "[Gambit] scholars OFF — the board will snap back on the next frame." );
+			return;
+		}
+
+		var station = ChessStation.Active;
+		if ( station == null )
+		{
+			Log.Warning( "[Gambit] scholars: sit down first — it drives YOUR seated hand, and nobody is seated." );
+			return;
+		}
+
+		// Seated ALONE: the demo shoves real pieces around a FAKE game, so a real opponent sitting
+		// opposite would watch their board get scrambled. Refuse rather than surprise them.
+		var other = ChessStation.ActiveSeat == ChessSeat.White ? ChessSeat.Black : ChessSeat.White;
+		if ( station.SeatSteamId( other ) != 0 )
+		{
+			Log.Warning( "[Gambit] scholars: the other seat is taken — this scrambles the board for debugging, "
+				+ "so run it seated ALONE." );
+			return;
+		}
+
+		// And on an IDLE board — a live game owns the pieces (they render off its FEN), and the
+		// demo moving them by hand would fight that.
+		if ( LocalGameController.For( station ) is { HasGame: true } )
+		{
+			Log.Warning( "[Gambit] scholars: a game is in progress at this table — finish or leave it first. "
+				+ "The demo only runs on an idle board." );
+			return;
+		}
+
+		// TerrySeated is the master kill switch — with it off, ApplyHandPose early-returns and the
+		// whole demo is an invisible no-op. Warn rather than let it look broken.
+		if ( ChessRing.Instance is { TerrySeated: false } )
+			Log.Warning( "[Gambit] scholars: heads up — ChessRing.TerrySeated is OFF, so no hand will draw. "
+				+ "Turn it on (hotload) to see anything." );
+
+		SeatedTerry.Scholars = true;
+		Log.Info( "[Gambit] scholars ON — playing e2e4 · f1c4 · d1h5 · h5xf7. Run gambit_terry_scholars again to stop." );
 	}
 
 	/// <summary>Why doesn't THIS machine see the hand animation? (The gambit_tv /

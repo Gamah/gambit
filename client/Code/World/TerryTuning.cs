@@ -47,6 +47,12 @@ public sealed class TerryTuning : Component
 	[Property, Group( "Hand" ), Range( 4f, 16f )] public float GraspHeight { get; set; } = 10f;
 	[Property, Group( "Hand" ), Range( 8f, 24f )] public float LiftHeight { get; set; } = 14f;
 
+	// Grasp clearance is measured off the MOVED PIECE'S OWN TOP, not the board surface — the one
+	// knob for "where the hand ends up relative to the piece it is moving" (watch it with
+	// gambit_terry_scholars). Unlike the three above (inert on the piece-child path today), this
+	// one is live for every real move.
+	[Property, Group( "Hand" ), Range( -4f, 10f )] public float GraspClearance { get; set; } = 1.5f;
+
 	// ── Carry ──
 	[Property, Group( "Carry" ), Range( 0f, 16f )] public float CarryHang { get; set; } = 8f;
 	[Property, Group( "Carry" ), Range( 2f, 16f )] public float GrabRadius { get; set; } = 9f;
@@ -62,7 +68,7 @@ public sealed class TerryTuning : Component
 	// levers and the diagnostics' save/force/restore cycles stay authoritative in between.
 	float _maxLean, _riseGrace, _reachMargin, _wristDrop, _handRoll, _maxRise, _maxStep, _riseLift,
 		_riseChase, _yaw, _pitch, _hover, _grasp, _lift, _hang, _grab, _hold, _speed, _handChase,
-		_hoverChase;
+		_hoverChase, _graspClearance;
 	bool _hands, _rise, _brace, _servo;
 
 	protected override void OnEnabled() => Push( all: true );
@@ -88,6 +94,7 @@ public sealed class TerryTuning : Component
 		if ( all || HoverHeight != _hover ) TerryPose.HoverHeight = _hover = HoverHeight;
 		if ( all || GraspHeight != _grasp ) TerryPose.GraspHeight = _grasp = GraspHeight;
 		if ( all || LiftHeight != _lift ) TerryPose.LiftHeight = _lift = LiftHeight;
+		if ( all || GraspClearance != _graspClearance ) SeatedHandSpikes.GraspClearance = _graspClearance = GraspClearance;
 		if ( all || CarryHang != _hang ) SeatedHandSpikes.CarryHang = _hang = CarryHang;
 		if ( all || GrabRadius != _grab ) SeatedHandSpikes.GrabRadius = _grab = GrabRadius;
 		if ( all || HandHoldSeconds != _hold ) SeatedHandSpikes.HandHoldSeconds = _hold = HandHoldSeconds;

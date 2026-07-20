@@ -1079,7 +1079,7 @@ public sealed class LobbyPlayer : Component
 				var p = gesturePiece.WorldPosition;
 				float topZ = MathF.Max( gesturePiece.GetBounds().Maxs.z, p.z );
 				on = station.WorldTransform.PointToLocal( new Vector3( p.x, p.y, topZ ) )
-					+ Vector3.Up * ( GraspClearance + ring.HandLift );
+					+ Vector3.Up * ( SeatedHandSpikes.GraspClearance + ring.HandLift );
 			}
 			else
 			{
@@ -1820,9 +1820,10 @@ public sealed class LobbyPlayer : Component
 	/// the lingering return read as loitering over the board.</summary>
 	const float ReturnChaseRate = 9f;
 
-	/// <summary>Wrist clearance above the performed piece's bounds TOP while gesturing —
-	/// the grasp height is piece-relative now, never a board-surface constant.</summary>
-	const float GraspClearance = 1.5f;
+	// Wrist clearance above the performed piece's bounds TOP while gesturing now lives on
+	// SeatedHandSpikes.GraspClearance — a live TerryTuning slider, not a const here — so the
+	// piece-relative grasp height can be dialled in the editor (and watched via
+	// gambit_terry_scholars) without a recompile.
 
 	void ReleaseRiseIk( SkinnedModelRenderer r )
 	{
