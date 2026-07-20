@@ -16,14 +16,14 @@ DejaVu Sans font — a fresh raster, so the atlas is CC0-clean (no lichess/Cburn
 piece art, matching the project's all-CC0 constraint). Re-run to regenerate:
 
     python3 scripts/gen_glyph_atlas.py          # floor pop atlas (alpha silhouettes)
-    python3 scripts/gen_glyph_atlas.py --2d      # M16 2D play-mode atlas (fill + outline, RGBA)
+    python3 scripts/gen_glyph_atlas.py --2d      # M16 2D play-mode piece sprites (12 PNGs)
 
-The `--2d` branch writes a SECOND atlas, `Assets/textures/chess_glyphs_2d.png`, for the
-M16 flat-board play mode. It is a full-colour 6×2 grid — row 0 white pieces, row 1 black,
-columns K Q R B N P — with each glyph rendered as a filled sprite with a contrasting
-outline (per-colour, so both read on both the cream and brown squares). Unlike the floor
-atlas above (an alpha-only silhouette the shader tints), the flat quad samples this
-directly, so the colour has to be baked in.
+The `--2d` branch writes TWELVE per-piece PNGs, `Assets/textures/chess2d_{w,b}_{type}.png`,
+for the M16 flat-board play mode. Each is a full-colour sprite — a filled glyph with a
+contrasting per-colour outline (so both read on both the cream and brown squares) — drawn
+by the engine's built-in SpriteRenderer, which takes one texture per sprite (not an atlas).
+Unlike the floor atlas above (an alpha-only silhouette the shader tints), these carry their
+final colour, so the fill+outline are baked in.
 
 Requires Pillow (`pip install pillow`).
 """
@@ -45,15 +45,19 @@ OUT = os.path.join(
     "client", "Assets", "textures", "chess_glyphs.png",
 )
 
-# ── M16 2D play-mode atlas ──
-# A 6×2 grid: columns are K Q R B N P (index 0..5), row 0 = white, row 1 = black.
-# BuildFlatPiece maps ChessPieceType → column and picks the row by colour, then UVs the
-# quad to (col/6, row/2)…((col+1)/6, (row+1)/2). Full RGBA (fill + outline baked in).
-CELL2 = 256                     # px per cell — bigger than the floor atlas; it carries real colour
-GLYPHS_2D = "♚♛♜♝♞♟"  # same solid glyphs, column order K Q R B N P
-OUT_2D = os.path.join(
+# ── M16 2D play-mode piece sprites ──
+# TWELVE individual RGBA PNGs (not an atlas): the flat play mode renders each piece with the
+# engine's built-in SpriteRenderer, which takes ONE texture per sprite (Sprite.FromTexture),
+# so per-piece files are the natural fit — no atlas UV math, and crucially no custom shader
+# (SpriteRenderer does unlit + alpha-cutoff itself). Files: chess2d_{w|b}_{type}.png in
+# Assets/textures/, where type is the lower-cased ChessPieceType. Each is a filled glyph with
+# a contrasting per-colour outline so both colours read on both the cream and brown squares.
+CELL2 = 256                     # px per sprite — carries real fill+outline colour
+GLYPHS_2D = "♚♛♜♝♞♟"  # solid glyphs, in the order below
+PIECE_NAMES = ["king", "queen", "rook", "bishop", "knight", "pawn"]  # matches GLYPHS_2D order
+TEX_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "client", "Assets", "textures", "chess_glyphs_2d.png",
+    "client", "Assets", "textures",
 )
 # fill / outline per colour. A dark outline on the near-white piece and a light outline on
 # the near-black piece is what lets each colour read against BOTH square colours.
@@ -89,28 +93,30 @@ def render():
 
 
 def render_2d():
-    """The M16 flat-board atlas: 6 columns (K Q R B N P) × 2 rows (white, black),
-    each a filled glyph with a contrasting outline, full RGBA."""
+    """The M16 flat-board sprites: 12 individual RGBA PNGs (white+black × K Q R B N P),
+    each a filled glyph with a contrasting outline, centred in a CELL2×CELL2 image."""
     # Leave room for the stroke inside the cell so a fat outline never clips the edge.
     stroke = int(CELL2 * 0.06)
     font = find_font(int(CELL2 * 0.78))
-    cols = len(GLYPHS_2D)
-    atlas = Image.new("RGBA", (CELL2 * cols, CELL2 * 2), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(atlas)
+    os.makedirs(TEX_DIR, exist_ok=True)
 
-    for row, (fill, edge) in enumerate(((WHITE_FILL, WHITE_STROKE), (BLACK_FILL, BLACK_STROKE))):
-        for col, ch in enumerate(GLYPHS_2D):
+    count = 0
+    for color, (fill, edge) in (("w", (WHITE_FILL, WHITE_STROKE)), ("b", (BLACK_FILL, BLACK_STROKE))):
+        for ch, name in zip(GLYPHS_2D, PIECE_NAMES):
+            img = Image.new("RGBA", (CELL2, CELL2), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
             # Bounding box WITH the stroke, so centring accounts for the outline's spread.
             box = draw.textbbox((0, 0), ch, font=font, stroke_width=stroke)
             gw, gh = box[2] - box[0], box[3] - box[1]
-            x = col * CELL2 + (CELL2 - gw) // 2 - box[0]
-            y = row * CELL2 + (CELL2 - gh) // 2 - box[1]
-            draw.text((x, y), ch, font=font, fill=fill,
-                      stroke_width=stroke, stroke_fill=edge)
+            x = (CELL2 - gw) // 2 - box[0]
+            y = (CELL2 - gh) // 2 - box[1]
+            draw.text((x, y), ch, font=font, fill=fill, stroke_width=stroke, stroke_fill=edge)
 
-    os.makedirs(os.path.dirname(OUT_2D), exist_ok=True)
-    atlas.save(OUT_2D)
-    print(f"wrote {OUT_2D} ({atlas.width}x{atlas.height}, {cols}×2 filled+outlined glyphs)")
+            out = os.path.join(TEX_DIR, f"chess2d_{color}_{name}.png")
+            img.save(out)
+            count += 1
+
+    print(f"wrote {count} piece sprites to {TEX_DIR}/chess2d_*.png ({CELL2}x{CELL2} each)")
 
 
 if __name__ == "__main__":
