@@ -114,7 +114,7 @@ func (h *handler) lichessRedirectURL() string {
 // lichessReady reports whether linking can run: a base URL to come back to, and
 // a key to encrypt the token with.
 func (h *handler) lichessReady() bool {
-	return h.baseURL != "" && h.tokens != nil
+	return h.baseURL != "" && h.keys != nil
 }
 
 // GET /lichess/link — the page the player lands on, and the URL the in-game
@@ -259,8 +259,9 @@ func (h *handler) lichessCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Encrypt BEFORE the row exists. There is no plaintext token column and no
-	// code path that writes one.
-	ct, nonce, err := h.tokens.Seal(tok.AccessToken)
+	// code path that writes one. keyVersion stamps which data key sealed it, so
+	// the sweep and OpenToken can find the right key later.
+	ct, nonce, keyVersion, err := h.keys.SealToken(tok.AccessToken)
 	if err != nil {
 		h.log.Error("could not encrypt the lichess token", zap.Error(err))
 		h.renderLichessPage(w, http.StatusInternalServerError, lichessPage{
@@ -285,6 +286,7 @@ func (h *handler) lichessCallback(w http.ResponseWriter, r *http.Request) {
 		Username:   username,
 		TokenEnc:   ct,
 		TokenNonce: nonce,
+		KeyVersion: keyVersion,
 		Scopes:     lichess.Scope,
 	})
 	if errors.Is(err, store.ErrLichessIDTaken) {
@@ -384,8 +386,8 @@ func (h *handler) revokeAndForget(ctx context.Context, steamID int64) error {
 		return err
 	}
 
-	if h.tokens != nil {
-		if token, derr := h.tokens.Open(link.TokenEnc, link.TokenNonce); derr == nil {
+	if h.keys != nil {
+		if token, derr := h.keys.OpenToken(link.TokenEnc, link.TokenNonce, link.KeyVersion); derr == nil {
 			if rerr := lichess.Revoke(ctx, token); rerr != nil {
 				h.log.Warn("could not revoke the lichess token on unlink",
 					zap.Int64("steam_id", steamID), zap.Error(rerr))
@@ -988,7 +990,7 @@ func (h *handler) lichessAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, link := range links {
-		token, err := h.tokens.Open(link.TokenEnc, link.TokenNonce)
+		token, err := h.keys.OpenToken(link.TokenEnc, link.TokenNonce, link.KeyVersion)
 		if err != nil {
 			out = append(out, row{
 				SteamID:   strconv.FormatInt(link.SteamID, 10),

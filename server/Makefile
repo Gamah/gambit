@@ -63,11 +63,11 @@ migrate-status:
 # registration at all). So there is no reason to make a human invent them: `up`
 # and `testinst` mint any that .env doesn't already have, and say so.
 #
-# THE RULE HERE IS NEVER OVERWRITE. Every stored link is encrypted under
-# LICHESS_TOKEN_KEY, and there is no rotation path (an open spike) — regenerating
-# it would silently turn every linked account into an undecryptable row and force
-# everyone to re-link. So a key with ANY value is left strictly alone; only a
-# missing or blank one is filled in.
+# THE RULE HERE IS NEVER OVERWRITE. LICHESS_TOKEN_KEY is the KEK that wraps every
+# rotating data key (M15) — regenerating it would leave those data keys (and so
+# every token) undecryptable. Re-keying the KEK is a deliberate act via
+# LICHESS_TOKEN_KEY_OLD (see M15.md), never an accident of `make up`. So a key
+# with ANY value is left strictly alone; only a missing or blank one is filled in.
 #
 # /dev/urandom rather than `openssl rand`: openssl is not guaranteed on a host
 # whose only stated dependency is Docker, and this must not become a hidden
@@ -110,10 +110,12 @@ keys-note:
 	@echo "lichess (it has no client registration: no client id, no secret, no"
 	@echo "API key)."
 	@echo ""
-	@echo "  LICHESS_TOKEN_KEY   encrypts every linked player's lichess token at"
-	@echo "                      rest. BACK IT UP. There is no rotation path yet:"
-	@echo "                      lose or change it and every linked player must"
-	@echo "                      re-link. Blank switches lichess off entirely —"
+	@echo "  LICHESS_TOKEN_KEY   the KEK: wraps the rotating data keys that seal"
+	@echo "                      every linked player's token at rest (M15). BACK IT"
+	@echo "                      UP — it is the one durable secret. Lose it and every"
+	@echo "                      player must re-link; to CHANGE it, rotate via"
+	@echo "                      LICHESS_TOKEN_KEY_OLD (see M15.md), don't just"
+	@echo "                      regenerate. Blank switches lichess off entirely —"
 	@echo "                      it never falls back to storing plaintext."
 	@echo "  LICHESS_AUDIT_KEY   gates POST /api/v1/lichess/audit, which asks"
 	@echo "                      lichess which of our stored tokens are still"

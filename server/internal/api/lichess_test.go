@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gamah/gambit/server/internal/keyring"
 	"github.com/gamah/gambit/server/internal/lichess"
 	"go.uber.org/zap"
 )
@@ -20,7 +21,7 @@ import (
 func lichessHandler(t *testing.T) *handler {
 	t.Helper()
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	c, err := lichess.NewCipher(key)
+	k, err := keyring.NewEphemeral(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,10 +31,10 @@ func lichessHandler(t *testing.T) *handler {
 		baseURL:  "https://testchess.gamah.net",
 		sessions: newSessions("test-secret"),
 		nonces:   newNonceStore(time.Minute),
-		tokens:   c,
+		keys:     k,
 		pending:  newPendingLinks(pendingTTL),
 	}
-	h.relay = newRelay(h.log, nil, c)
+	h.relay = newRelay(h.log, nil, k)
 	return h
 }
 
@@ -170,7 +171,7 @@ func TestLichessLinkShowsDisclosureWhenSignedIn(t *testing.T) {
 
 func TestLichessLinkOffWithoutAKey(t *testing.T) {
 	h := lichessHandler(t)
-	h.tokens = nil // no LICHESS_TOKEN_KEY ⇒ feature off
+	h.keys = nil // no LICHESS_TOKEN_KEY ⇒ feature off
 
 	w := httptest.NewRecorder()
 	h.lichessLink(w, httptest.NewRequest(http.MethodGet, "/lichess/link", nil))

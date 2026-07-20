@@ -56,11 +56,12 @@ func TestNewVerifier(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// RFC 7636 mandates 43..128 chars. 32 random bytes → 43 base64url chars, so
-	// we sit exactly on the floor — if this ever drops below 43, lichess answers
-	// CodeVerifierTooShort and linking breaks for everyone.
-	if len(verifier) < 43 || len(verifier) > 128 {
-		t.Fatalf("verifier length %d is outside RFC 7636's 43..128", len(verifier))
+	// RFC 7636 mandates 43..128 chars. 64 random bytes → 86 base64url chars, well
+	// clear of lichess's undocumented CodeVerifierTooShort floor and under the 128
+	// ceiling. If this ever drops back toward 43, linking risks breaking for
+	// everyone — keep the margin.
+	if len(verifier) < 64 || len(verifier) > 128 {
+		t.Fatalf("verifier length %d is outside the wanted 64..128", len(verifier))
 	}
 
 	// base64url, unpadded: any other alphabet would be re-encoded by lichess and

@@ -29,16 +29,20 @@ type LichessLink struct {
 	Username   string // display casing — cosmetic
 	TokenEnc   []byte // AES-256-GCM ciphertext, never plaintext
 	TokenNonce []byte
+	// KeyVersion is which key sealed TokenEnc (M15): 0 = the legacy pre-M15 rows
+	// sealed directly under the KEK, >= 1 = the data key of that version. The
+	// caller (keyring) needs it to pick the right key to Open with.
+	KeyVersion int32
 	Scopes     string
 	LinkedAt   time.Time
 }
 
-const lichessCols = `steam_id, lichess_id, username, token_enc, token_nonce, scopes, linked_at`
+const lichessCols = `steam_id, lichess_id, username, token_enc, token_nonce, key_version, scopes, linked_at`
 
 func scanLink(row pgx.Row) (LichessLink, error) {
 	var l LichessLink
 	err := row.Scan(&l.SteamID, &l.LichessID, &l.Username, &l.TokenEnc, &l.TokenNonce,
-		&l.Scopes, &l.LinkedAt)
+		&l.KeyVersion, &l.Scopes, &l.LinkedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LichessLink{}, ErrNotFound
 	}
@@ -60,17 +64,18 @@ func scanLink(row pgx.Row) (LichessLink, error) {
 // two simultaneous links of the same lichess account can't both win.
 func UpsertLichessLink(ctx context.Context, db *pgxpool.Pool, l LichessLink) (LichessLink, error) {
 	out, err := scanLink(db.QueryRow(ctx, `
-		INSERT INTO lichess_links (steam_id, lichess_id, username, token_enc, token_nonce, scopes)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO lichess_links (steam_id, lichess_id, username, token_enc, token_nonce, key_version, scopes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (steam_id) DO UPDATE SET
 			lichess_id  = EXCLUDED.lichess_id,
 			username    = EXCLUDED.username,
 			token_enc   = EXCLUDED.token_enc,
 			token_nonce = EXCLUDED.token_nonce,
+			key_version = EXCLUDED.key_version,
 			scopes      = EXCLUDED.scopes,
 			linked_at   = NOW()
 		RETURNING `+lichessCols,
-		l.SteamID, l.LichessID, l.Username, l.TokenEnc, l.TokenNonce, l.Scopes))
+		l.SteamID, l.LichessID, l.Username, l.TokenEnc, l.TokenNonce, l.KeyVersion, l.Scopes))
 
 	if err == nil {
 		return out, nil
@@ -123,4 +128,53 @@ func AllLichessLinks(ctx context.Context, db *pgxpool.Pool) ([]LichessLink, erro
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// LinksNeedingReEncrypt returns links whose token is NOT sealed under the current
+// key version — the work list for the M15 re-encrypt sweep. That is every legacy
+// (version 0) row plus anything sealed under a now-superseded data key.
+//
+// Paged by a steam_id CURSOR (afterSteamID, exclusive), not by OFFSET: the sweep
+// advances the cursor past every row it fetches whether or not that row could be
+// re-sealed, so a row that fails to decrypt is skipped rather than re-fetched
+// forever. A whole giant store never lands in one result set, and one bad row
+// can't spin the sweep.
+func LinksNeedingReEncrypt(ctx context.Context, db *pgxpool.Pool, current int32, afterSteamID int64, limit int) ([]LichessLink, error) {
+	rows, err := db.Query(ctx,
+		`SELECT `+lichessCols+` FROM lichess_links
+		  WHERE key_version <> $1 AND steam_id > $2 ORDER BY steam_id LIMIT $3`,
+		current, afterSteamID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list links needing re-encrypt: %w", err)
+	}
+	defer rows.Close()
+
+	var out []LichessLink
+	for rows.Next() {
+		l, err := scanLink(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// ReEncryptLinkToken rewrites one link's sealed token to a new key version, but
+// ONLY if it still carries the version the sweep read (fromVersion). That guard
+// is what makes the sweep safe to run against a live server: a player who
+// re-links mid-sweep writes a fresh token at the CURRENT version, and this
+// conditional update then no-ops on the stale row rather than clobbering their
+// new token with a re-seal of the old one. Reports whether the row was updated.
+func ReEncryptLinkToken(ctx context.Context, db *pgxpool.Pool, steamID int64,
+	tokenEnc, tokenNonce []byte, toVersion, fromVersion int32) (bool, error) {
+	tag, err := db.Exec(ctx, `
+		UPDATE lichess_links
+		   SET token_enc = $1, token_nonce = $2, key_version = $3
+		 WHERE steam_id = $4 AND key_version = $5`,
+		tokenEnc, tokenNonce, toVersion, steamID, fromVersion)
+	if err != nil {
+		return false, fmt.Errorf("re-encrypt link token: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
 }

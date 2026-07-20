@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gamah/gambit/server/internal/keyring"
 	"github.com/gamah/gambit/server/internal/lichess"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -34,11 +36,15 @@ type handler struct {
 	sessions *sessions
 	nonces   *nonceStore
 
-	// Lichess (M8). tokens is nil when LICHESS_TOKEN_KEY is unset, which switches
+	// Lichess (M8). keys is nil when LICHESS_TOKEN_KEY is unset, which switches
 	// the whole feature off — we never fall back to storing a plaintext token.
 	// There is no client-id field: lichess.ClientID is a constant, because
 	// lichess records the redirect ORIGIN on a token and never the client_id.
-	tokens  *lichess.Cipher
+	//
+	// It is a KeyRing, not a single cipher (M15): the env key is the KEK, and it
+	// wraps rotating data keys that actually seal the tokens. SealToken/OpenToken
+	// carry a version so a row can always be opened by the key that sealed it.
+	keys    *keyring.KeyRing
 	pending *pendingLinks
 	relay   *relay
 
@@ -61,8 +67,17 @@ type Config struct {
 	FrontendDir   string
 	SessionSecret string
 
-	// LichessTokenKey is 32 bytes (base64 or hex). Blank ⇒ lichess is off.
+	// LichessTokenKey is 32 bytes (base64 or hex): the KEK that wraps the rotating
+	// data keys. Blank ⇒ lichess is off.
 	LichessTokenKey string
+	// LichessTokenKeyOld is the PREVIOUS KEK during a KEK rotation (M15). Blank
+	// normally; set it for one deploy so any data key the new KEK can't open is
+	// unwrapped with the old one and re-sealed under the new, then drop it.
+	LichessTokenKeyOld string
+	// KeyRotationDays is how often the data key rotates. 0 disables timed rotation
+	// (versioning and the legacy-row migration still run); main.go defaults a blank
+	// env to 30.
+	KeyRotationDays int
 	// LichessAuditKey gates POST /api/v1/lichess/audit. Blank ⇒ no such route.
 	LichessAuditKey string
 }
@@ -79,26 +94,33 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 		auditKey: cfg.LichessAuditKey,
 	}
 
-	// The token cipher is the on/off switch for everything lichess. Absent key ⇒
+	// The keyring is the on/off switch for everything lichess. Absent KEK ⇒
 	// feature off with a warning, never fatal and never plaintext — the same
 	// discipline as a blank SESSION_SECRET. A key that is PRESENT but broken is
-	// fatal, because the operator meant to set it.
-	switch c, err := lichess.NewCipher(cfg.LichessTokenKey); {
-	case errors.Is(err, lichess.ErrNoKey):
+	// fatal, because the operator meant to set it. The load also bootstraps the
+	// first data key and re-wraps under a rotated KEK, so a broken/mismatched DB
+	// state surfaces here at startup rather than on the first game.
+	switch k, err := keyring.New(context.Background(), db, cfg.LichessTokenKey, cfg.LichessTokenKeyOld, log); {
+	case errors.Is(err, keyring.ErrNoKey):
 		log.Warn("LICHESS_TOKEN_KEY not set — lichess linking and play are disabled")
 	case err != nil:
 		log.Fatal("LICHESS_TOKEN_KEY is set but unusable", zap.Error(err))
 	default:
-		h.tokens = c
+		h.keys = k
+		// Rotate the data key on the cadence and drain any legacy/lagging rows onto
+		// the current key. Process-lived context: the daemon dies with the process,
+		// matching the rest of this server's background goroutines.
+		go k.Run(context.Background(), time.Duration(cfg.KeyRotationDays)*24*time.Hour, 0)
 		if h.baseURL == "" {
 			log.Warn("PUBLIC_BASE_URL not set — lichess linking is disabled (no redirect URI)")
 		} else {
 			log.Info("lichess linking enabled",
 				zap.String("client_id", lichess.ClientID),
-				zap.String("redirect_uri", h.lichessRedirectURL()))
+				zap.String("redirect_uri", h.lichessRedirectURL()),
+				zap.Int32("key_version", k.CurrentVersion()))
 		}
 	}
-	h.relay = newRelay(log, db, h.tokens)
+	h.relay = newRelay(log, db, h.keys)
 	h.tv = newTv(log)
 
 	mux := http.NewServeMux()

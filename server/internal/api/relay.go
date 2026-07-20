@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gamah/gambit/server/internal/keyring"
 	"github.com/gamah/gambit/server/internal/lichess"
 	"github.com/gamah/gambit/server/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -414,9 +415,9 @@ func (p *play) done(now time.Time) bool {
 
 // relay owns every live relayed game. One per process.
 type relay struct {
-	log    *zap.Logger
-	db     *pgxpool.Pool
-	cipher *lichess.Cipher
+	log  *zap.Logger
+	db   *pgxpool.Pool
+	keys *keyring.KeyRing
 
 	mu    sync.Mutex
 	plays map[string]*play
@@ -438,11 +439,11 @@ type relay struct {
 	pending map[int64]string
 }
 
-func newRelay(log *zap.Logger, db *pgxpool.Pool, c *lichess.Cipher) *relay {
+func newRelay(log *zap.Logger, db *pgxpool.Pool, keys *keyring.KeyRing) *relay {
 	return &relay{
 		log:     log,
 		db:      db,
-		cipher:  c,
+		keys:    keys,
 		plays:   map[string]*play{},
 		pending: map[int64]string{},
 	}
@@ -555,7 +556,7 @@ func (r *relay) cancelChallenge(steamID int64, challengeID string) {
 // config key, so a live server always has a pool, and folding "db != nil" in
 // here would only ever change behaviour under test — where it would answer 501
 // to requests that should have been refused as unauthorised first.
-func (r *relay) Enabled() bool { return r != nil && r.cipher != nil }
+func (r *relay) Enabled() bool { return r != nil && r.keys != nil }
 
 var errNotLinked = errors.New("that player has not linked a lichess account")
 
@@ -569,10 +570,12 @@ func (r *relay) credentials(ctx context.Context, steamID int64) (token, username
 	if err != nil {
 		return "", "", err
 	}
-	token, err = r.cipher.Open(link.TokenEnc, link.TokenNonce)
+	token, err = r.keys.OpenToken(link.TokenEnc, link.TokenNonce, link.KeyVersion)
 	if err != nil {
-		// The row exists but won't decrypt: the key changed under us (rotation is
-		// an open spike with no path today). Say so plainly — it means re-link.
+		// The row exists but won't decrypt: the KEK is wrong, or a data key was
+		// lost. Under M15's envelope this should not happen from ordinary rotation
+		// (every version stays loaded), so it means a genuine key mismatch. Say so
+		// plainly — it means re-link.
 		return "", "", fmt.Errorf("stored token will not decrypt — re-link required: %w", err)
 	}
 	return token, link.Username, nil

@@ -59,9 +59,17 @@ foreclose that migration.
 account for up to a year, and **lichess has no bulk revoke** — `DELETE /api/token` kills one
 token and must be signed by *that* token. So:
 
-- **Tokens are encrypted at rest** (AES-256-GCM, per-row nonce, `LICHESS_TOKEN_KEY`). A blank
-  key switches lichess **off**; it never falls back to plaintext. **No rotation path exists
-  yet** — changing the key invalidates every link. Back it up.
+- **Tokens are encrypted at rest under envelope encryption (M15).** `LICHESS_TOKEN_KEY` is now
+  the **KEK**: it wraps rotating **data keys** (`internal/keyring`, `lichess_key_versions`), and
+  those seal the tokens. A blank KEK still switches lichess **off**; it never falls back to
+  plaintext. **Back the KEK up** — it is still the one durable secret. What CHANGED: there is now
+  a rotation path. The data key rolls on a timer (`LICHESS_KEY_ROTATION_DAYS`, default 30) with a
+  background re-encrypt sweep, and the KEK itself can be re-keyed without orphaning links by
+  setting `LICHESS_TOKEN_KEY_OLD` for one deploy (re-wraps a few DEK rows, never the tokens). Old
+  rows carry `key_version = 0` = "sealed directly under the KEK, pre-M15" and migrate on their
+  own. **The envelope adds no secrecy on this deployment** — KEK and DB share a box, so a full
+  compromise reads both; its value is the rotate/re-key-without-orphaning capability, not
+  confidentiality vs a DB-only dump. Runbook + design in `M15.md`.
 - **The audit sweep is the only fast lever we own.** `POST /api/v1/lichess/audit` →
   `POST /api/token/test` (1000 tokens/call) says which of our tokens are still live, in
   seconds. It cannot revoke them. Auditing is the capability; mass revocation is not.
@@ -927,10 +935,13 @@ machine that has Docker, and the same suite passes locally with a downloaded Go 
 are changing the server, run the tests; "can't build it here" is no longer true for Go.
 
 **Secrets live in `.env` and are generated, not requested.** lichess issues nothing — no client
-id, no secret, no API key — so `LICHESS_TOKEN_KEY` (encrypts every stored lichess token; blank
-= lichess off; **no rotation path, back it up**) and `LICHESS_AUDIT_KEY` (gates the audit sweep)
-are ours. `make up` / `make testinst` mint any that `.env` lacks and **never overwrite one that
-has a value** — regenerating `LICHESS_TOKEN_KEY` would silently orphan every link.
+id, no secret, no API key — so `LICHESS_TOKEN_KEY` (the KEK that wraps the rotating data keys;
+blank = lichess off; **back it up**) and `LICHESS_AUDIT_KEY` (gates the audit sweep) are ours.
+`make up` / `make testinst` mint any that `.env` lacks and **never overwrite one that has a
+value** — regenerating `LICHESS_TOKEN_KEY` mid-life would leave the stored DEK rows undecryptable
+(re-key it deliberately via `LICHESS_TOKEN_KEY_OLD` instead — see `M15.md`). Optional M15 knobs,
+both fine left blank: `LICHESS_TOKEN_KEY_OLD` (set for one deploy to rotate the KEK) and
+`LICHESS_KEY_ROTATION_DAYS` (data-key cadence, default 30; 0 disables timed rotation).
 
 Test and prod **share** the token key deliberately: same host, same `.env`, so a second key
 isolates nothing, and each only ever decrypts its own already-separate database. What does

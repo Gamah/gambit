@@ -24,9 +24,12 @@ import (
 // seal, stored beside the ciphertext (a nonce is not a secret; reusing one under
 // the same key is what breaks GCM, so it is never derived or recycled).
 //
-// Key rotation is deliberately out of scope and is recorded as an open spike —
-// re-encrypting the store on a key change has no path today, so a key change
-// today invalidates every link and forces everyone to re-link.
+// This is only the AEAD primitive. It is used at TWO levels by internal/keyring
+// (M15): the KEK (LICHESS_TOKEN_KEY) is a Cipher that seals/opens the rotating
+// data keys, and each rotating data key is itself a Cipher that seals/opens the
+// player tokens. Key rotation, versioning and the re-encrypt sweep all live in
+// keyring; nothing about rotation belongs here, because rotation is orchestration
+// over many Ciphers, not a property of one.
 
 // ErrNoKey means LICHESS_TOKEN_KEY was blank or unusable. Callers treat it as
 // "lichess is switched off", never as "store the token in the clear".
@@ -57,8 +60,15 @@ func NewCipher(key string) (*Cipher, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewCipherFromBytes(raw)
+}
+
+// NewCipherFromBytes builds a Cipher from a raw 32-byte key. NewCipher is this
+// plus a decoding step; keyring calls this one directly, because a rotating data
+// key is generated as raw random bytes rather than typed by an operator.
+func NewCipherFromBytes(raw []byte) (*Cipher, error) {
 	if len(raw) != 32 {
-		return nil, fmt.Errorf("lichess: token key must be 32 bytes (AES-256), got %d", len(raw))
+		return nil, fmt.Errorf("lichess: key must be 32 bytes (AES-256), got %d", len(raw))
 	}
 
 	block, err := aes.NewCipher(raw)

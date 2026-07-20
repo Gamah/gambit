@@ -90,13 +90,13 @@ const maxBody = 1 << 20
 
 // NewVerifier mints a PKCE verifier and its S256 challenge.
 //
-// 32 random bytes → 43 base64url chars, which is exactly RFC 7636's minimum
-// verifier length. lichess has a CodeVerifierTooShort error whose threshold is
-// undocumented; 43 is the floor the RFC mandates, so it is the shortest thing
-// that can be correct — recorded as an open spike to confirm against the live
-// server on first link.
+// 64 random bytes → 86 base64url chars, comfortably inside RFC 7636's [43, 128]
+// range. It was 32 bytes (43 chars) — exactly the RFC floor — which sat right on
+// lichess's undocumented CodeVerifierTooShort threshold; widening to 64 buys
+// margin at zero cost (still one SHA-256, still well under the 128 ceiling) and
+// removes the "if linking fails at the exchange, suspect this first" footgun.
 func NewVerifier() (verifier, challenge string, err error) {
-	raw := make([]byte, 32)
+	raw := make([]byte, 64)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
 		return "", "", fmt.Errorf("lichess: read verifier: %w", err)
 	}

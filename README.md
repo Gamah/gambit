@@ -168,8 +168,13 @@ the token (lichess stores `clientOrigin`, the scheme+host of our redirect URI), 
 revokes and configures nothing. It is public and impersonable by design; PKCE secures the
 exchange and the redirect URI decides who receives a code.
 
-**The token is encrypted at rest** (AES-256-GCM, per-row nonce, `LICHESS_TOKEN_KEY`). A blank
-key switches lichess off entirely rather than storing plaintext.
+**The token is encrypted at rest under envelope encryption** (M15): `LICHESS_TOKEN_KEY` is a KEK
+that wraps rotating data keys (`lichess_key_versions`), and those seal the tokens (AES-256-GCM,
+per-row nonce). A blank KEK switches lichess off entirely rather than storing plaintext. The data
+key rotates on a timer (`LICHESS_KEY_ROTATION_DAYS`, default 30) with a background re-encrypt
+sweep, and the KEK itself re-keys without orphaning links via `LICHESS_TOKEN_KEY_OLD`. On this
+deployment the KEK lives beside the DB, so the envelope buys the rotate/re-key capability, not
+extra secrecy against a DB dump.
 
 | Route | Auth | Notes |
 |---|---|---|
