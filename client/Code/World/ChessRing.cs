@@ -561,8 +561,29 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		return false;
 	}
 
+	// Last SettingsModel version this client applied the "TERRY MOVES PIECES" toggle at. −1 so
+	// the first frame applies it once (after TerryTuning.OnEnabled has done its one-shot push).
+	int _handsSettingVersion = -1;
+
+	/// <summary>Push the player's "TERRY MOVES PIECES" toggle into the seated-hands gate.
+	///
+	/// <para>Version-keyed — writes <see cref="SeatedHandSpikes.HandsOn"/> only when the setting
+	/// actually changes, exactly like <see cref="TerryTuning"/>'s own on-change push and the
+	/// <c>gambit_terry_*</c> console levers. That is what keeps the three from fighting: between
+	/// player edits nobody re-asserts the static, so a diagnostic (or the tuning inspector) that
+	/// forces it mid-run stays authoritative. ChessRing is one per client, so this is one write
+	/// per change rather than one per station.</para></summary>
+	void ApplyHandsSetting()
+	{
+		if ( _handsSettingVersion == Gambit.UI.SettingsModel.SettingsVersion ) return;
+		_handsSettingVersion = Gambit.UI.SettingsModel.SettingsVersion;
+		SeatedHandSpikes.HandsOn = Gambit.Game.PlayerData.Load()?.TerryMovesPieces ?? true;
+	}
+
 	protected override void OnUpdate()
 	{
+		ApplyHandsSetting();
+
 		// Never set in the editor (HostSetStationCount is play-mode, host-only)
 		if ( _slidePhase == SlidePhase.None ) return;
 

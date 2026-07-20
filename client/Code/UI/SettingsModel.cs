@@ -100,6 +100,10 @@ public static class SettingsModel
 			v => Mutate( d => d.MyCabinetSounds = v ) ) );
 		rows.Add( ToggleRow( "OTHER BOARD SOUNDS", data.RemoteCabinetSounds,
 			v => Mutate( d => d.RemoteCabinetSounds = v ) ) );
+		// Seated players' hands reaching out to move pieces (M14). Client-local, cosmetic — off
+		// leaves the bodies sitting and the pieces sliding, just without the arm animation.
+		rows.Add( ToggleRow( "TERRY MOVES PIECES", data.TerryMovesPieces,
+			v => Mutate( d => d.TerryMovesPieces = v ) ) );
 
 		// Proximity-voice hearing range (M12): how far THIS client hears others, split by whether
 		// you're seated or roaming. Range is a receive-side, per-client value (the falloff is applied

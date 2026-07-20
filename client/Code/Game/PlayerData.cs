@@ -40,6 +40,11 @@ public sealed class PlayerData
 	public bool InfoPanelSeen { get; set; } = false;
 	/// <summary>Show the decorative checkerboard floor (with its colour pops).</summary>
 	public bool CheckerboardFloor { get; set; } = true;
+	/// <summary>Whether seated players' hands reach out and move the pieces (M14). Off = the
+	/// bodies still sit and the pieces still slide, but no arm animation. Drives the client-local
+	/// <see cref="Gambit.World.SeatedHandSpikes.HandsOn"/> gate (applied in ChessRing). Default on
+	/// — the hands ship.</summary>
+	public bool TerryMovesPieces { get; set; } = true;
 	/// <summary>Pop re-pick frequency as a multiplier on the floor's base interval
 	/// (0.25–3×; higher = pops change faster).</summary>
 	public float FloorPopRate { get; set; } = 1f;
