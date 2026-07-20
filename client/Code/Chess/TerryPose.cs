@@ -255,8 +255,13 @@ public static class TerryPose
 	public static HandPose Advance( in HandPose prev, in HandInput input, float dt )
 	{
 		dt *= SpeedScale <= 0f ? 1f : SpeedScale;
-		if ( !input.GameLive )
-			return Idle( prev, input.Ply, dt );
+
+		// NOTE: GameLive is checked BELOW, after the ply branch — NOT here. The move that
+		// ENDS a game (a checkmate, a flag) turns GameLive false on the very frame it lands,
+		// so a top-of-function `!GameLive → Idle` swallowed the mating move's own gesture:
+		// the hand never fired on the move that won, and in a premove-checkmate BOTH hands
+		// (the trigger and the reply land in one observation) were killed together. A move is
+		// a move even when it is the last one; GameLive only decides what an IDLE hand does.
 
 		// ── The abandon rule ──
 		//
@@ -298,6 +303,12 @@ public static class TerryPose
 			else
 				return Idle( cur with { Ply = input.Ply }, input.Ply, dt );
 		}
+
+		// No game to have hands about (stood up, or between games) AND nothing is playing:
+		// rest. Deferred to here — past the ply branch — so the move that just ended the game
+		// still gets its gesture; an in-flight gesture below also finishes on its own clock.
+		if ( !input.GameLive && !cur.Animating )
+			return Idle( cur, input.Ply, dt );
 
 		// A move already in flight, and the game hasn't moved OUT FROM UNDER it: run it out.
 		if ( cur.Animating )
