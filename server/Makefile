@@ -66,7 +66,7 @@ migrate-status:
 # THE RULE HERE IS NEVER OVERWRITE. LICHESS_TOKEN_KEY is the KEK that wraps every
 # rotating data key (M15) — regenerating it would leave those data keys (and so
 # every token) undecryptable. Re-keying the KEK is a deliberate act via
-# LICHESS_TOKEN_KEY_OLD (see M15.md), never an accident of `make up`. So a key
+# LICHESS_TOKEN_KEY_OLD (see .env.example), never an accident of `make up`. So a key
 # with ANY value is left strictly alone; only a missing or blank one is filled in.
 #
 # /dev/urandom rather than `openssl rand`: openssl is not guaranteed on a host
@@ -114,7 +114,7 @@ keys-note:
 	@echo "                      every linked player's token at rest (M15). BACK IT"
 	@echo "                      UP — it is the one durable secret. Lose it and every"
 	@echo "                      player must re-link; to CHANGE it, rotate via"
-	@echo "                      LICHESS_TOKEN_KEY_OLD (see M15.md), don't just"
+	@echo "                      LICHESS_TOKEN_KEY_OLD (see .env.example), don't just"
 	@echo "                      regenerate. Blank switches lichess off entirely —"
 	@echo "                      it never falls back to storing plaintext."
 	@echo "  LICHESS_AUDIT_KEY   gates POST /api/v1/lichess/audit, which asks"

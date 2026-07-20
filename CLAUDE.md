@@ -69,7 +69,8 @@ token and must be signed by *that* token. So:
   rows carry `key_version = 0` = "sealed directly under the KEK, pre-M15" and migrate on their
   own. **The envelope adds no secrecy on this deployment** — KEK and DB share a box, so a full
   compromise reads both; its value is the rotate/re-key-without-orphaning capability, not
-  confidentiality vs a DB-only dump. Runbook + design in `M15.md`.
+  confidentiality vs a DB-only dump. How rotation actually runs, and the KEK-rotation runbook,
+  are under **gamchess deployment facts** below.
 - **The audit sweep is the only fast lever we own.** `POST /api/v1/lichess/audit` →
   `POST /api/token/test` (1000 tokens/call) says which of our tokens are still live, in
   seconds. It cannot revoke them. Auditing is the capability; mass revocation is not.
@@ -938,10 +939,34 @@ are changing the server, run the tests; "can't build it here" is no longer true 
 id, no secret, no API key — so `LICHESS_TOKEN_KEY` (the KEK that wraps the rotating data keys;
 blank = lichess off; **back it up**) and `LICHESS_AUDIT_KEY` (gates the audit sweep) are ours.
 `make up` / `make testinst` mint any that `.env` lacks and **never overwrite one that has a
-value** — regenerating `LICHESS_TOKEN_KEY` mid-life would leave the stored DEK rows undecryptable
-(re-key it deliberately via `LICHESS_TOKEN_KEY_OLD` instead — see `M15.md`). Optional M15 knobs,
-both fine left blank: `LICHESS_TOKEN_KEY_OLD` (set for one deploy to rotate the KEK) and
-`LICHESS_KEY_ROTATION_DAYS` (data-key cadence, default 30; 0 disables timed rotation).
+value** — regenerating `LICHESS_TOKEN_KEY` mid-life would leave the stored DEK rows undecryptable,
+so **re-key it deliberately (below), never by regenerating**. Two optional knobs, both fine blank:
+`LICHESS_TOKEN_KEY_OLD` (set for one deploy to rotate the KEK) and `LICHESS_KEY_ROTATION_DAYS`
+(data-key cadence, default 30; 0 disables the timer).
+
+**How key rotation runs — the envelope (`internal/keyring`, `lichess_key_versions`).**
+`LICHESS_TOKEN_KEY` is the **KEK**; it wraps rotating **data keys** (DEKs), and those seal the
+tokens. Every `lichess_links` row carries the `key_version` that sealed it; **`key_version = 0` is
+the legacy sentinel** — sealed directly under the KEK before this existed, opened with the KEK, and
+migrated onto a real DEK by the boot sweep (that migration is exactly the `re-encrypted lichess
+tokens onto the current key, rows:N` log line the first deploy produces).
+
+- **The DATA KEY rotates automatically**, every `LICHESS_KEY_ROTATION_DAYS` (default 30, zero
+  maintenance). `KeyRing.Run` does one pass at boot then checks daily; past the cadence it mints a
+  new DEK, the sweep re-seals every token onto it, and the drained key is retired (kept loaded, not
+  deleted, so no row can ever be unopenable). **The cadence is anchored to the DEK's DB
+  `created_at`, not process uptime** — so `make up` deploys neither reset nor trigger it. The
+  rotate→re-encrypt→retire log trio is what to look for when it fires.
+- **The KEK does NOT auto-rotate** — that is the deliberate manual incident lever. To rotate it:
+  new key into `LICHESS_TOKEN_KEY`, the current one into `LICHESS_TOKEN_KEY_OLD`, `make up` once
+  (logs `re-wrapped a data key under the new KEK` — it rewrites the few DEK rows, **never the
+  tokens**), then **clear `LICHESS_TOKEN_KEY_OLD`** and deploy again. No player re-links. A KEK that
+  can't open a DEK with no old key set **fails at boot** by design, rather than run half-broken.
+- **One-way after deploy.** Once the boot sweep lifts a row onto a DEK, its token is DEK-sealed and
+  pre-M15 code cannot read it — so a *code* rollback after deploy orphans the swept links. Recover
+  from a pre-deploy DB backup, never by reverting the binary alone. (`test.sh` at the repo root is
+  the host smoke test for all of this: migration is zero-downtime, app bootstraps a DEK, KEK
+  rotates, and it fails closed on a bad KEK.)
 
 Test and prod **share** the token key deliberately: same host, same `.env`, so a second key
 isolates nothing, and each only ever decrypts its own already-separate database. What does
