@@ -345,22 +345,39 @@ public sealed class ChessBoardView : Component
 
 	string _lastFen;
 	bool _everSynced;
-	// The render mode the pieces on the board were built in (M16). A play-mode change flips
-	// ChessSetBuilder.FlatMode but does NOT change the FEN, so the reference check below would
-	// never rebuild — this guard forces a full respawn through the mode-appropriate builder.
+	// The render mode + glyph up-direction the pieces on the board were built in (M16). A play-mode
+	// change flips ChessSetBuilder.FlatMode, and sitting down / switching seats changes which way
+	// the flat glyphs should read — neither changes the FEN, so the reference check below would
+	// never rebuild. This guard forces a full respawn when either changes.
 	bool _renderedFlat;
+	float _renderedUpYaw;
+
+	/// <summary>Which way flat glyphs on THIS table should read (M16). If the local player is seated
+	/// here, orient to their side (White seat +X = yaw 0, Black seat −X = yaw 180) so they read their
+	/// own board upright — matching their per-seat top-down camera. Otherwise (spectating/roaming)
+	/// White-up. Only meaningful in flat mode.</summary>
+	float LocalSeatUpYaw() =>
+		ChessStation.Active == Station && Station != null
+			? ( ChessStation.ActiveSeat == ChessSeat.White ? 0f : 180f )
+			: 0f;
 
 	void SyncPieces()
 	{
-		// Play-mode change (M16): the FEN is unchanged, so destroy every piece and let the diff
-		// below respawn all 64 as flat glyphs or 3D bodies. Keyed on the render-relevant bit
-		// (flat vs not) rather than SettingsModel.SettingsVersion, so a brightness-slider drag
-		// doesn't thrash the whole board.
-		if ( ChessSetBuilder.FlatMode != _renderedFlat )
+		// Play-mode change or a seat change (M16): the FEN is unchanged, so destroy every piece and
+		// let the diff below respawn all 64 as flat glyphs (in the right orientation) or 3D bodies.
+		// Keyed on the render-relevant bits, not SettingsModel.SettingsVersion, so a brightness-slider
+		// drag doesn't thrash the whole board.
+		float upYaw = ChessSetBuilder.FlatMode ? LocalSeatUpYaw() : 0f;
+		if ( ChessSetBuilder.FlatMode != _renderedFlat || upYaw != _renderedUpYaw )
 		{
 			_renderedFlat = ChessSetBuilder.FlatMode;
+			_renderedUpYaw = upYaw;
 			ResetPieces();
 		}
+		// Stamp the up-direction the builder reads for every SpawnPiece below (per-board, so this
+		// view's value can't be clobbered by another board building in the same frame — each view
+		// stamps-then-spawns synchronously).
+		ChessSetBuilder.FlatUpYaw = upYaw;
 
 		// ChessGame.Fen returns the same string instance until a move mutates
 		// the board, so this reference check makes idle tables (most of a big

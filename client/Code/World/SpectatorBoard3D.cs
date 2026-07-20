@@ -186,6 +186,11 @@ public sealed class SpectatorBoard3D : Component, Component.ExecuteInEditor
 
 	void SyncPieces()
 	{
+		// The wall reads upright for the viewer: White faces +Y here (world-up once the board stands
+		// up), so glyphs point +Y = yaw 90. No seat concept — it's a spectator display. Stamped
+		// before any SpawnPiece below.
+		ChessSetBuilder.FlatUpYaw = 90f;
+
 		// Play-mode change (M16): the FEN is unchanged, so destroy the pieces, retint the squares,
 		// and let the diff below respawn all 64 through the mode-appropriate builder.
 		if ( ChessSetBuilder.FlatMode != _renderedFlat )

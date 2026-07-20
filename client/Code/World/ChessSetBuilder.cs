@@ -64,14 +64,23 @@ public static class ChessSetBuilder
 	/// 3D body. Toggled by ChessRing off <see cref="Gambit.Game.PlayerData.PlayMode"/>.</summary>
 	public static bool FlatMode;
 
+	/// <summary>The yaw (degrees) that a flat glyph's UP-direction faces, set by each view right
+	/// before it (re)builds its pieces (M16). This is a per-BOARD, not per-piece, choice — every
+	/// glyph on a board shares it — so it lives here as a static the caller stamps rather than being
+	/// derived from the per-colour yaw. Tables set it to the LOCAL player's seat facing (White seat
+	/// 0 = +X, Black seat 180 = −X, spectating 0) so each client reads its own board upright; the
+	/// spectator wall sets 90 (+Y, world-up after the board stands up) so it reads upright for the
+	/// viewer. Building is synchronous per view on one thread, so the stamp-then-spawn is race-free.</summary>
+	public static float FlatUpYaw;
+
 	public static GameObject BuildPiece( GameObject parent, ChessPieceType type, bool white, float scale, float yaw = 0f )
 	{
 		// 2D dispatch (M16): one line, every board. Falls through to the 3D path if the sprite
-		// can't be built (missing texture), so the board is never left empty. yaw carries the
-		// board's orientation (tables 0/180, wall 90/270) so the flat glyph lies the right way up.
+		// can't be built (missing texture), so the board is never left empty. The flat glyph's
+		// up-direction comes from FlatUpYaw (set per board by the view), not this piece's yaw.
 		if ( FlatMode )
 		{
-			var flat = BuildFlatPiece( parent, type, white, scale, yaw );
+			var flat = BuildFlatPiece( parent, type, white, scale );
 			if ( flat != null ) return flat;
 		}
 
@@ -203,15 +212,13 @@ public static class ChessSetBuilder
 	///
 	/// <para>The sprite is FIXED to the board plane (<c>Billboard = None</c>): it lies "on" the board
 	/// and does NOT rotate with the camera. Its normal points out of the board (board-local +Z) and
-	/// its up points along WHITE's facing — so a table reads upright for White (Black sees it
-	/// inverted, as on a physical board) and the wall reads upright for the viewer. White's facing is
-	/// recovered from <paramref name="yaw"/> (which the caller sets per board: tables 0/180, wall
-	/// 90/270), independent of this piece's colour, so every piece on a board shares one orientation.
-	/// Unlit (the PNG carries fill + outline), alpha-clipped (order-independent, no blend/sort).</para>
+	/// its up points along <see cref="FlatUpYaw"/> — the per-board direction the view stamped, so a
+	/// seated player reads their own table upright and the wall reads upright for the viewer. Unlit
+	/// (the PNG carries fill + outline), alpha-clipped (order-independent, no blend/sort).</para>
 	///
 	/// <para>Returns null if the piece texture is missing, so the caller can fall back to 3D.</para>
 	/// </summary>
-	static GameObject BuildFlatPiece( GameObject parent, ChessPieceType type, bool white, float scale, float yaw )
+	static GameObject BuildFlatPiece( GameObject parent, ChessPieceType type, bool white, float scale )
 	{
 		var sprite = FlatSprite( type, white );
 		if ( sprite == null ) return null;
@@ -226,11 +233,9 @@ public static class ChessSetBuilder
 		spriteGo.Parent = root;
 		spriteGo.LocalPosition = new Vector3( 0, 0, FlatLift );
 
-		// Lie in the board plane, glyph-up along White's facing. White's yaw is this piece's yaw
-		// (black is White + 180), so both colours resolve to the same board orientation. LookAt:
-		// +X (the sprite's normal) → board up (+Z); +Z (the sprite's up) → that facing direction.
-		float whiteYaw = white ? yaw : yaw - 180f;
-		var imageUp = Rotation.FromYaw( whiteYaw ) * Vector3.Forward;
+		// Lie in the board plane, glyph-up along the board's stamped up. LookAt: +X (the sprite's
+		// normal) → board up (+Z); +Z (the sprite's up) → the FlatUpYaw direction.
+		var imageUp = Rotation.FromYaw( FlatUpYaw ) * Vector3.Forward;
 		spriteGo.LocalRotation = Rotation.LookAt( Vector3.Up, imageUp );
 
 		var sr = spriteGo.AddComponent<SpriteRenderer>();
