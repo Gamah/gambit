@@ -652,8 +652,9 @@ have been run here at all.
   first-wins with loser-side reconciliation (**D1**). Seat cameras orbit the board
   center (`SeatOrbitRadius`/`SeatPitch`/`SeatLookDownAngle`). You take the side you
   walk up to; leaving a live game is a two-stage resign (Escape/Leave twice).
-- **Seated bodies are M13's deliverable; the hands that play the moves are M14's — MVP
-  passed by the owner 2026-07-19.** When you sit, your Citizen is planted at its side facing
+- **Seated bodies are M13's deliverable; the hands that play the moves are M14's — both
+  SHIPPED (M14 passed the owner 2026-07-19, merged to master); what's left is knob tuning,
+  a PLAN.md room row.** When you sit, your Citizen is planted at its side facing
   the board (`LobbyPlayer` sit pose `sit=1`, `SetSeatedPhysics` un-plant so the tabletop
   can't shove you off your chair, `TrimSeatedAvatar` to keep the seat camera out of your own
   skull, and `StationChair` under each seat). Gated behind **`ChessRing.TerrySeated`** —
@@ -685,8 +686,9 @@ have been run here at all.
   new diff snaps stale board slides forward, a premove reply does NOT abandon the trigger
   move's gesture (the one ply change that continues), and a same-frame collapse fires BOTH
   hands via `ChessGame.UciFromEnd`. **What remains is TUNING** (timing/positions —
-  PLAN.md's row); **`TERRY-HALFRISE.md` is the mechanism doc**, `M14.md` the attempts'
-  history. The bodies and hands are cosmetic — no player-facing copy
+  PLAN.md's row); **`TERRY-HALFRISE.md` is the mechanism doc** (the attempts' history that
+  fed it is in git — the milestone shipped, the doc distilled it). The bodies and hands are
+  cosmetic — no player-facing copy
   (`CenterInfoPanel`/`InfoScreen`) describes them, so none went stale.
 - **Wall boards go through `WallBoardGeometry` — all of them.** It owns the size
   (`BoardScale`), the aspect (`Stretch`), and the shared floor anchor (`FloorAnchor`, which

@@ -61,7 +61,15 @@
 >   deadlines (Reach 0.25 + Lift 0.18 + Carry 0.35 + Drop 0.2 ≈ 1s): stages when there is
 >   time, a snap when there isn't, reality always wins.
 
-> **MILESTONE PAUSE (2026-07-18) — MVP works, looks janky. Read this first.**
+> **SUPERSEDED — historical (2026-07-18 milestone-pause snapshot). Do NOT action this.**
+> Kept only as the "why" behind the shipped shape; the amendment stack at the top of this
+> file is the truth and OVERRULES everything below (the thinking hand was cut, the capture
+> became a plain gesture with no DropAndSwap, v1 ships no finger pose, the two-tempo model
+> was mooted). Every "next session's job" / "OPEN" / "specified by the owner" line here was
+> either resolved in that stack or dropped. Read it for the jank causes it diagnosed, never
+> as a task list.
+>
+> ---
 >
 > The mechanics are DONE and verified across two clients: the terry leans/rises to a
 > square, the wrist follows the arm, the piece waits on its square until the hand grabs
@@ -157,7 +165,7 @@ servo / wrist rot; search "half-rise") · `Code/World/ChessBoardView.cs` carry +
 lobby.scene the inspector surface · `Code/World/SeatedHandSpikes.cs` the statics + console
 levers · **`scripts/halfrise_harness/`** the planner proof (`dotnet run`, must stay green).
 
-**Branch `m14-terry-halfrise-ik`.** The reaching-hand idea was nuked (5fd4157) because a
+**Shipped on `m14-terry-halfrise-ik`, merged to master.** The reaching-hand idea was nuked (5fd4157) because a
 SEATED citizen can't reach: ~20u arm, far corner ~35u away, and every seated lever combined
 lands mid-board (the old SEATED-HANDS-REACH.md, recoverable at `origin/m14-terry-hands-spikes`,
 has the proof). This attempt keeps everything M14 *proved* and removes the one assumption that
