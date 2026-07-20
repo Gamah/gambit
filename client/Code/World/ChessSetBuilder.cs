@@ -66,11 +66,12 @@ public static class ChessSetBuilder
 
 	public static GameObject BuildPiece( GameObject parent, ChessPieceType type, bool white, float scale, float yaw = 0f )
 	{
-		// 2D dispatch (M16): one line, every board. Falls through to the 3D path if the flat quad
-		// can't be built (missing atlas/shader), so the board is never left empty.
+		// 2D dispatch (M16): one line, every board. Falls through to the 3D path if the sprite
+		// can't be built (missing texture), so the board is never left empty. yaw carries the
+		// board's orientation (tables 0/180, wall 90/270) so the flat glyph lies the right way up.
 		if ( FlatMode )
 		{
-			var flat = BuildFlatPiece( parent, type, white, scale );
+			var flat = BuildFlatPiece( parent, type, white, scale, yaw );
 			if ( flat != null ) return flat;
 		}
 
@@ -200,13 +201,17 @@ public static class ChessSetBuilder
 	/// origin at the centre of its footprint on the board surface — so the caller positions it with
 	/// LocalPosition exactly as it does a 3D piece, and every slide/tray/highlight path is unchanged.
 	///
-	/// <para>The sprite BILLBOARDS: under the top-down seat camera it lies flat on the board, and at
-	/// other tables / the wall it faces the viewer (a readable card) rather than going edge-on.
+	/// <para>The sprite is FIXED to the board plane (<c>Billboard = None</c>): it lies "on" the board
+	/// and does NOT rotate with the camera. Its normal points out of the board (board-local +Z) and
+	/// its up points along WHITE's facing — so a table reads upright for White (Black sees it
+	/// inverted, as on a physical board) and the wall reads upright for the viewer. White's facing is
+	/// recovered from <paramref name="yaw"/> (which the caller sets per board: tables 0/180, wall
+	/// 90/270), independent of this piece's colour, so every piece on a board shares one orientation.
 	/// Unlit (the PNG carries fill + outline), alpha-clipped (order-independent, no blend/sort).</para>
 	///
 	/// <para>Returns null if the piece texture is missing, so the caller can fall back to 3D.</para>
 	/// </summary>
-	static GameObject BuildFlatPiece( GameObject parent, ChessPieceType type, bool white, float scale )
+	static GameObject BuildFlatPiece( GameObject parent, ChessPieceType type, bool white, float scale, float yaw )
 	{
 		var sprite = FlatSprite( type, white );
 		if ( sprite == null ) return null;
@@ -221,10 +226,17 @@ public static class ChessSetBuilder
 		spriteGo.Parent = root;
 		spriteGo.LocalPosition = new Vector3( 0, 0, FlatLift );
 
+		// Lie in the board plane, glyph-up along White's facing. White's yaw is this piece's yaw
+		// (black is White + 180), so both colours resolve to the same board orientation. LookAt:
+		// +X (the sprite's normal) → board up (+Z); +Z (the sprite's up) → that facing direction.
+		float whiteYaw = white ? yaw : yaw - 180f;
+		var imageUp = Rotation.FromYaw( whiteYaw ) * Vector3.Forward;
+		spriteGo.LocalRotation = Rotation.LookAt( Vector3.Up, imageUp );
+
 		var sr = spriteGo.AddComponent<SpriteRenderer>();
 		sr.Sprite = sprite;
 		sr.Size = new Vector2( FlatCellBase, FlatCellBase );
-		sr.Billboard = SpriteRenderer.BillboardMode.Always;
+		sr.Billboard = SpriteRenderer.BillboardMode.None;   // fixed to the board plane, not the camera
 		sr.Lighting = false;   // unlit — the PNG is the final colour
 		sr.Opaque = true;      // alpha-CLIP via AlphaCutoff (below), not blend: order-independent
 		sr.AlphaCutoff = 0.5f;
