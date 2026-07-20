@@ -828,13 +828,35 @@ public sealed class LobbyPlayer : Component
 	/// </summary>
 	void HideLocalAvatar()
 	{
-		if ( ChessRing.Instance is { TerrySeated: false } )
+		// Hide the WHOLE body when the kill switch reverts to the pre-M13 world (TerrySeated
+		// false), OR when 2D play mode suppresses seated bodies (M16) — they are noise under the
+		// top-down camera. Same mechanism, same Disengage undo, for both.
+		bool hideAll = ChessRing.Instance is { TerrySeated: false } || SeatedTerry.ForceHidden;
+		if ( hideAll )
 		{
 			HideEveryRenderer();
 			return;
 		}
 
+		// A 3D mode: if we had hidden everything (a live switch OUT of 2D, or the kill switch
+		// flipped back on while seated), bring those renderers back before trimming — otherwise
+		// the body stays invisible until we stand and re-sit. HideLocalAvatar runs every seated
+		// frame, so this makes the mode switch take effect in place.
+		ShowHiddenRenderers();
 		TrimSeatedAvatar();
+	}
+
+	/// <summary>Re-enable every renderer <see cref="HideEveryRenderer"/> turned off and clear the
+	/// list. Shared by Disengage (standing up) and the live 2D→3D switch in
+	/// <see cref="HideLocalAvatar"/> — both undo the wholesale hide the same way.</summary>
+	void ShowHiddenRenderers()
+	{
+		foreach ( var r in _hiddenRenderers )
+		{
+			if ( r.IsValid() )
+				r.Enabled = true;
+		}
+		_hiddenRenderers.Clear();
 	}
 
 	/// <summary>The pre-M13 behaviour, kept behind ChessRing.TerrySeated: don't draw our
@@ -2339,14 +2361,9 @@ public sealed class LobbyPlayer : Component
 		InfoStation.Active?.Leave();
 
 		// Undo everything the seat did to our own body, in either direction: the wholesale
-		// hide (TerrySeated false) and the M13 trim can BOTH have run this session if the
-		// switch was flipped mid-game, so neither undo is conditional on it.
-		foreach ( var r in _hiddenRenderers )
-		{
-			if ( r.IsValid() )
-				r.Enabled = true;
-		}
-		_hiddenRenderers.Clear();
+		// hide (TerrySeated false, or 2D play mode) and the M13 trim can BOTH have run this
+		// session if the switch was flipped mid-game, so neither undo is conditional on it.
+		ShowHiddenRenderers();
 		RestoreSeatedAvatar();
 		ClearSitPose();
 		ClearHandPose();
@@ -2397,10 +2414,18 @@ public sealed class LobbyPlayer : Component
 	}
 
 	/// <summary>Ease the camera to the local player's seat anchor. The anchor is
-	/// pre-aimed down at the board center by ChessRing, so no target math here.</summary>
+	/// pre-aimed down at the board center by ChessRing, so no target math here.
+	///
+	/// <para>2D play mode (M16) picks the top-down (nadir) anchor instead of the orbit anchor;
+	/// the existing lerp/slerp then eases between them for free, so switching mode while seated
+	/// glides to the other view with no extra code. Read live off PlayMode, so the switch takes
+	/// effect the next frame.</para></summary>
 	void UpdateLockedCamera()
 	{
-		var anchor = ChessStation.Active?.SeatAnchor( ChessStation.ActiveSeat );
+		var station = ChessStation.Active;
+		var seat = ChessStation.ActiveSeat;
+		bool nadir = Gambit.Game.PlayerData.ClampPlayMode( Gambit.Game.PlayerData.Load()?.PlayMode ) == "2d";
+		var anchor = nadir ? station?.TopAnchor( seat ) : station?.SeatAnchor( seat );
 		if ( anchor == null || _cameraObject == null ) return;
 
 		float t = Math.Clamp( _engageTime / CamBlendTime, 0f, 1f );

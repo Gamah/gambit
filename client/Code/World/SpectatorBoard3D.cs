@@ -122,7 +122,7 @@ public sealed class SpectatorBoard3D : Component, Component.ExecuteInEditor
 			var cell = AddBox( _root, $"Cell {(char)( 'a' + file )}{rank + 1}",
 				CellCenter( sq, tileZ ),
 				new Vector3( CellSize, CellSize, CellThickness ),
-				light ? ChessRing.LightSquare : ChessRing.DarkSquare );
+				BaseTint( light ) );   // mode-aware so a hotload in 2D paints cream/brown (M16)
 			_cells[sq] = cell;
 		}
 
@@ -181,9 +181,20 @@ public sealed class SpectatorBoard3D : Component, Component.ExecuteInEditor
 
 	string _lastFen;
 	bool _everSynced;
+	// The render mode the wall's pieces were built in (M16); see ChessBoardView._renderedFlat.
+	bool _renderedFlat;
 
 	void SyncPieces()
 	{
+		// Play-mode change (M16): the FEN is unchanged, so destroy the pieces, retint the squares,
+		// and let the diff below respawn all 64 through the mode-appropriate builder.
+		if ( ChessSetBuilder.FlatMode != _renderedFlat )
+		{
+			_renderedFlat = ChessSetBuilder.FlatMode;
+			ResetPieces();
+			RetintCells();
+		}
+
 		var c = SpectatorController.Instance;
 		var fen = c?.Fen;
 		if ( _everSynced && ReferenceEquals( fen, _lastFen ) ) return;
@@ -309,7 +320,43 @@ public sealed class SpectatorBoard3D : Component, Component.ExecuteInEditor
 	{
 		if ( sq < 0 || !_cells[sq].IsValid() ) return;
 		bool light = ( ( ( sq >> 3 ) + ( sq & 7 ) ) & 1 ) != 0;
-		_cells[sq].Tint = light ? ChessRing.LightSquare : ChessRing.DarkSquare;
+		_cells[sq].Tint = BaseTint( light );
+	}
+
+	/// <summary>A square's own (unhighlighted) colour for the current play mode (M16): the classic
+	/// cream/brown pair in 2D, the neutral pair otherwise. Shared by the build, the highlight
+	/// restore, and the mode-switch retint so all three agree.</summary>
+	static Color BaseTint( bool light ) => ChessSetBuilder.FlatMode
+		? ( light ? ChessRing.Light2D : ChessRing.Dark2D )
+		: ( light ? ChessRing.LightSquare : ChessRing.DarkSquare );
+
+	/// <summary>Retint all 64 squares to the current mode's palette and drop the highlight latch so
+	/// PaintHighlight re-applies the last-move squares next frame (M16 mode switch).</summary>
+	void RetintCells()
+	{
+		for ( int sq = 0; sq < 64; sq++ )
+		{
+			if ( !_cells[sq].IsValid() ) continue;
+			bool light = ( ( ( sq >> 3 ) + ( sq & 7 ) ) & 1 ) != 0;
+			_cells[sq].Tint = BaseTint( light );
+		}
+		_lastHighlight = (-1, -1);
+	}
+
+	/// <summary>Destroy every piece and clear the render state so the next <see cref="SyncPieces"/>
+	/// rebuilds all 64 (M16 play-mode change). Mirrors ChessBoardView.ResetPieces; the wall has no
+	/// trays or performed pieces, so it is simpler.</summary>
+	void ResetPieces()
+	{
+		for ( int i = 0; i < 64; i++ )
+		{
+			_pieces[i]?.Destroy();
+			_pieces[i] = null;
+			_rendered[i] = '\0';
+		}
+		_slides.Clear();
+		_lastFen = null;
+		_everSynced = false;
 	}
 
 	// ── Geometry / parsing ──

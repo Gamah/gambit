@@ -67,6 +67,12 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// center.</summary>
 	[Property, Range( -20f, 20f )] public float SeatLookDownAngle { get; set; } = 8f;
 
+	/// <summary>Height of the top-down (nadir) camera above the board centre for 2D play mode
+	/// (M16), in the same units as <see cref="SeatOrbitRadius"/>. A separate anchor entirely —
+	/// never derived from <see cref="SeatPitch"/>, which also feeds the chair/walk-up placement
+	/// (<see cref="SeatSpotX"/>). Tune so the 8×8 board fills the frame from straight overhead.</summary>
+	[Property] public float TopDownHeight { get; set; } = 56f;
+
 	/// <summary>Calibration multiplier on the computed UI rect (see ScreenFractionRect) —
 	/// nudge until engaged UI lines up with the board on screen.</summary>
 	[Property] public float UiFit { get; set; } = 1f;
@@ -561,28 +567,40 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		return false;
 	}
 
-	// Last SettingsModel version this client applied the "TERRY MOVES PIECES" toggle at. −1 so
-	// the first frame applies it once (after TerryTuning.OnEnabled has done its one-shot push).
+	// Last SettingsModel version this client applied the PLAY MODE setting at. −1 so the first
+	// frame applies it once (after TerryTuning.OnEnabled has done its one-shot push).
 	int _handsSettingVersion = -1;
 
-	/// <summary>Push the player's "TERRY MOVES PIECES" toggle into the seated-hands gate.
+	/// <summary>Push the player's PLAY MODE (M16) into the three client-local gates it drives.
 	///
-	/// <para>Version-keyed — writes <see cref="SeatedHandSpikes.HandsOn"/> only when the setting
-	/// actually changes, exactly like <see cref="TerryTuning"/>'s own on-change push and the
-	/// <c>gambit_terry_*</c> console levers. That is what keeps the three from fighting: between
-	/// player edits nobody re-asserts the static, so a diagnostic (or the tuning inspector) that
-	/// forces it mid-run stays authoritative. ChessRing is one per client, so this is one write
-	/// per change rather than one per station.</para></summary>
-	void ApplyHandsSetting()
+	/// <para>Version-keyed — writes the statics only when the setting actually changes, exactly like
+	/// <see cref="TerryTuning"/>'s own on-change push and the <c>gambit_terry_*</c> console levers.
+	/// That is what keeps them from fighting: between player edits nobody re-asserts the statics, so
+	/// a diagnostic (or the tuning inspector) that forces one mid-run stays authoritative. ChessRing
+	/// is one per client, so this is one write per change rather than one per station.</para>
+	///
+	/// <list type="bullet">
+	/// <item><see cref="SeatedHandSpikes.HandsOn"/> — only <c>3d-arms</c> animates hands; <c>2d</c>
+	/// and <c>3d-clean</c> leave them off (bodies still sit, pieces still slide).</item>
+	/// <item><see cref="ChessSetBuilder.FlatMode"/> — the render dispatch gate: <c>2d</c> makes every
+	/// board build flat glyph quads. The two board views watch this and respawn their pieces.</item>
+	/// <item><see cref="SeatedTerry.ForceHidden"/> — <c>2d</c> suppresses the seated bodies, which are
+	/// noise under the top-down camera.</item>
+	/// </list></summary>
+	void ApplyPlayModeSetting()
 	{
 		if ( _handsSettingVersion == Gambit.UI.SettingsModel.SettingsVersion ) return;
 		_handsSettingVersion = Gambit.UI.SettingsModel.SettingsVersion;
-		SeatedHandSpikes.HandsOn = Gambit.Game.PlayerData.Load()?.TerryMovesPieces ?? true;
+
+		string mode = Gambit.Game.PlayerData.ClampPlayMode( Gambit.Game.PlayerData.Load()?.PlayMode );
+		SeatedHandSpikes.HandsOn = mode == "3d-arms";
+		ChessSetBuilder.FlatMode = mode == "2d";
+		SeatedTerry.ForceHidden = mode == "2d";
 	}
 
 	protected override void OnUpdate()
 	{
-		ApplyHandsSetting();
+		ApplyPlayModeSetting();
 
 		// Never set in the editor (HostSetStationCount is play-mode, host-only)
 		if ( _slidePhase == SlidePhase.None ) return;
@@ -703,6 +721,10 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			var component = station.AddComponent<ChessStation>();
 			component.WhiteAnchor = BuildSeatAnchor( station, "WhiteAnchor", -1f );
 			component.BlackAnchor = BuildSeatAnchor( station, "BlackAnchor", +1f );
+			// Top-down (nadir) anchors for 2D play mode (M16) — a second per-seat camera target,
+			// used instead of the orbit anchor when PlayMode is "2d". Separate GO, separate maths.
+			component.WhiteTopAnchor = BuildTopAnchor( station, "WhiteTopAnchor", -1f );
+			component.BlackTopAnchor = BuildTopAnchor( station, "BlackTopAnchor", +1f );
 
 			// Game flow + board rendering (M2). Both replicate with the station GO
 			// like ChessStation does — the controller for its [Sync] game state, the
@@ -1723,6 +1745,27 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		return anchor;
 	}
 
+	/// <summary>Top-down (nadir) camera anchor for one seat — the 2D play-mode view (M16). side −1 =
+	/// White (outward), +1 = Black (inward). Directly above the board centre looking straight down,
+	/// with the seat's FAR rank at the top of the screen so each player reads the board from their
+	/// own side. A separate anchor from <see cref="BuildSeatAnchor"/> — it never touches SeatPitch
+	/// (which also drives chair/walk-up placement), and LobbyPlayer eases between the two for free
+	/// when the mode changes while seated.</summary>
+	GameObject BuildTopAnchor( GameObject station, string name, float side )
+	{
+		var center = new Vector3( 0, 0, BoardSurfaceZ + 2f );
+
+		var anchor = new GameObject( true, name );
+		anchor.Parent = station;
+		anchor.LocalPosition = center + Vector3.Up * TopDownHeight;
+		// Look straight DOWN. The up-hint is this seat's board-forward (the far rank), never
+		// Vector3.Up — that is parallel to the look direction and degenerate. So the camera's
+		// screen-up points down the board away from the player, as at a real board.
+		var farDir = new Vector3( -side, 0, 0 );
+		anchor.LocalRotation = Rotation.LookAt( Vector3.Down, farDir );
+		return anchor;
+	}
+
 	/// <summary>Ring radius for a given station count: keeps the chord between
 	/// neighboring tables at the scene-tuned 8-station spacing (Radius), then
 	/// clamps so the outer seat spots (the orbit's ground footprint, plus a margin
@@ -1809,6 +1852,12 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	// ChessBoardView restores cell tints to these after clearing highlights.
 	public static readonly Color LightSquare = new( 0.85f, 0.85f, 0.85f );
 	public static readonly Color DarkSquare = new( 0.09f, 0.09f, 0.09f );
+
+	// 2D play mode (M16): the classic cream/brown board. The board views retint their cells to
+	// these while FlatMode is on and back to the neutral pair above when it's off. Public so both
+	// ChessBoardView (tables) and SpectatorBoard3D (the wall) share one palette.
+	public static readonly Color Light2D = new( 0.93f, 0.85f, 0.67f );   // cream
+	public static readonly Color Dark2D = new( 0.71f, 0.53f, 0.39f );    // brown
 	static readonly Color FrameColor = new( 0.12f, 0.08f, 0.05f );
 	// Darker than the frame and flatter than the wood: a tray should read as a
 	// recess the pieces are set INTO, not another ledge on the table. It also has

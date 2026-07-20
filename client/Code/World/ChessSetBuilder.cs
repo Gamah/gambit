@@ -52,8 +52,28 @@ public static class ChessSetBuilder
 	/// <paramref name="yaw"/> is the piece's facing (knights look at the enemy);
 	/// pass the side's "toward the opponent" yaw.
 	/// </summary>
+	// ── 2D play mode (M16) ──
+	//
+	// FlatMode is the render dispatch gate: set true by ChessRing.ApplyPlayModeSetting when the
+	// player's PlayMode is "2d", it makes EVERY board (tables, the north wall, the ring's preview
+	// set) build flat glyph sprites instead of lathed bodies — with ZERO call-site changes, because
+	// every one of them goes through this one BuildPiece seam. The pieces are still real per-piece
+	// GameObjects, so slides/trays/captures/highlights keep working; only the geometry differs.
+
+	/// <summary>When true, <see cref="BuildPiece"/> builds a flat top-down glyph quad instead of a
+	/// 3D body. Toggled by ChessRing off <see cref="Gambit.Game.PlayerData.PlayMode"/>.</summary>
+	public static bool FlatMode;
+
 	public static GameObject BuildPiece( GameObject parent, ChessPieceType type, bool white, float scale, float yaw = 0f )
 	{
+		// 2D dispatch (M16): one line, every board. Falls through to the 3D path if the flat quad
+		// can't be built (missing atlas/shader), so the board is never left empty.
+		if ( FlatMode )
+		{
+			var flat = BuildFlatPiece( parent, type, white, scale );
+			if ( flat != null ) return flat;
+		}
+
 		var root = new GameObject( true, $"{( white ? "White" : "Black" )} {type}" );
 		root.Parent = parent;
 		root.LocalRotation = Rotation.FromYaw( yaw );
@@ -126,6 +146,154 @@ public static class ChessSetBuilder
 		}
 
 		return root;
+	}
+
+	// ── Flat glyph pieces (M16 2D play mode) ──
+	//
+	// A single quad in the board plane, UV-baked to this piece's cell in the 6×2 colour atlas
+	// (chess_glyphs_2d.png, columns K Q R B N P, row 0 white / row 1 black). One atlas + one
+	// material serve all 12 pieces; the 12 quad Models are cached (type × colour).
+
+	/// <summary>Quad half-size in base units. DERIVED, not guessed: a piece's root is scaled by
+	/// <c>scale</c> = <c>PieceScale</c> = <c>TableScale·(BoardSize/26)</c>, and a cell's pitch in
+	/// that same space is <c>(BoardSize/8)·TableScale</c>. Setting quad·scale = cell pitch and
+	/// solving, everything cancels to <b>26/8</b> — independent of BoardSize and TableScale — so a
+	/// 26/8-wide quad fills exactly one square on every board. The 26 is the same reference constant
+	/// PieceScale divides by.</summary>
+	const float FlatCellBase = 26f / 8f;
+
+	/// <summary>Quad footprint as a fraction of a full cell. 1 = exactly one square; the glyph sits
+	/// smaller than this because the atlas already renders it at ~0.78 of its cell with a margin.</summary>
+	const float FlatFill = 1f;
+
+	/// <summary>Lift above the cell top, in base units (scaled by <c>scale</c>), so the quad never
+	/// z-fights the cell it sits on. The piece origin is already at the cell's top surface.</summary>
+	const float FlatLift = 0.15f;
+
+	static Material _flatMaterial;
+	static Texture _flatAtlas;
+	// Keyed (type, white). The quad differs only by baked UVs, so 12 shared models cover every board.
+	static readonly Dictionary<(ChessPieceType, bool), Model> _flatCache = new();
+
+	/// <summary>Atlas column for a piece type — the 2D atlas is laid out K Q R B N P (0..5), which
+	/// is NOT the <see cref="ChessPieceType"/> enum order, so map explicitly.</summary>
+	static int AtlasColumn( ChessPieceType type ) => type switch
+	{
+		ChessPieceType.King => 0,
+		ChessPieceType.Queen => 1,
+		ChessPieceType.Rook => 2,
+		ChessPieceType.Bishop => 3,
+		ChessPieceType.Knight => 4,
+		ChessPieceType.Pawn => 5,
+		_ => 5,
+	};
+
+	/// <summary>The shared flat-glyph material, or null if the shader/atlas can't be loaded (in
+	/// which case <see cref="BuildPiece"/> falls back to the 3D body).</summary>
+	static Material FlatMaterial()
+	{
+		// Statics reset on hotload, so a plain null-check is enough (and Material has no IsValid()).
+		if ( _flatMaterial != null ) return _flatMaterial;
+
+		_flatAtlas ??= Texture.Load( FileSystem.Mounted, "textures/chess_glyphs_2d.png" );
+		if ( _flatAtlas == null )
+		{
+			Log.Warning( "[Gambit] 2D mode: textures/chess_glyphs_2d.png not mounted — falling back to 3D pieces. "
+				+ "Run scripts/gen_glyph_atlas.py --2d and add the png to the .sbproj Resources." );
+			return null;
+		}
+
+		var mat = Material.FromShader( "shaders/chess_glyph.shader" );
+		if ( mat == null )
+		{
+			Log.Warning( "[Gambit] 2D mode: shaders/chess_glyph.shader failed to load — falling back to 3D pieces." );
+			return null;
+		}
+		mat.Set( "Color", _flatAtlas );
+		_flatMaterial = mat;
+		return _flatMaterial;
+	}
+
+	/// <summary>
+	/// Build one flat glyph piece under <paramref name="parent"/> and return its root GO, matching
+	/// <see cref="BuildPiece"/>'s contract: parented, uniformly scaled by <paramref name="scale"/>,
+	/// origin at the centre of its footprint on the board surface — so the caller positions it with
+	/// LocalPosition exactly as it does a 3D piece, and every slide/tray/highlight path is unchanged.
+	///
+	/// <para><b>Yaw is forced to 0.</b> A glyph must read upright in board space; applying the 3D
+	/// facing yaw (0/180 or 90/270) would flip half the pieces upside-down. Both colours therefore
+	/// read the same way, and whichever seat sits at the "bottom" reads them naturally — the
+	/// opponent sees them inverted, exactly as on a shared physical board.</para>
+	///
+	/// <para>Returns null if the material can't be built, so the caller can fall back to 3D.</para>
+	/// </summary>
+	static GameObject BuildFlatPiece( GameObject parent, ChessPieceType type, bool white, float scale )
+	{
+		var mat = FlatMaterial();
+		if ( mat == null ) return null;
+
+		var root = new GameObject( true, $"{( white ? "White" : "Black" )} {type} (flat)" );
+		root.Parent = parent;
+		root.LocalRotation = Rotation.Identity; // yaw 0 — glyphs upright in board space
+		root.LocalScale = scale;
+
+		var renderer = root.AddComponent<ModelRenderer>();
+		renderer.Model = FlatModel( type, white );
+		renderer.MaterialOverride = mat;
+		return root;
+	}
+
+	static Model FlatModel( ChessPieceType type, bool white )
+	{
+		var key = (type, white);
+		if ( _flatCache.TryGetValue( key, out var cached ) && cached.IsValid() )
+			return cached;
+
+		var model = BuildFlatQuad( $"chess_flat_{type}_{( white ? "w" : "b" )}", type, white );
+		_flatCache[key] = model;
+		return model;
+	}
+
+	/// <summary>A two-sided quad in the board's XY plane (normal +Z, lifted a hair above the cell),
+	/// with UVs baked to this piece's atlas cell. Two-sided at the GEOMETRY level (both windings over
+	/// the four corners) so it needs no cull render-state — invisible-from-one-side can't happen.
+	/// Image "up" points to board +X and image "left" to board +Y (s&amp;box is Y-left), so the glyph
+	/// is not mirrored when read from above.</summary>
+	static Model BuildFlatQuad( string name, ChessPieceType type, bool white )
+	{
+		int col = AtlasColumn( type );
+		int row = white ? 0 : 1;
+		float u0 = col / 6f, u1 = ( col + 1 ) / 6f;
+		float v0 = row / 2f, v1 = ( row + 1 ) / 2f;
+
+		float half = FlatCellBase * 0.5f * FlatFill;
+		float z = FlatLift;
+		var n = Vector3.Up;          // +Z; unlit, so this is nominal
+		var tan = Vector3.Forward;   // +X
+
+		// Corner order: +X is board-forward (glyph top), +Y is board-left (glyph left).
+		var verts = new List<Vertex>
+		{
+			new( new Vector3( +half, +half, z ), n, tan, new Vector4( u0, v0, 0, 0 ) ), // 0 top-left
+			new( new Vector3( +half, -half, z ), n, tan, new Vector4( u1, v0, 0, 0 ) ), // 1 top-right
+			new( new Vector3( -half, -half, z ), n, tan, new Vector4( u1, v1, 0, 0 ) ), // 2 bottom-right
+			new( new Vector3( -half, +half, z ), n, tan, new Vector4( u0, v1, 0, 0 ) ), // 3 bottom-left
+		};
+		// Front (faces +Z) and back (faces −Z) over the same four corners — geometry two-sidedness.
+		var indices = new List<int>
+		{
+			0, 1, 2, 0, 2, 3,   // front
+			0, 2, 1, 0, 3, 2,   // back
+		};
+
+		var mesh = new Mesh( name, Material.Load( "materials/default.vmat" ) );
+		mesh.CreateVertexBuffer( verts.Count, verts );
+		mesh.CreateIndexBuffer( indices.Count, indices );
+		mesh.Bounds = BBox.FromPositionAndSize( new Vector3( 0, 0, z ), new Vector3( FlatCellBase, FlatCellBase, 0.5f ) );
+
+		// The MaterialOverride on the renderer is what actually draws it (the flat glyph shader);
+		// the mesh material here is just a required non-null and never rendered.
+		return Model.Builder.AddMesh( mesh ).Create();
 	}
 
 	// ── Lathed bodies ──

@@ -40,11 +40,25 @@ public sealed class PlayerData
 	public bool InfoPanelSeen { get; set; } = false;
 	/// <summary>Show the decorative checkerboard floor (with its colour pops).</summary>
 	public bool CheckerboardFloor { get; set; } = true;
-	/// <summary>Whether seated players' hands reach out and move the pieces (M14). Off = the
-	/// bodies still sit and the pieces still slide, but no arm animation. Drives the client-local
-	/// <see cref="Gambit.World.SeatedHandSpikes.HandsOn"/> gate (applied in ChessRing). Default on
-	/// — the hands ship.</summary>
-	public bool TerryMovesPieces { get; set; } = true;
+	/// <summary>How chess boards render for this client, and how a seated player sees them (M16).
+	/// Three values:
+	/// <list type="bullet">
+	/// <item><c>"2d"</c> — every board (tables + the north spectator wall) draws as flat top-down
+	/// glyph sprites on a white/brown board; seated camera looks straight down; seated hands AND
+	/// bodies are off.</item>
+	/// <item><c>"3d-clean"</c> — today's 3D pieces, seated hands off.</item>
+	/// <item><c>"3d-arms"</c> — today's 3D pieces, seated hands on. The pre-M16 default behaviour,
+	/// so it stays the default and nothing changes for existing players.</item>
+	/// </list>
+	/// Purely per-client and local (like the old terry-arms toggle, voice range, TTS) — nothing is
+	/// networked. Stored as a string (like <see cref="ColorScheme"/>/<see cref="LichessTvChannel"/>)
+	/// so a hand-edited value survives; <see cref="ClampPlayMode"/> coerces on read. Drives
+	/// <see cref="Gambit.World.SeatedHandSpikes.HandsOn"/>, <see cref="Gambit.World.ChessSetBuilder.FlatMode"/>
+	/// and <see cref="Gambit.World.SeatedTerry.ForceHidden"/> (all applied in ChessRing).
+	/// <para>No migration: an old save's now-unknown <c>TerryMovesPieces</c> key is dropped on load,
+	/// and a missing <c>PlayMode</c> deserializes to the default <c>3d-arms</c> = hands on = today's
+	/// behaviour.</para></summary>
+	public string PlayMode { get; set; } = "3d-arms";
 	/// <summary>Pop re-pick frequency as a multiplier on the floor's base interval
 	/// (0.25–3×; higher = pops change faster).</summary>
 	public float FloorPopRate { get; set; } = 1f;
@@ -117,6 +131,19 @@ public sealed class PlayerData
 		data.InfoPanelSeen = true;
 		data.Save();
 	}
+	/// <summary>The three play modes (M16), in picker order.</summary>
+	public static readonly string[] PlayModes = { "2d", "3d-clean", "3d-arms" };
+
+	/// <summary>Coerce a stored/hand-edited play mode to one of the three, defaulting to
+	/// <c>3d-arms</c> (today's behaviour) for anything unrecognised — same guard shape as the
+	/// slider clamps below, for a string.</summary>
+	public static string ClampPlayMode( string v )
+	{
+		foreach ( var m in PlayModes )
+			if ( m == v ) return v;
+		return "3d-arms";
+	}
+
 	// Slider ranges; clamping on use guards hand-edited JSON.
 	public static float ClampLightScale( float v ) => Math.Clamp( v, 0f, 1.5f );
 	public static float ClampPopRate( float v ) => Math.Clamp( v, 0.25f, 3f );

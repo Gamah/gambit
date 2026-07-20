@@ -177,6 +177,33 @@ public sealed class ChessBoardView : Component
 
 	readonly List<Slide> _slides = new();
 
+	/// <summary>Destroy every piece and tray GameObject and clear all in-flight render state, so the
+	/// next <see cref="SyncPieces"/> rebuilds all 64 from scratch (M16 play-mode change). Unlike
+	/// <see cref="EnsureBoard"/>, which drops the whole PiecesView parent, this keeps the root and
+	/// destroys the pieces individually — a mode switch shouldn't tear down and re-resolve the board.
+	/// Resetting <c>_lastFen</c>/<c>_everSynced</c> is what makes the FEN early-return fall through to
+	/// an all-additions respawn.</summary>
+	void ResetPieces()
+	{
+		for ( int i = 0; i < 64; i++ )
+		{
+			_pieces[i]?.Destroy();
+			_pieces[i] = null;
+			_rendered[i] = '\0';
+		}
+		foreach ( var t in _trayWhite ) t.Go?.Destroy();
+		foreach ( var t in _trayBlack ) t.Go?.Destroy();
+		foreach ( var c in _captured ) c.Go?.Destroy();
+		_trayWhite.Clear();
+		_trayBlack.Clear();
+		_captured.Clear();
+		_slides.Clear();
+		_performedWhite = null;
+		_performedBlack = null;
+		_lastFen = null;
+		_everSynced = false;
+	}
+
 	// ── The performed piece (M14): the WRIST is a child of the PIECE ──
 	//
 	// ONE clock. The piece runs its hold-then-slide (this view owns it, and the hold is
@@ -318,9 +345,23 @@ public sealed class ChessBoardView : Component
 
 	string _lastFen;
 	bool _everSynced;
+	// The render mode the pieces on the board were built in (M16). A play-mode change flips
+	// ChessSetBuilder.FlatMode but does NOT change the FEN, so the reference check below would
+	// never rebuild — this guard forces a full respawn through the mode-appropriate builder.
+	bool _renderedFlat;
 
 	void SyncPieces()
 	{
+		// Play-mode change (M16): the FEN is unchanged, so destroy every piece and let the diff
+		// below respawn all 64 as flat glyphs or 3D bodies. Keyed on the render-relevant bit
+		// (flat vs not) rather than SettingsModel.SettingsVersion, so a brightness-slider drag
+		// doesn't thrash the whole board.
+		if ( ChessSetBuilder.FlatMode != _renderedFlat )
+		{
+			_renderedFlat = ChessSetBuilder.FlatMode;
+			ResetPieces();
+		}
+
 		// ChessGame.Fen returns the same string instance until a move mutates
 		// the board, so this reference check makes idle tables (most of a big
 		// lobby, most frames) free.
@@ -829,7 +870,10 @@ public sealed class ChessBoardView : Component
 		// happened to change in the same frame — which, while the opponent thinks,
 		// nothing does.
 		int hash = HashCode.Combine( lastMove, checkedKing, interactive,
-			Selected, _hoverSquare, _targets, premoveFrom, premoveTo );
+			Selected, _hoverSquare, _targets, premoveFrom,
+			// FlatMode belongs in the hash so a play-mode change (M16) forces one repaint —
+			// that is what swaps the base squares to the 2D cream/brown palette and back.
+			HashCode.Combine( premoveTo, ChessSetBuilder.FlatMode ) );
 		if ( !binding && hash == _lastPaintHash ) return;
 		_lastPaintHash = hash;
 
@@ -874,8 +918,11 @@ public sealed class ChessBoardView : Component
 			else if ( lastFrom == name || lastTo == name )
 				tint = LastMoveTint;
 			else
-				// Restore the square's own checker color
-				tint = light ? ChessRing.LightSquare : ChessRing.DarkSquare;
+				// Restore the square's own checker color — the 2D cream/brown palette in flat
+				// mode (M16), the neutral pair otherwise.
+				tint = ChessSetBuilder.FlatMode
+					? ( light ? ChessRing.Light2D : ChessRing.Dark2D )
+					: ( light ? ChessRing.LightSquare : ChessRing.DarkSquare );
 
 			if ( renderer.Tint != tint )
 				renderer.Tint = tint;

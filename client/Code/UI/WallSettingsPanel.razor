@@ -146,7 +146,7 @@
 			$"CHECKERBOARD — {floor}",
 			$"MY BOARD SOUNDS — {OnOff( data.MyCabinetSounds )}",
 			$"OTHER BOARD SOUNDS — {OnOff( data.RemoteCabinetSounds )}",
-			$"TERRY MOVES PIECES — {OnOff( data.TerryMovesPieces )}",
+			$"PLAY MODE — {PlayModeLabel( data.PlayMode )}",
 			$"VOICE RANGE — {PlayerData.ClampVoiceRange( data.VoiceRangeAtTable ):0}u / {PlayerData.ClampVoiceRange( data.VoiceRangeRoaming ):0}u",
 			$"SPEAK MOVES — {OnOff( data.MoveTtsEnabled )}",
 		};
@@ -173,6 +173,13 @@
 	}
 
 	static string OnOff( bool v ) => v ? "ON" : "OFF";
+
+	static string PlayModeLabel( string mode ) => PlayerData.ClampPlayMode( mode ) switch
+	{
+		"2d" => "2D",
+		"3d-clean" => "3D",
+		_ => "3D + ARMS",
+	};
 
 	protected override int BuildHash() =>
 		HashCode.Combine( Kind, SettingsModel.SettingsVersion, LobbyNetworkManager.LocalIsAdmin,

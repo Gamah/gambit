@@ -49,6 +49,18 @@ public sealed class SeatedTerry : Component
 	/// these ever disagree, the board and the hands are describing different games.</summary>
 	IBoardGame Source => BoardGame.Source( Controller, Lichess );
 
+	/// <summary>Runtime override (M16 2D play mode): when true, the seated bodies are suppressed —
+	/// they are noise under the top-down nadir camera. Set by ChessRing off
+	/// <see cref="Gambit.Game.PlayerData.PlayMode"/> == "2d".
+	///
+	/// <para>Deliberately a SEPARATE static from the authored <see cref="ChessRing.TerrySeated"/>
+	/// <c>[Property]</c> kill switch, ANDed into the body-enable gate in <see cref="LobbyPlayer"/>
+	/// (<c>effectiveOn = TerrySeated &amp;&amp; !ForceHidden</c>) — same shape as
+	/// <see cref="SeatedHandSpikes.HandsOn"/>. This keeps the three-deep kill-switch discipline
+	/// intact and stays console-settable, rather than overwriting an authored property at
+	/// runtime.</para></summary>
+	public static bool ForceHidden;
+
 	object _lastSource;
 	HandPose _white = HandPose.None;
 	HandPose _black = HandPose.None;

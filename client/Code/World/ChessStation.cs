@@ -34,6 +34,12 @@ public sealed class ChessStation : Component
 	/// <summary>Camera lock target for the Black seat (inward side).</summary>
 	[Property] public GameObject BlackAnchor { get; set; }
 
+	/// <summary>Top-down (nadir) camera targets for 2D play mode (M16), one per seat. Set by
+	/// ChessRing at build time, looking straight down at the board from each player's side. Used
+	/// instead of <see cref="WhiteAnchor"/>/<see cref="BlackAnchor"/> when PlayMode is "2d".</summary>
+	[Property] public GameObject WhiteTopAnchor { get; set; }
+	[Property] public GameObject BlackTopAnchor { get; set; }
+
 	/// <summary>SteamId of the player in the White seat, 0 if free. Host-authoritative.</summary>
 	[Sync( SyncFlags.FromHost )] public ulong WhiteSteamId { get; set; }
 	[Sync( SyncFlags.FromHost )] public string WhiteName { get; set; }
@@ -57,6 +63,12 @@ public sealed class ChessStation : Component
 
 	public GameObject SeatAnchor( ChessSeat seat ) =>
 		seat == ChessSeat.White ? WhiteAnchor : BlackAnchor;
+
+	/// <summary>The top-down (nadir) camera target for this seat — the 2D play-mode view (M16).
+	/// Mirrors <see cref="SeatAnchor"/>; LobbyPlayer picks this over the orbit anchor when 2D is on.
+	/// Falls back to the orbit anchor if the top anchors weren't built (e.g. an old scene).</summary>
+	public GameObject TopAnchor( ChessSeat seat ) =>
+		( seat == ChessSeat.White ? WhiteTopAnchor : BlackTopAnchor ) ?? SeatAnchor( seat );
 
 	/// <summary>Where a player stands to claim this seat — used for the "Press E"
 	/// proximity pick. The camera anchor's ground position is exactly that spot.

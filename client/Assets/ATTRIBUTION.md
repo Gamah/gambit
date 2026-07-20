@@ -40,6 +40,13 @@ logo, below. Recorded here for auditability even when no attribution is legally 
   the Cburnett/Wikipedia/lichess piece set (those are CC-BY-SA/GPL, not CC0). CC0 /
   public-domain-clean. Regenerate with `python3 scripts/gen_glyph_atlas.py`.
 
+- **`textures/chess_glyphs_2d.png`** — 2D play-mode piece atlas (M16). The same fresh
+  DejaVu Sans rasterisation of U+265A–U+265F, but a full-colour 6×2 grid (white row /
+  black row) with a filled body and a contrasting outline per colour, sampled directly
+  by the flat-quad pieces. Same provenance and licence as the floor atlas above — our
+  own raster, **not** the Cburnett/lichess set — CC0 / public-domain-clean. Regenerate
+  with `python3 scripts/gen_glyph_atlas.py --2d`.
+
 ## Sounds
 
 - **`sounds/sfx/*.wav`** — synthesised in-repo by `scripts/gen_sounds.py` (numpy).

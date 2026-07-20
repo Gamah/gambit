@@ -5,7 +5,7 @@
   "Ident": "gambit",
   "Schema": 1,
   "IncludeSourceFiles": false,
-  "Resources": "textures/chess_glyphs.png",
+  "Resources": "textures/*.png",
   "PackageReferences": [],
   "EditorReferences": null,
   "Mounts": null,

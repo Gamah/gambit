@@ -100,10 +100,12 @@ public static class SettingsModel
 			v => Mutate( d => d.MyCabinetSounds = v ) ) );
 		rows.Add( ToggleRow( "OTHER BOARD SOUNDS", data.RemoteCabinetSounds,
 			v => Mutate( d => d.RemoteCabinetSounds = v ) ) );
-		// Seated players' hands reaching out to move pieces (M14). Client-local, cosmetic — off
-		// leaves the bodies sitting and the pieces sliding, just without the arm animation.
-		rows.Add( ToggleRow( "TERRY MOVES PIECES", data.TerryMovesPieces,
-			v => Mutate( d => d.TerryMovesPieces = v ) ) );
+		// How chess boards render for this client (M16): flat 2D glyphs, clean 3D, or 3D with the
+		// seated hands animating moves. Client-local and cosmetic; 3D+ARMS is the pre-M16 default.
+		rows.Add( PickerRow( "PLAY MODE",
+			new[] { ("2d", "2D"), ("3d-clean", "3D"), ("3d-arms", "3D + ARMS") },
+			PlayerData.ClampPlayMode( data.PlayMode ),
+			v => Mutate( d => d.PlayMode = v ) ) );
 
 		// Proximity-voice hearing range (M12): how far THIS client hears others, split by whether
 		// you're seated or roaming. Range is a receive-side, per-client value (the falloff is applied
@@ -240,6 +242,28 @@ public static class SettingsModel
 			Selected = true,
 			Activate = () => set( voices[( idx + 1 ) % voices.Count] ),
 		} );
+		return row;
+	}
+
+	// A multi-value picker: one clickable cell per option, the current one Selected. Modelled on
+	// the host BOARDS cell loop and SwatchRow — SettingsScreen already renders a multi-cell .cells
+	// row, so no UI change is needed. Each cell's value is captured per-iteration (the lambda
+	// outlives the loop), and Activate routes through the caller's setter (→ Mutate → SettingsVersion++).
+	static SettingRow PickerRow( string label, (string Value, string CellLabel)[] options,
+		string current, Action<string> set )
+	{
+		var row = new SettingRow { Label = label };
+		foreach ( var (value, cellLabel) in options )
+		{
+			string v = value; // capture per iteration
+			row.Cells.Add( new SettingCell
+			{
+				Label = cellLabel,
+				Css = "toggle",
+				Selected = v == current,
+				Activate = () => set( v ),
+			} );
+		}
 		return row;
 	}
 
