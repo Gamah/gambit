@@ -1363,18 +1363,35 @@ template documents the intent). Diagnose either with the host console:
 
 ### Chat is the ENGINE'S overlay now, not ours
 
-`ChatShowUI` is **`true`** in `Platform.config`, and `ChatPanel.razor` is a **thin hint only**
-(a keycap glyph telling roaming players which key opens chat). The engine draws the feed and the
-input box; messages route/filter through the host as before. This replaced a **288-line** custom
-chat box (feed + `TextEntry` + fade + hand-rolled word-wrap) copied from rotaliate and kept alive
-*only* by turning the engine overlay off to redraw it worse — terryball threw the same box away
-(`8ad9f4b`), and this is Gambit catching up. **Do not re-add a custom chat box.**
+`ChatShowUI` is **`true`** in `Platform.config`. The engine draws the feed and the input box;
+messages route/filter through the host as before. This replaced a **288-line** custom chat box
+(feed + `TextEntry` + fade + hand-rolled word-wrap) copied from rotaliate and kept alive *only* by
+turning the engine overlay off to redraw it worse — terryball threw the same box away (`8ad9f4b`),
+and this is Gambit catching up. **Do not re-add a custom chat box.**
+
+**The chat WINDOW's position and size are the engine's, not ours, and cannot be moved from game
+code** (checked against `sbox-public`'s `menu` addon 2026-07). The feed/input is that addon's
+`ChatOverlay`, laid out by *its own* stylesheet (`left: 64px; bottom: 20%; width: 600px` in-game;
+messages `justify-content: flex-end` up to `max-height: 400px`, then scroll — so it already grows
+UP from the bottom). It renders in the menu overlay tree, outside our `ScreenPanel`, and
+`Platform.config` exposes only `ChatEnabled`/`ChatShowUI`/`ChatMaxMessageLength` — **no position, no
+API**. So "align the chat box to the glyphs / grow it to the top" is not doable without re-adding
+our own box, which is the forbidden path above. The keycap HINT is ours and movable; the window is
+not.
+
+`ChatPanel.razor` used to draw the "which key opens chat" hint; **that hint moved to
+`VoicePanel` (M17)** so all three bottom-left UX-glyph hints (Chat / Voice / Mute) are one panel in
+one keycap style, each read live from its binding. `ChatPanel` now **draws nothing** and survives
+only for its `IsOpen` stub (below) — a serialized `lobby.scene` component, so the class can't be
+deleted without orphaning that scene entry.
 
 - `ChatPanel.IsOpen` is a **stub `=> false`** kept so `LobbyPlayer`'s "don't walk while typing"
   gate compiles. That gate is now **dead code, and that's fine** — the engine's focused text box
   already stops WASD leaking into the world. Don't try to revive it.
-- The keycap is read live from `Input.GetButtonOrigin( "Chat" )`, **never hardcoded**. The old
-  panel's comment claimed the key was "rebindable in Settings" and resolved it through
+- The chat keycap (now in `VoicePanel` beside the Voice/Mute keycaps) is read live from
+  `Input.GetButtonOrigin( "Chat" )`, **never hardcoded** — there is no glyph-ICON API in this
+  build, so an input "glyph" is the binding string in a keycap box. The old ChatPanel's comment
+  claimed the key was "rebindable in Settings" and resolved it through
   `PlayerData.Bindings` — but **nothing ever wrote `Bindings`**, so it was dead code guarding a
   feature that doesn't exist. `Bindings` is **deleted** from `PlayerData` (old saves drop the
   unknown key on load); `GamepadBindings` is the real, separate thing — don't confuse them.
