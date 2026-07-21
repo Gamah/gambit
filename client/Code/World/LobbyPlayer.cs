@@ -316,24 +316,42 @@ public sealed class LobbyPlayer : Component
 	/// networked, because everything it needs already is.</summary>
 	public (ChessStation Station, ChessSeat Seat)? SeatedAt { get; private set; }
 
+	/// <summary>The chess station this player is actively SITTING at (camera-engaged), or
+	/// null — networked, unlike the rest of the seated pose. Occupancy replicates already,
+	/// but post-M17 a player keeps their seat while roaming, so occupancy alone would leave
+	/// a walked-away player stuck seated (body + hand IK) on everyone ELSE's screen. This is
+	/// the missing bit: the owner publishes where they actually sit (ChessStation.Active),
+	/// and <see cref="UpdateSeatedAt"/> reads it for proxies instead of guessing from a seat
+	/// they merely hold.</summary>
+	[Sync] public GameObject NetSeatedStation { get; set; }
+
 	/// <summary>Recompute <see cref="SeatedAt"/>. Cheap enough to do per player per frame:
 	/// it is a walk of ~8 stations, the same order as FindNearbySeat, which already does
 	/// this every frame over stations × seats.</summary>
 	void UpdateSeatedAt()
 	{
-		// Our OWN seat comes from ChessStation.Active, not from the [Sync] fields: that
-		// covers the optimistic-claim window between pressing E and the host's occupancy
-		// landing, which is exactly the moment we sit down.
-		if ( !IsProxy && ChessStation.Active is { } active )
+		// Our OWN seat comes from the CAMERA (ChessStation.Active), not the [Sync] occupancy:
+		// it covers the optimistic-claim window between pressing E and the host's occupancy
+		// landing, AND — post-M17 — it goes null the instant we stand up to roam even though
+		// we still hold the seat. We PUBLISH it (NetSeatedStation) so proxies can tell real
+		// sitting from mere occupancy; occupancy alone would keep a roaming player planted on
+		// everyone else's screen.
+		if ( !IsProxy )
 		{
-			SeatedAt = (active, ChessStation.ActiveSeat);
+			var active = ChessStation.Active;
+			var go = active?.GameObject;
+			if ( NetSeatedStation != go ) NetSeatedStation = go;   // [Sync]: publish only on change
+			SeatedAt = active != null ? (active, ChessStation.ActiveSeat) : null;
 			return;
 		}
 
-		ulong id = Network.Owner?.SteamId ?? 0;
-		if ( id != 0 )
+		// Proxy: where they are actually SITTING is the networked station (null while they
+		// roam); the seat within it comes from the occupancy at that station.
+		if ( NetSeatedStation.IsValid()
+			&& NetSeatedStation.Components.Get<ChessStation>() is { } s )
 		{
-			foreach ( var s in Scene.GetAllComponents<ChessStation>() )
+			ulong id = Network.Owner?.SteamId ?? 0;
+			if ( id != 0 )
 			{
 				if ( s.WhiteSteamId == id ) { SeatedAt = (s, ChessSeat.White); return; }
 				if ( s.BlackSteamId == id ) { SeatedAt = (s, ChessSeat.Black); return; }

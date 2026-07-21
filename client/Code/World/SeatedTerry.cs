@@ -933,14 +933,14 @@ public sealed class SeatedTerry : Component
 			return;
 		}
 
-		// The LOCAL player's hand only fires while they are actually SITTING here — the
-		// camera (ChessStation.Active), not merely holding the seat. Post-M17 you can keep a
-		// live game and roam, so the hand IK must not reach across the room to a board you
-		// stood up from, nor fire on a SECOND table you also hold a seat at. A proxy has no
-		// camera we can read, so its occupancy stands in as before. Clear the hand and rest
-		// the pose so a mid-gesture doesn't freeze mid-air when you get up.
-		if ( avatar.IsValid() && !avatar.IsProxy
-			&& !( ChessStation.Active == station && ChessStation.ActiveSeat == seat ) )
+		// A hand only fires while its player is actually SITTING here — LobbyPlayer.SeatedAt,
+		// not mere occupancy. Post-M17 you can keep a live game and roam, so the IK must not
+		// reach across the room to a board you stood up from, nor fire on a SECOND table you
+		// also hold. SeatedAt is the camera for the local player and the NETWORKED sitting
+		// station for a proxy — so this holds on every screen, not just the one that stood
+		// up. Clear the hand and rest the pose so a mid-gesture doesn't freeze mid-air.
+		if ( avatar.IsValid()
+			&& !( avatar.SeatedAt is { } sa && sa.Station == station && sa.Seat == seat ) )
 		{
 			avatar.ClearHandPose();
 			pose = HandPose.None with { Ply = game.MoveCount };
