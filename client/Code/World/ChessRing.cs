@@ -719,6 +719,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			_spawned.Add( station );
 
 			var component = station.AddComponent<ChessStation>();
+			component.Number = i;   // same index the plaque shows (BuildStationPlaque below)
 			component.WhiteAnchor = BuildSeatAnchor( station, "WhiteAnchor", -1f );
 			component.BlackAnchor = BuildSeatAnchor( station, "BlackAnchor", +1f );
 			// Top-down (nadir) anchors for 2D play mode (M16) — a second per-seat camera target,

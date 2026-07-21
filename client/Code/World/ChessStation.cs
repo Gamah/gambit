@@ -27,6 +27,10 @@ public sealed class ChessStation : Component
 	/// <summary>Which seat the local player took at <see cref="Active"/>.</summary>
 	public static ChessSeat ActiveSeat { get; private set; }
 
+	/// <summary>This table's number, as shown on its plaque. Set by ChessRing at build
+	/// time; used by the roaming "your game on Table N is live" reminder.</summary>
+	public int Number { get; set; }
+
 	/// <summary>Camera lock target for the White seat (outward side). Set by
 	/// ChessRing at build time.</summary>
 	[Property] public GameObject WhiteAnchor { get; set; }

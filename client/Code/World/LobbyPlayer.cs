@@ -669,6 +669,29 @@ public sealed class LobbyPlayer : Component
 		Disengage( keepSeat: false );
 	}
 
+	/// <summary>The table where the local player has a LIVE game they've stepped away from
+	/// — seated (occupancy still ours) at a board whose game is running, while our camera
+	/// is not at that board. Null if none. Drives the roaming reminder, so you don't forget
+	/// a game (and a ticking clock) you walked away from. Covers a relayed lichess game and
+	/// a local two-seat game alike.</summary>
+	public ChessStation RoamingLiveGame()
+	{
+		ulong mine = Connection.Local?.SteamId ?? 0;
+		if ( mine == 0 ) return null;
+
+		foreach ( var s in Scene.GetAllComponents<ChessStation>() )
+		{
+			if ( ChessStation.Active == s ) continue;                 // we're AT this board
+			if ( s.WhiteSteamId != mine && s.BlackSteamId != mine ) continue;  // not our seat
+
+			var lichess = Gambit.Game.LichessGameController.For( s );
+			var local = Gambit.Game.LocalGameController.For( s );
+			if ( ( lichess is { Engaged: true, Playing: true } ) || ( local is { Playing: true } ) )
+				return s;
+		}
+		return null;
+	}
+
 	/// <summary>Resign the live game at the seat we're engaged at — the explicit,
 	/// two-stage button on the seated HUD, unrelated to standing up. A first call arms
 	/// the confirm (the button shows "Sure?"), a second within the window commits: it
