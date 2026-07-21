@@ -380,21 +380,37 @@ gameOver frame — don't go looking for one.
 
 So the wall's fanfare splits the job in two, and **which half does what is the whole lesson**:
 
-- **The CLIENT decides a game ended**, from the featured id changing away from the one on its
-  board. Nothing else can mean that, and it needs nothing from the server.
-- **gamchess only supplies the REASON**: it notices the same swap and fetches the old game's
-  result from **`GET /game/export/{id}`** (anonymous, like the feed; `status` + `winner`, where
-  a **missing winner means a draw**), publishing it as `last_game_id/last_status/last_winner`.
-  The client uses it only if `last_game_id` is the game it was actually showing.
+- **The CLIENT decides a game ended.** Two ways, and the fast one is the point:
+  - **From the POSITION** — a checkmate or stalemate is IN the FEN, so
+    `LichessTv.TryPositionResult` reads it off the frame the mating move lands on and the wall
+    freezes and announces **instantly**, deriving who+why locally ("White wins — checkmate"). No
+    server, no wait. This is **the one place the TV path reads the rules**, and it is gated to
+    `IsStandardRules` (`Group.Speed`) — a Crazyhouse/Atomic/Antichess "mate" isn't one, and the
+    vendored rules are standard-only. The spectator BOARD still parses nothing; this is
+    `LichessTvSource` calling `ChessGame.TryFromFen`, harness-proven. It exists because without
+    it the wall runs the mated side's clock down for **~2s** until the swap below (the feed sends
+    no game-over event, and lichess lingers before featuring the next game).
+  - **From the featured id changing** — the fallback for everything the position can't show: a
+    resign, a flag, a draw agreement, and every variant. Needs nothing from the server.
+- **gamchess supplies the REASON for that fallback**: it notices the same swap and fetches the
+  old game's result from **`GET /game/export/{id}`** (anonymous, like the feed; `status` +
+  `winner`, where a **missing winner means a draw**), publishing it as
+  `last_game_id/last_status/last_winner`. The client uses it only if `last_game_id` is the game
+  it was actually showing — and only if the position path didn't already announce the end.
 
 The first version had the client WAIT for `last_game_id` to appear before announcing anything
 — which silently made the entire feature depend on the server half being deployed. Against a
 gamchess without it, nothing ever fired, and **a fanfare that never fires looks identical to
-one that isn't wired up**: it cost two rounds of testing and a wrong diagnosis. Now an
-undeployed server costs the *reason* ("Game over") and never the announcement.
+one that isn't wired up**: it cost two rounds of testing and a wrong diagnosis.
 
-The client holds the finished position for `LichessTv.FanfareSeconds` (3s) with a result line,
-because lichess TV cuts to the next game instantly and on a wall that reads as a glitch.
+The client holds the finished position for `LichessTv.FanfareSeconds` (3s), because lichess TV
+cuts to the next game instantly and on a wall that reads as a glitch. **The HOLD (freeze the
+position + clocks) is decoupled from the BANNER (who+why).** The hold starts the instant we
+know the game ended; the banner shows a real WHO-WON / WHY line and nothing else — **no bare
+"Game over" placeholder** (`LichessTv.Result` returns a null headline when it can't say who or
+why, and the wall shows no banner rather than a placeholder that then rewrites itself). The
+position path sets both at once (it knows the result); the swap path freezes first and fills the
+banner a beat later when the export returns.
 
 **The swap and the reason are published SEPARATELY, and getting that wrong is what made the
 fanfare arrive late.** The export fetch is **one request per game END per channel**, not per
@@ -428,13 +444,18 @@ progress whatever the speed; a wall wants something worth looking up at, and bli
 game but an arbitrary one). This was **six** at first, excluded on the reasoning that the
 vendored rules are standard-only so a variant FEN can't be drawn —
 **that was wrong, and the mistake is instructive**: the standard-only rule governs *playing*
-(`ChessGame` parses the FEN and validates moves) and was carried over to the wall, which
-parses nothing. `SpectatorBoard3D` takes the placement field alone and walks its characters
+(`ChessGame` parses the FEN and validates moves) and was carried over to the wall's DRAWING,
+which parses nothing. `SpectatorBoard3D` takes the placement field alone and walks its characters
 under a `file < 8 && rank >= 0` guard, so Chess960's X-FEN castling (`HDhd`) is never read,
 Crazyhouse's pockets (`…/RNBQKBNR[Pp]`) fall off the guard, Three-check's counters ride at
 the end of the FEN, and the rest are plain standard placement. Proven against every variant's
 real starting FEN in the dotnet harness. **Before excluding something for "the board can't
 draw it", check what actually reads the FEN.**
+
+*(The wall's DRAWING parses nothing; its end-DETECTION does, and only for standard channels —
+`LichessTvSource` runs `ChessGame.TryFromFen` on standard-rules frames to spot a checkmate/
+stalemate instantly. That's the one exception, gated by `IsStandardRules`, and it never touches
+`SpectatorBoard3D`. See the fanfare split above.)*
 
 Two channels hide state the 64 squares can't hold — Crazyhouse's pockets and Three-check's
 counts (`LichessTv.HidesState`) — and the spectator board says so, because a viewer who can't

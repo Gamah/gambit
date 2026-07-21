@@ -556,6 +556,29 @@ public sealed class LichessTvSource
 			_ => null,
 		};
 		StatusText = null;
+
+		// LOCAL end-of-game detection — the fast path a wall wants (M18).
+		//
+		// A checkmate or stalemate is IN the position we just applied, so we can freeze and
+		// announce it the INSTANT the mating move lands, instead of running the mated side's
+		// clock down for ~2s until lichess features the next game (the feed has no game-over
+		// event; the featured swap is its only other end signal, and it lingers). Standard
+		// channels only — a variant "mate" isn't one — and only checkmate/stalemate reach here;
+		// a resign or a flag isn't visible in the position and still falls through to the swap
+		// path below on the next messages. Locally derived, so _fanfareUpgraded = true keeps the
+		// later swap/fetch from overwriting a result we already know for certain.
+		if ( LichessTv.IsStandardRules( Channel )
+			&& LichessTv.TryPositionResult( st.fen, out var head, out var reason ) )
+		{
+			_fanfareShownFor = _gameId;
+			_holdUntil = LichessTv.FanfareSeconds;
+			FanfareHeadline = head;
+			FanfareReason = reason;
+			FanfareText = reason == null ? head : $"{head} — {reason}";
+			_fanfareUpgraded = true;
+			Log.Info( $"[Gambit] lichess TV: {_gameId} ended (from position) — {FanfareText}" );
+		}
+
 		return true;
 	}
 
