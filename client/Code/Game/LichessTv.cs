@@ -179,8 +179,12 @@ public static class LichessTv
 	///
 	/// <para><paramref name="winner"/> is "white"/"black", or null/empty for a DRAW —
 	/// lichess omits the field rather than sending a third value.
-	/// <paramref name="status"/> empty means we couldn't find out, and the caller still
-	/// wants to say the game ended: that is a bare "Game over".</para></summary>
+	/// <paramref name="status"/> empty (or otherwise unknown) with no winner means we
+	/// couldn't find out who or why: <paramref name="headline"/> comes back <b>null</b>,
+	/// meaning "nothing to announce". Callers show no banner in that case rather than a
+	/// bare "Game over" — the held finished position already says the game ended.
+	/// <see cref="ResultLine"/>, which needs a string for a one-line status context,
+	/// substitutes "Game over" for a null headline; the wall banner does not.</para></summary>
 	public static void Result( string status, string winner, out string headline, out string reason )
 	{
 		string who = winner == "white" ? "White" : winner == "black" ? "Black" : null;
@@ -217,7 +221,10 @@ public static class LichessTv
 
 		if ( unknown )
 		{
-			headline = who == null ? "Game over" : $"{who} wins";
+			// A winner with no reason is still a result ("White wins"); no winner and no
+			// reason is nothing to announce — a null headline, NOT a bare "Game over". The
+			// wall shows no banner over the held position in that case (see LichessTvSource).
+			headline = who == null ? null : $"{who} wins";
 			return;
 		}
 
@@ -245,7 +252,9 @@ public static class LichessTv
 		// Every real draw has a recognised reason, so this costs none of them.
 		if ( who == null )
 		{
-			headline = why == null ? "Game over" : "Draw";
+			// A recognised drawing reason is a "Draw"; an unrecognised one with no winner is
+			// nothing we can announce — null headline, not "Game over".
+			headline = why == null ? null : "Draw";
 			reason = why;
 			return;
 		}
@@ -255,12 +264,14 @@ public static class LichessTv
 		reason = why;
 	}
 
-	/// <summary>The result as ONE line — "White wins — out of time". For the places that
-	/// have a line rather than a banner (the walk-up board's status row).</summary>
+	/// <summary>The result as ONE line — "White wins — out of time". For a one-line status
+	/// context that needs SOME string even when the result is unknown, so it substitutes
+	/// "Game over" for a null headline (where the wall banner instead shows nothing).</summary>
 	public static string ResultLine( string status, string winner )
 	{
 		Result( status, winner, out var headline, out var reason );
-		return reason == null ? headline : $"{headline} — {reason}";
+		var line = headline ?? "Game over";
+		return reason == null ? line : $"{line} — {reason}";
 	}
 
 	/// <summary>The next channel in the cycle, wrapping.</summary>

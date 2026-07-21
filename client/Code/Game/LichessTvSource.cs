@@ -89,59 +89,67 @@ public sealed class LichessTvSource
 	//
 	// lichess TV cuts to the next game the instant one ends. On a wall that reads as a
 	// glitch: the result never appears, the pieces just jump to a new position. So when
-	// the game we're showing ends, we stop on it for FanfareSeconds with a line saying
-	// how it went, and only then move on.
+	// the game we're showing ends, we HOLD on its final position for FanfareSeconds and,
+	// once we know how it went, put a two-line WHO-WON / WHY banner over it.
+	//
+	// Two things are deliberately DECOUPLED. The HOLD starts the instant we see the game
+	// ended (the featured id changed) — that's what freezes the position and the clocks.
+	// The BANNER only appears once we actually know who won and why, which arrives a beat
+	// later (gamchess fetches the result from the game export off the reader's path). We
+	// do NOT show a bare "Game over" placeholder in the gap: the presence of the held
+	// position is already "a game ended", and a placeholder that then rewrites itself
+	// reads worse than a clean position that gains a result line. If the result never
+	// arrives, the hold simply expires with no banner and the wall moves on.
 	//
 	// We KEEP THE SOCKET OPEN throughout — the connection is what tells gamchess someone
-	// is watching, so dropping it would let the upstream drop just because a game ended.
-	// The pushes that arrive during the hold simply aren't applied to the board; the
-	// LATEST is buffered in _latest and revealed when the hold expires. Every message is
-	// a full snapshot, so this is one field to hold, not a queue to drain.
+	// is watching. Pushes during the hold aren't applied to the board; the LATEST is kept
+	// in _latest and revealed when the hold expires. Every message is a full snapshot, so
+	// this is one field to hold, not a queue to drain.
 
-	RealTimeUntil _fanfareUntil;
+	/// <summary>The hold timer. Set to FanfareSeconds the instant we detect the game
+	/// ended; while it runs we freeze the finished position and refuse to apply new state.
+	/// The hold, NOT the banner, is what "we are showing a finished game" means — the
+	/// banner may still be empty (waiting on the result) for the first part of it.</summary>
+	RealTimeUntil _holdUntil;
 
-	/// <summary>The game we've already shown the fanfare for.
+	/// <summary>Are we holding a finished position right now? Freezes the clocks
+	/// (<see cref="ClockFor"/>), stops the board advancing (<see cref="Apply"/>), and is
+	/// how a caller knows a dead game is on the board even before its result line lands.</summary>
+	bool Holding => (float)_holdUntil > 0f;
+
+	/// <summary>The game we've already begun a hold for.
 	///
 	/// <para>Needed because gamchess reports the last ending until the NEXT one, so
 	/// <c>last_game_id</c> keeps matching our frozen <see cref="_gameId"/> after the hold
-	/// expires — and the fanfare would re-arm on the very next push, forever, and the
-	/// wall would never advance past the finished game.</para></summary>
+	/// expires — and the hold would re-arm on the very next push, forever, and the wall
+	/// would never advance past the finished game.</para></summary>
 	string _fanfareShownFor;
 
-	/// <summary>Whether the held fanfare has already taken lichess's reason, so the
-	/// per-frame <see cref="Pump"/> during the hold doesn't rebuild the line every frame
-	/// for one unchanging reason. Reset when the fanfare clears.</summary>
+	/// <summary>Whether the banner has already taken a real result, so the per-frame
+	/// <see cref="Pump"/> during the hold doesn't re-derive it every frame. Stays false
+	/// while the result is still unknown, so a late result is picked up. Reset on clear.</summary>
 	bool _fanfareUpgraded;
 
-	/// <summary>The result line for the game on the board, or null — the one-line form,
-	/// for callers that have a line rather than a banner.
-	///
-	/// <para><b>This — not <see cref="InFanfare"/> — is what "the game being shown has
-	/// finished" means</b>, and the two are not the same window. It is cleared at the
-	/// moment the next game is applied, so it is true for exactly as long as a finished
-	/// position is on the board.</para></summary>
+	/// <summary>The joined result line ("White wins — out of time"), or null while there
+	/// is no finished-game result to show — which is BOTH during live play and during the
+	/// early part of a hold before the result has arrived. Callers wanting "is a finished
+	/// game on the board" must ask <see cref="ShowingFinished"/>, not this: a hold with no
+	/// banner yet is still a finished game.</summary>
 	public string FanfareText { get; private set; }
 
-	/// <summary>"White wins" — the banner's first line.</summary>
+	/// <summary>"White wins" — the banner's first line, or null. Never a bare "Game over":
+	/// the banner shows only a real result (a winner, a draw, an abort), and stays empty
+	/// otherwise.</summary>
 	public string FanfareHeadline { get; private set; }
 
 	/// <summary>"out of time" — the banner's second line, or null when there's no reason
 	/// to give (an abort, or a result we couldn't fetch).</summary>
 	public string FanfareReason { get; private set; }
 
-	/// <summary>Is the finished game on the board right now? Anything that must not treat
-	/// a dead game as live — a running clock, a ticking highlight — asks this.</summary>
-	public bool ShowingFinished => FanfareText != null;
-
-	/// <summary>Are we still holding, i.e. must we refuse to apply new state?
-	///
-	/// <para><b>Narrower than <see cref="ShowingFinished"/>, deliberately.</b> The hold
-	/// expiring does not itself put the new game on the board — <see cref="Pump"/> does
-	/// that on the next tick or push. Using this to decide "is the game over" would leave
-	/// a gap where the board still shows the finished position while the clock resumes
-	/// draining and the result line vanishes: the exact thing the fanfare exists to
-	/// prevent, moved a moment later.</para></summary>
-	public bool InFanfare => FanfareText != null && (float)_fanfareUntil > 0f;
+	/// <summary>Is a finished game on the board right now? True for the whole hold, banner
+	/// or not. Anything that must not treat a dead game as live — a running clock, a
+	/// ticking highlight — asks this.</summary>
+	public bool ShowingFinished => Holding;
 
 	// The last clocks lichess told us, in SECONDS (the TV feed's unit; the Board API
 	// sends the same idea in ms), and when they were snapped onto us.
@@ -195,9 +203,7 @@ public sealed class LichessTvSource
 	float ClockFor( ChessSeat seat )
 	{
 		float bank = seat == ChessSeat.White ? _whiteBank : _blackBank;
-		// A finished game's clock does not run. ShowingFinished, not InFanfare: the hold
-		// can expire before Pump replaces the position, and the clock must not spring back
-		// to life on a dead game in the meantime.
+		// A finished game's clock does not run — frozen for the whole hold, banner or not.
 		if ( ShowingFinished ) return bank;
 		// Only the side to move is spending time. Nothing to run down before the first
 		// frame either — TickingSeat is null until then.
@@ -483,47 +489,42 @@ public sealed class LichessTvSource
 
 		if ( endedOnOurBoard )
 		{
-			// Only trust the result if it is THIS game's. gamchess reports the last ending it
-			// saw, which after a reconnect may be a different game entirely.
-			bool haveResult = st.last_game_id == _gameId;
+			// Start the HOLD immediately — this freezes the final position and the clocks.
+			// The banner is set separately, below, once we actually know the result: no bare
+			// "Game over" in the gap.
 			_fanfareShownFor = _gameId;
-
-			var status = haveResult ? st.last_status : null;
-			var winner = haveResult ? st.last_winner : null;
-			LichessTv.Result( status, winner, out var headline, out var reason );
-			FanfareHeadline = headline;
-			FanfareReason = reason;
-			FanfareText = reason == null ? headline : $"{headline} — {reason}";
-
-			_fanfareUntil = LichessTv.FanfareSeconds;
-			_fanfareUpgraded = haveResult; // if the arming frame already knew, there's nothing to upgrade
+			_holdUntil = LichessTv.FanfareSeconds;
+			_fanfareUpgraded = false;
 			StatusText = null;
-
-			Log.Info( $"[Gambit] lichess TV: {_gameId} ended — {FanfareText}"
-				+ ( haveResult ? "" : " (gamchess sent no result for it)" ) );
+			Log.Info( $"[Gambit] lichess TV: {_gameId} ended, holding" );
 		}
 
-		// The reason arrives AFTER the swap. gamchess publishes the featured swap the instant
-		// it sees it and fetches how the old game ended in the background, so the first frame
-		// of an ending carries an empty status ("Game over") and a later push fills it in.
-		// While we're still holding on THIS ended game, adopt the better line when it lands —
-		// otherwise the fanfare would keep the bare "Game over" for the whole hold even though
-		// lichess told us how it went a beat later. Once per ending (_fanfareUpgraded): Pump
-		// re-runs Apply every frame during the hold, and rebuilding the line each frame would
-		// churn a string ~180 times for one unchanging reason.
-		if ( InFanfare && !_fanfareUpgraded && _gameId == _fanfareShownFor
+		// Set the WHO-WON / WHY banner once — the instant we have a real result for the game
+		// we're holding on. It arrives a beat after the hold starts (gamchess publishes the
+		// featured swap immediately and fetches the result off the reader's path), and may
+		// already be present on the arming push (a reconnect onto a settled state). We show
+		// nothing until then, and nothing at all if the result is unknown — the held position
+		// already says "a game ended", so a "Game over" placeholder that rewrites itself is
+		// worse than a clean position that gains a result line. Guarded by _fanfareUpgraded so
+		// Pump (which re-runs Apply every frame of the hold) sets it once, not per frame.
+		if ( Holding && !_fanfareUpgraded && _gameId == _fanfareShownFor
 			&& st.last_game_id == _gameId && !string.IsNullOrEmpty( st.last_status ) )
 		{
-			LichessTv.Result( st.last_status, st.last_winner, out var lateHead, out var lateReason );
-			FanfareHeadline = lateHead;
-			FanfareReason = lateReason;
-			FanfareText = lateReason == null ? lateHead : $"{lateHead} — {lateReason}";
-			_fanfareUpgraded = true;
+			LichessTv.Result( st.last_status, st.last_winner, out var head, out var reason );
+			// A null headline is the "we can't say who or why" case (an unrecognised or
+			// still-settling status). Keep waiting rather than show a placeholder.
+			if ( !string.IsNullOrEmpty( head ) )
+			{
+				FanfareHeadline = head;
+				FanfareReason = reason;
+				FanfareText = reason == null ? head : $"{head} — {reason}";
+				_fanfareUpgraded = true;
+			}
 		}
 
 		// Hold the finished position: keep the buffered snapshot un-applied until the hold
 		// expires, then reveal whatever is current by construction (the latest push wins).
-		if ( InFanfare ) return false;
+		if ( Holding ) return false;
 
 		// The hold is over (or never started): the fanfare is history.
 		ClearFanfare();
@@ -586,15 +587,15 @@ public sealed class LichessTvSource
 		ClearFanfare();
 	}
 
-	/// <summary>Drop the held result. One method because it is three fields that must
-	/// agree — <see cref="ShowingFinished"/> keys on FanfareText, and a headline left
-	/// behind would print under the next game's position.</summary>
+	/// <summary>End the hold and drop the banner together. One method because the banner
+	/// fields must agree, and a headline left behind would print under the next game's
+	/// position; clearing <see cref="_holdUntil"/> here is what lets the next game apply.</summary>
 	void ClearFanfare()
 	{
 		FanfareText = null;
 		FanfareHeadline = null;
 		FanfareReason = null;
-		_fanfareUntil = 0f;
+		_holdUntil = 0f;
 		_fanfareUpgraded = false;
 	}
 }

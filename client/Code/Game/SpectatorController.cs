@@ -332,26 +332,22 @@ public sealed class SpectatorController : Component
 
 		// The game on the board has finished: say how it ended, and stop showing a clock
 		// as running. lichess TV would already be showing the next game by now — stopping
-		// on the result for a beat is the whole point.
-		//
-		// ShowingFinished, not InFanfare: the hold expires before the poll that replaces
-		// the position lands, and for that gap the board is still showing the finished
-		// game. Keying on the hold would drop the result line and restart the ticking
-		// highlight while the dead game is still up.
+		// on the result for a beat is the whole point. The banner text may still be empty
+		// early in the hold (the WHO-WON / WHY line arrives a beat after the position
+		// freezes) — that's fine, the frozen position IS the announcement until it lands.
 		if ( _tv.ShowingFinished )
 		{
-			// Sound the ending, once (M11). Quiet and POSITIONAL — the wall is always
-			// audible to the whole room, and on UltraBullet a game ends every ~30
-			// seconds, so this has to be something you notice standing at the wall and
-			// never something the room has to listen to forever. Same gate as everyone
-			// else's tables (RemoteCabinetSounds), because that is what it is: a game
+			// Sound the ending, once per game, on the HOLD's leading edge (M11). Not keyed
+			// on the banner text: that's null early in the hold and stays null for a result
+			// we couldn't fetch, so keying on it would delay or drop the sound. The hold
+			// starting IS the game ending. Quiet and POSITIONAL — the wall is always audible
+			// to the whole room, and on UltraBullet a game ends every ~30 seconds, so this
+			// has to be something you notice at the wall and never something the room listens
+			// to forever. Same gate as everyone else's tables (RemoteCabinetSounds): a game
 			// finishing somewhere you aren't sitting.
-			//
-			// Keyed on the headline changing rather than on ShowingFinished, which stays
-			// true for the whole hold and would re-fire every frame of it.
-			if ( _tv.FanfareText != _lastFanfareSounded )
+			if ( !_soundedThisHold )
 			{
-				_lastFanfareSounded = _tv.FanfareText;
+				_soundedThisHold = true;
 				Audio.SoundPlayer.PlayGameOver( mine: false, WorldPosition );
 			}
 
@@ -436,15 +432,16 @@ public sealed class SpectatorController : Component
 		FanfareHeadline = null;
 		FanfareReason = null;
 
-		// Re-arm the sound. Without this, two games in a row ending the same way — which
-		// on a fast channel is routine ("White won — Checkmate" twice) — would announce
-		// the first and sit silent through the second, because the text never changed.
-		_lastFanfareSounded = null;
+		// Re-arm the sound for the next hold. The end sound fires once on a hold's leading
+		// edge; this is what resets that edge between games so two in a row (routine on a
+		// fast channel) both announce.
+		_soundedThisHold = false;
 	}
 
-	/// <summary>The fanfare text we last made a noise for. Guards against re-firing
-	/// every frame of the hold; cleared between games by <see cref="ClearFanfare"/>.</summary>
-	string _lastFanfareSounded;
+	/// <summary>Whether we've already sounded the end for the hold currently on screen.
+	/// Guards against re-firing every frame of the 3s hold; reset between games by
+	/// <see cref="ClearFanfare"/>.</summary>
+	bool _soundedThisHold;
 
 	static string TableNumber( ChessStation st )
 	{
