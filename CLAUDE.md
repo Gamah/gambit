@@ -26,8 +26,10 @@ in git. Two consequences worth knowing before editing either file:
 ### Cutting a release (sbox.game)
 
 Gambit publishes to **sbox.game** with a version and a **"changes"** field — the changelog
-players see. Version scheme is **Alpha 0.0.x** (2D play mode was `0.0.1`; the M17 branch is
-`0.0.2`). The changes field is written in **five sbox.game categories, in this order**:
+players see. Version scheme is **Alpha 0.0.x** (2D play mode was `0.0.1`; **`0.0.2` bundles M17
+and M18** — multi-table play + relay/archive/HUD polish, then the lichess-TV WebSocket push +
+wall-clock panic + instant checkmate fanfare — so the next release is `0.0.3`). The changes
+field is written in **five sbox.game categories, in this order**:
 
 > **Added · Improved · Fixed · Removed · Known issues**
 
