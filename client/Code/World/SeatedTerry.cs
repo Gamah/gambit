@@ -933,6 +933,20 @@ public sealed class SeatedTerry : Component
 			return;
 		}
 
+		// The LOCAL player's hand only fires while they are actually SITTING here — the
+		// camera (ChessStation.Active), not merely holding the seat. Post-M17 you can keep a
+		// live game and roam, so the hand IK must not reach across the room to a board you
+		// stood up from, nor fire on a SECOND table you also hold a seat at. A proxy has no
+		// camera we can read, so its occupancy stands in as before. Clear the hand and rest
+		// the pose so a mid-gesture doesn't freeze mid-air when you get up.
+		if ( avatar.IsValid() && !avatar.IsProxy
+			&& !( ChessStation.Active == station && ChessStation.ActiveSeat == seat ) )
+		{
+			avatar.ClearHandPose();
+			pose = HandPose.None with { Ply = game.MoveCount };
+			return;
+		}
+
 		// This seat played either the LAST classified move, or — on a ≥2-ply jump (a
 		// premove firing the frame its trigger applies) — the EARLIER one (_prevUci).
 		// Each seat gets its own move as its own gesture; the capture flag belongs to
