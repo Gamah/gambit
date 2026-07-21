@@ -880,6 +880,15 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	const float ClockDepth = 1.6f;    // across Y — thin, it shares this margin with a tray
 	const float ClockHeight = 2.2f;   // a low plinth, not a tower: it must not fence the board
 
+	/// <summary>How far the plates (and the lead badge, which shares the plane) stand PROUD of
+	/// the plinth top. The plate's bottom edge computes flush to the surface, but a vertical
+	/// plate emerging from the middle of the flat top reads as slotted INTO it — the plinth's
+	/// near rim occludes the plate's lower edge from a seat. This lifts it clear so it sits ON
+	/// the base. Empirical (the arithmetic says flush; the room said sunk — the same lesson
+	/// ClockPlaneOriginZ already carries) and hotload-tunable: raise it if the plate still looks
+	/// sunk, drop toward 0 if it looks like it floats.</summary>
+	const float ClockPlateStandoff = 0.25f;
+
 	/// <summary>
 	/// Tilt of everything standing on the clock, in degrees of pitch. <b>0 stands the plates
 	/// fully UPRIGHT</b> (vertical, facing +Y across the board); negative pitches them back so
@@ -1033,7 +1042,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// rule: <b>derive an edge from the centre through the rotation — never place a tilted
 	/// object by the number that would be correct if it were flat.</b></para></summary>
 	static float ClockPlaneOriginZ =>
-		ClockHeight + ClockPlateHeight * 0.5f * MathF.Cos( ClockFaceTilt * ( MathF.PI / 180f ) );
+		ClockHeight + ClockPlateStandoff + ClockPlateHeight * 0.5f * MathF.Cos( ClockFaceTilt * ( MathF.PI / 180f ) );
 
 	// ── The material bar ──
 	//
