@@ -179,6 +179,9 @@
 	string ClockColor() => Panic() ? "#ff5f5f" : Ticking() ? "#7fd47f" : WallTheme.Text;
 
 	protected override int BuildHash() =>
+		// HashCode.Combine tops out at 8 args; fold the last two into one so Panic() and
+		// the settings version both still feed the hash (a repaint must catch a clock
+		// crossing the panic threshold).
 		HashCode.Combine( White, C?.WhiteName, C?.BlackName, Title(), Rating(), Clock(),
-			Ticking(), Panic(), SettingsModel.SettingsVersion );
+			Ticking(), HashCode.Combine( Panic(), SettingsModel.SettingsVersion ) );
 }
