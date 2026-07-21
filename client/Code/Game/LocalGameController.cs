@@ -218,9 +218,29 @@ public sealed class LocalGameController : Component, IBoardGame
 	/// (over or not) — the view renders Game instead of the start position.</summary>
 	public bool HasGame => Game != null;
 
-	/// <summary>Local player's seat at this table, or null when not seated here.</summary>
-	public ChessSeat? LocalSeat =>
-		ChessStation.Active == Station && Station != null ? ChessStation.ActiveSeat : null;
+	/// <summary>Local player's seat at this table by OCCUPANCY (the [Sync] SteamId), or
+	/// null if they don't hold a seat here.
+	///
+	/// <para><b>Occupancy, not the camera (M17).</b> This used to read
+	/// <c>ChessStation.Active == Station ? ActiveSeat</c> — which is the seat the camera is
+	/// AT. That was fine until standing up stopped releasing the seat: now you can hold a
+	/// live game and roam, and a camera-derived seat would read null the instant you got up,
+	/// so <see cref="FirePremove"/> would drop your premove and <see cref="IsMyTurn"/> would
+	/// forget it's your move — the game would think you left. Reading the networked
+	/// occupancy keeps "which side am I playing" true while you walk around, the same way
+	/// LichessGameController.LocalSeat reads gamchess's your_color rather than the camera.</para></summary>
+	public ChessSeat? LocalSeat
+	{
+		get
+		{
+			if ( Station is not { } s ) return null;
+			ulong me = Connection.Local?.SteamId ?? 0;
+			if ( me == 0 ) return null;
+			if ( s.WhiteSteamId == me ) return ChessSeat.White;
+			if ( s.BlackSteamId == me ) return ChessSeat.Black;
+			return null;
+		}
+	}
 
 	/// <summary>Seconds left on a seat's clock — the seam's copy. Null when nothing is
 	/// live or the game is untimed.</summary>
