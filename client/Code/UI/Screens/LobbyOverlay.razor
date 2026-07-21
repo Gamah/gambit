@@ -18,7 +18,7 @@
 	   the moment you sit back at any board. *@
 	@if ( !( LobbyPlayer.Local?.Engaged ?? false ) && LobbyPlayer.Local?.RoamingLiveGame() is { } liveTable )
 	{
-		<div class="live-reminder">♟  Your game on Table @liveTable.Number is live — sit back down to play</div>
+		<div class="live-reminder">@LiveReminder( liveTable )</div>
 	}
 
 	@if ( LobbyPlayer.Local?.Engaged ?? false )
@@ -137,6 +137,16 @@
 
 	static string LeaveLabel() => ChessStation.Active == null ? "Close" : "Stand Up";
 
+	// The roaming reminder for a game you stood up from. A premove stays armed when you
+	// stand up (it lives on the controller, not the seat) and fires when your opponent
+	// moves — showing it here is how you can tell it survived walking away.
+	static string LiveReminder( ChessStation t )
+	{
+		string pm = LobbyPlayer.Local?.PremoveAt( t );
+		string prem = pm is { Length: >= 4 } ? $" · premove {pm[..2]}→{pm[2..4]} still armed" : "";
+		return $"♟  Your game on Table {t.Number} is live{prem} — sit back down to play";
+	}
+
 	static string BoardPrompt( Gambit.World.SettingsStation b ) => b.Kind switch
 	{
 		Gambit.World.SettingsStation.StationKind.Host => "to change host settings",
@@ -159,6 +169,8 @@
 			LobbyPlayer.Local?.NearbyInfo?.Kind, DiscordButton.SinceCopied < 2f,
 			System.HashCode.Combine( LobbyPlayer.Local?.NearbySpectator != null,
 				LobbyPlayer.Local?.LeaveArmed,
-				// The roaming reminder: repaint when it appears/clears or the table changes.
-				LobbyPlayer.Local?.RoamingLiveGame()?.Number ) );
+				// The roaming reminder: repaint when it appears/clears, the table changes, or a
+				// premove arms/fires on the game you walked away from.
+				LobbyPlayer.Local?.RoamingLiveGame()?.Number,
+				LobbyPlayer.Local?.PremoveAt( LobbyPlayer.Local?.RoamingLiveGame() ) ) );
 }

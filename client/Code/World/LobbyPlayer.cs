@@ -692,6 +692,18 @@ public sealed class LobbyPlayer : Component
 		return null;
 	}
 
+	/// <summary>The armed premove UCI at station <paramref name="s"/>, or null. Read off
+	/// the same IBoardGame seam the board does, so it covers a lichess or local game.
+	/// Surfaced in the roaming reminder: standing up keeps a premove armed (it lives on the
+	/// controller, not the seat), and showing it is how you know it survived walking away.</summary>
+	public string PremoveAt( ChessStation s )
+	{
+		if ( s == null ) return null;
+		var src = Gambit.Game.BoardGame.Source(
+			Gambit.Game.LocalGameController.For( s ), Gambit.Game.LichessGameController.For( s ) );
+		return src?.PremoveUci is { Length: >= 4 } u ? u : null;
+	}
+
 	/// <summary>The table where the local player already has a live LICHESS game, other
 	/// than <paramref name="except"/> — or null. Gates a SECOND lichess game: lichess does
 	/// not document permission to play concurrent games through the Board API, so we relay
