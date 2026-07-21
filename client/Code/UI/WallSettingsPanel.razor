@@ -16,7 +16,7 @@
 *@
 
 <root>
-	<div class="board" style="background-color:@WallTheme.Bg; border:2px solid @WallTheme.Border;">
+	<div class="board" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
 		<div class="title" style="color:@WallTheme.Text;">@Title()</div>
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 		@{ var lines = Lines(); }
@@ -41,46 +41,50 @@
 	}
 
 	/* Colours are runtime-driven (WallTheme.cs, bound inline above); only layout +
-	   static tokens live here. Layout in the WorldPanel's fixed intrinsic pixel space,
-	   fixed px font sizes, uniform GO scale. */
+	   static tokens live here. On the shared WallTheme scale now (M17) — it was ~2x the
+	   east-wall trio (12/16 padding, 6 gap, 1.5 dividers, 12px body), the odd board out.
+	   The east-wall trio is canonical; these tokens are the copyable-px family. */
 	.board {
 		width: 100%;
 		height: auto;
 		flex-direction: column;
 		align-items: stretch;
 		justify-content: flex-start;
-		padding: 12px 16px;
+		padding: $wall-pad;
 		border-radius: $wall-radius;
 		font-family: $wall-font;
-		gap: 6px;
+		gap: $wall-gap;
 	}
 
 	.board > div {
 		flex-shrink: 0;
 	}
 
+	/* Title size stays its own call (PLAN's open room row on 13-vs-10-vs-15 across the
+	   walls); mapped to the vocabulary's hero step, which is its current 15px — a no-op
+	   until that row is settled, not a decision made here. */
 	.title {
 		justify-content: center;
 		white-space: nowrap;
-		font-size: 15px;
+		font-size: $wall-fs-hero;
 		font-weight: bold;
 		letter-spacing: 4px;
 	}
 
 	.divider {
-		height: 1.5px;
-		margin: 3px 0;
+		height: $wall-divider-h;
+		margin: $wall-divider-gap 0;
 	}
 
 	.line {
-		font-size: 12px;
+		font-size: $wall-fs-body;
 		letter-spacing: 1px;
 		white-space: nowrap;
 	}
 
 	.hint {
 		justify-content: center;
-		font-size: 11px;
+		font-size: $wall-fs-fine;
 		letter-spacing: 1px;
 		margin-top: 8px;
 	}

@@ -1,7 +1,35 @@
-// ── Lobby wall theme — static tokens ──────────────────────────────────────────
+// ── Lobby wall theme — static (non-colour) tokens ─────────────────────────────
 // The COLOURS are runtime-driven (see WallTheme.cs — they follow the world light
 // colour) and bound by each panel as inline style= values. Only the non-colour tokens
-// live here; @@import this and use them for font/radius. (Cabinet UI is not themed.)
+// live here: the shared TYPE SCALE, spacing, radius and font. @@import this and use
+// them so every wall board reads as one family — and so the web viewer can inherit the
+// same vocabulary (type scale, spacing, radius; NOT colour, which is dynamic here and
+// fixed gold there). Cabinet UI is not themed.
+//
+// The east-wall trio (CenterInfoPanel / LichessBoardPanel / DevNotesPanel) is the
+// CANONICAL scale: it is the majority, and it is what WallBoardGeometry's "copyable px"
+// promise assumes — every board shares one intrinsic pixel space, so these px are
+// directly comparable across boards. WallSettingsPanel was ~2x oversized (12/16 padding,
+// 6 gap, 1.5 dividers, 12px body) and is now on these tokens.
+//
+// TITLE sizes are deliberately still per-board (PLAN's open room row — nobody has decided
+// 13 vs 10 vs 15), so the title steps below are the shared vocabulary, not a mandate to
+// flatten every board's title to one value.
 
-$wall-radius:  4px;                              // near-square corners
-$wall-font:    Consolas, 'Roboto Mono', monospace;
+$wall-font:         Consolas, 'Roboto Mono', monospace;
+$wall-radius:       7.5px;     // board corner (trio canonical; Settings was 4px)
+
+// Board rhythm
+$wall-pad:          9px 12px;  // .board padding (Settings was 12px 16px)
+$wall-gap:          4px;       // .board flex gap (Settings was 6px)
+$wall-border:       1.5px;     // .board border width
+$wall-divider-h:    0.75px;    // hairline divider thickness (Settings was 1.5px)
+$wall-divider-gap:  1.5px;     // divider vertical margin (Settings was 3px)
+
+// Type scale — intrinsic panel px, NOT world size (the GO scale sizes the quad; see
+// CLAUDE.md). Calibrated on the trio.
+$wall-fs-hero:      15px;      // the one instruction that IS the content (CenterInfo .prompt)
+$wall-fs-title:     13px;      // signpost / prompt-board title
+$wall-fs-title-sm:  10px;      // secondary boards (lichess, dev notes)
+$wall-fs-body:      5.5px;     // primary body line
+$wall-fs-fine:      4.5px;     // secondary / hint line

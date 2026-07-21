@@ -16,7 +16,7 @@
 
 <root>
 	<div class="board" style="background-color:@WallTheme.Bg; border-color:@WallTheme.Border;">
-		<div class="title">LICHESS</div>
+		<div class="title" style="color:@WallTheme.Text;">LICHESS</div>
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 		<div class="status" style="color:@StatusColor()">@StatusLine()</div>
 		<div class="hint" style="color:@WallTheme.TextFaint;">Press E</div>
@@ -40,38 +40,40 @@
 		flex-direction: column;
 		align-items: stretch;
 		justify-content: flex-start;
-		padding: 9px 12px;
-		border: 1.5px solid;
-		border-radius: 7.5px;
+		padding: $wall-pad;
+		border: $wall-border solid;
+		border-radius: $wall-radius;
 		font-family: $wall-font;
-		gap: 4px;
+		gap: $wall-gap;
 	}
 
 	.board > div {
 		flex-shrink: 0;
 	}
 
+	/* Colour is bound inline (@@WallTheme.Text) like the other boards' titles, so it
+	   retints with the room theme. It used to hardcode a grey here and was the only
+	   trio title that didn't follow the accent. */
 	.title {
-		font-size: 10px;
+		font-size: $wall-fs-title-sm;
 		font-weight: bold;
 		letter-spacing: 3px;
 		text-align: center;
-		color: rgba(220, 220, 220, 0.9);
 	}
 
 	.divider {
-		height: 0.75px;
-		margin: 1.5px 0;
+		height: $wall-divider-h;
+		margin: $wall-divider-gap 0;
 	}
 
 	/* One div per line — a div's auto height doesn't grow for wrapped text. */
 	.status {
-		font-size: 5.5px;
+		font-size: $wall-fs-body;
 		text-align: center;
 	}
 
 	.hint {
-		font-size: 4.5px;
+		font-size: $wall-fs-fine;
 		letter-spacing: 2px;
 		text-align: center;
 	}
