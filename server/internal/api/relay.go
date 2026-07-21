@@ -145,8 +145,9 @@ type PlayState struct {
 	BlackIncMs  int64 `json:"black_inc_ms"`
 
 	// ClockAgeMs / HoldMs let the client subtract this frame's staleness before it
-	// runs a clock down — the identical machinery to TvState's, for the identical
-	// reason (a live clock must never read HIGHER than the time actually left). Both
+	// runs a clock down — for the same reason TV's clock does (a live clock must
+	// never read HIGHER than the time actually left), though the game relay keeps its
+	// long poll and so still carries HoldMs where M18's push-based TV dropped it. Both
 	// are computed AT SEND on a copy, never stored: ClockAgeMs from clockAt (below),
 	// HoldMs from when the request landed. Omitted (0) means "no correction", so a
 	// client talking to an older gamchess just gets the old frozen-between-moves
@@ -194,7 +195,9 @@ type PlayState struct {
 
 // ageAt fills the two send-time staleness fields on a COPY of the state — never on
 // the shared state, since these are per-response values (one request's timings must
-// not leak onto another waiter's answer). Mirrors TvState.ageAt exactly.
+// not leak onto another waiter's answer). TV used to mirror this exactly; M18
+// collapsed TV's version to a single AgeMs stamp (no HoldMs) when it moved to a
+// push, so this is now the only long-poll clock-staleness pair left.
 func (s *PlayState) ageAt(now, reqStart time.Time) {
 	if !s.clockAt.IsZero() {
 		s.ClockAgeMs = now.Sub(s.clockAt).Milliseconds()

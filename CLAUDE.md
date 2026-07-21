@@ -26,8 +26,10 @@ in git. Two consequences worth knowing before editing either file:
 ### Cutting a release (sbox.game)
 
 Gambit publishes to **sbox.game** with a version and a **"changes"** field — the changelog
-players see. Version scheme is **Alpha 0.0.x** (2D play mode was `0.0.1`; the M17 branch is
-`0.0.2`). The changes field is written in **five sbox.game categories, in this order**:
+players see. Version scheme is **Alpha 0.0.x** (2D play mode was `0.0.1`; **`0.0.2` bundles M17
+and M18** — multi-table play + relay/archive/HUD polish, then the lichess-TV WebSocket push +
+wall-clock panic + instant checkmate fanfare — so the next release is `0.0.3`). The changes
+field is written in **five sbox.game categories, in this order**:
 
 > **Added · Improved · Fixed · Removed · Known issues**
 
@@ -287,10 +289,16 @@ never asked for it, on a stream held open for hours, would be a real leak.
 **The invariant that pays for the proxy: one upstream stream per CHANNEL.** 100 players on
 blitz cost lichess one stream. That is why TV goes through gamchess rather than each client
 hitting lichess (lichess advocates precisely this), and why per-client channel choice is
-affordable — the cost is bounded by the channel count (15), not the player count. Ref-counted
-by **pollers via a last-polled timestamp, not a counter**: a counter needs a decrement on
-every exit path including the ones a dropped HTTP connection never gives us, and one missed
-decrement leaks a stream forever. A timestamp cannot leak.
+affordable — the cost is bounded by the channel count (15), not the player count. **Since M18
+this is ref-counted by a CONNECTION COUNT** (`tvChannel.conns`): `watch` increments it, and a
+`defer h.tv.leave(...)` in the socket handler decrements it on **every** exit path — clean
+close, write error, rude TCP drop. The **sweeper is the only thing that closes an upstream**,
+dropping a channel a short `tvLingerTTL` (~10s) after its count reaches zero so an A→B→A channel
+switch doesn't flap it; correctness rests on the guaranteed decrement, not the linger. *(Pre-M18
+it was a last-polled TIMESTAMP, because a long poll's HTTP handler had exit paths a dropped
+connection never ran — a counter would have leaked. A WebSocket handler holds the connection for
+its whole life, so a `defer` decrement is both possible and simpler, and it is the leak-proof
+core rather than a timestamp that merely can't leak.)*
 
 **It is still session-gated, and not for cost reasons.** An open `/api/v1/tv/{channel}` is a
 free CDN for someone else's content, and lichess sees our IP and our User-Agent — we made
@@ -310,61 +318,63 @@ this was wrong when recalled from memory first):
 - **`wc`/`bc` are SECONDS.** The Board API sends the same idea in **milliseconds**. Seconds
   happens to be what `TimeControl.Format` takes, so nothing converts — don't generalise it.
 
+**The client-facing transport is a WebSocket push (M18), one socket per channel.** gamchess
+still reads the lichess ndjson upstream and stays the sole stream holder — this did not become
+clients reading lichess. What changed is the gamchess→client hop: it was a version-gated long
+poll over a latest-state slot, with a `since`/`version` cursor, a `hold_ms` field and a whole
+clock-latency apparatus bolted on to make a 5s-held poll feel live. It is now `wss://…/api/v1/tv/
+{channel}` pushing **one full, self-contained `TvState` snapshot per state change** — no deltas,
+no cursor, latest-wins. `LichessTvSource` holds the socket, applies each pushed snapshot, and
+reconnects on a drop; switching channels reconnects and the stored latest frame is pushed on
+connect. `tvState` (the long-poll handler) is gone; `tvSocket` upgrades.
+
 **lichess only sends a clock when a MOVE happens**, so a TV clock rendered raw sits frozen
 through every think and reads as a broken board rather than a thinking player.
 `LichessTvSource` runs the side-to-move's clock down locally from the last frame and snaps
 both to whatever the next one says. lichess stays the only authority, and local drift cannot
 outlive one move.
 
-> **The "it can only read low" reasoning was WRONG, and it was written in three places.** This
-> file, PLAN.md and the code comment all claimed the local countdown "drifts LOW by roughly the
-> network latency". It read **HIGH**, and that inverts the house rule below — the one rule the
-> whole clock design exists to satisfy. The mechanism: lichess stamps the clock at the move
-> instant **T₀**; the frame reaches us at **T₀ + L** (lichess → gamchess → client); on arrival
-> the code set the bank and zeroed its age, so at wall-clock T₀+L we displayed the value as of
-> T₀ while the player had already burned **L**. Displayed = true + L, held until the next move.
-> "Counting down from a known-good value can only read low" is the step that fails: **the value
-> is already stale on arrival**, so the countdown starts late, not early.
+> **The clock favours reading LOW, and M18 made the mechanism tiny.** The house rule below is
+> that a live clock must never read HIGHER than the time actually left; reading low is fine.
+> With a push, a moving game's frames are FRESH — a change wakes the writer and it sends at once
+> — so the client flooring the displayed second (`TimeControl.Format` already truncates) absorbs
+> the sub-second transport latency for free, and the steady-state clock reads low with **no
+> correction at all**. The one case the floor can't cover is a client that CONNECTS mid-think:
+> gamchess hands the new socket its stored frame, already stale, and without a subtraction the
+> clock would read HIGH by that staleness.
 >
-> **Fixed in M11** — and the fix is not the one this file specified, which is worth keeping.
-> The agreed shape was "gamchess stamps receipt time into the state and the client subtracts the
-> elapsed since". **That does not work, for two reasons found on building it:**
+> So `TvState` carries **one** field, `age_ms` (~0 on a live push, the real staleness on the
+> connect/replay path), and the client subtracts it — a duration, not a timestamp, because we do
+> not share a wall clock with gamchess and a skewed absolute stamp would correct in either
+> direction, *including up*, the one direction the house rule forbids. On top, a fixed
+> `ClockLeadSeconds` (~0.25s) deliberate undershoot: the **lichess→gamchess** leg is
+> irrecoverable (nothing downstream knows lichess's move-instant T₀), so a small residual HIGH
+> bias survives on that leg, and shaving a quarter-second is free insurance in the one permitted
+> direction where a fair estimate would be a coin-flip on the forbidden outcome.
 >
-> 1. **We do not share a wall clock with gamchess.** An absolute stamp is meaningless to a
->    client, and a skewed one corrects by the skew — *including upwards*, the one direction the
->    house rule forbids. The correction has to travel as a **duration**, not a timestamp.
-> 2. **The stamp alone is a no-op on the common path.** The long poll wakes on the frame, so
->    gamchess sends it instantly and its own staleness is ~0. The bias that actually exists is
->    the **network leg**, and no server-side stamp can express it.
+> **This replaced the M11 apparatus wholesale.** That version carried TWO durations — `clock_age_ms`
+> *and* `hold_ms` — because a long poll's round trip is mostly gamchess *waiting*, so the client
+> had to subtract `hold_ms` to recover the network leg, plus `LagOf`/`_bankLag`/`MaxLagSeconds`
+> and a measured round trip. A push has no hold to measure and no cursor to reconcile, so all of
+> that is **deleted**. (The earlier "it can only read low" reasoning was itself wrong and written
+> in three places before M11 fixed it; that lesson is in git — the point that survives is that a
+> re-derived clock must reason from *when the value was stamped*, never from *when we received it*.)
 >
-> So `TvState` carries **two** durations, both computed at send: `clock_age_ms` (how long the
-> value sat with gamchess — ~0 normally, and it earns its keep only on a late or reconnecting
-> poll) and `hold_ms` (how long gamchess sat on the request). The client measures its own round
-> trip and takes **network = round trip − hold_ms**; without `hold_ms` a 5s long-poll hold reads
-> as 5s of latency and the clock runs five seconds fast-forward of the truth — a *bigger* lie
-> than the one being fixed. It subtracts the **full** remaining round trip rather than halving
-> it for the downstream leg: the house rule is one-directional, so a deliberate undershoot is
-> free where a fair estimate is a coin-flip on the forbidden outcome.
->
-> **The lichess→gamchess leg survives by construction** — nothing downstream knows T₀ — so a
-> small residual high bias remains, documented rather than denied. Its magnitude has never been
-> measured; only its direction is certain.
->
-> **The lag applies to the TICKING seat only.** The idle side's clock isn't running, so however
-> stale the frame is their bank is still exactly right; subtracting from both would invent a
-> loss of time that never happened. Anything that re-derives a TV clock must reason from *when
-> the value was stamped*, never from *when we received it*.
+> **The correction applies to the TICKING seat only.** The idle side's clock isn't running, so
+> however stale the frame is their bank is still exactly right; subtracting from both would invent
+> a loss of time that never happened.
 
 **The house rule: a live clock must never read HIGHER than the time actually left** — the same
 rule that makes `TimeControl.Format` truncate where the PGN writer rounds. Reading low is
 explicitly permitted; reading high is not. The rule is one-directional on purpose, which is why
 a deliberate undershoot satisfies it where an unbiased estimate would not.
 
-> The snap is gated on the **version advancing**, and that guard is the feature. A long poll
-> that reaches its hold answers with the current state at the *same* version, every ~5s
-> through any think — re-snapping on that restarts the countdown from an already-stale value,
-> so the clock ticks down 5s and jumps back UP, forever. That sawtooth is worse than the
-> frozen clock it replaced, because it reads HIGH.
+> **No sawtooth to guard against, with a push.** The old long poll re-delivered the current state
+> at the *same* version every ~5s through a think, so the snap was gated on the version advancing
+> — re-snapping on a timed-out poll restarted the countdown from an already-stale value and the
+> clock ticked down 5s then jumped back UP, forever (worse than a frozen clock, because it read
+> HIGH). A push only ever fires on a real change, so there is no duplicate: the client applies
+> each snapshot exactly once and snaps on it. The version cursor that gated it is gone.
 
 **The feed NEVER says a game ended.** Ninety-five seconds of `ultraBullet` is 5 `featured` and
 203 `fen` and nothing else: a game ending is just a swap to a new `featured`. There is no
@@ -372,21 +382,37 @@ gameOver frame — don't go looking for one.
 
 So the wall's fanfare splits the job in two, and **which half does what is the whole lesson**:
 
-- **The CLIENT decides a game ended**, from the featured id changing away from the one on its
-  board. Nothing else can mean that, and it needs nothing from the server.
-- **gamchess only supplies the REASON**: it notices the same swap and fetches the old game's
-  result from **`GET /game/export/{id}`** (anonymous, like the feed; `status` + `winner`, where
-  a **missing winner means a draw**), publishing it as `last_game_id/last_status/last_winner`.
-  The client uses it only if `last_game_id` is the game it was actually showing.
+- **The CLIENT decides a game ended.** Two ways, and the fast one is the point:
+  - **From the POSITION** — a checkmate or stalemate is IN the FEN, so
+    `LichessTv.TryPositionResult` reads it off the frame the mating move lands on and the wall
+    freezes and announces **instantly**, deriving who+why locally ("White wins — checkmate"). No
+    server, no wait. This is **the one place the TV path reads the rules**, and it is gated to
+    `IsStandardRules` (`Group.Speed`) — a Crazyhouse/Atomic/Antichess "mate" isn't one, and the
+    vendored rules are standard-only. The spectator BOARD still parses nothing; this is
+    `LichessTvSource` calling `ChessGame.TryFromFen`, harness-proven. It exists because without
+    it the wall runs the mated side's clock down for **~2s** until the swap below (the feed sends
+    no game-over event, and lichess lingers before featuring the next game).
+  - **From the featured id changing** — the fallback for everything the position can't show: a
+    resign, a flag, a draw agreement, and every variant. Needs nothing from the server.
+- **gamchess supplies the REASON for that fallback**: it notices the same swap and fetches the
+  old game's result from **`GET /game/export/{id}`** (anonymous, like the feed; `status` +
+  `winner`, where a **missing winner means a draw**), publishing it as
+  `last_game_id/last_status/last_winner`. The client uses it only if `last_game_id` is the game
+  it was actually showing — and only if the position path didn't already announce the end.
 
 The first version had the client WAIT for `last_game_id` to appear before announcing anything
 — which silently made the entire feature depend on the server half being deployed. Against a
 gamchess without it, nothing ever fired, and **a fanfare that never fires looks identical to
-one that isn't wired up**: it cost two rounds of testing and a wrong diagnosis. Now an
-undeployed server costs the *reason* ("Game over") and never the announcement.
+one that isn't wired up**: it cost two rounds of testing and a wrong diagnosis.
 
-The client holds the finished position for `LichessTv.FanfareSeconds` (3s) with a result line,
-because lichess TV cuts to the next game instantly and on a wall that reads as a glitch.
+The client holds the finished position for `LichessTv.FanfareSeconds` (3s), because lichess TV
+cuts to the next game instantly and on a wall that reads as a glitch. **The HOLD (freeze the
+position + clocks) is decoupled from the BANNER (who+why).** The hold starts the instant we
+know the game ended; the banner shows a real WHO-WON / WHY line and nothing else — **no bare
+"Game over" placeholder** (`LichessTv.Result` returns a null headline when it can't say who or
+why, and the wall shows no banner rather than a placeholder that then rewrites itself). The
+position path sets both at once (it knows the result); the swap path freezes first and fills the
+banner a beat later when the export returns.
 
 **The swap and the reason are published SEPARATELY, and getting that wrong is what made the
 fanfare arrive late.** The export fetch is **one request per game END per channel**, not per
@@ -401,13 +427,15 @@ its own 3s hold, so ordering was never at risk; the coupling bought nothing and 
 Now gamchess **publishes the swap immediately** (with `last_game_id` set, `last_status` empty)
 and fetches the reason in a **background goroutine**, folding it in with `tvChannel.setLastResult`
 when it returns. That method **drops a stale answer** (a fast channel can swap again mid-fetch, so
-it only applies when `last_game_id` still names the game it fetched) and **does not bump the
-version on that no-op** — a spurious bump would wake every poller and make the client re-snap its
-locally-run clocks (the sawtooth the clock section warns about). The client, still holding on the
-finished game, **upgrades** the fanfare line from "Game over" to "White wins — out of time" when
-the later poll carries the reason (`LichessTvSource`, guarded on `InFanfare && _gameId ==
-_fanfareShownFor`). This split is the same "the CLIENT decides a game ended; gamchess only
-supplies the REASON" separation stated above — the synchronous fetch was quietly violating it.
+it only applies when `last_game_id` still names the game it fetched) and on that no-op **does not
+close `changed`** — a spurious wake would re-push the full snapshot to every connected client and
+make them re-snap their locally-run clocks off an unchanged value. (Pre-M18 the same guard read
+"does not bump the version"; the version is gone, but the property — a no-op stays a no-op on the
+wire — is identical.) The client, still holding on the finished game, **upgrades** the fanfare
+line from "Game over" to "White wins — out of time" when the later push carries the reason
+(`LichessTvSource`, guarded on `InFanfare && _gameId == _fanfareShownFor`). This split is the same
+"the CLIENT decides a game ended; gamchess only supplies the REASON" separation stated above — the
+synchronous fetch was quietly violating it.
 
 **There is no buffer, and nothing to bound.** gamchess keeps only the LATEST state per channel
 (one slot, overwritten), so "hold for 3s, then take whatever is current" abandons all but the
@@ -418,13 +446,18 @@ progress whatever the speed; a wall wants something worth looking up at, and bli
 game but an arbitrary one). This was **six** at first, excluded on the reasoning that the
 vendored rules are standard-only so a variant FEN can't be drawn —
 **that was wrong, and the mistake is instructive**: the standard-only rule governs *playing*
-(`ChessGame` parses the FEN and validates moves) and was carried over to the wall, which
-parses nothing. `SpectatorBoard3D` takes the placement field alone and walks its characters
+(`ChessGame` parses the FEN and validates moves) and was carried over to the wall's DRAWING,
+which parses nothing. `SpectatorBoard3D` takes the placement field alone and walks its characters
 under a `file < 8 && rank >= 0` guard, so Chess960's X-FEN castling (`HDhd`) is never read,
 Crazyhouse's pockets (`…/RNBQKBNR[Pp]`) fall off the guard, Three-check's counters ride at
 the end of the FEN, and the rest are plain standard placement. Proven against every variant's
 real starting FEN in the dotnet harness. **Before excluding something for "the board can't
 draw it", check what actually reads the FEN.**
+
+*(The wall's DRAWING parses nothing; its end-DETECTION does, and only for standard channels —
+`LichessTvSource` runs `ChessGame.TryFromFen` on standard-rules frames to spot a checkmate/
+stalemate instantly. That's the one exception, gated by `IsStandardRules`, and it never touches
+`SpectatorBoard3D`. See the fanfare split above.)*
 
 Two channels hide state the 64 squares can't hold — Crazyhouse's pockets and Three-check's
 counts (`LichessTv.HidesState`) — and the spectator board says so, because a viewer who can't
@@ -526,9 +559,15 @@ Three long-standing claims in this file were **wrong** and are now removed:
 3. **`Sandbox.WebSocket` streams fine**, supports custom headers and incremental receive, and
    its `Connect` goes through the **same** `Http.IsAllowedAsync` — which closes the old open
    spike: yes, the URL policy covers WS, and since that policy is just scheme/IP checks,
-   `wss://chess.gamah.net` is allowed. We still use a long poll, for a Go-side reason: gamchess
-   would need a WebSocket library, and this repo cannot add a dependency (no Go, no Docker here
-   to regenerate `go.sum`). If that changes, the transport is one function each side.
+   `wss://chess.gamah.net` is allowed. **This fact is now load-bearing: M18 moved TV to a
+   WebSocket push** (`LichessTvSource` holds a `Sandbox.WebSocket`, sending an `Authorization`
+   header over `wss://`). The old caveat here — "we still use a long poll because gamchess can't
+   add a Go WS library, no Go/Docker to regenerate `go.sum`" — is **dead**: `gorilla/websocket`
+   was already pinned in `server/go.sum` (transitive), so adding it needed no new hashes and no
+   trust decision, and a networked machine can `go get` the `.zip` into the cache when the
+   dev-host lacks it. The **game relay** (`/lichess/play/{id}`) is still a long poll — not for
+   want of the library, but because it simply wasn't part of the M18 migration; if it moves, it
+   is one function each side, exactly as TV was.
 
 Status: gamchess client + server built, plus the M8 lichess link + Board API relay. The
 **Go half compiles and its tests pass** (fetch a Go 1.22 toolchain into scratch; `go test

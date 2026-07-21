@@ -1,3 +1,5 @@
+using Gambit.Chess;
+
 namespace Gambit.Game;
 
 /// <summary>
@@ -135,6 +137,20 @@ public static class LichessTv
 	/// from another machine — neither may put the wall on a dead channel.</summary>
 	public static string Coerce( string channel ) => IsValid( channel ) ? channel : DefaultChannel;
 
+	/// <summary>Is this a STANDARD-chess channel — one where the vendored rules apply, so a
+	/// position can be judged (see <see cref="TryPositionResult"/>)? Only <see cref="Group.Speed"/>.
+	///
+	/// <para>A "checkmate" by standard rules is NOT one in Crazyhouse (the mated side can drop a
+	/// piece to block), Atomic or Antichess (which don't mate at all), and the other variants
+	/// change the rules too; <see cref="Group.Other"/> (bot/computer) may itself be a variant
+	/// game. So end-detection from the position is gated to Speed and nothing else.</para></summary>
+	public static bool IsStandardRules( string channel )
+	{
+		foreach ( var c in All )
+			if ( c.Key == channel ) return c.Group == Group.Speed;
+		return false;
+	}
+
 	/// <summary>Does this channel have game state the wall CANNOT show?
 	///
 	/// <para>The board draws 64 squares and nothing else, so a variant whose state lives
@@ -164,6 +180,57 @@ public static class LichessTv
 	/// Long enough to read one line, short enough not to feel like a hang.</para></summary>
 	public const float FanfareSeconds = 3f;
 
+	/// <summary>Read a finished-game result straight from the POSITION.
+	///
+	/// <para>A checkmate or stalemate is <b>in the FEN</b> — no history, no server needed — so
+	/// the wall can freeze and announce it the instant the mating move lands, rather than wait
+	/// for lichess to feature the next game (the feed's ONLY other signal that a game ended, and
+	/// it lingers a beat before doing so). Returns false for a live position, an unparseable FEN,
+	/// or any ending not visible in the position alone: a resign or a flag needs external info,
+	/// and falls through to the featured-swap path.</para>
+	///
+	/// <para><b>STANDARD rules only</b> — the caller MUST gate on <see cref="IsStandardRules"/>.
+	/// The vendored rules are standard chess; judging a variant position by them would be wrong
+	/// (a Crazyhouse "mate" isn't one, Atomic/Antichess don't mate). This is the one place the
+	/// TV path reads the rules — the spectator BOARD still parses nothing, it only draws.</para>
+	///
+	/// <para>Only a checkmate can WIN from a bare position (resign/timeout need outside info), so
+	/// a win is always "checkmate"; a positional draw is stalemate / insufficient material / the
+	/// fifty-move rule. The reason strings match <see cref="Result"/>'s vocabulary so a locally
+	/// detected end reads identically to one lichess reported.</para></summary>
+	public static bool TryPositionResult( string fen, out string headline, out string reason )
+	{
+		headline = null;
+		reason = null;
+		if ( string.IsNullOrEmpty( fen ) || !ChessGame.TryFromFen( fen, out var g ) || !g.IsGameOver )
+			return false;
+
+		switch ( g.Result )
+		{
+			case GameResult.WhiteWon:
+				headline = "White wins";
+				reason = "checkmate";
+				return true;
+			case GameResult.BlackWon:
+				headline = "Black wins";
+				reason = "checkmate";
+				return true;
+			case GameResult.Draw:
+				headline = "Draw";
+				reason = g.ResultReason switch
+				{
+					"Stalemate" => "stalemate",
+					"Insufficient material" => "insufficient material",
+					"Fifty-move rule" => "fifty-move rule",
+					"Threefold repetition" => "threefold repetition",
+					_ => null,
+				};
+				return true;
+			default:
+				return false;
+		}
+	}
+
 	/// <summary>A result in two parts: the HEADLINE ("White wins") and the REASON ("out of
 	/// time"), the latter null when there isn't one.
 	///
@@ -179,8 +246,12 @@ public static class LichessTv
 	///
 	/// <para><paramref name="winner"/> is "white"/"black", or null/empty for a DRAW —
 	/// lichess omits the field rather than sending a third value.
-	/// <paramref name="status"/> empty means we couldn't find out, and the caller still
-	/// wants to say the game ended: that is a bare "Game over".</para></summary>
+	/// <paramref name="status"/> empty (or otherwise unknown) with no winner means we
+	/// couldn't find out who or why: <paramref name="headline"/> comes back <b>null</b>,
+	/// meaning "nothing to announce". Callers show no banner in that case rather than a
+	/// bare "Game over" — the held finished position already says the game ended.
+	/// <see cref="ResultLine"/>, which needs a string for a one-line status context,
+	/// substitutes "Game over" for a null headline; the wall banner does not.</para></summary>
 	public static void Result( string status, string winner, out string headline, out string reason )
 	{
 		string who = winner == "white" ? "White" : winner == "black" ? "Black" : null;
@@ -217,7 +288,10 @@ public static class LichessTv
 
 		if ( unknown )
 		{
-			headline = who == null ? "Game over" : $"{who} wins";
+			// A winner with no reason is still a result ("White wins"); no winner and no
+			// reason is nothing to announce — a null headline, NOT a bare "Game over". The
+			// wall shows no banner over the held position in that case (see LichessTvSource).
+			headline = who == null ? null : $"{who} wins";
 			return;
 		}
 
@@ -245,7 +319,9 @@ public static class LichessTv
 		// Every real draw has a recognised reason, so this costs none of them.
 		if ( who == null )
 		{
-			headline = why == null ? "Game over" : "Draw";
+			// A recognised drawing reason is a "Draw"; an unrecognised one with no winner is
+			// nothing we can announce — null headline, not "Game over".
+			headline = why == null ? null : "Draw";
 			reason = why;
 			return;
 		}
@@ -255,12 +331,14 @@ public static class LichessTv
 		reason = why;
 	}
 
-	/// <summary>The result as ONE line — "White wins — out of time". For the places that
-	/// have a line rather than a banner (the walk-up board's status row).</summary>
+	/// <summary>The result as ONE line — "White wins — out of time". For a one-line status
+	/// context that needs SOME string even when the result is unknown, so it substitutes
+	/// "Game over" for a null headline (where the wall banner instead shows nothing).</summary>
 	public static string ResultLine( string status, string winner )
 	{
 		Result( status, winner, out var headline, out var reason );
-		return reason == null ? headline : $"{headline} — {reason}";
+		var line = headline ?? "Game over";
+		return reason == null ? line : $"{line} — {reason}";
 	}
 
 	/// <summary>The next channel in the cycle, wrapping.</summary>

@@ -8,50 +8,68 @@ using Sandbox;
 namespace Gambit.Game;
 
 /// <summary>
-/// One lichess TV channel, polled from gamchess for this client (M9).
+/// One lichess TV channel, streamed from gamchess over a WebSocket for this client
+/// (M9; the client-facing transport became a WebSocket push in M18).
 ///
 /// <para><b>Per-client, and that is the existing pattern rather than a new one.</b> The
 /// north wall was already per-client — <c>SpectatorController._featuredIndex</c> is
 /// local, so two players at that wall already see different tables. This just extends
-/// the cycle with a source that happens to come over HTTP.</para>
+/// the cycle with a source that happens to come over a socket.</para>
+///
+/// <para>gamchess still holds the single lichess ndjson stream and stays the sole
+/// token/stream holder — this is NOT the client reading lichess directly. What changed
+/// in M18 is only the hop from gamchess to us: it was a version-gated long poll with a
+/// clock latency-compensation apparatus bolted on to make a 5s-held poll feel live; it
+/// is now a socket that pushes one full, self-contained <see cref="TvState"/> snapshot
+/// whenever the channel's state changes — latest-wins, no cursor.</para>
 ///
 /// <para>Not a <see cref="IBoardGame"/>: that seam is for boards you can PLAY at, and
 /// TV is spectate-only. It has no seat, no turn, and nothing to submit.</para>
 ///
 /// <para><b>Nothing here is authoritative and nothing here is required.</b> It runs no
-/// clock and adjudicates nothing — lichess is the only authority, and the clocks
-/// arrive with each frame. If gamchess is down, every property stays empty and the
-/// wall falls back to mirroring real tables, which is its original job.</para>
+/// clock authority and adjudicates nothing — lichess is the only authority, and the
+/// clocks arrive with each frame. If gamchess is down, every property stays empty and
+/// the wall falls back to mirroring real tables, which is its original job.</para>
 /// </summary>
 public sealed class LichessTvSource
 {
-	/// <summary>Between polls after a failure. The gamchess breaker only opens on
-	/// 5xx/transport errors, so a 4xx returns INSTANTLY — without this the poll loop
-	/// re-fires next frame and we'd hammer gamchess hundreds of times a second. The
-	/// same guard <see cref="LichessGameController"/> needs, for the same reason.</summary>
-	const float PollBackoffSeconds = 3f;
+	/// <summary>Between reconnect attempts after a socket drops or a handshake fails.
+	/// Guards against a reconnect storm — a refused or flapping host must not have us
+	/// dialling every frame.</summary>
+	const float ReconnectBackoffSeconds = 3f;
+
+	/// <summary>How many consecutive failed connects before we decide a channel is not
+	/// being served, rather than merely blipping.
+	///
+	/// <para>A WebSocket handshake failure does not cleanly tell us 401 from 404 from a
+	/// transient 1006 (see the class notes and PLAN), so — unlike the old long poll,
+	/// which had lichess's literal 404 to trust — we infer "not served" from repeated
+	/// immediate failures instead of acting on the first one. A few retries first keeps
+	/// a single network blip from falling a good channel back to the default.</para></summary>
+	const int RejectAfterFailures = 3;
 
 	public string Channel { get; private set; } = LichessTv.DefaultChannel;
 
-	/// <summary>Channels gamchess has told us (with a 404) it will not serve.
+	/// <summary>Channels gamchess has (by repeated refusal) shown it will not serve.
 	///
 	/// <para>Load-bearing, not a cache. The wall re-asserts the desired channel EVERY
 	/// frame from the player's saved pick, so without a memory of the refusal the
-	/// fallback below is undone before the next poll — and the result is a permanent
-	/// 3s-backoff loop against a dead channel with the board flickering to "connecting".
+	/// fallback below is undone before the next connect — and the result is a permanent
+	/// backoff loop against a dead channel with the board flickering to "connecting".
 	/// Remembering the refusal is what makes "the server wins" actually stick.</para></summary>
 	readonly HashSet<string> _rejected = new();
 
 	/// <summary>How long to stop trying after gamchess refuses even the default channel.
 	/// Self-healing rather than permanent: the likeliest cause is a gamchess older than
-	/// the TV routes, and a deploy shouldn't need the player to restart. Mirrors
-	/// <c>GamchessApi.SessionMintRetrySeconds</c>, for the same reason.</summary>
+	/// the M18 WebSocket route (its GET handler answers the upgrade with plain JSON, so
+	/// the handshake fails for every channel), and a deploy shouldn't need the player to
+	/// restart. Mirrors <c>GamchessApi.SessionMintRetrySeconds</c>, for the same reason.</summary>
 	const float UnavailableRetrySeconds = 120f;
 
 	RealTimeUntil _unavailableUntil;
 
 	/// <summary>gamchess serves no channel we know how to ask for — including the
-	/// default. Nothing left to try, so stop polling rather than loop.</summary>
+	/// default. Nothing left to try, so stop dialling rather than loop.</summary>
 	public bool Unavailable => (float)_unavailableUntil > 0f;
 
 	public string Fen { get; private set; }
@@ -71,67 +89,77 @@ public sealed class LichessTvSource
 	//
 	// lichess TV cuts to the next game the instant one ends. On a wall that reads as a
 	// glitch: the result never appears, the pieces just jump to a new position. So when
-	// the game we're showing ends, we stop on it for FanfareSeconds with a line saying
-	// how it went, and only then move on.
+	// the game we're showing ends, we HOLD on its final position for FanfareSeconds and,
+	// once we know how it went, put a two-line WHO-WON / WHY banner over it.
 	//
-	// We KEEP POLLING throughout — polling is what tells gamchess someone is watching,
-	// so pausing it would let the upstream drop just because a game ended. The updates
-	// simply aren't applied.
+	// Two things are deliberately DECOUPLED. The HOLD starts the instant we see the game
+	// ended (the featured id changed) — that's what freezes the position and the clocks.
+	// The BANNER only appears once we actually know who won and why, which arrives a beat
+	// later (gamchess fetches the result from the game export off the reader's path). We
+	// do NOT show a bare "Game over" placeholder in the gap: the presence of the held
+	// position is already "a game ended", and a placeholder that then rewrites itself
+	// reads worse than a clean position that gains a result line. If the result never
+	// arrives, the hold simply expires with no banner and the wall moves on.
 	//
-	// And there is no buffer to grow. gamchess keeps only the LATEST state per channel
-	// (one slot, overwritten), so "hold for 3s then take whatever's current" costs
-	// nothing and skips whatever happened in between by construction. Nothing to bound,
-	// nothing to speed up, nothing to drain — the relay already abandons all but the
-	// latest, which is the behaviour we'd otherwise have had to build.
+	// We KEEP THE SOCKET OPEN throughout — the connection is what tells gamchess someone
+	// is watching. Pushes during the hold aren't applied to the board; the LATEST is kept
+	// in _latest and revealed when the hold expires. Every message is a full snapshot, so
+	// this is one field to hold, not a queue to drain.
 
-	RealTimeUntil _fanfareUntil;
+	/// <summary>The hold timer. Set to FanfareSeconds the instant we detect the game
+	/// ended; while it runs we freeze the finished position and refuse to apply new state.
+	/// The hold, NOT the banner, is what "we are showing a finished game" means — the
+	/// banner may still be empty (waiting on the result) for the first part of it.</summary>
+	RealTimeUntil _holdUntil;
 
-	/// <summary>The game we've already shown the fanfare for.
+	/// <summary>Are we holding a finished position right now? Freezes the clocks
+	/// (<see cref="ClockFor"/>), stops the board advancing (<see cref="Apply"/>), and is
+	/// how a caller knows a dead game is on the board even before its result line lands.</summary>
+	bool Holding => (float)_holdUntil > 0f;
+
+	/// <summary>The game we've already begun a hold for.
 	///
 	/// <para>Needed because gamchess reports the last ending until the NEXT one, so
 	/// <c>last_game_id</c> keeps matching our frozen <see cref="_gameId"/> after the hold
-	/// expires — and the fanfare would re-arm on the very next poll, forever, and the
-	/// wall would never advance past the finished game.</para></summary>
+	/// expires — and the hold would re-arm on the very next push, forever, and the wall
+	/// would never advance past the finished game.</para></summary>
 	string _fanfareShownFor;
 
-	/// <summary>The result line for the game on the board, or null — the one-line form,
-	/// for callers that have a line rather than a banner.
-	///
-	/// <para><b>This — not <see cref="InFanfare"/> — is what "the game being shown has
-	/// finished" means</b>, and the two are not the same window. It is cleared in Poll at
-	/// the moment the new state is applied, so it is true for exactly as long as a
-	/// finished position is on the board.</para></summary>
+	/// <summary>Whether the banner has already taken a real result, so the per-frame
+	/// <see cref="Pump"/> during the hold doesn't re-derive it every frame. Stays false
+	/// while the result is still unknown, so a late result is picked up. Reset on clear.</summary>
+	bool _fanfareUpgraded;
+
+	/// <summary>The joined result line ("White wins — out of time"), or null while there
+	/// is no finished-game result to show — which is BOTH during live play and during the
+	/// early part of a hold before the result has arrived. Callers wanting "is a finished
+	/// game on the board" must ask <see cref="ShowingFinished"/>, not this: a hold with no
+	/// banner yet is still a finished game.</summary>
 	public string FanfareText { get; private set; }
 
-	/// <summary>"White wins" — the banner's first line.</summary>
+	/// <summary>"White wins" — the banner's first line, or null. Never a bare "Game over":
+	/// the banner shows only a real result (a winner, a draw, an abort), and stays empty
+	/// otherwise.</summary>
 	public string FanfareHeadline { get; private set; }
 
 	/// <summary>"out of time" — the banner's second line, or null when there's no reason
 	/// to give (an abort, or a result we couldn't fetch).</summary>
 	public string FanfareReason { get; private set; }
 
-	/// <summary>Is the finished game on the board right now? Anything that must not treat
-	/// a dead game as live — a running clock, a ticking highlight — asks this.</summary>
-	public bool ShowingFinished => FanfareText != null;
-
-	/// <summary>Are we still holding, i.e. must we refuse to apply new state?
-	///
-	/// <para><b>Narrower than <see cref="ShowingFinished"/>, deliberately.</b> The hold
-	/// expiring does not put the new game on the board — only a poll landing does, and
-	/// that is up to <c>pollHold</c> (5s) away. Using this to decide "is the game over"
-	/// leaves a gap where the board still shows the finished position while the clock
-	/// resumes draining and the result line vanishes: the exact thing the fanfare exists
-	/// to prevent, moved a few seconds later.</para></summary>
-	public bool InFanfare => FanfareText != null && (float)_fanfareUntil > 0f;
+	/// <summary>Is a finished game on the board right now? True for the whole hold, banner
+	/// or not. Anything that must not treat a dead game as live — a running clock, a
+	/// ticking highlight — asks this.</summary>
+	public bool ShowingFinished => Holding;
 
 	// The last clocks lichess told us, in SECONDS (the TV feed's unit; the Board API
-	// sends the same idea in ms), and when they landed.
+	// sends the same idea in ms), and when they were snapped onto us.
 	int _whiteBank, _blackBank;
 	RealTimeSince _sinceBank;
 
-	/// <summary>How stale the banked clocks already were when we got them, in seconds.
-	/// Subtracted from the ticking seat — see <see cref="ClockFor"/>.</summary>
-	float _bankLag;
+	/// <summary>How stale the banked clocks already were when gamchess sent them, in
+	/// seconds — <c>age_ms/1000</c> from the snapshot. Subtracted from the ticking seat;
+	/// see <see cref="ClockFor"/>.</summary>
+	float _ageAtSnap;
 
 	/// <summary>Seconds left for each seat, counted down locally between frames.
 	///
@@ -143,49 +171,49 @@ public sealed class LichessTvSource
 	///
 	/// <para><b>The house rule: a live clock must never read HIGHER than the time actually
 	/// left.</b> It is why <see cref="TimeControl.Format"/> truncates where the PGN writer
-	/// rounds, and reading LOW is explicitly permitted where reading high is not.</para>
+	/// rounds, and reading LOW is explicitly permitted where reading high is not. M18
+	/// leans into that on purpose and keeps the mechanism tiny.</para>
 	///
-	/// <para><b>This code broke that rule for two milestones, and the reason it gave was
-	/// written in three places.</b> The claim was that "counting down from a known-good
-	/// value can only ever read low", so it drifts low by about the network latency. That
-	/// fails at its first step: <b>the value is already stale on arrival.</b> lichess
-	/// stamps the clock at the move instant T0; the frame reaches us at T0+L; the code
-	/// banked it and zeroed its age, so at wall-clock T0+L we displayed T0's value while
-	/// the player had already burned L. Displayed = true + L. It read HIGH, by the whole
-	/// chain, until the next move corrected it. Anything that re-derives a clock here must
-	/// reason from <b>when the value was stamped</b>, never from when we received it.</para>
+	/// <para><b>Why it stays low for free.</b> A push arrives the instant a move lands, so
+	/// a live game's steady-state frames are FRESH — and flooring the displayed second
+	/// (which <see cref="TimeControl.Format"/> already does) absorbs the sub-second
+	/// transport latency, so the wall reads low without any correction at all. The one
+	/// case the floor can't cover is CONNECTING mid-think: gamchess hands the new socket
+	/// its stored frame, already <c>age_ms</c> milliseconds stale, and without subtracting
+	/// that the clock would read HIGH by the age. So <see cref="_ageAtSnap"/> takes it
+	/// back off — the whole of the old <c>clock_age_ms</c> + <c>hold_ms</c> + round-trip
+	/// apparatus collapses to this one subtraction, because a push has no hold to measure
+	/// and no cursor to reconcile.</para>
 	///
-	/// <para><b>What <see cref="_bankLag"/> now removes, and what it cannot.</b> gamchess
-	/// reports <c>clock_age_ms</c> (how long the value sat with IT) and <c>hold_ms</c> (how
-	/// long it sat on our request), so we can subtract its staleness plus our own measured
-	/// network time. <b>The lichess → gamchess leg survives by construction</b> — nothing
-	/// downstream of lichess knows T0, and no client-side fix can invent it. So a small
-	/// residual high bias remains, and it is documented rather than denied. Its magnitude
-	/// has never been measured; only its direction is certain.</para>
-	///
-	/// <para>The network estimate deliberately uses the FULL round trip rather than half
-	/// of it. An unbiased estimate would be wrong in both directions; the house rule is
-	/// one-directional, so a deliberate undershoot satisfies it where a fair guess would
-	/// not. Erring low is free, and erring high is the bug.</para></summary>
+	/// <para><b>What survives, and is documented rather than denied.</b> The lichess →
+	/// gamchess leg is spent before any of this: nothing downstream of lichess knows the
+	/// move-instant T0, so a small residual HIGH bias remains on that leg. <see
+	/// cref="ClockLeadSeconds"/> is a fixed deliberate undershoot on top — belt-and-braces
+	/// in the one permitted direction, since erring low is free and erring high is the
+	/// bug.</para></summary>
 	public float WhiteClock => ClockFor( ChessSeat.White );
 	public float BlackClock => ClockFor( ChessSeat.Black );
+
+	/// <summary>A fixed undershoot, seconds. Small and one-directional: the house rule
+	/// forbids reading high, so shaving a quarter-second off is free insurance against
+	/// the irrecoverable lichess→gamchess leg, where a fair estimate would be a coin-flip
+	/// on the forbidden outcome. Tunable.</summary>
+	const float ClockLeadSeconds = 0.25f;
 
 	float ClockFor( ChessSeat seat )
 	{
 		float bank = seat == ChessSeat.White ? _whiteBank : _blackBank;
-		// A finished game's clock does not run. ShowingFinished, not InFanfare: the hold
-		// can expire seconds before a poll actually replaces the position, and the clock
-		// must not spring back to life on a dead game in the meantime.
+		// A finished game's clock does not run — frozen for the whole hold, banner or not.
 		if ( ShowingFinished ) return bank;
 		// Only the side to move is spending time. Nothing to run down before the first
 		// frame either — TickingSeat is null until then.
 		//
-		// The lag applies ONLY here, and that is not an optimisation: the idle side's
-		// clock is not running, so however stale the frame is, their bank is still
-		// exactly right. Subtracting the lag from both would invent a loss of time that
-		// never happened — and on a wall showing a 60s bullet game, visibly.
+		// The staleness applies ONLY here, and that is not an optimisation: the idle
+		// side's clock is not running, so however stale the frame is, their bank is still
+		// exactly right. Subtracting from both would invent a loss of time that never
+		// happened — and on a wall showing a 60s bullet game, visibly.
 		if ( TickingSeat != seat ) return bank;
-		return MathF.Max( 0f, bank - _bankLag - (float)_sinceBank );
+		return MathF.Max( 0f, bank - _ageAtSnap - ClockLeadSeconds - (float)_sinceBank );
 	}
 
 	public ChessSeat? TickingSeat { get; private set; }
@@ -195,22 +223,34 @@ public sealed class LichessTvSource
 
 	public bool HasPosition => !string.IsNullOrEmpty( Fen );
 
-	ulong _version;
-	bool _pollInFlight;
-	RealTimeUntil _pollBackoff;
+	// ── The socket ──
+
+	WebSocket _ws;
+	bool _connecting;
+	RealTimeUntil _reconnectBackoff;
+	int _connectFailures;
+
+	/// <summary>The latest snapshot received, and whether it has been reflected onto the
+	/// board yet. A push arrives on any thread the engine marshals the event to (the game
+	/// main thread), stores it here, and lets <see cref="Pump"/> apply it — which lets a
+	/// fanfare hold BUFFER the latest without losing it, and lets a hold that expires
+	/// while the game is quiet still reveal the next position on the next Tick.</summary>
+	TvState _latest;
+	bool _latestApplied = true;
 
 	/// <summary>Point at a different channel — a REQUEST, not a command: a channel
 	/// gamchess has already refused is silently swapped for the default.
 	///
 	/// <para>Safe to call every frame with the same value; only a real change does
-	/// anything. A real change drops everything, because the old channel's position
-	/// belongs to a different game and showing it under the new channel's name would be
-	/// a lie.</para></summary>
+	/// anything. A real change drops the socket and everything else, because the old
+	/// channel's position belongs to a different game and showing it under the new
+	/// channel's name would be a lie. A fresh socket always gets the current snapshot
+	/// first, so there is no cursor to reset.</para></summary>
 	public void SetChannel( string channel )
 	{
 		channel = LichessTv.Coerce( channel );
 
-		// gamchess has already 404'd this one. Honour that rather than let the caller
+		// gamchess has already refused this one. Honour that rather than let the caller
 		// re-assert it forever — the server is the authority on what it serves.
 		if ( _rejected.Contains( channel ) )
 			channel = LichessTv.DefaultChannel;
@@ -218,142 +258,230 @@ public sealed class LichessTvSource
 		if ( channel == Channel ) return;
 
 		Channel = channel;
-		_version = 0;
+		DisposeSocket();
+		_connectFailures = 0;
+		_reconnectBackoff = 0f; // reconnect to the new channel promptly
 		Clear();
 		StatusText = $"Connecting to lichess TV ({LichessTv.Label( channel )})…";
 	}
 
 	/// <summary>Nobody is watching any more. Idempotent; safe to call every frame.
 	///
-	/// <para><b>Resetting the version is the point.</b> Our <c>since</c> is only meaningful
-	/// against the channel gamchess currently holds — and when the last watcher leaves,
-	/// gamchess drops the upstream and the NEXT one gets a fresh channel whose version
-	/// starts at 1. Come back holding <c>since=500</c> and we'd ask it to tell us about
-	/// version 501 of a counter that just went back to 1: we'd sit through hold after
-	/// hold waiting for a number that takes hundreds of moves to arrive. Starting from 0
-	/// asks for "whatever is on now", which is the only sensible question after a gap.</para>
-	///
-	/// <para>Clearing the position matters too: it's frozen the moment we stop polling,
-	/// and a frozen game is indistinguishable from a live one on a board this size.</para></summary>
+	/// <para><b>Dropping the socket is the point.</b> The connection IS the watch signal:
+	/// closing it is what tells gamchess we left, so it can drop the upstream after its
+	/// linger. Clearing the position matters too — it's frozen the moment we stop, and a
+	/// frozen game is indistinguishable from a live one on a board this size.</para></summary>
 	public void StopWatching()
 	{
-		_version = 0;
+		DisposeSocket();
+		_reconnectBackoff = 0f;
 		if ( HasPosition ) Clear();
 		StatusText = null;
 	}
 
 	/// <summary>Call every frame while this source IS being watched.
 	///
-	/// <para>Polling IS the watch signal — there is no register/unregister to get wrong.
-	/// Stop calling this and the polls stop, and gamchess drops its upstream after its
-	/// own idle TTL. That is what keeps a wall nobody is looking at from costing lichess
-	/// a held stream.</para></summary>
+	/// <para>Ticking is the watch signal — stop calling this and the socket is disposed
+	/// (below) and gamchess drops its upstream after its own linger. Two jobs each frame:
+	/// keep a connection up (dialling when there isn't one and the backoff has elapsed),
+	/// and pump any buffered snapshot onto the board — the latter is what lets a fanfare
+	/// hold that expires during a quiet moment still reveal the next game.</para></summary>
 	public void Tick()
 	{
-		if ( Unavailable ) return;
-		if ( _pollInFlight ) return;
-		if ( (float)_pollBackoff > 0f ) return;
+		// Advance a held fanfare / apply a buffered snapshot even when no push is arriving.
+		Pump();
 
-		_pollInFlight = true;
-		_ = Poll();
+		if ( Unavailable ) return;
+		if ( _connecting ) return;
+		if ( _ws is { IsConnected: true } ) return;
+		if ( (float)_reconnectBackoff > 0f ) return;
+
+		_ = Connect();
 	}
 
-	async Task Poll()
+	async Task Connect()
 	{
-		// Capture the channel we're asking about: SetChannel can land while this is in
-		// flight, and applying a blitz frame to a rapid channel would be a real bug.
+		_connecting = true;
 		var asked = Channel;
-
-		// Time our own round trip. Most of a long poll's round trip is gamchess WAITING,
-		// not the network — so this is only half the measurement; hold_ms in the answer
-		// is the other half. See _bankLag.
-		RealTimeSince sent = 0f;
-		var res = await LichessTvApi.PollChannel( asked, _version );
-		_lastRoundTrip = (float)sent;
-		_pollInFlight = false;
-
-		if ( asked != Channel ) return; // the player cycled mid-poll; the answer is stale
-
-		if ( !res.Ok )
+		WebSocket ws = null;
+		try
 		{
-			_pollBackoff = PollBackoffSeconds;
-
-			// A 404 means gamchess doesn't serve this channel — our list disagrees with
-			// its allowlist. The server wins: remember the refusal (so the wall can't
-			// re-assert it next frame) and fall back.
-			if ( res.NotFound )
+			var (bearer, steamId) = await GamchessApi.WsCredentials();
+			if ( string.IsNullOrEmpty( bearer ) )
 			{
-				_rejected.Add( asked );
-				Log.Warning( $"[Gambit] gamchess doesn't serve TV channel '{asked}'" );
-
-				if ( _rejected.Contains( LichessTv.DefaultChannel ) )
-				{
-					// Even the default is refused — this gamchess serves no TV we can ask
-					// for (most likely one older than the TV routes). Nothing to fall back
-					// to, so stop rather than loop, but only for a while: forget the
-					// refusals so a deploy is picked up without restarting the game.
-					_unavailableUntil = UnavailableRetrySeconds;
-					_rejected.Clear();
-					Clear();
-					StatusText = "lichess TV isn't available here.";
-					return;
-				}
-
-				SetChannel( LichessTv.DefaultChannel );
+				// No Steam credentials — can't authenticate the socket. Back off and let
+				// Tick try again; this is a degrade to "unavailable for now", never a crash.
+				_reconnectBackoff = ReconnectBackoffSeconds;
+				StatusText = "lichess TV needs Steam.";
 				return;
 			}
+			if ( asked != Channel ) return; // the player cycled while we fetched credentials
 
-			Clear();
-			StatusText = GamchessApi.Unreachable
-				? "lichess TV is offline."
-				: "Waiting for lichess TV…";
+			var headers = new Dictionary<string, string> { ["Authorization"] = "Bearer " + bearer };
+			// A session bearer carries its SteamID in its MAC and needs no header; the FP
+			// fallback does, so send it when present. (Whether the WS handshake may set this
+			// extra header is weaker ground than the session path — see the class notes.)
+			if ( !string.IsNullOrEmpty( steamId ) )
+				headers[GamchessApi.SteamIdHeader] = steamId;
+
+			ws = new WebSocket();
+			ws.OnMessageReceived += OnMessage;
+			ws.OnDisconnected += OnDisconnected;
+			_ws = ws;
+
+			// Throws on a failed handshake (a refused channel, an expired session, a host
+			// that isn't there). ChannelSocketUrl escapes the key; gamchess re-checks its
+			// allowlist and 404s anything else before the upgrade.
+			await ws.Connect( LichessTvApi.ChannelSocketUrl( asked ), headers );
+
+			// Connected: the socket clearly works for this channel, so forget prior failures.
+			// The first push (the current snapshot) will land via OnMessage.
+			_connectFailures = 0;
+		}
+		catch ( Exception e )
+		{
+			// A one-shot WebSocket that failed its handshake is spent — dispose it rather
+			// than leak it, and drop our reference (unhooking first so its Dispose-fired
+			// OnDisconnected doesn't re-arm anything).
+			if ( ws != null )
+			{
+				ws.OnMessageReceived -= OnMessage;
+				ws.OnDisconnected -= OnDisconnected;
+				ws.Dispose();
+				if ( _ws == ws ) _ws = null;
+			}
+			OnConnectFailed( asked, e );
+		}
+		finally
+		{
+			_connecting = false;
+		}
+	}
+
+	/// <summary>A handshake failed. Back off, and after enough consecutive failures on one
+	/// channel decide it isn't being served rather than merely blipping — falling a
+	/// non-default channel back to the default, or, if even the default won't connect,
+	/// giving up for a while (most likely a gamchess older than the M18 WebSocket route).</summary>
+	void OnConnectFailed( string asked, Exception e )
+	{
+		if ( asked != Channel ) return; // stale failure for a channel we've since left
+
+		_reconnectBackoff = ReconnectBackoffSeconds;
+		_connectFailures++;
+		if ( _connectFailures < RejectAfterFailures )
+		{
+			// Might just be a blip. Keep the last position up, keep trying.
+			if ( !HasPosition )
+				StatusText = GamchessApi.Unreachable ? "lichess TV is offline." : "Waiting for lichess TV…";
 			return;
 		}
 
-		var st = GamchessApi.Deserialize<TvState>( res.Body );
+		Log.Warning( $"[Gambit] lichess TV: couldn't connect to '{asked}' ({e.Message})" );
+
+		if ( asked == LichessTv.DefaultChannel )
+		{
+			// Even the default won't connect — this gamchess serves no TV we can reach
+			// (most likely one older than the M18 route). Nothing to fall back to, so stop
+			// for a while rather than loop, and forget the refusals so a deploy is picked up
+			// without restarting the game.
+			_unavailableUntil = UnavailableRetrySeconds;
+			_rejected.Clear();
+			_connectFailures = 0;
+			Clear();
+			StatusText = "lichess TV isn't available here.";
+			return;
+		}
+
+		// A specific channel is refused: remember it (so the wall can't re-assert it next
+		// frame) and fall back to the default.
+		_rejected.Add( asked );
+		_connectFailures = 0;
+		SetChannel( LichessTv.DefaultChannel );
+	}
+
+	/// <summary>A message arrived (on the game main thread). Buffer it and try to apply.
+	/// Every message is a full snapshot, so the latest is all that matters.</summary>
+	void OnMessage( string json )
+	{
+		var st = GamchessApi.Deserialize<TvState>( json );
 		if ( st == null ) return;
+		_latest = st;
+		_latestApplied = false;
+		Pump();
+	}
 
-		// Did anything actually happen, or did the poll just time out?
-		//
-		// A long poll that reaches its hold answers with the CURRENT state at the SAME
-		// version — a real answer, not an error, and one that arrives every ~5s through
-		// any think. gamchess only bumps the version when the state really changes, so
-		// this is exactly the "is this news" test. `!=` rather than `>`: a channel that
-		// was dropped and reopened restarts its version at 1, and that is news too.
-		bool advanced = st.version != _version;
-		_version = st.version;
+	/// <summary>An established socket dropped, for any reason. Null it and back off so Tick
+	/// reconnects; keep the <c>_rejected</c>/<c>Unavailable</c> memory. Deliberately does
+	/// NOT clear the board — a brief blip reconnects within gamchess's linger and re-attaches
+	/// to the same live upstream, so the last position is still valid, and blanking it would
+	/// flicker the wall on every hiccup.</summary>
+	void OnDisconnected( int status, string reason )
+	{
+		// The socket disposed itself on disconnect; just drop our reference. (Unhooking a
+		// disposed object's events is harmless, and keeps a stray late callback from firing
+		// against a socket we've moved on from.)
+		if ( _ws != null )
+		{
+			_ws.OnMessageReceived -= OnMessage;
+			_ws.OnDisconnected -= OnDisconnected;
+			_ws = null;
+		}
+		_reconnectBackoff = ReconnectBackoffSeconds;
+		// Nothing to apply from a dropped socket; whatever was buffered is now history.
+		_latestApplied = true;
+	}
 
+	void DisposeSocket()
+	{
+		var ws = _ws;
+		_ws = null;
+		if ( ws == null ) return;
+		// Unhook BEFORE Dispose: Dispose fires OnDisconnected, and we don't want our
+		// handler to re-arm a reconnect for a socket we are deliberately tearing down.
+		ws.OnMessageReceived -= OnMessage;
+		ws.OnDisconnected -= OnDisconnected;
+		ws.Dispose();
+	}
+
+	/// <summary>Apply the buffered snapshot to the board, unless a fanfare hold says to
+	/// wait. Called from both <see cref="OnMessage"/> and <see cref="Tick"/>, so a hold
+	/// that expires with no new push still advances on the next frame.</summary>
+	void Pump()
+	{
+		if ( _latest == null || _latestApplied ) return;
+		if ( Apply( _latest ) )
+			_latestApplied = true;
+	}
+
+	/// <summary>Reflect one snapshot onto the board. Returns true when the board actually
+	/// advanced (the message is consumed); false when we ARMED or are HOLDING a fanfare and
+	/// the reveal is deferred, so the same buffered message (or a newer one) is applied when
+	/// the hold expires.</summary>
+	bool Apply( TvState st )
+	{
 		if ( !string.IsNullOrEmpty( st.error ) )
 		{
 			Clear();
 			StatusText = st.error;
-			return;
+			return true;
 		}
 		if ( string.IsNullOrEmpty( st.fen ) )
 		{
 			StatusText = "Waiting for lichess TV…";
-			return;
+			return true;
 		}
 
 		// Did the game WE are showing just end?
 		//
-		// WE work that out, from the featured game changing away from the one on our
-		// board. Nothing else can mean that, and it needs nothing from the server.
-		//
-		// The first version asked gamchess instead — it fired only when `last_game_id`
-		// came back matching — which quietly made the whole feature depend on the server
-		// half being deployed. Against a gamchess that predates it, `last_game_id` is
-		// never sent, the condition is never true, and the wall silently never announces
-		// anything. That is exactly what happened, and it was invisible because a
-		// fanfare that never fires looks identical to a fanfare that isn't wired up.
-		//
-		// The server's contribution is now the REASON only, and it degrades: no result,
-		// or a result for some other game, and we still say the game ended — just not how.
+		// WE work that out, from the featured game changing away from the one on our board.
+		// Nothing else can mean that, and it needs nothing from the server beyond the id —
+		// the server's contribution is the REASON only, and it degrades: no result, or a
+		// result for some other game, and we still say the game ended, just not how.
 		//
 		// Once per game (_fanfareShownFor keyed on the game that ENDED): the ids go on
-		// differing for the whole hold, so without it the fanfare re-arms every poll and
-		// the wall never moves on. And `_gameId` non-empty is what stops the very first
-		// featured — a game we never showed — announcing an ending.
+		// differing for the whole hold, so without it the fanfare re-arms every push and the
+		// wall never moves on. And _gameId non-empty is what stops the very first featured —
+		// a game we never showed — announcing an ending.
 		bool endedOnOurBoard = !string.IsNullOrEmpty( _gameId )
 			&& !string.IsNullOrEmpty( st.game_id )
 			&& st.game_id != _gameId
@@ -361,52 +489,45 @@ public sealed class LichessTvSource
 
 		if ( endedOnOurBoard )
 		{
-			// Only trust the result if it is THIS game's. gamchess reports the last
-			// ending it saw, which after a missed poll may be a different game entirely.
-			bool haveResult = st.last_game_id == _gameId;
+			// Start the HOLD immediately — this freezes the final position and the clocks.
+			// The banner is set separately, below, once we actually know the result: no bare
+			// "Game over" in the gap.
 			_fanfareShownFor = _gameId;
-
-			var status = haveResult ? st.last_status : null;
-			var winner = haveResult ? st.last_winner : null;
-			LichessTv.Result( status, winner, out var headline, out var reason );
-			FanfareHeadline = headline;
-			FanfareReason = reason;
-			FanfareText = reason == null ? headline : $"{headline} — {reason}";
-
-			_fanfareUntil = LichessTv.FanfareSeconds;
+			_holdUntil = LichessTv.FanfareSeconds;
+			_fanfareUpgraded = false;
 			StatusText = null;
-
-			Log.Info( $"[Gambit] lichess TV: {_gameId} ended — {FanfareText}"
-				+ ( haveResult ? "" : " (gamchess sent no result for it)" ) );
+			Log.Info( $"[Gambit] lichess TV: {_gameId} ended, holding" );
 		}
 
-		// The reason arrives AFTER the swap now. gamchess publishes the featured swap the
-		// instant it sees it and fetches how the old game ended in the background, so the
-		// first frame of an ending carries an empty status ("Game over") and a later one
-		// fills it in. While we're still holding on THIS ended game, adopt the better line
-		// when it lands — otherwise the fanfare would keep the bare "Game over" for the
-		// whole hold even though lichess told us how it went a beat later.
-		if ( InFanfare && _gameId == _fanfareShownFor && st.last_game_id == _gameId
-			&& !string.IsNullOrEmpty( st.last_status ) )
+		// Set the WHO-WON / WHY banner once — the instant we have a real result for the game
+		// we're holding on. It arrives a beat after the hold starts (gamchess publishes the
+		// featured swap immediately and fetches the result off the reader's path), and may
+		// already be present on the arming push (a reconnect onto a settled state). We show
+		// nothing until then, and nothing at all if the result is unknown — the held position
+		// already says "a game ended", so a "Game over" placeholder that rewrites itself is
+		// worse than a clean position that gains a result line. Guarded by _fanfareUpgraded so
+		// Pump (which re-runs Apply every frame of the hold) sets it once, not per frame.
+		if ( Holding && !_fanfareUpgraded && _gameId == _fanfareShownFor
+			&& st.last_game_id == _gameId && !string.IsNullOrEmpty( st.last_status ) )
 		{
-			LichessTv.Result( st.last_status, st.last_winner, out var lateHead, out var lateReason );
-			FanfareHeadline = lateHead;
-			FanfareReason = lateReason;
-			FanfareText = lateReason == null ? lateHead : $"{lateHead} — {lateReason}";
+			LichessTv.Result( st.last_status, st.last_winner, out var head, out var reason );
+			// A null headline is the "we can't say who or why" case (an unrecognised or
+			// still-settling status). Keep waiting rather than show a placeholder.
+			if ( !string.IsNullOrEmpty( head ) )
+			{
+				FanfareHeadline = head;
+				FanfareReason = reason;
+				FanfareText = reason == null ? head : $"{head} — {reason}";
+				_fanfareUpgraded = true;
+			}
 		}
 
-		// Hold the finished position. We keep POLLING (that's what tells gamchess someone
-		// is here) but apply nothing — and because gamchess keeps only the latest state,
-		// there is no queue piling up behind this. When the hold ends we take whatever is
-		// current, having skipped the moves in between by construction.
-		if ( InFanfare ) return;
+		// Hold the finished position: keep the buffered snapshot un-applied until the hold
+		// expires, then reveal whatever is current by construction (the latest push wins).
+		if ( Holding ) return false;
 
 		// The hold is over (or never started): the fanfare is history.
 		ClearFanfare();
-
-		// Read BEFORE _gameId is overwritten below — comparing it afterwards would compare
-		// the id to itself and be false forever. See the clock snap.
-		bool newGame = st.game_id != _gameId;
 
 		_gameId = st.game_id;
 		Fen = st.fen;
@@ -418,26 +539,15 @@ public sealed class LichessTvSource
 		WhiteRating = st.white_rating;
 		BlackRating = st.black_rating;
 
-		// Snap the clocks ONLY on real news, and this guard is the whole feature.
-		//
-		// Re-snapping on a timed-out poll would reset the countdown to a value that is
-		// already 5 seconds stale — so the clock would tick down for 5s, jump back UP to
-		// where it started, and do it again forever. That sawtooth is worse than the
-		// frozen clock this replaced: it makes the clock read HIGHER than the time
-		// actually left, which is the one direction a live clock must never go.
-		//
-		// `newGame` (read above, before _gameId moved) is not belt-and-braces. Through a
-		// fanfare we keep polling and keep consuming versions while applying nothing, so
-		// by the time the hold ends `advanced` may well be false — and the new game would
-		// inherit the finished game's clocks and hold them until its first move. A
-		// different game is always news, whatever the version says.
-		if ( advanced || newGame )
-		{
-			_whiteBank = st.white_clock;
-			_blackBank = st.black_clock;
-			_bankLag = LagOf( st );
-			_sinceBank = 0f;
-		}
+		// Snap the clocks on every applied snapshot. A push only ever arrives on a real
+		// change, so — unlike the old long poll, which could return the SAME state on a
+		// timed-out hold and needed a version/newGame guard against re-snapping a stale value
+		// into a sawtooth — there is no duplicate to guard against here. Pump applies each
+		// message exactly once (_latestApplied), so each snap is a genuinely new frame.
+		_whiteBank = st.white_clock;
+		_blackBank = st.black_clock;
+		_ageAtSnap = st.age_ms / 1000f;
+		_sinceBank = 0f;
 
 		TickingSeat = st.ticking_seat switch
 		{
@@ -446,42 +556,31 @@ public sealed class LichessTvSource
 			_ => null,
 		};
 		StatusText = null;
+
+		// LOCAL end-of-game detection — the fast path a wall wants (M18).
+		//
+		// A checkmate or stalemate is IN the position we just applied, so we can freeze and
+		// announce it the INSTANT the mating move lands, instead of running the mated side's
+		// clock down for ~2s until lichess features the next game (the feed has no game-over
+		// event; the featured swap is its only other end signal, and it lingers). Standard
+		// channels only — a variant "mate" isn't one — and only checkmate/stalemate reach here;
+		// a resign or a flag isn't visible in the position and still falls through to the swap
+		// path below on the next messages. Locally derived, so _fanfareUpgraded = true keeps the
+		// later swap/fetch from overwriting a result we already know for certain.
+		if ( LichessTv.IsStandardRules( Channel )
+			&& LichessTv.TryPositionResult( st.fen, out var posHead, out var posReason ) )
+		{
+			_fanfareShownFor = _gameId;
+			_holdUntil = LichessTv.FanfareSeconds;
+			FanfareHeadline = posHead;
+			FanfareReason = posReason;
+			FanfareText = posReason == null ? posHead : $"{posHead} — {posReason}";
+			_fanfareUpgraded = true;
+			Log.Info( $"[Gambit] lichess TV: {_gameId} ended (from position) — {FanfareText}" );
+		}
+
+		return true;
 	}
-
-	/// <summary>How stale these clocks already were when they reached us, in seconds:
-	/// gamchess's own staleness plus our network time.
-	///
-	/// <para>Network time is the round trip MINUS the hold, because a long poll's round
-	/// trip is mostly gamchess waiting for something to happen. Reading the hold as
-	/// latency would subtract up to 5 seconds from the clock.</para>
-	///
-	/// <para>Uses the full remaining round trip rather than halving it for the downstream
-	/// leg. That over-subtracts, deliberately: the house rule is one-directional, so an
-	/// undershoot is free and a fair estimate is a coin-flip on the one outcome that is
-	/// forbidden. See <see cref="ClockFor"/>.</para>
-	///
-	/// <para>Clamped at both ends. Zero when gamchess sends nothing (one that predates
-	/// this simply gets the old behaviour instead of a broken clock), and capped at
-	/// <see cref="MaxLagSeconds"/> so a pathological measurement can't blank a clock that
-	/// has real time on it — a wall reading 0:00 on a live game is its own kind of
-	/// lie.</para></summary>
-	float LagOf( TvState st )
-	{
-		float age = st.clock_age_ms / 1000f;
-		float hold = st.hold_ms / 1000f;
-		float network = MathF.Max( 0f, _lastRoundTrip - hold );
-		return Math.Clamp( age + network, 0f, MaxLagSeconds );
-	}
-
-	/// <summary>Our last poll's round trip, seconds. Includes gamchess's hold; LagOf
-	/// takes that back off.</summary>
-	float _lastRoundTrip;
-
-	/// <summary>Ceiling on the staleness correction. Generous — this is a backstop
-	/// against a nonsense measurement, not a tuning knob. A real correction is
-	/// milliseconds; anything near this means something else is wrong, and eating a
-	/// player's whole clock because a poll took a minute would be worse than the bias.</summary>
-	const float MaxLagSeconds = 10f;
 
 	void Clear()
 	{
@@ -495,31 +594,31 @@ public sealed class LichessTvSource
 		BlackRating = 0;
 		_whiteBank = 0;
 		_blackBank = 0;
-		// The lag belongs to the banks it was measured for — cleared with them. Nothing
-		// depends on this today (the next state is always a newGame, which re-derives
-		// it), but a bank and its staleness are one value in two fields, and clearing
-		// only one of them is how that stops being true.
-		_bankLag = 0f;
+		_ageAtSnap = 0f;
 		// TickingSeat null stops ClockFor counting down against a bank of 0 anyway, but
 		// clearing it is what makes "no position" mean no clock rather than 0:00.
 		TickingSeat = null;
 
 		// There's no position, so there's nothing to hold on. Dropping _gameId matters
-		// most: it's what the next poll's ending is matched against, and a stale one
+		// most: it's what the next snapshot's ending is matched against, and a stale one
 		// would announce the ending of a game we are no longer showing.
 		_gameId = null;
 		_fanfareShownFor = null;
+		// A buffered snapshot belongs to the position we're clearing — drop it too.
+		_latest = null;
+		_latestApplied = true;
 		ClearFanfare();
 	}
 
-	/// <summary>Drop the held result. One method because it is three fields that must
-	/// agree — <see cref="ShowingFinished"/> keys on FanfareText, and a headline left
-	/// behind would print under the next game's position.</summary>
+	/// <summary>End the hold and drop the banner together. One method because the banner
+	/// fields must agree, and a headline left behind would print under the next game's
+	/// position; clearing <see cref="_holdUntil"/> here is what lets the next game apply.</summary>
 	void ClearFanfare()
 	{
 		FanfareText = null;
 		FanfareHeadline = null;
 		FanfareReason = null;
-		_fanfareUntil = 0f;
+		_holdUntil = 0f;
+		_fanfareUpgraded = false;
 	}
 }

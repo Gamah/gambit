@@ -182,12 +182,13 @@ public static class LichessApi
 	/// The game-state transport: a long poll. gamchess holds this open for ~5s
 	/// waiting for the state to pass <paramref name="since"/>, then answers.
 	///
-	/// <para>A poll rather than a WebSocket. s&amp;box <i>can</i> speak WebSocket —
-	/// <c>Sandbox.WebSocket</c> streams fine — but gamchess would need a Go WS
-	/// library, and that repo can't take a new dependency (the machine that writes
-	/// it has neither Go nor Docker to regenerate go.sum). A long poll suits a
-	/// client whose HTTP buffers whole bodies anyway, and costs one round trip of
-	/// latency, which blitz can afford.</para>
+	/// <para>Still a poll, where TV moved to a WebSocket push in M18. Not because
+	/// s&amp;box can't stream — <c>Sandbox.WebSocket</c> streams fine, and gorilla is
+	/// now a gamchess dependency, so the "can't add a Go WS library" reason this
+	/// comment used to give is gone. It stays a poll because the game relay was simply
+	/// not part of that migration: a long poll suits a client whose HTTP buffers whole
+	/// bodies anyway and costs one round trip of latency, which blitz affords. If it
+	/// ever moves, it is one function each side, exactly as TV was.</para>
 	///
 	/// <para>The 5s hold is deliberately under <see cref="GamchessApi.Timeout"/>:
 	/// a hold longer than that would look like a timeout to us and trip the
@@ -258,16 +259,17 @@ public static class LichessApi
 /// </summary>
 public static class LichessTvApi
 {
-	/// <summary>Long-poll a channel's featured game. Same transport and the same 5s
-	/// hold as <see cref="LichessApi.PollState"/>, for the same reasons.
+	/// <summary>The base WebSocket URL for a channel's push stream (M18):
+	/// <c>wss://…/api/v1/tv/{channel}</c>. The channel is escaped even though
+	/// <see cref="Gambit.Game.LichessTv"/> only ever hands us a key off its own list —
+	/// gamchess re-checks against its allowlist and 404s anything else at the
+	/// handshake, and belt-and-braces on a value that becomes a URL costs nothing.
 	///
-	/// <para>The channel is escaped even though <see cref="Gambit.Game.LichessTv"/>
-	/// only ever hands us a key off its own list: gamchess re-checks against its own
-	/// allowlist and 404s anything else, and belt-and-braces on a value that becomes
-	/// a URL costs nothing.</para></summary>
-	public static Task<GamchessApi.Result> PollChannel( string channel, ulong since ) =>
-		GamchessApi.SendAuthed(
-			$"/api/v1/tv/{Uri.EscapeDataString( channel )}?since={since}", "GET", null );
+	/// <para>The connection itself is owned by <see cref="Gambit.Game.LichessTvSource"/>,
+	/// which holds the socket, applies each pushed snapshot, and reconnects on a drop —
+	/// there is no request/response call to wrap here as the old long poll had.</para></summary>
+	public static string ChannelSocketUrl( string channel ) =>
+		$"{GamchessApi.WsBase}/api/v1/tv/{Uri.EscapeDataString( channel )}";
 
 	/// <summary>What channels gamchess will actually serve. The client keeps its own
 	/// list (<see cref="Gambit.Game.LichessTv"/>) so the settings board works offline;

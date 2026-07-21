@@ -39,6 +39,11 @@ public static class GamchessApi
 	/// (D8) or every request fails — the allowlist is the only entry there now.</summary>
 	public const string Base = "https://chess.gamah.net";
 
+	/// <summary>The same host over WebSocket (M18), for the TV push. <c>wss://</c> goes
+	/// through the SAME <c>Http.IsAllowedAsync</c> as an <c>https</c> call — the URL
+	/// policy is only scheme/IP checks, so our own host is allowed either way.</summary>
+	public const string WsBase = "wss://chess.gamah.net";
+
 	/// <summary>Per-request ceiling. Short on purpose: a hung backend must not be
 	/// something the player can feel.</summary>
 	public const float Timeout = 8f;
@@ -288,6 +293,33 @@ public static class GamchessApi
 		if ( string.IsNullOrEmpty( token ) ) return res;
 
 		return await Send( path, method, content, steamId, token );
+	}
+
+	/// <summary>Credentials for a WebSocket connection (M18, the TV push): the bearer
+	/// to put in an <c>Authorization: Bearer …</c> header, and a SteamID that
+	/// accompanies a FACEPUNCH token only.
+	///
+	/// <para>The session path is the normal one and needs no SteamID — the MAC carries
+	/// it, exactly as <see cref="Send"/> omits the header for a session. The FP fallback
+	/// returns the claimed SteamID too, though whether a WS handshake may set the extra
+	/// <c>X-Steam-Id</c> header is weaker ground (see the caller); a minted session
+	/// sidesteps it entirely. Returns a null bearer when Steam is unavailable, so the
+	/// caller can degrade to "TV unavailable" rather than dial without auth.</para>
+	///
+	/// <para>Public so <see cref="LichessTvApi"/> / the TV source can authenticate a
+	/// socket through the same session machinery every HTTP call uses, rather than
+	/// reimplement the token dance.</para></summary>
+	public static async Task<(string bearer, string steamId)> WsCredentials()
+	{
+		var session = await Session();
+		if ( !string.IsNullOrEmpty( session ) )
+			return (session, null);
+
+		// No session (mint blocked, or no route on an older gamchess): fall back to the
+		// FP token, which authenticates the same identity and just costs gamchess a
+		// Facepunch round-trip on the handshake.
+		var (steamId, token) = await GamchessAuth.Credentials();
+		return (token, steamId);
 	}
 
 	/// <summary>A JSON body. Public for <see cref="LichessApi"/>, same reasoning as

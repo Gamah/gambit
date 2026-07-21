@@ -52,6 +52,17 @@ public sealed class SpectatorController : Component
 	public string WhiteClock { get; private set; }
 	public string BlackClock { get; private set; }
 
+	/// <summary>That seat is under <see cref="TimeControl.PanicSeconds"/> on a LIVE game, so
+	/// the wall reddens its clock — the same threshold the table clock reddens at, and the
+	/// wall's only urgency cue: it does NOT beep (six tables in time trouble would be a slot
+	/// machine, the same reason the room's tables are quiet — see the sound gates). Per-seat
+	/// and independent of whose turn it is, exactly like the table clock: a player low on time
+	/// is in time trouble whether or not their clock is the one running. Computed from the raw
+	/// remaining seconds, since <see cref="WhiteClock"/> is a pre-formatted string; false for
+	/// an untimed table and for a finished game (the fanfare owns that beat).</summary>
+	public bool WhitePanic { get; private set; }
+	public bool BlackPanic { get; private set; }
+
 	/// <summary>Which seat's clock is running on the featured table, or null.</summary>
 	public ChessSeat? TickingSeat { get; private set; }
 
@@ -260,6 +271,8 @@ public sealed class SpectatorController : Component
 		WhiteRating = BlackRating = 0;
 		WhiteClock = t.WhiteClock;
 		BlackClock = t.BlackClock;
+		WhitePanic = t.WhitePanic;
+		BlackPanic = t.BlackPanic;
 		TickingSeat = t.Ticking;
 		TimeControlLabel = t.TcLabel;
 		ChannelLabel = sources > 1
@@ -309,31 +322,32 @@ public sealed class SpectatorController : Component
 		// plaque tick. A TV game always has a clock: every lichess channel is timed.
 		WhiteClock = TimeControl.Format( _tv.WhiteClock );
 		BlackClock = TimeControl.Format( _tv.BlackClock );
+		// Redden a seat under PanicSeconds, same as a table — but never on a finished game:
+		// the clock is frozen through the fanfare hold and a dead game isn't in time trouble.
+		// Every lichess channel is timed, so no untimed case here.
+		WhitePanic = !_tv.ShowingFinished && _tv.WhiteClock < TimeControl.PanicSeconds;
+		BlackPanic = !_tv.ShowingFinished && _tv.BlackClock < TimeControl.PanicSeconds;
 		TickingSeat = _tv.TickingSeat;
 		TimeControlLabel = label;
 
 		// The game on the board has finished: say how it ended, and stop showing a clock
 		// as running. lichess TV would already be showing the next game by now — stopping
-		// on the result for a beat is the whole point.
-		//
-		// ShowingFinished, not InFanfare: the hold expires before the poll that replaces
-		// the position lands, and for that gap the board is still showing the finished
-		// game. Keying on the hold would drop the result line and restart the ticking
-		// highlight while the dead game is still up.
+		// on the result for a beat is the whole point. The banner text may still be empty
+		// early in the hold (the WHO-WON / WHY line arrives a beat after the position
+		// freezes) — that's fine, the frozen position IS the announcement until it lands.
 		if ( _tv.ShowingFinished )
 		{
-			// Sound the ending, once (M11). Quiet and POSITIONAL — the wall is always
-			// audible to the whole room, and on UltraBullet a game ends every ~30
-			// seconds, so this has to be something you notice standing at the wall and
-			// never something the room has to listen to forever. Same gate as everyone
-			// else's tables (RemoteCabinetSounds), because that is what it is: a game
+			// Sound the ending, once per game, on the HOLD's leading edge (M11). Not keyed
+			// on the banner text: that's null early in the hold and stays null for a result
+			// we couldn't fetch, so keying on it would delay or drop the sound. The hold
+			// starting IS the game ending. Quiet and POSITIONAL — the wall is always audible
+			// to the whole room, and on UltraBullet a game ends every ~30 seconds, so this
+			// has to be something you notice at the wall and never something the room listens
+			// to forever. Same gate as everyone else's tables (RemoteCabinetSounds): a game
 			// finishing somewhere you aren't sitting.
-			//
-			// Keyed on the headline changing rather than on ShowingFinished, which stays
-			// true for the whole hold and would re-fire every frame of it.
-			if ( _tv.FanfareText != _lastFanfareSounded )
+			if ( !_soundedThisHold )
 			{
-				_lastFanfareSounded = _tv.FanfareText;
+				_soundedThisHold = true;
 				Audio.SoundPlayer.PlayGameOver( mine: false, WorldPosition );
 			}
 
@@ -353,6 +367,7 @@ public sealed class SpectatorController : Component
 	{
 		public string Fen, LastMove, White, Black, Number, WhiteClock, BlackClock, TcLabel;
 		public ChessSeat? Ticking;
+		public bool WhitePanic, BlackPanic;
 	}
 
 	/// <summary>Every sbox table currently showing a live game, read from the
@@ -366,6 +381,8 @@ public sealed class SpectatorController : Component
 			if ( lc is not { Playing: true } || lc.Game == null ) continue;
 
 			bool timed = !lc.Tc.IsUnlimited;
+			float wLeft = lc.ClockFor( ChessSeat.White );
+			float bLeft = lc.ClockFor( ChessSeat.Black );
 			list.Add( new LiveTable
 			{
 				Fen = lc.Game.Fen,
@@ -373,8 +390,12 @@ public sealed class SpectatorController : Component
 				White = st.WhiteName ?? "White",
 				Black = st.BlackName ?? "Black",
 				Number = TableNumber( st ),
-				WhiteClock = timed ? TimeControl.Format( lc.ClockFor( ChessSeat.White ) ) : null,
-				BlackClock = timed ? TimeControl.Format( lc.ClockFor( ChessSeat.Black ) ) : null,
+				WhiteClock = timed ? TimeControl.Format( wLeft ) : null,
+				BlackClock = timed ? TimeControl.Format( bLeft ) : null,
+				// Same rule as the table clock: reddens under PanicSeconds on a live timed
+				// game, per seat. Playing:true is guaranteed above, so no finished-game case.
+				WhitePanic = timed && wLeft < TimeControl.PanicSeconds,
+				BlackPanic = timed && bLeft < TimeControl.PanicSeconds,
 				Ticking = lc.TickingSeat,
 				TcLabel = lc.Tc.Name,
 			} );
@@ -394,6 +415,8 @@ public sealed class SpectatorController : Component
 		BlackRating = 0;
 		WhiteClock = null;
 		BlackClock = null;
+		WhitePanic = false;
+		BlackPanic = false;
 		TickingSeat = null;
 		TimeControlLabel = null;
 		// No position means nothing to hold a result over. A stale fanfare would float
@@ -409,15 +432,16 @@ public sealed class SpectatorController : Component
 		FanfareHeadline = null;
 		FanfareReason = null;
 
-		// Re-arm the sound. Without this, two games in a row ending the same way — which
-		// on a fast channel is routine ("White won — Checkmate" twice) — would announce
-		// the first and sit silent through the second, because the text never changed.
-		_lastFanfareSounded = null;
+		// Re-arm the sound for the next hold. The end sound fires once on a hold's leading
+		// edge; this is what resets that edge between games so two in a row (routine on a
+		// fast channel) both announce.
+		_soundedThisHold = false;
 	}
 
-	/// <summary>The fanfare text we last made a noise for. Guards against re-firing
-	/// every frame of the hold; cleared between games by <see cref="ClearFanfare"/>.</summary>
-	string _lastFanfareSounded;
+	/// <summary>Whether we've already sounded the end for the hold currently on screen.
+	/// Guards against re-firing every frame of the 3s hold; reset between games by
+	/// <see cref="ClearFanfare"/>.</summary>
+	bool _soundedThisHold;
 
 	static string TableNumber( ChessStation st )
 	{

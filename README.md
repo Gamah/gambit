@@ -221,11 +221,12 @@ stops every outbound call for a full minute, per lichess's own instruction. Ever
 streams included — carries a `User-Agent` naming the project and a contact, which is how lichess
 can attribute our traffic (they record a `userAgent` per token).
 
-**The state transport is a long poll, not a WebSocket.** s&box *can* speak WebSocket, but the Go
-side would need a WS library and this repo cannot add a dependency (the machine that writes the
-server has neither Go nor Docker to regenerate `go.sum`). Each `gameState` carries the **whole**
-UCI move list from the start, so the client rebuilds rather than reconciles and a dropped or
-duplicated poll costs nothing.
+**The game-state transport is still a long poll, where TV moved to a WebSocket push in M18.**
+Not for want of a library — `gorilla/websocket` is a gamchess dependency now (M18) and s&box
+speaks WebSocket fine — but because the game relay simply wasn't part of that migration. Each
+`gameState` carries the **whole** UCI move list from the start, so the client rebuilds rather
+than reconciles and a dropped or duplicated poll costs nothing; if it ever moves to a socket,
+it's one function each side, exactly as TV was.
 
 **gamchess is never required.** If it is unreachable, the client degrades to archive-off and
 lichess-off; local play and spectating tables never touch it.
@@ -241,30 +242,63 @@ never linked a lichess account and never will.**
 | Route | Auth | Notes |
 |---|---|---|
 | `GET /api/v1/tv/channels` | session/FP | `{default, channels:[{key,label}]}` — what we'll actually serve |
-| `GET /api/v1/tv/{channel}?since=N` | session/FP | **long poll** (held ~5s) for the channel's featured game |
+| `GET /api/v1/tv/{channel}` | session/FP | **WebSocket** (M18): one full snapshot pushed per state change |
 
-**Two fields on the TV state exist only to keep the wall's clock legal**, and they are
-durations rather than timestamps on purpose. `clock_age_ms` is how long ago gamchess received
-those clocks from lichess; `hold_ms` is how long gamchess sat on this request. The client
-subtracts `clock_age_ms + (its own round trip − hold_ms)` from the **ticking** seat, because
-lichess only sends a clock when a move happens and the value is therefore already stale on
-arrival — without this the wall reads HIGHER than the time actually left, which is the one
-direction a live clock may never be wrong in.
+**The client-facing transport is a WebSocket push (M18).** The `{channel}` route upgrades to a
+socket — one socket per channel — and gamchess pushes one **full, self-contained `TvState`
+snapshot** whenever that channel's state changes: no deltas, no `?since=` cursor, latest-wins.
+Switching channels reconnects (the gap is ~one round trip, filled by the stored latest frame
+pushed on connect). The gate runs **before** the upgrade, so a bad session is a plain 401 with
+no socket and no upstream. Compression (permessage-deflate) is safe to enable here because TV
+data is the public anonymous feed — no secrets — and it cuts egress. This replaced a
+version-gated long poll with a `since`/`version` cursor, a `hold_ms` field and a clock
+latency-compensation apparatus; all of that is gone.
 
-An absolute timestamp would not work here: we don't share a wall clock with the client, so a
-skewed one would correct in either direction, including up. And `hold_ms` is not diagnostics —
-without it a 5s long-poll hold reads as 5s of network latency. The **lichess→gamchess** leg is
-irrecoverable by construction (nothing downstream knows when lichess stamped it), so a small
-residual bias survives and is documented rather than denied.
+*(gamchess still reads the lichess ndjson feed itself and stays the sole stream holder — this
+is not clients reading lichess directly. Only the gamchess→client hop changed.)*
+
+**gamchess→client wire — the bespoke snapshot** (one message = the whole state):
+
+```
+channel, label, error, game_id, url, fen, last_move_uci,
+white_name/black_name, white_title/black_title, white_rating/black_rating,
+white_clock/black_clock  (SECONDS),  ticking_seat  ("white"|"black"),
+age_ms,                                             // clock staleness — see below
+last_game_id/last_status/last_winner/last_white_name/last_black_name  // the fanfare
+```
+
+**The clock favours reading LOW, on one field.** A push arrives the instant a move lands, so a
+live game's frames are FRESH and the client flooring the displayed second (it already
+truncates) absorbs the sub-second transport latency for free — the steady-state clock reads low
+with no correction at all. The one case the floor can't cover is a client that **connects
+mid-think**: gamchess hands the new socket its stored frame, already `age_ms` milliseconds
+stale, and the client subtracts `age_ms` so that replay reads low, not high. `age_ms` is a
+duration, not a timestamp (we don't share a wall clock with the client; a skewed absolute stamp
+would correct in either direction, including up). On top, the client shaves a fixed
+`ClockLeadSeconds` (~0.25s) undershoot — belt-and-braces in the one permitted direction, since
+the **lichess→gamchess** leg is irrecoverable (nothing downstream knows when lichess stamped
+it), so a small residual HIGH bias survives on that leg and is documented rather than denied.
+The whole of the old `clock_age_ms` + `hold_ms` + measured-round-trip machinery collapses to
+this: a push has no hold to measure and no cursor to reconcile.
 
 **One upstream stream per CHANNEL, however many are watching.** 100 players on blitz cost
 lichess exactly one stream. That invariant is the entire reason TV is proxied rather than hit
 from each client (lichess advocates precisely this), and it is what makes per-client channel
-choice affordable: the cost is bounded by the channel count (15), not the player count. The
-stream opens on the first watcher and is dropped ~45s after the last one stops polling —
-ref-counted by **pollers**, via a last-polled timestamp rather than a counter, because a
-counter needs a decrement on every exit path including the ones a dropped connection never
-gives us, and one missed decrement leaks a stream to lichess forever.
+choice affordable: the cost is bounded by the channel count (15), not the player count. Now
+that each viewer holds a socket for its whole life, the ref count is a **persistent per-channel
+registry** with a connection count: `watch` increments it, and a `defer leave` in the socket
+handler decrements it on **every** exit path — a clean close, a write error, a rude TCP drop.
+The sweeper (the *only* thing that closes an upstream) drops a channel a short `tvLingerTTL`
+(~10s) after its count reaches zero, so an A→B→A channel switch doesn't flap the upstream.
+Correctness doesn't depend on the linger — the guaranteed decrement means we never leak — only
+cost does. *(Pre-M18 this was a last-polled timestamp, because a long poll's handler had exit
+paths a dropped connection never ran; a socket handler holds the connection for its whole life,
+so a `defer` decrement is both possible and simpler.)*
+
+**Traffic sizing.** Upstream from lichess is fixed — one stream per channel, ≤15 channels,
+independent of audience. Only gamchess→client egress scales: ~1 KB per move per viewer (a full
+snapshot), so a ~40-move blitz game ≈ 40 KB/viewer (~10–15 KB with permessage-deflate). At tens
+of concurrent spectators that's single-digit MB/hour; it only matters at thousands of viewers.
 
 **It is session-gated even though it's anonymous upstream**, and the reason is not cost:
 
@@ -311,10 +345,12 @@ siblings, and **`wc`/`bc` are SECONDS** — where the Board API sends the same i
 milliseconds. Two endpoints, two units.
 
 **A clock only arrives on a move**, so the client counts the side-to-move's down locally from
-the last frame and snaps both to the next one — gated on the version advancing, since a
-timed-out long poll re-delivers the same state every ~5s and re-snapping on that makes the
-clock sawtooth *upward*. It only ever spends time, never invents it, which keeps a live clock
-from reading higher than what's actually left. lichess remains the only authority.
+the last frame and snaps both to the next one. A push only ever fires on a real change, so —
+unlike the old long poll, which could re-deliver the same state on a timed-out hold and needed
+a version guard against re-snapping a stale value into an *upward* sawtooth — there is no
+duplicate to guard against: the client applies each snapshot exactly once and snaps on it. It
+only ever spends time, never invents it, which keeps a live clock from reading higher than
+what's actually left. lichess remains the only authority.
 
 **The feed never says a game ended** — it just swaps to a new `featured`. So on a swap
 gamchess publishes the new game *immediately* (with `last_game_id` set) and fetches the old
