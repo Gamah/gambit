@@ -173,14 +173,18 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 	mux.HandleFunc("DELETE /api/v1/lichess/play/{id}", h.lichessPlayCancel)
 	mux.HandleFunc("POST /api/v1/lichess/play/{id}/{action}", h.lichessPlayAct)
 
-	// lichess TV (M9), for the spectator wall. Session-gated like everything else —
-	// anonymous upstream is exactly why an open relay here would be attractive to
-	// abuse, and lichess would see our IP and our User-Agent on all of it.
+	// lichess TV (M9, WebSocket push since M18), for the spectator wall.
+	// Session-gated like everything else — anonymous upstream is exactly why an open
+	// relay here would be attractive to abuse, and lichess would see our IP and our
+	// User-Agent on all of it.
 	//
-	// One upstream stream per CHANNEL regardless of how many clients poll: that
-	// invariant is the whole reason this is proxied rather than hit directly.
+	// One upstream stream per CHANNEL regardless of how many clients connect: that
+	// invariant is the whole reason this is proxied rather than hit directly. The
+	// {channel} route is a WebSocket upgrade (tvSocket) that pushes a full snapshot
+	// per state change; /channels stays a plain JSON GET. Go 1.22's more-specific-wins
+	// keeps the literal ahead of {channel}, so the ordering is already correct.
 	mux.HandleFunc("GET /api/v1/tv/channels", h.tvChannels)
-	mux.HandleFunc("GET /api/v1/tv/{channel}", h.tvState)
+	mux.HandleFunc("GET /api/v1/tv/{channel}", h.tvSocket)
 
 	// The audit sweep: the only fast incident lever we own (lichess has no bulk
 	// revoke). Operator-gated by LICHESS_AUDIT_KEY; 404s when that is unset.

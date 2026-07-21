@@ -140,8 +140,11 @@ public sealed class SessionResponse
 	public long expires_at { get; set; }
 }
 
-/// <summary>The featured game on a lichess TV channel, from
-/// <c>GET /api/v1/tv/{channel}?since=N</c> (M9).
+/// <summary>The featured game on a lichess TV channel — one full, self-contained
+/// snapshot pushed over the TV WebSocket (M18), <c>wss://…/api/v1/tv/{channel}</c>.
+///
+/// <para>Every message is the whole state, not a delta: latest-wins, no cursor. The
+/// pre-M18 long poll's <c>version</c> and <c>hold_ms</c> fields are gone with it.</para>
 ///
 /// <para><b>Clocks are SECONDS here</b>, not the milliseconds
 /// <see cref="LichessPlayState"/> uses for the same idea: two lichess endpoints, two
@@ -151,7 +154,6 @@ public sealed class SessionResponse
 /// this is a spectate-only feed and none of it may ever be treated as a caller.</para></summary>
 public sealed class TvState
 {
-	public ulong version { get; set; }
 	public string channel { get; set; }
 
 	/// <summary>Human channel name ("Blitz"), so the client needn't keep its own copy
@@ -183,7 +185,7 @@ public sealed class TvState
 	/// from the FEN's side-to-move.</summary>
 	public string ticking_seat { get; set; }
 
-	/// <summary>How long ago gamchess RECEIVED these clocks from lichess, in ms.
+	/// <summary>How long ago gamchess RECEIVED these clocks from lichess, in ms (M18).
 	///
 	/// <para>Milliseconds of age, not a timestamp, and that is the point: we do not
 	/// share a wall clock with gamchess, so an absolute stamp would be corrected by
@@ -191,18 +193,14 @@ public sealed class TvState
 	/// the one direction a live clock may never be wrong in. A duration survives
 	/// skew.</para>
 	///
-	/// <para>0 on the common path (the long poll wakes on the frame itself) and on any
-	/// gamchess too old to send it — which is why the client treats a missing value as
-	/// "no correction" and simply keeps the old behaviour rather than breaking.</para></summary>
-	public long clock_age_ms { get; set; }
-
-	/// <summary>How long gamchess sat on our request before answering, in ms.
-	///
-	/// <para>Subtracted from our own measured round trip to leave the NETWORK time.
-	/// Without it a 5s long-poll hold reads as 5s of latency, and the wall's clock
-	/// would run five seconds fast-forward of the truth — a bigger lie than the one
-	/// this exists to fix.</para></summary>
-	public long hold_ms { get; set; }
+	/// <para><b>~0 on a live push</b> — a change wakes the writer and it sends at once,
+	/// so a moving game's steady-state frames are fresh and the whole-second floor
+	/// absorbs the sub-second transport latency for free. It is the CONNECT/replay path
+	/// that this covers: a client that tunes in mid-think is handed the stored frame,
+	/// already this-many-ms stale, and subtracts <c>age_ms</c> so it reads LOW not high.
+	/// 0 (omitted) means "no correction". Replaces the pre-M18 <c>clock_age_ms</c> +
+	/// <c>hold_ms</c> + round-trip apparatus with this single field.</para></summary>
+	public long age_ms { get; set; }
 
 	// How the PREVIOUS featured game ended.
 	//

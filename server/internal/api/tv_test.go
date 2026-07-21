@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,13 +9,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"regexp"
-	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gamah/gambit/server/internal/lichess"
+	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
 
@@ -54,6 +56,29 @@ func framePump(h *handler) chan lichess.TvEvent {
 		}
 	}
 	return frames
+}
+
+// countingStream makes streamTv record how many upstreams were opened and block
+// until cancelled. Returned pointer is read atomically.
+func countingStream(h *handler) *int32 {
+	var opened int32
+	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
+		atomic.AddInt32(&opened, 1)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return &opened
+}
+
+// connsFor reads a channel's live connection count under the tv lock. Test-only,
+// but declared on the production type so it sees the real field.
+func (t *tv) connsFor(c lichess.Channel) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if ch, ok := t.channels[c]; ok {
+		return ch.conns
+	}
+	return -1
 }
 
 // authed stamps a valid game session on a request.
@@ -187,25 +212,21 @@ func TestClientChannelListMatchesTheAllowlist(t *testing.T) {
 	}
 }
 
-// An unknown channel must 404 without opening anything upstream.
-func TestTvStateUnknownChannel404s(t *testing.T) {
+// An unknown channel must 404 without opening anything upstream — checked before
+// the upgrade, so a junk channel never becomes a socket or a stream.
+func TestTvSocketUnknownChannel404s(t *testing.T) {
 	h := tvHandler(t)
-	var opened int32
-	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
-		atomic.AddInt32(&opened, 1)
-		<-ctx.Done()
-		return ctx.Err()
-	}
+	opened := countingStream(h)
 
 	r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/notachannel", nil))
 	r.SetPathValue("channel", "notachannel")
 	w := httptest.NewRecorder()
-	h.tvState(w, r)
+	h.tvSocket(w, r)
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", w.Code)
 	}
-	if n := atomic.LoadInt32(&opened); n != 0 {
+	if n := atomic.LoadInt32(opened); n != 0 {
 		t.Fatalf("opened %d upstream streams for a junk channel — must be 0", n)
 	}
 }
@@ -214,9 +235,12 @@ func TestTvStateUnknownChannel404s(t *testing.T) {
 
 // TV is anonymous UPSTREAM, which is exactly why our proxy of it must not be
 // open: an unauthed relay is a free CDN for lichess's content pointable by any
-// script, and every byte of it is attributed to our IP and our User-Agent.
-func TestTvRequiresASession(t *testing.T) {
+// script, and every byte of it is attributed to our IP and our User-Agent. The
+// gate runs BEFORE the upgrade — a bad credential is a plain 401 with no socket
+// and no upstream.
+func TestTvSocketRequiresASession(t *testing.T) {
 	h := tvHandler(t)
+	opened := countingStream(h)
 	for _, tc := range []struct{ name, auth string }{
 		{"no credentials", ""},
 		{"garbage bearer", "Bearer nonsense"},
@@ -229,11 +253,14 @@ func TestTvRequiresASession(t *testing.T) {
 				r.Header.Set("Authorization", tc.auth)
 			}
 			w := httptest.NewRecorder()
-			h.tvState(w, r)
+			h.tvSocket(w, r)
 			if w.Code != http.StatusUnauthorized {
 				t.Fatalf("status %d, want 401 — TV must never be an open relay", w.Code)
 			}
 		})
+	}
+	if n := atomic.LoadInt32(opened); n != 0 {
+		t.Fatalf("opened %d upstreams for unauthed requests — must be 0", n)
 	}
 }
 
@@ -255,25 +282,12 @@ const (
 
 func TestTvFeaturedThenFen(t *testing.T) {
 	h := tvHandler(t)
-	frames := make(chan lichess.TvEvent)
-	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
-		for {
-			select {
-			case ev := <-frames:
-				fn(ev)
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
+	frames := framePump(h)
 
 	ch := h.tv.watch(lichess.ChannelBlitz)
 	frames <- decodeTvFrame(t, tvFeaturedFrame)
 
-	st := waitForVersion(t, ch, 1)
-	if st.GameID != "BQ7M0K1i" {
-		t.Errorf("game id %q", st.GameID)
-	}
+	st := waitForState(t, ch, func(s TvState) bool { return s.GameID == "BQ7M0K1i" })
 	if st.URL != "https://lichess.org/BQ7M0K1i" {
 		t.Errorf("url %q", st.URL)
 	}
@@ -296,13 +310,9 @@ func TestTvFeaturedThenFen(t *testing.T) {
 		t.Errorf("a fresh featured game has no last move, got %q", st.LastMoveUci)
 	}
 
-	before := st.Version
 	frames <- decodeTvFrame(t, tvFenFrame)
-	st = waitForVersion(t, ch, before)
+	st = waitForState(t, ch, func(s TvState) bool { return s.LastMoveUci == "d7f6" })
 
-	if st.LastMoveUci != "d7f6" {
-		t.Errorf("last move %q", st.LastMoveUci)
-	}
 	// Seconds, not milliseconds — lichess sends the TV clock in seconds and the
 	// Board API sends the same idea in ms. The client renders these directly.
 	if st.WhiteClock != 56 || st.BlackClock != 51 {
@@ -321,23 +331,13 @@ func TestTvFeaturedThenFen(t *testing.T) {
 // must not carry across into a different game.
 func TestTvFeaturedChangeClearsLastMove(t *testing.T) {
 	h := tvHandler(t)
-	frames := make(chan lichess.TvEvent)
-	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
-		for {
-			select {
-			case ev := <-frames:
-				fn(ev)
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
+	frames := framePump(h)
 	ch := h.tv.watch(lichess.ChannelBlitz)
 
 	frames <- decodeTvFrame(t, tvFeaturedFrame)
-	st := waitForVersion(t, ch, 1)
+	waitForState(t, ch, func(s TvState) bool { return s.GameID == "BQ7M0K1i" })
 	frames <- decodeTvFrame(t, tvFenFrame)
-	st = waitForVersion(t, ch, st.Version)
+	st := waitForState(t, ch, func(s TvState) bool { return s.LastMoveUci == "d7f6" })
 	if st.LastMoveUci == "" {
 		t.Fatal("setup: expected a last move")
 	}
@@ -347,11 +347,8 @@ func TestTvFeaturedChangeClearsLastMove(t *testing.T) {
 		`{"color":"black","user":{"name":"bob"},"rating":2050,"seconds":180}],` +
 		`"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}}`
 	frames <- decodeTvFrame(t, next)
-	st = waitForVersion(t, ch, st.Version)
+	st = waitForState(t, ch, func(s TvState) bool { return s.GameID == "NEWGAME1" })
 
-	if st.GameID != "NEWGAME1" {
-		t.Errorf("game id %q, want NEWGAME1", st.GameID)
-	}
 	if st.LastMoveUci != "" {
 		t.Errorf("last move %q carried across into a different game", st.LastMoveUci)
 	}
@@ -417,16 +414,11 @@ func TestSideToMove(t *testing.T) {
 
 // ── Ref-counting: the invariant that makes this worth proxying ──
 
-// N clients must cost lichess ONE stream. This is the deal with lichess, and it
+// N connections must cost lichess ONE stream. This is the deal with lichess, and it
 // is why per-client channel choice is affordable at all.
 func TestTvSecondWatcherReusesTheUpstream(t *testing.T) {
 	h := tvHandler(t)
-	var opened int32
-	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
-		atomic.AddInt32(&opened, 1)
-		<-ctx.Done()
-		return ctx.Err()
-	}
+	opened := countingStream(h)
 
 	a := h.tv.watch(lichess.ChannelBlitz)
 	for i := 0; i < 20; i++ {
@@ -434,26 +426,25 @@ func TestTvSecondWatcherReusesTheUpstream(t *testing.T) {
 			t.Fatal("watch returned a different channel object — that is a second upstream")
 		}
 	}
-	waitFor(t, func() bool { return atomic.LoadInt32(&opened) == 1 })
-	if n := atomic.LoadInt32(&opened); n != 1 {
+	waitFor(t, func() bool { return atomic.LoadInt32(opened) == 1 })
+	if n := atomic.LoadInt32(opened); n != 1 {
 		t.Fatalf("opened %d upstreams for 21 watchers, want exactly 1", n)
+	}
+	// 21 watches means 21 live connections on the one channel.
+	if got := h.tv.connsFor(lichess.ChannelBlitz); got != 21 {
+		t.Fatalf("conns = %d, want 21 — every watch is a connection", got)
 	}
 
 	// A different channel is a different upstream — that's the bound: one per
 	// channel, not one per player.
 	h.tv.watch(lichess.ChannelRapid)
-	waitFor(t, func() bool { return atomic.LoadInt32(&opened) == 2 })
+	waitFor(t, func() bool { return atomic.LoadInt32(opened) == 2 })
 }
 
 // Concurrent first-watchers must not race into two upstreams.
 func TestTvConcurrentWatchersOpenOneUpstream(t *testing.T) {
 	h := tvHandler(t)
-	var opened int32
-	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
-		atomic.AddInt32(&opened, 1)
-		<-ctx.Done()
-		return ctx.Err()
-	}
+	opened := countingStream(h)
 
 	var wg sync.WaitGroup
 	seen := make([]*tvChannel, 50)
@@ -471,16 +462,20 @@ func TestTvConcurrentWatchersOpenOneUpstream(t *testing.T) {
 			t.Fatalf("watcher %d got a different channel object — raced into a second upstream", i)
 		}
 	}
-	waitFor(t, func() bool { return atomic.LoadInt32(&opened) == 1 })
-	if n := atomic.LoadInt32(&opened); n != 1 {
+	waitFor(t, func() bool { return atomic.LoadInt32(opened) == 1 })
+	if n := atomic.LoadInt32(opened); n != 1 {
 		t.Fatalf("opened %d upstreams under concurrency, want 1", n)
+	}
+	if got := h.tv.connsFor(lichess.ChannelBlitz); got != 50 {
+		t.Fatalf("conns = %d after 50 concurrent watches, want 50", got)
 	}
 }
 
-// The last watcher leaving drops the upstream — after a TTL, not immediately.
-func TestTvIdleUpstreamIsDroppedAfterTTL(t *testing.T) {
+// The upstream drops after the LAST connection leaves — after a linger, not
+// immediately, and never while a connection is still attached.
+func TestTvUpstreamDroppedWhenLastConnectionLeaves(t *testing.T) {
 	h := tvHandler(t)
-	h.tv.idleTTL = 50 * time.Millisecond
+	h.tv.lingerTTL = 50 * time.Millisecond
 
 	var opened, cancelled int32
 	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
@@ -490,75 +485,74 @@ func TestTvIdleUpstreamIsDroppedAfterTTL(t *testing.T) {
 		return ctx.Err()
 	}
 
-	h.tv.watch(lichess.ChannelBlitz)
+	ch := h.tv.watch(lichess.ChannelBlitz)
 	waitFor(t, func() bool { return atomic.LoadInt32(&opened) == 1 })
 
-	// Still inside the TTL: a sweep must NOT drop it. A watcher between two polls
-	// is not a watcher who left.
-	h.tv.sweep()
-	if len(h.tv.channels) != 1 {
-		t.Fatal("swept a channel that was polled moments ago")
-	}
-	if atomic.LoadInt32(&cancelled) != 0 {
-		t.Fatal("cancelled an upstream that still had a watcher")
-	}
-
+	// A connection is still attached: a sweep must NOT drop it, however long ago.
 	time.Sleep(60 * time.Millisecond)
 	h.tv.sweep()
+	if len(h.tv.channels) != 1 {
+		t.Fatal("swept a channel that still had a live connection")
+	}
+	if atomic.LoadInt32(&cancelled) != 0 {
+		t.Fatal("cancelled an upstream that still had a connection")
+	}
 
+	// The last connection leaves. Within the linger a sweep still keeps it — a
+	// channel switch reconnects within a round trip and must not flap the upstream.
+	h.tv.leave(lichess.ChannelBlitz, ch)
+	h.tv.sweep()
+	if len(h.tv.channels) != 1 {
+		t.Fatal("dropped the upstream inside the linger window")
+	}
+
+	// Past the linger, the sweeper cancels it. This is the ONLY thing that closes an
+	// upstream, so it running is what keeps a stream from leaking to lichess.
+	time.Sleep(60 * time.Millisecond)
+	h.tv.sweep()
 	if len(h.tv.channels) != 0 {
 		t.Fatal("idle channel survived the sweep — this leaks a stream to lichess forever")
 	}
 	waitFor(t, func() bool { return atomic.LoadInt32(&cancelled) == 1 })
 }
 
-// A watcher returning DURING the TTL keeps the existing stream rather than
-// causing a close+reopen against lichess.
-func TestTvWatcherDuringTTLReusesTheUpstream(t *testing.T) {
+// A leave-then-rejoin inside the linger window must reuse the existing stream
+// rather than cause a close+reopen against lichess — the A→B→A channel switch.
+func TestTvChannelSwitchDoesNotFlap(t *testing.T) {
 	h := tvHandler(t)
-	h.tv.idleTTL = 200 * time.Millisecond
-
-	var opened int32
-	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
-		atomic.AddInt32(&opened, 1)
-		<-ctx.Done()
-		return ctx.Err()
-	}
+	h.tv.lingerTTL = time.Second
+	opened := countingStream(h)
 
 	first := h.tv.watch(lichess.ChannelBlitz)
-	waitFor(t, func() bool { return atomic.LoadInt32(&opened) == 1 })
+	waitFor(t, func() bool { return atomic.LoadInt32(opened) == 1 })
 
-	// Come back before the TTL expires, repeatedly. Each touch pushes the deadline
-	// out, so a steadily-polled channel is never swept.
+	// Leave (conns → 0, linger starts) and immediately rejoin, several times. Each
+	// rejoin is inside the linger, so the same upstream is reused.
 	for i := 0; i < 5; i++ {
-		time.Sleep(50 * time.Millisecond)
+		h.tv.leave(lichess.ChannelBlitz, first)
+		h.tv.sweep() // conns==0 but within linger — must NOT drop
 		if got := h.tv.watch(lichess.ChannelBlitz); got != first {
-			t.Fatal("a returning watcher got a new channel — the stream was reopened")
+			t.Fatal("a rejoin inside the linger got a new channel — the stream was reopened")
 		}
-		h.tv.sweep()
 	}
 
-	if n := atomic.LoadInt32(&opened); n != 1 {
-		t.Fatalf("opened %d upstreams, want 1 — a returning watcher must reuse", n)
+	if n := atomic.LoadInt32(opened); n != 1 {
+		t.Fatalf("opened %d upstreams, want 1 — a rejoin inside the linger must reuse", n)
 	}
 	if len(h.tv.channels) != 1 {
-		t.Fatal("a steadily-polled channel was swept")
+		t.Fatal("a channel being rejoined was swept")
 	}
 }
 
 // After a drop, a fresh watcher opens a NEW upstream rather than getting nothing.
 func TestTvWatchAfterDropReopens(t *testing.T) {
 	h := tvHandler(t)
-	h.tv.idleTTL = 10 * time.Millisecond
-	var opened int32
-	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
-		atomic.AddInt32(&opened, 1)
-		<-ctx.Done()
-		return ctx.Err()
-	}
+	h.tv.lingerTTL = 10 * time.Millisecond
+	opened := countingStream(h)
 
-	h.tv.watch(lichess.ChannelBlitz)
-	waitFor(t, func() bool { return atomic.LoadInt32(&opened) == 1 })
+	ch := h.tv.watch(lichess.ChannelBlitz)
+	waitFor(t, func() bool { return atomic.LoadInt32(opened) == 1 })
+	h.tv.leave(lichess.ChannelBlitz, ch)
 	time.Sleep(20 * time.Millisecond)
 	h.tv.sweep()
 	if len(h.tv.channels) != 0 {
@@ -566,87 +560,197 @@ func TestTvWatchAfterDropReopens(t *testing.T) {
 	}
 
 	h.tv.watch(lichess.ChannelBlitz)
-	waitFor(t, func() bool { return atomic.LoadInt32(&opened) == 2 })
+	waitFor(t, func() bool { return atomic.LoadInt32(opened) == 2 })
 }
 
-// ── The long poll ──
+// ── The WebSocket push (M18) ──
+//
+// These exercise the real upgrade/broadcast/decrement paths over an httptest
+// server and a gorilla dial, so the handler, the auth-before-upgrade gate, the
+// full-snapshot wire and the leak-proof `defer leave` are all run, not reasoned
+// about.
 
-// since=version must hold rather than spin. The client polls in a tight loop;
-// answering instantly with an unchanged state is how you get hundreds of
-// requests a second.
-func TestTvLongPollHoldsWhenNothingChanged(t *testing.T) {
+// tvServer stands the tvSocket route up on a real HTTP server and returns its ws://
+// base. Go 1.22's method-and-path mux gives {channel} to PathValue exactly as
+// production's does.
+func tvServer(t *testing.T, h *handler) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/tv/{channel}", h.tvSocket)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return "ws" + strings.TrimPrefix(srv.URL, "http")
+}
+
+func dialTv(t *testing.T, h *handler, wsBase, channel string) (*websocket.Conn, *http.Response, error) {
+	t.Helper()
+	tok, _ := h.sessions.issueGame(76561197960287930)
+	hdr := http.Header{"Authorization": {"Bearer " + tok}}
+	return websocket.DefaultDialer.Dial(wsBase+"/api/v1/tv/"+channel, hdr)
+}
+
+func readTvRaw(t *testing.T, conn *websocket.Conn) []byte {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return msg
+}
+
+func readTv(t *testing.T, conn *websocket.Conn) TvState {
+	t.Helper()
+	var st TvState
+	if err := json.Unmarshal(readTvRaw(t, conn), &st); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return st
+}
+
+// A dial with no credentials must be refused at the handshake with a 401 — no
+// upgrade, no upstream.
+func TestTvSocketDialRequiresASession(t *testing.T) {
 	h := tvHandler(t)
-	ch := h.tv.watch(lichess.ChannelBlitz)
-	st, _ := ch.snapshot()
+	opened := countingStream(h)
+	wsBase := tvServer(t, h)
 
-	since := strconv.FormatUint(st.Version, 10)
-	r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/blitz?since="+since, nil))
-	r.SetPathValue("channel", "blitz")
-	ctx, cancel := context.WithTimeout(r.Context(), 80*time.Millisecond)
-	defer cancel()
-	r = r.WithContext(ctx)
-
-	start := time.Now()
-	w := httptest.NewRecorder()
-	h.tvState(w, r)
-
-	// The request context died first, so the handler should have returned on it —
-	// the point is that it did NOT return immediately with the same version.
-	if elapsed := time.Since(start); elapsed < 50*time.Millisecond {
-		t.Fatalf("returned after %v without holding — the client would spin", elapsed)
+	conn, resp, err := websocket.DefaultDialer.Dial(wsBase+"/api/v1/tv/blitz", nil)
+	if err == nil {
+		conn.Close()
+		t.Fatal("handshake succeeded without a session — TV must never be an open relay")
+	}
+	if resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status %v, want 401", resp)
+	}
+	if n := atomic.LoadInt32(opened); n != 0 {
+		t.Fatalf("opened %d upstreams for an unauthed dial — must be 0", n)
 	}
 }
 
-// A stale `since` must answer immediately: that is the catch-up path.
-func TestTvLongPollAnswersImmediatelyWhenBehind(t *testing.T) {
+// A change pushes a full snapshot to a connected client, and the wire carries none
+// of the retired long-poll fields.
+func TestTvSocketPushesOnChange(t *testing.T) {
 	h := tvHandler(t)
-	h.tv.watch(lichess.ChannelBlitz)
+	frames := framePump(h)
+	wsBase := tvServer(t, h)
 
-	r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/blitz?since=0", nil))
-	r.SetPathValue("channel", "blitz")
-	w := httptest.NewRecorder()
+	conn, _, err := dialTv(t, h, wsBase, "blitz")
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
 
-	done := make(chan struct{})
-	go func() { h.tvState(w, r); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("held a poll that was already behind — catch-up must be immediate")
+	// The first push on connect is the seed state (channel/label, no game yet).
+	seed := readTv(t, conn)
+	if seed.Channel != "blitz" || seed.Label != "Blitz" {
+		t.Fatalf("seed = %q/%q, want blitz/Blitz", seed.Channel, seed.Label)
 	}
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status %d", w.Code)
+	// A featured frame pushes the game.
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	raw := readTvRaw(t, conn)
+	if bytes.Contains(raw, []byte(`"version"`)) {
+		t.Errorf("wire still carries a version cursor: %s", raw)
+	}
+	if bytes.Contains(raw, []byte(`"hold_ms"`)) {
+		t.Errorf("wire still carries hold_ms: %s", raw)
 	}
 	var st TvState
-	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(raw, &st); err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-	if st.Channel != "blitz" || st.Label != "Blitz" {
-		t.Errorf("channel/label = %q/%q", st.Channel, st.Label)
+	if st.GameID != "BQ7M0K1i" || st.WhiteName != "DiazVelandia" {
+		t.Fatalf("featured not pushed: %q/%q", st.GameID, st.WhiteName)
 	}
-	if st.Version == 0 {
-		t.Error("version 0 — the client would never advance")
+
+	// A move pushes the next full snapshot.
+	frames <- decodeTvFrame(t, tvFenFrame)
+	st = readTv(t, conn)
+	if st.LastMoveUci != "d7f6" || st.WhiteClock != 56 || st.BlackClock != 51 {
+		t.Fatalf("fen not pushed: lm=%q %d/%d", st.LastMoveUci, st.WhiteClock, st.BlackClock)
 	}
 }
 
-// Polling is what marks a channel as wanted; the handler must touch it or a
-// watched channel gets swept out from under its viewers.
-func TestTvPollTouchesTheChannel(t *testing.T) {
+// A client that connects mid-think is handed the stored frame immediately, and its
+// age_ms reflects how stale that frame is — the one case the whole-second floor
+// can't cover, so it must be real, not zero.
+func TestTvSocketSendsCurrentSnapshotOnConnect(t *testing.T) {
 	h := tvHandler(t)
-	h.tv.idleTTL = 100 * time.Millisecond
-	h.tv.watch(lichess.ChannelBlitz)
+	frames := framePump(h)
+	wsBase := tvServer(t, h)
 
-	time.Sleep(70 * time.Millisecond)
+	// Open the upstream and land a game BEFORE anyone connects, then let it age.
+	ch := h.tv.watch(lichess.ChannelBlitz)
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	waitForState(t, ch, func(s TvState) bool { return s.GameID == "BQ7M0K1i" })
+	time.Sleep(60 * time.Millisecond)
 
-	r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/blitz?since=0", nil))
-	r.SetPathValue("channel", "blitz")
-	h.tvState(httptest.NewRecorder(), r)
-
-	time.Sleep(50 * time.Millisecond) // past the original deadline, not the touched one
-	h.tv.sweep()
-	if len(h.tv.channels) != 1 {
-		t.Fatal("a channel being actively polled was swept")
+	conn, _, err := dialTv(t, h, wsBase, "blitz")
+	if err != nil {
+		t.Fatalf("dial: %v", err)
 	}
+	defer conn.Close()
+
+	st := readTv(t, conn)
+	if st.GameID != "BQ7M0K1i" {
+		t.Fatalf("connect didn't get the current game: %q", st.GameID)
+	}
+	if st.AgeMs < 50 {
+		t.Errorf("age_ms = %d on a stale connect, want >= 50 — the client would read HIGH", st.AgeMs)
+	}
+	if st.AgeMs > 5000 {
+		t.Errorf("age_ms = %d, implausible", st.AgeMs)
+	}
+}
+
+// N connected clients cost lichess ONE stream — the invariant, over the real
+// socket path this time.
+func TestTvNViewersOneUpstream(t *testing.T) {
+	h := tvHandler(t)
+	opened := countingStream(h)
+	wsBase := tvServer(t, h)
+
+	var conns []*websocket.Conn
+	for i := 0; i < 8; i++ {
+		conn, _, err := dialTv(t, h, wsBase, "blitz")
+		if err != nil {
+			t.Fatalf("dial %d: %v", i, err)
+		}
+		readTv(t, conn) // drain the seed push so the connection is fully established
+		conns = append(conns, conn)
+	}
+	defer func() {
+		for _, c := range conns {
+			c.Close()
+		}
+	}()
+
+	waitFor(t, func() bool { return h.tv.connsFor(lichess.ChannelBlitz) == 8 })
+	if n := atomic.LoadInt32(opened); n != 1 {
+		t.Fatalf("opened %d upstreams for 8 viewers, want exactly 1", n)
+	}
+}
+
+// A rude TCP close — no WebSocket close handshake — must still run the `defer leave`
+// and drop the connection count. This is the whole reason the ref count is a defer
+// decrement and not a code path: a dropped socket gives us no clean exit to hook.
+func TestTvSocketDeferDecrementsOnAbruptClose(t *testing.T) {
+	h := tvHandler(t)
+	countingStream(h)
+	wsBase := tvServer(t, h)
+
+	conn, _, err := dialTv(t, h, wsBase, "blitz")
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	readTv(t, conn)
+	waitFor(t, func() bool { return h.tv.connsFor(lichess.ChannelBlitz) == 1 })
+
+	// Slam the underlying TCP connection shut without a close frame.
+	conn.UnderlyingConn().Close()
+
+	waitFor(t, func() bool { return h.tv.connsFor(lichess.ChannelBlitz) == 0 })
 }
 
 // ── The channel list ──
@@ -701,18 +805,21 @@ func decodeTvFrame(t *testing.T, line string) lichess.TvEvent {
 	return ev
 }
 
-func waitForVersion(t *testing.T, ch *tvChannel, after uint64) TvState {
+// waitForState blocks until the channel's state satisfies pred, using the same
+// close-and-replace wake the writers do — the version cursor it replaces is gone.
+func waitForState(t *testing.T, ch *tvChannel, pred func(TvState) bool) TvState {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
 	for {
 		st, changed := ch.snapshot()
-		if st.Version > after {
+		if pred(st) {
 			return st
 		}
 		select {
 		case <-changed:
 		case <-deadline:
-			t.Fatalf("no state past version %d within 2s", after)
+			t.Fatalf("state predicate not met within 2s (last: game=%q lm=%q lastStatus=%q)",
+				st.GameID, st.LastMoveUci, st.LastStatus)
 		}
 	}
 }
@@ -753,7 +860,7 @@ func TestTvFetchesTheResultOfTheGameThatJustEnded(t *testing.T) {
 
 	// First featured: nothing has ended yet, so nothing may be asked.
 	frames <- decodeTvFrame(t, tvFeaturedFrame)
-	st := waitForVersion(t, ch, 1)
+	st := waitForState(t, ch, func(s TvState) bool { return s.GameID == "BQ7M0K1i" })
 	if st.LastGameID != "" || st.LastStatus != "" {
 		t.Errorf("claimed a previous game on the FIRST featured: %q/%q", st.LastGameID, st.LastStatus)
 	}
@@ -767,16 +874,13 @@ func TestTvFetchesTheResultOfTheGameThatJustEnded(t *testing.T) {
 	// A second featured: the first game just ended. The swap is published immediately
 	// and the reason is fetched off the reader's path (see TestTvPublishesTheSwapBeforeTheResult
 	// for that ordering) — so the fully-settled state carries both the new game and the
-	// reason, though they may arrive in two versions.
+	// reason, though they arrive in two pushes.
 	next := `{"t":"featured","d":{"id":"NEWGAME1","orientation":"white","players":[` +
 		`{"color":"white","user":{"name":"alice"},"rating":2100,"seconds":180},` +
 		`{"color":"black","user":{"name":"bob"},"rating":2050,"seconds":180}],` +
 		`"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}}`
 	frames <- decodeTvFrame(t, next)
-	waitFor(t, func() bool {
-		st, _ = ch.snapshot()
-		return st.GameID == "NEWGAME1" && st.LastStatus != ""
-	})
+	st = waitForState(t, ch, func(s TvState) bool { return s.GameID == "NEWGAME1" && s.LastStatus != "" })
 
 	mu.Lock()
 	got := append([]string(nil), asked...)
@@ -820,7 +924,7 @@ func TestTvPublishesTheSwapBeforeTheResult(t *testing.T) {
 
 	ch := h.tv.watch(lichess.ChannelBlitz)
 	frames <- decodeTvFrame(t, tvFeaturedFrame)
-	st := waitForVersion(t, ch, 1)
+	waitForState(t, ch, func(s TvState) bool { return s.GameID == "BQ7M0K1i" })
 
 	frames <- decodeTvFrame(t, `{"t":"featured","d":{"id":"G2","orientation":"white","players":[`+
 		`{"color":"white","user":{"name":"a"}},{"color":"black","user":{"name":"b"}}],`+
@@ -828,10 +932,7 @@ func TestTvPublishesTheSwapBeforeTheResult(t *testing.T) {
 
 	// The swap lands while gameResult is still blocked: the new game and the ending id
 	// are here, the reason is not.
-	st = waitForVersion(t, ch, st.Version)
-	if st.GameID != "G2" {
-		t.Fatalf("the wall waited on the result fetch — new game %q not published", st.GameID)
-	}
+	st := waitForState(t, ch, func(s TvState) bool { return s.GameID == "G2" })
 	if st.LastGameID != "BQ7M0K1i" {
 		t.Errorf("ending not announced with the swap: last_game_id %q", st.LastGameID)
 	}
@@ -839,12 +940,12 @@ func TestTvPublishesTheSwapBeforeTheResult(t *testing.T) {
 		t.Errorf("last_status %q — must be empty until the fetch returns", st.LastStatus)
 	}
 
-	// Let the fetch finish; the reason arrives in a later version without disturbing the
+	// Let the fetch finish; the reason arrives in a later push without disturbing the
 	// ending id it belongs to.
 	close(release)
-	st = waitForVersion(t, ch, st.Version)
-	if st.LastStatus != "mate" || st.LastWinner != "black" {
-		t.Errorf("late result = %q/%q, want mate/black", st.LastStatus, st.LastWinner)
+	st = waitForState(t, ch, func(s TvState) bool { return s.LastStatus == "mate" })
+	if st.LastWinner != "black" {
+		t.Errorf("late result winner %q, want black", st.LastWinner)
 	}
 	if st.LastGameID != "BQ7M0K1i" {
 		t.Errorf("last_game_id changed under the late result: %q", st.LastGameID)
@@ -856,34 +957,33 @@ func TestTvPublishesTheSwapBeforeTheResult(t *testing.T) {
 
 // A fast channel can swap AGAIN before a result fetch returns. By then the state names
 // a newer ending, so the stale answer must be dropped rather than pinned to it — and it
-// must not even bump the version, or the client would needlessly re-snap its clocks.
-// Tested directly on setLastResult because "a no-op happened" has no wire signal to
-// wait on from the outside.
+// must not close `changed`, or every connected client re-pushes and re-snaps its locally
+// -run clocks off a no-op. Tested directly on setLastResult because "a no-op happened"
+// has no wire signal to wait on from the outside.
 func TestTvSetLastResultDropsAStaleEnding(t *testing.T) {
 	ch := &tvChannel{changed: make(chan struct{})}
 	ch.state.LastGameID = "G2"
 
-	// A result for a game the state has already moved past: dropped, no version change.
-	before := ch.version
+	// A result for a game the state has already moved past: dropped, `changed` NOT closed.
+	stale := ch.changed
 	ch.setLastResult("OLDGAME", "outoftime", "white")
 	if ch.state.LastStatus != "" || ch.state.LastWinner != "" {
 		t.Errorf("stale result applied: %q/%q", ch.state.LastStatus, ch.state.LastWinner)
 	}
-	if ch.version != before {
-		t.Errorf("stale result bumped the version %d→%d — that re-snaps the client's clocks", before, ch.version)
+	select {
+	case <-stale:
+		t.Error("stale ending closed changed — that re-pushes to every client and re-snaps their clocks")
+	default:
 	}
 
-	// A result for the current ending: applied, version bumped, waiters woken.
-	changed := ch.changed
+	// A result for the current ending: applied, and `changed` closed so waiters wake.
+	live := ch.changed
 	ch.setLastResult("G2", "mate", "black")
 	if ch.state.LastStatus != "mate" || ch.state.LastWinner != "black" {
 		t.Errorf("current result not applied: %q/%q", ch.state.LastStatus, ch.state.LastWinner)
 	}
-	if ch.version != before+1 {
-		t.Errorf("version %d, want %d after applying the reason", ch.version, before+1)
-	}
 	select {
-	case <-changed:
+	case <-live:
 	default:
 		t.Error("waiters were not woken when the reason landed")
 	}
@@ -900,16 +1000,13 @@ func TestTvFanfareHandlesADraw(t *testing.T) {
 
 	ch := h.tv.watch(lichess.ChannelBlitz)
 	frames <- decodeTvFrame(t, tvFeaturedFrame)
-	st := waitForVersion(t, ch, 1)
+	waitForState(t, ch, func(s TvState) bool { return s.GameID == "BQ7M0K1i" })
 
 	frames <- decodeTvFrame(t, `{"t":"featured","d":{"id":"G2","orientation":"white","players":[`+
 		`{"color":"white","user":{"name":"a"}},{"color":"black","user":{"name":"b"}}],`+
 		`"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}}`)
 	// The reason is fetched off the reader's path now — wait for it to settle.
-	waitFor(t, func() bool {
-		st, _ = ch.snapshot()
-		return st.LastStatus != ""
-	})
+	st := waitForState(t, ch, func(s TvState) bool { return s.LastStatus != "" })
 
 	if st.LastStatus != "stalemate" {
 		t.Errorf("last_status %q, want stalemate", st.LastStatus)
@@ -933,12 +1030,12 @@ func TestTvFanfareSurvivesAFailedResultFetch(t *testing.T) {
 
 	ch := h.tv.watch(lichess.ChannelBlitz)
 	frames <- decodeTvFrame(t, tvFeaturedFrame)
-	st := waitForVersion(t, ch, 1)
+	waitForState(t, ch, func(s TvState) bool { return s.GameID == "BQ7M0K1i" })
 
 	frames <- decodeTvFrame(t, `{"t":"featured","d":{"id":"G2","orientation":"white","players":[`+
 		`{"color":"white","user":{"name":"a"}},{"color":"black","user":{"name":"b"}}],`+
 		`"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}}`)
-	st = waitForVersion(t, ch, st.Version)
+	st := waitForState(t, ch, func(s TvState) bool { return s.GameID == "G2" })
 
 	// The ending is still announced — the client needs to know the game it was watching
 	// finished, even without a reason.
@@ -967,202 +1064,79 @@ func TestTvFenFramesNeverFetchAResult(t *testing.T) {
 
 	ch := h.tv.watch(lichess.ChannelBlitz)
 	frames <- decodeTvFrame(t, tvFeaturedFrame)
-	st := waitForVersion(t, ch, 1)
+	waitForState(t, ch, func(s TvState) bool { return s.GameID == "BQ7M0K1i" })
 	for i := 0; i < 5; i++ {
 		frames <- decodeTvFrame(t, tvFenFrame)
-		st, _ = ch.snapshot()
 	}
-	_ = st
+	waitForState(t, ch, func(s TvState) bool { return s.LastMoveUci == "d7f6" })
 
 	if n := atomic.LoadInt32(&calls); n != 0 {
 		t.Fatalf("%d result fetches for plain moves — that is one lichess request per MOVE", n)
 	}
 }
 
-// ── The clock's age and hold (M11) ──
+// ── The clock's age stamp (M18) ──
 //
-// The wall's clock read HIGH — above the time actually left, which is the one
-// direction the house rule forbids. These two fields are what let the client
-// subtract the staleness, so they are worth pinning hard: silently zero, and the
-// clock is wrong again with nothing failing.
+// The favor-low clock rests on one field, age_ms, stamped at send. Silently zero it
+// and a mid-think connect reads HIGH again with nothing failing — so pin the stamp
+// and pin that serving a client never writes the age back into the shared state.
 
-// ClockAgeMs must measure from when LICHESS's value reached us, not from when the
-// request did. Getting this backwards yields ~0 forever and looks like it works.
-func TestTvClockAgeMeasuresFromTheFrameNotTheRequest(t *testing.T) {
-	h := tvHandler(t)
-	frames := make(chan lichess.TvEvent)
-	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
-		for {
-			select {
-			case ev := <-frames:
-				fn(ev)
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
+// stamp must measure from when LICHESS's value reached us (clockAt), not from now.
+func TestTvStampMeasuresAgeFromTheClockStamp(t *testing.T) {
+	now := time.Now()
+	st := TvState{clockAt: now.Add(-60 * time.Millisecond)}
+	st.stamp(now)
+	if st.AgeMs < 50 || st.AgeMs > 5000 {
+		t.Errorf("age_ms = %d, want ~60 (measured from clockAt)", st.AgeMs)
 	}
 
-	ch := h.tv.watch(lichess.ChannelBlitz)
-	frames <- decodeTvFrame(t, tvFeaturedFrame)
-	waitForVersion(t, ch, 1) // past the seed state watch() publishes, to the featured frame
+	// A state that never carried a clock (the seed) has nothing to age.
+	seed := TvState{}
+	seed.stamp(now)
+	if seed.AgeMs != 0 {
+		t.Errorf("age_ms = %d on a state with no clock, want 0", seed.AgeMs)
+	}
+}
 
-	// Let the value go stale on our side before anyone asks for it.
+// A fen frame carries fresh clocks and must RE-stamp — or every move after the first
+// would report the first frame's age and the correction would grow without bound.
+func TestTvFenFrameRestampsTheClock(t *testing.T) {
+	h := tvHandler(t)
+	frames := framePump(h)
+	ch := h.tv.watch(lichess.ChannelBlitz)
+
+	frames <- decodeTvFrame(t, tvFeaturedFrame)
+	waitForState(t, ch, func(s TvState) bool { return s.GameID == "BQ7M0K1i" })
+
 	time.Sleep(60 * time.Millisecond)
-
-	r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/blitz?since=0", nil))
-	r.SetPathValue("channel", "blitz")
-	w := httptest.NewRecorder()
-	h.tvState(w, r)
-
-	var st TvState
-	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if st.ClockAgeMs < 50 {
-		t.Errorf("clock_age_ms = %d, want >= 50 — it is measuring the request, not the frame", st.ClockAgeMs)
-	}
-	if st.ClockAgeMs > 5000 {
-		t.Errorf("clock_age_ms = %d, implausible", st.ClockAgeMs)
-	}
-	// This request did not wait: it had a newer version to hand.
-	if st.HoldMs > 50 {
-		t.Errorf("hold_ms = %d, want ~0 — nothing was held", st.HoldMs)
-	}
-}
-
-// A poll that finds nothing new sits for pollHold and then answers. That wait is
-// OURS and must be reported as hold, not left for the client to read as network
-// latency — it would subtract up to 5s from the clock.
-func TestTvHoldIsReportedSoTheClientCantReadItAsLatency(t *testing.T) {
-	h := tvHandler(t)
-	frames := make(chan lichess.TvEvent)
-	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
-		for {
-			select {
-			case ev := <-frames:
-				fn(ev)
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
-
-	ch := h.tv.watch(lichess.ChannelBlitz)
-	frames <- decodeTvFrame(t, tvFeaturedFrame)
-	st0 := waitForVersion(t, ch, 1) // past the seed state watch() publishes, to the featured frame
-
-	// Ask for the version we already have, so the handler has nothing to say and
-	// holds — then land a frame to release it, well short of pollHold.
-	//
-	// `polling` is closed immediately before the handler runs. Without it this test
-	// races its own goroutine: if the frame lands first the handler takes the
-	// early-return path, reports hold=0 honestly, and the test reads that as the bug
-	// it is looking for. It did exactly that.
-	polling := make(chan struct{})
-	done := make(chan TvState, 1)
-	go func() {
-		r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/blitz?since="+strconv.FormatUint(st0.Version, 10), nil))
-		r.SetPathValue("channel", "blitz")
-		w := httptest.NewRecorder()
-		close(polling)
-		h.tvState(w, r)
-		var st TvState
-		if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
-			t.Errorf("decode: %v (status %d)", err, w.Code)
-		}
-		done <- st
-	}()
-
-	<-polling
-	time.Sleep(150 * time.Millisecond)
 	frames <- decodeTvFrame(t, tvFenFrame)
+	waitForState(t, ch, func(s TvState) bool { return s.LastMoveUci == "d7f6" })
 
-	select {
-	case st := <-done:
-		if st.Version <= st0.Version {
-			t.Fatalf("poll returned version %d, want past %d — it never waited", st.Version, st0.Version)
-		}
-		if st.HoldMs < 100 {
-			t.Errorf("hold_ms = %d, want >= 100 — the client will read our wait as latency", st.HoldMs)
-		}
-		// The frame that woke us is fresh, even though we held a while. Age and hold
-		// are different quantities and this is the case that proves it.
-		if st.ClockAgeMs > 60 {
-			t.Errorf("clock_age_ms = %d, want ~0 — the frame just landed", st.ClockAgeMs)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("poll never returned")
+	st, _ := ch.snapshot()
+	st.stamp(time.Now())
+	if st.AgeMs > 50 {
+		t.Errorf("age_ms = %d after a fresh fen frame — the stamp is stuck on the featured frame", st.AgeMs)
 	}
 }
 
-// ageAt writes to the response copy only. If it ever touched the shared state,
-// two clients polling one channel would overwrite each other's timings — and the
-// stored value would age cumulatively, so the clock would drift further wrong the
-// longer the channel stayed up.
-func TestTvAgeAtDoesNotMutateSharedState(t *testing.T) {
+// stamp writes to the response copy only. If it ever touched the shared state, two
+// clients on one channel would age it cumulatively and every push would read staler
+// than the last.
+func TestTvStampDoesNotMutateSharedState(t *testing.T) {
 	h := tvHandler(t)
-	frames := make(chan lichess.TvEvent)
-	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
-		for {
-			select {
-			case ev := <-frames:
-				fn(ev)
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
-
+	frames := framePump(h)
 	ch := h.tv.watch(lichess.ChannelBlitz)
+
 	frames <- decodeTvFrame(t, tvFeaturedFrame)
-	waitForVersion(t, ch, 1) // past the seed state watch() publishes, to the featured frame
+	waitForState(t, ch, func(s TvState) bool { return s.GameID == "BQ7M0K1i" })
 
 	for i := 0; i < 3; i++ {
-		r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/blitz?since=0", nil))
-		r.SetPathValue("channel", "blitz")
-		h.tvState(httptest.NewRecorder(), r)
+		st, _ := ch.snapshot()
+		st.stamp(time.Now())
 	}
 
 	stored, _ := ch.snapshot()
-	if stored.ClockAgeMs != 0 || stored.HoldMs != 0 {
-		t.Errorf("serving a poll wrote timings back into the channel: age=%d hold=%d — these are per-response",
-			stored.ClockAgeMs, stored.HoldMs)
-	}
-}
-
-// The clock stamp must not ride on the FEN alone: a fen frame carries new clocks
-// and must re-stamp, or every move after the first would report the FIRST frame's
-// age and the correction would grow without bound.
-func TestTvFenFrameRestampsTheClock(t *testing.T) {
-	h := tvHandler(t)
-	frames := make(chan lichess.TvEvent)
-	h.tv.streamTv = func(ctx context.Context, c lichess.Channel, fn func(lichess.TvEvent)) error {
-		for {
-			select {
-			case ev := <-frames:
-				fn(ev)
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
-
-	ch := h.tv.watch(lichess.ChannelBlitz)
-	frames <- decodeTvFrame(t, tvFeaturedFrame)
-	st0 := waitForVersion(t, ch, 1) // past the seed state watch() publishes, to the featured frame
-
-	time.Sleep(60 * time.Millisecond)
-	frames <- decodeTvFrame(t, tvFenFrame)
-	waitForVersion(t, ch, st0.Version)
-
-	r := authed(t, h, httptest.NewRequest("GET", "/api/v1/tv/blitz?since=0", nil))
-	r.SetPathValue("channel", "blitz")
-	w := httptest.NewRecorder()
-	h.tvState(w, r)
-
-	var st TvState
-	json.Unmarshal(w.Body.Bytes(), &st)
-	if st.ClockAgeMs > 50 {
-		t.Errorf("clock_age_ms = %d after a fresh fen frame — the stamp is stuck on the featured frame", st.ClockAgeMs)
+	if stored.AgeMs != 0 {
+		t.Errorf("stamping a snapshot wrote the age back into the channel: %d — it is per-response", stored.AgeMs)
 	}
 }

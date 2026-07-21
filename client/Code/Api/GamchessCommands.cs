@@ -179,29 +179,29 @@ public static class GamchessCommands
 			Log.Warning( "[Gambit] no SpectatorController — the wall didn't build." );
 			return;
 		}
+		// Since M18 the TV feed is a WebSocket push, not a poll — so there is no
+		// synchronous request to fire here, and the live source IS the source of truth.
+		// Print what it actually holds; the fanfare line is what a missing/late reason
+		// would show up as.
 		Log.Info( $"[Gambit] wall: {c.ChannelLabel} · tv-source={c.IsTvSource}"
 			+ $" · position={c.HasPosition} · fanfare={c.FanfareText ?? "(none)"}" );
 
-		// The raw state, which is the thing that actually decides whether a fanfare can
-		// ever happen: no last_status here means gamchess can't tell us how games end.
-		var res = await LichessTvApi.PollChannel( Gambit.Game.SpectatorController.DesiredChannel, 0 );
+		// The socket is authed the same way every gamchess call is; prove that path still
+		// works and that this gamchess serves the channel list, which is the most common
+		// reason the wall shows nothing (a session that won't mint, or a server too old to
+		// serve TV at all). Channels() is a plain GET and doesn't disturb the live socket.
+		var res = await LichessTvApi.Channels();
 		if ( !res.Ok )
 		{
-			Log.Warning( $"[Gambit] gamchess TV poll failed: {res.Error ?? res.Status.ToString()}"
+			Log.Warning( $"[Gambit] gamchess /tv/channels failed: {res.Error ?? res.Status.ToString()}"
 				+ ( res.NotFound ? " — this gamchess has no TV routes (deploy the server half)." : "" ) );
 			return;
 		}
-		var st = GamchessApi.Deserialize<TvState>( res.Body );
-		if ( st == null )
-		{
-			Log.Warning( "[Gambit] gamchess TV returned something unreadable." );
-			return;
-		}
-		Log.Info( $"[Gambit] gamchess: v{st.version} game={st.game_id} {st.white_name} vs {st.black_name}" );
-		Log.Info( st.last_game_id == null
-			? "[Gambit] gamchess reports NO last-game result — either no game has ended yet, "
-				+ "or this gamchess predates the fanfare (deploy the server half)."
-			: $"[Gambit] gamchess last game: {st.last_game_id} status={st.last_status} winner={st.last_winner}" );
+		var chans = GamchessApi.Deserialize<TvChannelsResponse>( res.Body );
+		Log.Info( chans?.channels == null
+			? "[Gambit] gamchess TV channel list was unreadable."
+			: $"[Gambit] gamchess serves {chans.channels.Length} channels (default {chans.@default})."
+				+ " If the wall is blank, watch the gamchess logs for the upstream open/drop on this channel." );
 	}
 
 	/// <summary>
