@@ -901,3 +901,74 @@ func TestChallengeStateShape(t *testing.T) {
 		t.Fatalf("a solo flow fills no seat up front: %+v", st)
 	}
 }
+
+// ── Abandonment (a client that stops polling a live game) ──
+
+// A paired game where one seat's client falls silent past abandonTTL is the seat the
+// relay resigns on their behalf — the other seat, still polling, is left alone.
+func TestAbandonedSeatDetectsAStaleClient(t *testing.T) {
+	p := newPlay(PlayRequest{ClientGameID: validUUID, WhiteSteamID: 1001, BlackSteamID: 1002,
+		LimitSeconds: 180, IncrementSec: 2})
+	now := time.Now()
+
+	// Both seats just polled → nobody abandoned.
+	p.markPolled(1001)
+	p.markPolled(1002)
+	if got := p.abandonedSeat(now); got != 0 {
+		t.Fatalf("both seats fresh, want 0, got %d", got)
+	}
+
+	// White still polling, Black gone quiet past the TTL → Black is the abandoned seat.
+	p.mu.Lock()
+	p.lastPoll[1002] = now.Add(-abandonTTL - time.Second)
+	p.mu.Unlock()
+	if got := p.abandonedSeat(now); got != 1002 {
+		t.Fatalf("black is stale, want 1002, got %d", got)
+	}
+}
+
+// A seat that never polled is measured from the game's creation, so it still gets the
+// full grace before it counts as gone; and once resigned, the sweep reports nothing
+// more (the resign fires at most once).
+func TestAbandonedSeatGraceAndOnce(t *testing.T) {
+	p := newPlay(PlayRequest{ClientGameID: validUUID, WhiteSteamID: 1001, BlackSteamID: 1002})
+	now := time.Now()
+
+	// Freshly created, nobody has polled yet → still within grace, nobody abandoned.
+	if got := p.abandonedSeat(now); got != 0 {
+		t.Fatalf("fresh game within grace, want 0, got %d", got)
+	}
+
+	// Past the TTL from creation with no poll → the first unpolled seat is abandoned.
+	future := now.Add(2 * abandonTTL)
+	if got := p.abandonedSeat(future); got != 1001 {
+		t.Fatalf("want 1001 abandoned, got %d", got)
+	}
+
+	// Once resigned, no seat is reported again — the guard that makes the resign fire once.
+	p.mu.Lock()
+	p.abandonResigned = true
+	p.mu.Unlock()
+	if got := p.abandonedSeat(future); got != 0 {
+		t.Fatalf("after resign, want 0, got %d", got)
+	}
+}
+
+// A solo flow (seek / open link / challenge) has one Gambit seat; when that one
+// client stops polling, it is the seat to resign.
+func TestAbandonedSeatSolo(t *testing.T) {
+	p := newPlay(PlayRequest{ClientGameID: validUUID, Open: true, SoloSteamID: 1001})
+	now := time.Now()
+
+	p.markPolled(1001)
+	if got := p.abandonedSeat(now); got != 0 {
+		t.Fatalf("fresh solo player, want 0, got %d", got)
+	}
+
+	p.mu.Lock()
+	p.lastPoll[1001] = now.Add(-abandonTTL - time.Second)
+	p.mu.Unlock()
+	if got := p.abandonedSeat(now); got != 1001 {
+		t.Fatalf("stale solo player, want 1001, got %d", got)
+	}
+}

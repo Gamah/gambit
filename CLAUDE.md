@@ -465,6 +465,16 @@ published rules (`lichess.org/page/api-tips`) are short and we follow all of the
 - **Self-limit lobby seeks** to lila's own 5/min/IP (`Limiters.setupPost` **[SOURCE]**), refusing
   locally with a legible reason rather than spending the shared budget to earn a 429.
 - **Never retry into a throttle.** Report the reason; let the player decide.
+- **An abandoned relayed game is RESIGNED, not left to rot** (`relay.watchAbandonment`,
+  `abandonTTL` 30s). gamchess holds the token and streams the game, but a game only ends on
+  lichess when someone resigns, flags, or draws — a client that stops polling (editor closed,
+  crash, walk-away) does none of those, so without this the opponent waits out the whole clock
+  and we leave dead games on an API where our IP is attributable. The relay tracks each seat's
+  `lastPoll` and, on a LIVE game whose seat has been silent past `abandonTTL`, resigns THAT seat
+  with THAT seat's token (paired: the one who left loses, the one still there wins; solo: the one
+  player's game just ends). The TTL is well clear of `pollHold` + a reconnect/hotload grace so a
+  blip can't resign a live game, and it fires once (no retry storm). **So: closing the editor
+  mid-game will lose that lichess game after ~30–40s — by design.**
 
 The accommodation channel is **Discord `#lichess-api-support`** (`https://discord.gg/MS9MejQqha`)
 — **not email**; there is no API branch in their contact form. Bring real traffic numbers and the

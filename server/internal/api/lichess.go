@@ -861,6 +861,9 @@ func (h *handler) lichessPlayState(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such game")
 		return
 	}
+	// Liveness for the abandonment watcher: this seat is still here. A seat that goes
+	// silent on a live game past abandonTTL is resigned on its behalf.
+	p.markPolled(steamID)
 
 	since, _ := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
 	// Before Wait, which hangs up to pollHold: HoldMs is how long we sat here, and
