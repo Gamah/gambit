@@ -98,21 +98,25 @@
 		background-color: #ff2d55;
 	}
 
-	/* Roaming "your game is live" reminders — one row per game, left side, starting at
-	   vertical centre and growing DOWN. Only while not seated, so it never coincides with
-	   the seated-only .leave-btn (top-right). */
+	/* Roaming "your game is live" reminders — one row per game, top-RIGHT, right-justified
+	   and growing DOWN; each row grows LEFT as its text lengthens (the right edge is pinned).
+	   max-width keeps a long row from running off the left of the screen. Only while not
+	   seated. Sits below the top-right .leave-btn's row, but that button is seated-only so
+	   they never show together. */
 	.live-reminders {
 		position: absolute;
-		left: 24px;
-		top: 50%;
+		right: 16px;
+		top: 16px;
+		max-width: 60%;
 		flex-direction: column;
-		align-items: flex-start;
+		align-items: flex-end;
 		gap: 8px;
 		pointer-events: none;
 	}
 	.live-reminder {
 		flex-shrink: 0;
 		white-space: nowrap;
+		text-align: right;
 		font-size: 16px;
 		font-weight: bold;
 		color: rgba(255, 214, 120, 0.95);
