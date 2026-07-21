@@ -52,6 +52,17 @@ public sealed class SpectatorController : Component
 	public string WhiteClock { get; private set; }
 	public string BlackClock { get; private set; }
 
+	/// <summary>That seat is under <see cref="TimeControl.PanicSeconds"/> on a LIVE game, so
+	/// the wall reddens its clock — the same threshold the table clock reddens at, and the
+	/// wall's only urgency cue: it does NOT beep (six tables in time trouble would be a slot
+	/// machine, the same reason the room's tables are quiet — see the sound gates). Per-seat
+	/// and independent of whose turn it is, exactly like the table clock: a player low on time
+	/// is in time trouble whether or not their clock is the one running. Computed from the raw
+	/// remaining seconds, since <see cref="WhiteClock"/> is a pre-formatted string; false for
+	/// an untimed table and for a finished game (the fanfare owns that beat).</summary>
+	public bool WhitePanic { get; private set; }
+	public bool BlackPanic { get; private set; }
+
 	/// <summary>Which seat's clock is running on the featured table, or null.</summary>
 	public ChessSeat? TickingSeat { get; private set; }
 
@@ -260,6 +271,8 @@ public sealed class SpectatorController : Component
 		WhiteRating = BlackRating = 0;
 		WhiteClock = t.WhiteClock;
 		BlackClock = t.BlackClock;
+		WhitePanic = t.WhitePanic;
+		BlackPanic = t.BlackPanic;
 		TickingSeat = t.Ticking;
 		TimeControlLabel = t.TcLabel;
 		ChannelLabel = sources > 1
@@ -309,6 +322,11 @@ public sealed class SpectatorController : Component
 		// plaque tick. A TV game always has a clock: every lichess channel is timed.
 		WhiteClock = TimeControl.Format( _tv.WhiteClock );
 		BlackClock = TimeControl.Format( _tv.BlackClock );
+		// Redden a seat under PanicSeconds, same as a table — but never on a finished game:
+		// the clock is frozen through the fanfare hold and a dead game isn't in time trouble.
+		// Every lichess channel is timed, so no untimed case here.
+		WhitePanic = !_tv.ShowingFinished && _tv.WhiteClock < TimeControl.PanicSeconds;
+		BlackPanic = !_tv.ShowingFinished && _tv.BlackClock < TimeControl.PanicSeconds;
 		TickingSeat = _tv.TickingSeat;
 		TimeControlLabel = label;
 
@@ -353,6 +371,7 @@ public sealed class SpectatorController : Component
 	{
 		public string Fen, LastMove, White, Black, Number, WhiteClock, BlackClock, TcLabel;
 		public ChessSeat? Ticking;
+		public bool WhitePanic, BlackPanic;
 	}
 
 	/// <summary>Every sbox table currently showing a live game, read from the
@@ -366,6 +385,8 @@ public sealed class SpectatorController : Component
 			if ( lc is not { Playing: true } || lc.Game == null ) continue;
 
 			bool timed = !lc.Tc.IsUnlimited;
+			float wLeft = lc.ClockFor( ChessSeat.White );
+			float bLeft = lc.ClockFor( ChessSeat.Black );
 			list.Add( new LiveTable
 			{
 				Fen = lc.Game.Fen,
@@ -373,8 +394,12 @@ public sealed class SpectatorController : Component
 				White = st.WhiteName ?? "White",
 				Black = st.BlackName ?? "Black",
 				Number = TableNumber( st ),
-				WhiteClock = timed ? TimeControl.Format( lc.ClockFor( ChessSeat.White ) ) : null,
-				BlackClock = timed ? TimeControl.Format( lc.ClockFor( ChessSeat.Black ) ) : null,
+				WhiteClock = timed ? TimeControl.Format( wLeft ) : null,
+				BlackClock = timed ? TimeControl.Format( bLeft ) : null,
+				// Same rule as the table clock: reddens under PanicSeconds on a live timed
+				// game, per seat. Playing:true is guaranteed above, so no finished-game case.
+				WhitePanic = timed && wLeft < TimeControl.PanicSeconds,
+				BlackPanic = timed && bLeft < TimeControl.PanicSeconds,
 				Ticking = lc.TickingSeat,
 				TcLabel = lc.Tc.Name,
 			} );
@@ -394,6 +419,8 @@ public sealed class SpectatorController : Component
 		BlackRating = 0;
 		WhiteClock = null;
 		BlackClock = null;
+		WhitePanic = false;
+		BlackPanic = false;
 		TickingSeat = null;
 		TimeControlLabel = null;
 		// No position means nothing to hold a result over. A stale fanfare would float

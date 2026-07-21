@@ -51,7 +51,7 @@
 				}
 				@if ( !string.IsNullOrEmpty( Clock() ) )
 				{
-					<div class="clock" style="color:@( Ticking() ? "#7fd47f" : WallTheme.Text );">@Clock()</div>
+					<div class="clock" style="color:@ClockColor();">@Clock()</div>
 				}
 			</div>
 		}
@@ -169,7 +169,16 @@
 	/// <summary>This seat's clock is the one running.</summary>
 	bool Ticking() => C?.TickingSeat == ( White ? ChessSeat.White : ChessSeat.Black );
 
+	/// <summary>This seat is under the panic threshold on a live game.</summary>
+	bool Panic() => ( White ? C?.WhitePanic : C?.BlackPanic ) ?? false;
+
+	/// <summary>Clock colour, in precedence order: red under time pressure (the same
+	/// <c>#ff5f5f</c> the table clock reddens to), else green while it's the running clock,
+	/// else the wall's normal text. Red wins over green — a seat can be both ticking and in
+	/// time trouble, and the urgent state is the one to show.</summary>
+	string ClockColor() => Panic() ? "#ff5f5f" : Ticking() ? "#7fd47f" : WallTheme.Text;
+
 	protected override int BuildHash() =>
 		HashCode.Combine( White, C?.WhiteName, C?.BlackName, Title(), Rating(), Clock(),
-			Ticking(), SettingsModel.SettingsVersion );
+			Ticking(), Panic(), SettingsModel.SettingsVersion );
 }
