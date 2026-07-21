@@ -568,13 +568,13 @@ public sealed class LichessTvSource
 		// path below on the next messages. Locally derived, so _fanfareUpgraded = true keeps the
 		// later swap/fetch from overwriting a result we already know for certain.
 		if ( LichessTv.IsStandardRules( Channel )
-			&& LichessTv.TryPositionResult( st.fen, out var head, out var reason ) )
+			&& LichessTv.TryPositionResult( st.fen, out var posHead, out var posReason ) )
 		{
 			_fanfareShownFor = _gameId;
 			_holdUntil = LichessTv.FanfareSeconds;
-			FanfareHeadline = head;
-			FanfareReason = reason;
-			FanfareText = reason == null ? head : $"{head} — {reason}";
+			FanfareHeadline = posHead;
+			FanfareReason = posReason;
+			FanfareText = posReason == null ? posHead : $"{posHead} — {posReason}";
 			_fanfareUpgraded = true;
 			Log.Info( $"[Gambit] lichess TV: {_gameId} ended (from position) — {FanfareText}" );
 		}
