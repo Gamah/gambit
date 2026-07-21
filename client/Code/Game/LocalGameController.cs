@@ -335,14 +335,12 @@ public sealed class LocalGameController : Component, IBoardGame
 		// POST wins and can't be corrected.
 		if ( !_historyIntact ) return;
 
-		// Same rule, different cause: a LICHESS game's moves went to the relay and
-		// never touched this ChessGame, so _historyIntact is still true and every
-		// guard above passes — but BuildPgn() would produce headers with no moves,
-		// no clocks and Result "*". Archiving that would be permanent (the POST is
-		// idempotent on client_game_id, so it could never be corrected).
-		//
-		// lichess holds that game and gamchess relayed it. Wiring the relay's final
-		// state into the archive is worth doing; posting a stub is not.
+		// A LICHESS game's moves went to the relay and never touched THIS ChessGame,
+		// so _historyIntact is still true and every guard above passes — but BuildPgn()
+		// here would produce headers with no moves. That game is archived from the side
+		// that actually holds it: LichessGameController.TryArchiveFinished, off its own
+		// _game (rebuilt from lichess's move list) with the lichess names and result.
+		// So this path stays out of its way.
 		if ( LichessGame ) return;
 
 		// Claim it BEFORE awaiting: OnUpdate runs every frame and would otherwise
@@ -353,7 +351,9 @@ public sealed class LocalGameController : Component, IBoardGame
 			string.IsNullOrEmpty( OverResult ) ? "*" : OverResult );
 	}
 
-	static async Task ArchiveGame( string id, string pgn, ulong white, ulong black, string result )
+	/// <summary>Best-effort archive POST, shared with the lichess relay path
+	/// (LichessGameController archives finished relayed games the same way).</summary>
+	internal static async Task ArchiveGame( string id, string pgn, ulong white, ulong black, string result )
 	{
 		var res = await GamchessApi.PostGame( id, pgn, white, black, result );
 		if ( res.Ok ) return;

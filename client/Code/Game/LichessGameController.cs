@@ -404,6 +404,12 @@ public sealed class LichessGameController : Component, IBoardGame
 	/// a poll that repeats a finished state doesn't re-report every ~5s.</summary>
 	bool _reportedResult;
 
+	/// <summary>Have we already archived this finished game to gamchess? Claimed once,
+	/// so a repeated finished poll doesn't re-POST every ~5s. Separate from
+	/// <see cref="_reportedResult"/>: that one is a table-reset concern gated on the game
+	/// being a paired table game, and archiving covers seeks and solo links too.</summary>
+	bool _archived;
+
 	/// <summary>A ClientGameId whose lichess play already failed. Never asked for
 	/// again.
 	///
@@ -737,6 +743,7 @@ public sealed class LichessGameController : Component, IBoardGame
 		ChallengeOpponent = null;
 		_pollBackoff = 0f;   // never let a dead game's backoff gag the next one
 		_reportedResult = false;
+		_archived = false;
 		State = null;
 		_game = null;
 		Error = null;
@@ -960,9 +967,68 @@ public sealed class LichessGameController : Component, IBoardGame
 
 		Rebuild( st.moves );
 
+		// After the rebuild, so _game holds the finishing move: archive a finished
+		// game to gamchess exactly once. Placed here, not in the result-report block
+		// above, on purpose — that block is a paired-table concern (gated on !st.seek),
+		// and a relayed game is worth archiving however it started.
+		TryArchiveFinished();
+
 		// After the rebuild, never before: the premove is aimed at the position
 		// lichess just sent, and IsMyTurn reads the board Rebuild just built.
 		FirePremove();
+	}
+
+	/// <summary>Archive a finished relayed lichess game to gamchess, once, so it lands
+	/// in the private archive and the web viewer the same as a local game does — the
+	/// gap LocalGameController.TryArchive bails on (its own ChessGame never saw a move).
+	///
+	/// <para>Runs on each SEATED PARTICIPANT (this is the engaged poll handler;
+	/// spectators mirror and never reach it). <see cref="_game"/> is rebuilt from
+	/// lichess's own authoritative move list, so its history is intact by construction —
+	/// none of the resync-stub hazard that gates the local path. Both seats of a paired
+	/// game post the same <c>client_game_id</c> (the [Sync]ed <see cref="_clientGameId"/>)
+	/// and the server dedups; a seek or solo link has a single poster and a unique id.</para>
+	///
+	/// <para>An abort (<see cref="ResultString"/> null) archives nothing — same reason it
+	/// sounds no fanfare and reports no result: lichess scored nothing.</para></summary>
+	void TryArchiveFinished()
+	{
+		if ( _archived || !Engaged ) return;
+		if ( State is not { finished: true } ) return;
+		if ( ResultString is not string result ) return;   // abort: nothing to archive
+		if ( _game == null || _game.MoveCount == 0 ) return;
+		if ( Local is not { } local || Station is not { } station ) return;
+		if ( string.IsNullOrEmpty( _clientGameId ) ) return;
+
+		// Only a seat archives (the seats' SteamIDs are the archive's identity), and the
+		// server 403s anyone else anyway. For a solo game one seat is 0 (the stranger),
+		// which the server accepts as an empty seat — the poster is the other seat.
+		ulong me = Connection.Local?.SteamId ?? 0;
+		if ( me == 0 || ( me != station.WhiteSteamId && me != station.BlackSteamId ) ) return;
+
+		_archived = true;
+		_ = LocalGameController.ArchiveGame( _clientGameId, BuildArchivePgn( result ),
+			station.WhiteSteamId, station.BlackSteamId, result );
+	}
+
+	/// <summary>PGN for the archive: the lichess names, the table's time control, and the
+	/// lichess result. No <c>%clk</c> — lichess sends a clock per move but this controller
+	/// doesn't log it per ply (the countdown is display-only), so the archived relay carries
+	/// moves, names, result and time control but not per-move clocks. The result comes from
+	/// lichess (<paramref name="result"/>), never <c>_game.ResultString</c>: a game ended by
+	/// resignation or flag is not terminal on the board.</summary>
+	string BuildArchivePgn( string result )
+	{
+		_game.SetHeader( "Event", "Terry's Gambit (lichess)" );
+		_game.SetHeader( "Site", "lichess.org" );
+		_game.SetHeader( "Date", DateTime.UtcNow.ToString( "yyyy.MM.dd" ) );
+		_game.SetHeader( "White", NameOr( State?.white_name ) );
+		_game.SetHeader( "Black", NameOr( State?.black_name ) );
+		_game.SetHeader( "Result", result );
+		_game.SetHeader( "TimeControl", Local?.Tc.PgnSpec ?? "-" );
+		return _game.Pgn;
+
+		static string NameOr( string n ) => string.IsNullOrEmpty( n ) ? "Anonymous" : n;
 	}
 
 	/// <summary>
