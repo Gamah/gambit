@@ -219,10 +219,14 @@
 				}
 			}
 
+			@* Resign is its own explicit, confirmed action now (M17) — decoupled from
+			   standing up, which just gets you out of the seat to roam without ending the
+			   game. Two-stage: first click arms, second confirms. Escape/Leave no longer
+			   resigns, so this button is the ONLY way to end a live game from the board. *@
 			@if ( ( Source()?.Playing ?? false ) )
 			{
-				<div class="button resign" onclick="@( () => LobbyPlayer.Local?.RequestLeave() )">
-					@( ( LobbyPlayer.Local?.LeaveArmed ?? false ) ? "Sure? This resigns" : "Resign & stand up" )
+				<div class="button resign" onclick="@( () => LobbyPlayer.Local?.Resign() )">
+					@( ( LobbyPlayer.Local?.LeaveArmed ?? false ) ? "Sure? Resign the game" : "Resign" )
 				</div>
 			}
 		</div>

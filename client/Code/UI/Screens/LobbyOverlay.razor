@@ -107,16 +107,12 @@
 
 @code
 {
-	// Standing up mid-game resigns, so leaving a chess seat runs through the
-	// two-stage RequestLeave; wall boards close immediately as before.
+	// Standing up NO LONGER resigns (decoupled M17): this just gets you out of the seat
+	// to roam, keeping the seat and any live game (RequestLeave). Resign is its own
+	// confirmed button on the seated HUD. Wall boards close as before.
 	void Leave() => LobbyPlayer.Local?.RequestLeave();
 
-	static string LeaveLabel()
-	{
-		if ( ChessStation.Active == null ) return "Close";
-		if ( LobbyPlayer.Local?.LeaveArmed ?? false ) return "Resign & Stand Up?";
-		return "Stand Up";
-	}
+	static string LeaveLabel() => ChessStation.Active == null ? "Close" : "Stand Up";
 
 	static string BoardPrompt( Gambit.World.SettingsStation b ) => b.Kind switch
 	{

@@ -237,7 +237,8 @@ public sealed class LobbyPlayer : Component
 		{
 			// Escape or Back stands up / closes the wall board. (Start auto-sets
 			// EscapePressed; the Back button is wired through the "Back" action.)
-			// Standing up mid-game resigns, so that path is two-stage (RequestLeave).
+			// Standing up mid-game NO LONGER resigns (M17) — RequestLeave just gets you
+			// up to roam, keeping the seat and the live game; resign is its own button.
 			// The info/welcome board also closes on E (its own hint says "E or Esc").
 			if ( Input.EscapePressed || Input.Pressed( "Back" )
 				|| ( InfoStation.Active != null && Input.Pressed( "use" ) ) )
@@ -582,11 +583,14 @@ public sealed class LobbyPlayer : Component
 		NearbyStation = null;
 		float bestDist = InteractRange;
 
+		ulong mine = Connection.Local?.SteamId ?? 0;
 		foreach ( var station in Scene.GetAllComponents<ChessStation>() )
 		{
 			foreach ( var seat in new[] { ChessSeat.White, ChessSeat.Black } )
 			{
-				if ( station.SeatTaken( seat ) ) continue;
+				// A seat someone else holds is skipped; my OWN seat (kept while roaming
+				// mid-game) stays offered so I can walk back and sit down to resume.
+				if ( station.SeatTaken( seat ) && station.SeatSteamId( seat ) != mine ) continue;
 
 				var delta = station.SeatWorldPosition( seat ) - GameObject.WorldPosition;
 				float dist = new Vector2( delta.x, delta.y ).Length;
@@ -600,81 +604,109 @@ public sealed class LobbyPlayer : Component
 		}
 	}
 
-	// ── Two-stage leave (M2): standing up from a live game resigns it, so the
-	// first Escape/Leave only arms the intent; a second within the window (or
-	// with no live game) actually stands. GameHud/LobbyOverlay read LeaveArmed
-	// to show "again to resign".
+	// ── Standing up vs resigning (decoupled M17) ──
+	//
+	// Standing up NO LONGER resigns. You can get up and walk around while your seat
+	// stays claimed and your game stays live — your clock runs on lichess exactly as
+	// a real game does, and gamchess keeps it alive as long as your client is polling
+	// (its abandonment sweep only fires if the client actually drops). Resign is its
+	// own explicit, confirmed button on the seated HUD (see Resign()).
+	//
+	// The two-stage confirm now belongs to RESIGN alone: a first press arms, a second
+	// within the window commits. GameHud reads LeaveArmed for that button's label.
 
 	RealTimeSince _leaveArm = 999f;
 	const float LeaveConfirmWindow = 3f;
 
-	/// <summary>An armed leave-confirm is pending (UI shows the resign warning).</summary>
+	/// <summary>A resign-confirm is armed (the Resign button shows "Sure?").</summary>
 	public bool LeaveArmed => _leaveArm < LeaveConfirmWindow;
 
 	/// <summary>Escape / the Leave button while engaged. Immediate for wall
 	/// boards, finished games and untouched boards; two-stage when it would
 	/// forfeit a live game.</summary>
+	/// <summary>Stand up (Escape / Back). This NO LONGER resigns — decoupled in M17.
+	///
+	/// <para>Standing up from a LIVE game just gets you out of the seat to roam: the seat
+	/// stays claimed and the relay keeps polling, so the game stays live on lichess and
+	/// your clock runs while you're away. Walk back and sit at the same seat to resume;
+	/// resign is its own explicit button (<see cref="Resign"/>). This is what lets
+	/// gamchess "let lichess handle it" — a still-connected player just risks flagging,
+	/// and only a truly-gone client is resigned by the abandonment sweep.</para>
+	///
+	/// <para>Anything that ISN'T a live game is a full leave: an idle or waiting seat, a
+	/// finished game, or a wall board. A pending seek/challenge is withdrawn on the way
+	/// out (its held connection or an explicit /cancel), and a finished lichess game is
+	/// dismissed so its server-side slot doesn't linger.</para></summary>
 	public void RequestLeave()
 	{
 		var station = ChessStation.Active;
 		var controller = Gambit.Game.LocalGameController.For( station );
 		var lichess = Gambit.Game.LichessGameController.For( station );
 
-		// A lichess game is the one that counts: it is on the player's real record,
-		// so standing up must resign it THERE. The local controller can't do that —
-		// during a lichess game its ChessGame never advances, so it doesn't even
-		// know a game is in progress.
-		bool lichessForfeits = lichess is { Engaged: true, Playing: true }
-			&& lichess.LocalSeat != null;
+		bool liveGame = ( lichess is { Engaged: true, Playing: true } && lichess.LocalSeat != null )
+			|| ( controller is { Playing: true } && controller.LocalSeat != null
+				&& ( controller.Game?.MoveCount ?? 0 ) > 0 );
 
-		// Standing up mid-game forfeits it — true for both the local two-seat game and
-		// a live game arms the two-stage confirm.
+		// Live game: get up and roam, keeping the seat and the game. No resign, no
+		// Clear() — the controller stays Engaged and polling so the game stays live and
+		// the abandonment sweep doesn't treat us as gone.
+		if ( liveGame )
+		{
+			Disengage( keepSeat: true );
+			return;
+		}
+
+		// Not a live game — a clean leave that releases the seat. Withdraw a pending
+		// seek/challenge (its held connection IS the seek; a challenge needs an explicit
+		// /cancel or it stays acceptable for hours), and dismiss a finished game so its
+		// server-side slot and event stream don't linger to the 10-min sweep.
+		if ( lichess is { AwaitingOpponent: true } )
+			lichess.CancelWaiting();
+		if ( lichess is { State: { finished: true } } )
+			lichess.DismissFinished();
+		lichess?.Clear();
+
+		Disengage( keepSeat: false );
+	}
+
+	/// <summary>Resign the live game at the seat we're engaged at — the explicit,
+	/// two-stage button on the seated HUD, unrelated to standing up. A first call arms
+	/// the confirm (the button shows "Sure?"), a second within the window commits: it
+	/// resigns on lichess (or ends the local game), then stands up and releases the seat.
+	/// No-op if there is no live game to resign.</summary>
+	public void Resign()
+	{
+		var station = ChessStation.Active;
+		var controller = Gambit.Game.LocalGameController.For( station );
+		var lichess = Gambit.Game.LichessGameController.For( station );
+
+		// A lichess game is the one that counts — it is on the player's real record, so
+		// it must be resigned THERE. The local controller can't (its ChessGame never
+		// advances during a lichess game), so lichess takes precedence.
+		bool lichessForfeits = lichess is { Engaged: true, Playing: true } && lichess.LocalSeat != null;
 		bool localForfeits = !lichessForfeits
 			&& controller is { Playing: true }
 			&& controller.LocalSeat != null
 			&& ( controller.Game?.MoveCount ?? 0 ) > 0;
-		bool forfeits = localForfeits || lichessForfeits;
+		if ( !lichessForfeits && !localForfeits ) return;
 
-		if ( forfeits && !LeaveArmed )
+		// Two-stage: first press arms, a second within the window commits.
+		if ( !LeaveArmed )
 		{
 			_leaveArm = 0f;
 			return;
 		}
-
 		_leaveArm = 999f;
-
-		// Walking away while still waiting on an opponent WITHDRAWS the request —
-		// whether that's a lobby seek (its held connection IS the seek) or a direct
-		// challenge (which gamchess must explicitly /cancel, or it stays acceptable
-		// for hours). Without this we get dropped into a game nobody is sitting at.
-		//
-		// Below the arm gate, not above it: a press that only arms the confirm must
-		// not silently bin the player's request while they read "Sure? This resigns"
-		// and then decline. (Waiting and Playing are mutually exclusive — Adopt drops
-		// both the moment a game goes live — so this never races a resign.)
-		if ( lichess is { AwaitingOpponent: true } )
-			lichess.CancelWaiting();
-
-		// Standing up from a FINISHED lichess game: release the server-side play so its
-		// pending slot and event stream don't linger to the 10-min sweep (which after a
-		// link game can leave a stale gameStart the next link trips on). No-op otherwise.
-		if ( lichess is { State: { finished: true } } )
-			lichess.DismissFinished();
 
 		if ( lichessForfeits )
 			lichess.ResignLocal();
-		else if ( localForfeits )
+		else
 			controller.ResignLocal();
 
-		// Safety: standing up always drops any lichess game state so the board doesn't
-		// keep showing it. The other paths above already handle the withdrawing/resigning/
-		// dismissing; this just guarantees the controller is cleared no matter which case
-		// we came through (ResignLocal, notably, keeps polling to show the result — we
-		// don't want that once we've left). The local table resets on its own as the seat
-		// empties. Idempotent.
+		// ResignLocal keeps polling to show the result; we've chosen to leave, so drop
+		// it and release the seat. The local table resets as the seat empties.
 		lichess?.Clear();
-
-		Disengage();
+		Disengage( keepSeat: false );
 	}
 
 	public void Engage( ChessStation station, ChessSeat seat )
@@ -2332,7 +2364,13 @@ public sealed class LobbyPlayer : Component
 		}
 	}
 
-	public void Disengage()
+	/// <summary>Stand up from whatever we're engaged at, blending the camera back to
+	/// roaming. <paramref name="keepSeat"/> stands up from a chess seat WITHOUT releasing
+	/// the networked occupancy — used to walk around mid-game without resigning, so the
+	/// live game keeps running and we keep polling it (see ChessStation.LeaveCameraKeepSeat).
+	/// The default releases the seat, which is every other case: an idle seat, a finished
+	/// game, a wall board, or an explicit resign.</summary>
+	public void Disengage( bool keepSeat = false )
 	{
 		_switching = false; // standing up cancels any in-flight seat-switch schwoop
 
@@ -2358,7 +2396,10 @@ public sealed class LobbyPlayer : Component
 			_movedForSeat = false;
 		}
 
-		ChessStation.Active?.Leave();
+		if ( keepSeat )
+			ChessStation.Active?.LeaveCameraKeepSeat();  // roam, but the seat stays ours
+		else
+			ChessStation.Active?.Leave();
 		SettingsStation.Active?.Leave();
 		InfoStation.Active?.Leave();
 
