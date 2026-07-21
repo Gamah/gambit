@@ -10,12 +10,20 @@
 @inherits PanelComponent
 
 @*
-	Seated-game HUD: seat names, whose turn, the time-control picker and ready button
-	while the table is idle, SAN move list, resign, promotion picker, and the result
-	after the game. Attached to the scene ScreenPanel at runtime by
-	LobbyPlayer.EnsureGameHud. Screen-space overlay: the board itself is the 3D world —
-	this sits in a column on the right edge, clear of the board (px values are
-	uncalibrated, tune in-editor).
+	Seated-game HUD: seat names, whose turn, the status/turn line, standing draw and
+	takeback offers, the SAN move list, the waiting-on-an-opponent controls (a seek, a
+	named challenge, a shareable link), and resign, plus the result after the game.
+	Attached to the scene ScreenPanel at runtime by LobbyPlayer.EnsureGameHud.
+	Screen-space overlay: the board itself is the 3D world — this sits in a column on the
+	right edge, clear of the board (px values are uncalibrated, tune in-editor).
+
+	Two pieces split out of here in M17 (this file was 1089 lines): the pre-game SETUP
+	block (time control + the four lichess start flows + Ready) is now <SetupPanel />,
+	rendered in-column where the block was; the PROMOTION picker is now <PromotionPanel />,
+	a full-screen sibling of the column. Both are nested @inherits Panel widgets that
+	re-resolve the controllers off ChessStation.Active and carry their own style and
+	repaint hash — s&box panel stylesheets don't reliably cross a nested-panel boundary,
+	so a split panel that leaned on this file's <style> would render unstyled.
 
 	NO CLOCKS (M11). They are on the table now, as a real mesh clock with a face per seat
 	— ChessRing.BuildStationClock and TableClock. Both clocks used to be text in this
@@ -29,7 +37,6 @@
 	@if ( Visible() )
 	{
 		var ctrl = Controller();
-		var view = View();
 
 		<div class="hud">
 			<div class="title">@BoardTitle( ctrl )</div>
@@ -128,136 +135,10 @@
 				<div class="reason lichess-err">♞ @lerr — playing here instead.</div>
 			}
 
-			@* Time control + ready. Shown whenever the table is not mid-game, so it
-			   covers both a fresh table and the rematch after a result. *@
-			@if ( ShowSetup( ctrl ) )
-			{
-				<div class="setup-label">TIME CONTROL</div>
-				<div class="tc-list">
-					@for ( int i = 0; i < TimeControl.All.Count; i++ )
-					{
-						var index = i; // capture per iteration — the lambda outlives the loop
-						<div class="tc @( ctrl.TimeControlIndex == index ? "on" : "" )"
-							onclick="@( () => ctrl.RequestSetTimeControl( index ) )">@TimeControl.All[index].Name</div>
-					}
-				</div>
-
-				@* Lichess (M8). Two ways to put a real game on your lichess record:
-				   play the person opposite you, or play a stranger. Each is offered
-				   only where it could actually work — the two flows have DIFFERENT
-				   speed floors (blitz for a challenge, rapid for a seek), which is
-				   lichess's rule, not ours. *@
-				@* No "already engaged" branch needed: ShowSetup is false whenever
-				   lichess owns the board, so this block is only ever reached with no
-				   lichess game in flight. *@
-				@if ( !LichessLinkState.Linked )
-				{
-					<div class="setup-hint">Link a lichess account at the east wall to play real games from this table</div>
-				}
-				else
-				{
-					@* Play the person opposite you. Both seats must opt in — and
-					   gamchess independently requires both to ask, so this is the
-					   agreement, not the authorisation. *@
-					@if ( LichessTable.CanMirror( ctrl.Tc ) )
-					{
-						<div class="button lichess @( LocalLichess( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleLichess() )">@LichessText( ctrl )</div>
-						@if ( LichessOptInHint( ctrl ) is string hint )
-						{
-							<div class="setup-hint">@hint</div>
-						}
-					}
-					else
-					{
-						<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
-					}
-
-					@* Or play a stranger. Needs nobody's agreement but yours: you're
-					   spending your own grant on an opponent who opted in on lichess,
-					   in their own client, by their own choice. Works alone at a table.
-
-					   The HEADER is outside the CanSeek check on purpose. It used to be
-					   inside, so picking Blitz made the whole section vanish and the only
-					   trace was a hint the player had no reason to read — the feature
-					   looked missing rather than unavailable, and that cost a round of
-					   "the board only supports two people in sbox". A control that can't
-					   be offered still has to say so where it would have been. *@
-					<div class="setup-label">OR PLAY A RANDOM OPPONENT</div>
-					@if ( LichessTable.CanSeek( ctrl.Tc ) )
-					{
-						<div class="seek-row">
-							<div class="chip @( _seekRated ? "on" : "" )" onclick="@( () => ToggleSeekRated() )">@( _seekRated ? "Rated" : "Casual" )</div>
-							<div class="chip @( _seekColor != "random" ? "on" : "" )" onclick="@( () => CycleSeekColor() )">@SeekColorText()</div>
-						</div>
-						<div class="button lichess" onclick="@( () => StartSeek() )">♞ Find a game on lichess</div>
-						<div class="setup-hint">@SeekHint()</div>
-					}
-					else
-					{
-						<div class="setup-hint">@LichessTable.WhySeekNot( ctrl.Tc )</div>
-					}
-
-					@* Or challenge a SPECIFIC lichess player by name. Same speed floor as
-					   playing the person opposite (blitz), NOT the seek's (rapid) — so it
-					   shares CanMirror, and only needs a seat (for the colour it plays).
-
-					   The header is outside the CanMirror check for the same reason the
-					   seek's is outside CanSeek: a control that can't be offered still has
-					   to say so where it would have been, or its absence reads as a bug.
-					   Gated on holding a seat, though — with no seat there is no side to
-					   challenge with, and nothing useful to say about that. *@
-					@if ( LichessSeatColor( ctrl ) is string seatColor )
-					{
-						<div class="setup-label">OR CHALLENGE A LICHESS PLAYER</div>
-						@if ( LichessTable.CanMirror( ctrl.Tc ) )
-						{
-							<div class="seek-row">
-								<div class="chip @( _challengeRated ? "on" : "" )" onclick="@( () => ToggleChallengeRated() )">@( _challengeRated ? "Rated" : "Casual" )</div>
-								<div class="chip">You play @seatColor</div>
-							</div>
-							<TextEntry @ref="_challengeEntry" placeholder="lichess username" class="challenge-entry" maxlength="30" />
-							<div class="button lichess" onclick="@( () => StartChallenge() )">♞ Send the challenge</div>
-							<div class="setup-hint">@ChallengeHint()</div>
-						}
-						else
-						{
-							<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
-						}
-					}
-
-					@* Or hand out a link an ANONYMOUS browser player opens to play YOU on
-					   this board — no lichess account needed their side. gamchess seats your
-					   account in an open challenge and relays your side here (server runOpen).
-					   Blitz+ only (your side plays via the Board API), and the colour chip is
-					   which side YOU take — picking it moves your seat to match. *@
-					@if ( LichessSeatColor( ctrl ) is not null )
-					{
-						<div class="setup-label">OR GET A SHAREABLE LINK</div>
-						@if ( LichessTable.CanMirror( ctrl.Tc ) )
-						{
-							<div class="seek-row">
-								<div class="chip @( _openRated ? "on" : "" )" onclick="@( () => ToggleOpenRated() )">@( _openRated ? "Rated" : "Casual" )</div>
-								<div class="chip @( _openColor != "random" ? "on" : "" )" onclick="@( () => CycleOpenColor() )">@OpenColorText()</div>
-							</div>
-							<div class="button lichess" onclick="@( () => StartOpenLink() )">♞ Get a shareable link</div>
-							<div class="setup-hint">Send the link to anyone — they open it in a browser and play you here. No account needed.</div>
-						}
-						else
-						{
-							<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
-						}
-					}
-				}
-
-				@if ( BothSeated() )
-				{
-					<div class="button ready @( LocalReady( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleReady() )">@ReadyText( ctrl )</div>
-				}
-				else
-				{
-					<div class="setup-hint">Ready unlocks when both seats fill</div>
-				}
-			}
+			@* The pre-game setup — time control, the four lichess start flows, and Ready —
+			   is its own panel now (M17). It re-gates on ShowSetup internally, carries its own
+			   style, and keeps ticking through a seek to resolve the assigned seat. *@
+			<SetupPanel />
 
 			@if ( Source()?.Game != null )
 			{
@@ -338,29 +219,19 @@
 				}
 			}
 
+			@* Resign is its own explicit, confirmed action now (M17) — decoupled from
+			   standing up, which just gets you out of the seat to roam without ending the
+			   game. Two-stage: first click arms, second confirms. Escape/Leave no longer
+			   resigns, so this button is the ONLY way to end a live game from the board. *@
 			@if ( ( Source()?.Playing ?? false ) )
 			{
-				<div class="button resign" onclick="@( () => LobbyPlayer.Local?.RequestLeave() )">
-					@( ( LobbyPlayer.Local?.LeaveArmed ?? false ) ? "Sure? This resigns" : "Resign & stand up" )
+				<div class="button resign" onclick="@( () => LobbyPlayer.Local?.Resign() )">
+					@( ( LobbyPlayer.Local?.LeaveArmed ?? false ) ? "Sure? Resign the game" : "Resign" )
 				</div>
 			}
 		</div>
 
-		@if ( view?.PendingPromotion != null )
-		{
-			<div class="promo-veil">
-				<div class="promo">
-					<div class="promo-title">Promote to</div>
-					<div class="promo-row">
-						<div class="promo-pick" onclick="@( () => view.ChoosePromotion( 'q' ) )">♛</div>
-						<div class="promo-pick" onclick="@( () => view.ChoosePromotion( 'r' ) )">♜</div>
-						<div class="promo-pick" onclick="@( () => view.ChoosePromotion( 'b' ) )">♝</div>
-						<div class="promo-pick" onclick="@( () => view.ChoosePromotion( 'n' ) )">♞</div>
-					</div>
-					<div class="promo-cancel" onclick="@( () => view.CancelPromotion() )">cancel</div>
-				</div>
-			</div>
-		}
+		<PromotionPanel />
 	}
 </root>
 
@@ -401,36 +272,9 @@
 	/* The side whose clock is running. */
 	.name.ticking { color: #7fd47f; font-weight: bold; }
 
-	.setup-label {
-		font-size: 11px;
-		letter-spacing: 2px;
-		color: rgba(255, 255, 255, 0.45);
-		margin-top: 4px;
-	}
-	.tc-list { flex-direction: column; gap: 3px; }
-	.tc {
-		font-size: 13px;
-		padding: 4px 8px;
-		border-radius: 5px;
-		cursor: pointer;
-		pointer-events: all;
-		background-color: rgba(255, 255, 255, 0.06);
-		color: rgba(255, 255, 255, 0.75);
-	}
-	.tc:hover { background-color: rgba(255, 255, 255, 0.16); }
-	.tc.on {
-		background-color: rgba(90, 140, 255, 0.4);
-		color: white;
-	}
+	/* The setup block moved to SetupPanel (M17), but the shareable-link "waiting"
+	   controls below still use this one hint style, so it stays. */
 	.setup-hint { font-size: 12px; color: rgba(255, 255, 255, 0.45); }
-
-	.button.ready { background-color: rgba(127, 212, 127, 0.22); }
-	.button.ready:hover { background-color: rgba(127, 212, 127, 0.4); }
-	.button.ready.on {
-		background-color: rgba(127, 212, 127, 0.55);
-		color: white;
-		font-weight: bold;
-	}
 
 	/* Lichess opt-in: lichess's own black/white, so it reads as "this leaves
 	   Gambit" rather than as another table control. */
@@ -441,34 +285,6 @@
 		color: rgba(15, 15, 15, 0.95);
 		font-weight: bold;
 	}
-
-	/* Seek controls: small toggles, so the row reads as settings rather than
-	   actions. */
-	.seek-row { flex-direction: row; gap: 4px; }
-	.chip {
-		flex-grow: 1;
-		justify-content: center;
-		font-size: 12px;
-		padding: 4px 6px;
-		border-radius: 5px;
-		cursor: pointer;
-		pointer-events: all;
-		background-color: rgba(255, 255, 255, 0.06);
-		color: rgba(255, 255, 255, 0.7);
-	}
-	.chip:hover { background-color: rgba(255, 255, 255, 0.16); }
-	.chip.on { background-color: rgba(255, 255, 255, 0.2); color: white; }
-
-	.challenge-entry {
-		pointer-events: all;
-		font-size: 13px;
-		padding: 5px 7px;
-		border-radius: 5px;
-		background-color: rgba(0, 0, 0, 0.3);
-		border: 1px solid rgba(255, 255, 255, 0.14);
-		color: white;
-	}
-
 	/* The shareable link itself: monospace so it reads as a URL, click-to-copy. */
 	.link-url {
 		pointer-events: all;
@@ -503,7 +319,6 @@
 	.button.decline:hover { background-color: rgba(255, 45, 85, 0.4); }
 
 	.status { font-size: 16px; font-weight: bold; }
-	.status.wait { color: #ffd60a; font-weight: normal; font-size: 14px; }
 	.status.turn { color: #7fd47f; }
 	.status.over { color: #ffd60a; font-size: 20px; }
 	.reason { font-size: 13px; color: rgba(255, 255, 255, 0.6); }
@@ -532,50 +347,8 @@
 		justify-content: center;
 	}
 	.button:hover { background-color: rgba(90, 140, 255, 0.45); }
-	.button.disabled { color: rgba(255, 255, 255, 0.4); pointer-events: none; }
 	.button.resign { background-color: rgba(255, 45, 85, 0.25); }
 	.button.resign:hover { background-color: rgba(255, 45, 85, 0.5); }
-
-
-	.button.ghost { background-color: rgba(255, 255, 255, 0.08); }
-	.button.ghost:hover { background-color: rgba(255, 255, 255, 0.18); }
-
-	.promo-veil {
-		position: absolute;
-		left: 0; top: 0;
-		width: 100%; height: 100%;
-		justify-content: center;
-		align-items: center;
-		background-color: rgba(0, 0, 0, 0.35);
-		pointer-events: all;
-	}
-	.promo {
-		flex-direction: column;
-		align-items: center;
-		gap: 10px;
-		padding: 18px 26px;
-		background-color: rgba(10, 10, 14, 0.92);
-		border-radius: 12px;
-	}
-	.promo-title { font-size: 15px; color: rgba(255, 255, 255, 0.8); }
-	.promo-row { flex-direction: row; gap: 14px; }
-	.promo-pick {
-		font-size: 42px;
-		color: white;
-		padding: 4px 10px;
-		border-radius: 8px;
-		cursor: pointer;
-		pointer-events: all;
-		background-color: rgba(255, 255, 255, 0.08);
-	}
-	.promo-pick:hover { background-color: rgba(90, 140, 255, 0.45); }
-	.promo-cancel {
-		font-size: 12px;
-		color: rgba(255, 255, 255, 0.5);
-		cursor: pointer;
-		pointer-events: all;
-	}
-	.promo-cancel:hover { color: white; }
 </style>
 
 @code
@@ -602,28 +375,6 @@
 		return "Pick a time control and ready up";
 	}
 
-	// ── Time control + ready ──
-
-	/// <summary>The setup block (time control + ready) shows whenever the table isn't
-	/// mid-game — a fresh table, or one showing a result and open to a rematch.
-	///
-	/// <para>Also hidden while a lichess game is IN FLIGHT. A SEEK starts no local
-	/// game, so <c>ctrl.Playing</c> stays false for its whole duration — without
-	/// this, Ready would sit there clickable under a live lichess game and start a
-	/// second, local one behind it.</para>
-	///
-	/// <para>"In flight", not "on screen": the lichess controller deliberately stays
-	/// engaged while the result is displayed, so gating on OnLichess() alone would
-	/// leave a finished lichess game with no time control and no Ready — the pair
-	/// would have to stand up and re-sit to play again.</para></summary>
-	static bool ShowSetup( LocalGameController ctrl ) =>
-		ctrl != null && !ctrl.Playing && !LichessInFlight();
-
-	/// <summary>A lichess game is running (or being started) at this board — as
-	/// opposed to one whose result is merely still on display.</summary>
-	static bool LichessInFlight() =>
-		OnLichess() && !( Lichess()?.State?.finished ?? false );
-
 	static bool LocalReady( LocalGameController ctrl ) =>
 		ctrl?.LocalSeat is { } seat && ctrl.ReadyFor( seat );
 
@@ -647,129 +398,9 @@
 	static string PremoveUci() =>
 		Source()?.PremoveUci is { Length: >= 4 } u ? u : null;
 
-	static bool LocalLichess( LocalGameController ctrl ) =>
-		ctrl?.LocalSeat is { } seat && ctrl.LichessFor( seat );
-
-	// ── Seek controls ──
-	//
-	// Instance state, not static: these are this player's preferences for their
-	// next seek, and they don't outlive the HUD.
-
-	bool _seekRated;
-	string _seekColor = "random";
-
-	// The username the player is challenging, and whether that game is rated. A
-	// challenge takes the SEAT's colour (a physical board has sides), so there is no
-	// colour chip here — unlike a seek.
-	TextEntry _challengeEntry;
-	bool _challengeRated;
-
-	void ToggleChallengeRated() { _challengeRated = !_challengeRated; StateHasChanged(); }
-
-	void StartChallenge()
-	{
-		string name = _challengeEntry?.Text?.Trim();
-		if ( string.IsNullOrWhiteSpace( name ) ) return;
-		Lichess()?.RequestChallenge( name, _challengeRated );
-		// A challenge plays the seat's colour, so this is normally a no-op — but harmless,
-		// and keeps every lichess-start path aligning the seat the same way.
-		_seatAlignPending = true;
-		if ( _challengeEntry != null ) _challengeEntry.Text = "";
-		StateHasChanged();
-	}
-
-	/// <summary>The colour the local player would challenge with — their seat's side
-	/// — or null if they hold no seat at this table (so the challenge UI is hidden,
-	/// because we'd have no colour to ask lichess for). "white"/"black" as a display
-	/// string; the controller re-derives the seat itself rather than trusting this.</summary>
-	static string LichessSeatColor( LocalGameController ctrl )
-	{
-		if ( ctrl?.LocalSeat is not { } seat ) return null;
-		return seat == ChessSeat.White ? "White" : "Black";
-	}
-
-	string ChallengeHint()
-	{
-		if ( _challengeRated ) return "Rated: this will move your real lichess rating.";
-		return "They'll get a challenge on lichess to accept or decline.";
-	}
-
-	static string ReadError( GamchessApi.Result res )
-	{
-		var body = GamchessApi.Deserialize<GamchessError>( res.Body );
-		return !string.IsNullOrEmpty( body?.error ) ? body.error
-			: res.Error ?? "Something went wrong.";
-	}
-
-	void ToggleSeekRated() { _seekRated = !_seekRated; StateHasChanged(); }
-
-	void CycleSeekColor()
-	{
-		_seekColor = _seekColor switch { "random" => "white", "white" => "black", _ => "random" };
-		StateHasChanged();
-	}
-
-	string SeekColorText() => _seekColor switch
-	{
-		"white" => "Play White",
-		"black" => "Play Black",
-		_ => "Either colour",
-	};
-
-	string SeekHint()
-	{
-		if ( _seekRated ) return "Rated: this will move your real lichess rating.";
-		return "Casual: it won't touch your lichess rating.";
-	}
-
-	/// <summary>We send NO ratingRange, ever, and that is the strongest option rather
-	/// than the laziest — see CLAUDE.md's ratingRange trap. lila treats an omitted
-	/// range as "no preference" and substitutes a Gaussian band centred on the
-	/// player's REAL rating (`Hook.ratingRangeOrDefault` → `RatingRange.defaultFor`).
-	/// So lichess centres the pool on them for free, with no scope, no /api/account
-	/// fetch and no rating stored our side. This replaced a "Near my rating" chip
-	/// that sent a fixed "1400-1800" to every player regardless of strength — both a
-	/// lie to a 2200 and *narrower and worse-informed* than sending nothing.</summary>
-	void StartSeek()
-	{
-		Lichess()?.RequestSeek( _seekRated, color: _seekColor );
-		// lichess assigns the side when matched — align the seat to it at game start.
-		_seatAlignPending = true;
-		StateHasChanged();
-	}
-
-	// ── Shareable link (an anonymous browser opponent plays this player on the board) ──
-	// Colour is which side WE take; the opponent's link is the opposite side. Picking a
-	// side moves our seat to it (MoveSeatToColor); a colour lichess ASSIGNS (a random link,
-	// or ANY seek) is settled when the game starts and moved then (_seatAlignPending,
-	// resolved in OnUpdate) — that is why sitting White and being matched Black rotates you.
-	bool _openRated;
-	string _openColor = "random";
-	bool _seatAlignPending;
+	// The "Copied ✓" flash on the shareable-link copy button (shown while a link game is
+	// awaiting an opponent). Self-clears on a timer, so it must be hashed or it would stick.
 	RealTimeSince _shareCopied = 999f;
-
-	void ToggleOpenRated() { _openRated = !_openRated; StateHasChanged(); }
-
-	void CycleOpenColor()
-	{
-		_openColor = _openColor switch { "random" => "white", "white" => "black", _ => "random" };
-		MoveSeatToColor( _openColor );
-		StateHasChanged();
-	}
-
-	string OpenColorText() => _openColor switch
-	{
-		"white" => "You play White",
-		"black" => "You play Black",
-		_ => "Either colour",
-	};
-
-	void StartOpenLink()
-	{
-		Lichess()?.RequestOpenLink( _openRated, _openColor );
-		_seatAlignPending = true; // move to the assigned side once the game starts (random)
-		StateHasChanged();
-	}
 
 	void CopyShareUrl( string url )
 	{
@@ -791,20 +422,6 @@
 
 	string ShareCopyText() => _shareCopied < 2f ? "Copied ✓" : "Copy the link to send";
 
-	/// <summary>Move the local player's seat to the side they picked, so the board shows
-	/// them where they'll play. white/black only — "random" is settled at game start.
-	/// No-op if the target seat is taken or there's a live game (see LobbyPlayer.SwitchSeat).</summary>
-	static void MoveSeatToColor( string color )
-	{
-		var seat = color switch
-		{
-			"white" => ChessSeat.White,
-			"black" => ChessSeat.Black,
-			_ => (ChessSeat?)null,
-		};
-		if ( seat is { } s ) LobbyPlayer.Local?.SwitchSeat( s );
-	}
-
 	string CancelWaitingText()
 	{
 		var lc = Lichess();
@@ -813,20 +430,6 @@
 		return "Cancel — stop looking";
 	}
 
-	static string LichessText( LocalGameController ctrl ) =>
-		LocalLichess( ctrl )
-			? $"♞ Playing on lichess as {LichessLinkState.Username} ✓ (click to cancel)"
-			: "♞ Play this game on lichess";
-
-	/// <summary>What the opt-in is waiting on, or null when there's nothing to say.
-	/// Deliberately honest about the one thing a player can't see: whether the
-	/// person opposite has a lichess account at all.</summary>
-	static string LichessOptInHint( LocalGameController ctrl )
-	{
-		if ( ctrl == null || !LocalLichess( ctrl ) ) return null;
-		if ( ctrl.BothWantLichess ) return "Both in — this game will be played on lichess for real.";
-		return "Waiting for your opponent to opt in too. They need a linked lichess account.";
-	}
 
 	/// <summary>Should an offer button render at all?
 	///
@@ -880,11 +483,6 @@
 		};
 	}
 
-	static string ReadyText( LocalGameController ctrl )
-	{
-		if ( ctrl?.LocalSeat == null ) return "Ready";
-		return LocalReady( ctrl ) ? "Ready ✓ (click to cancel)" : "Ready";
-	}
 
 	/// <summary>Seat line: who is on a side, and what they've agreed to.
 	/// One div per line and no inline markup — CLAUDE.md UI Gotchas.</summary>
@@ -984,24 +582,6 @@
 	{
 		if ( ChessStation.Active != null )
 			LichessLinkState.Poll();
-
-		// Any lichess game where lichess ASSIGNS the side (a seek, a random link) can put
-		// us on the opposite colour from the seat we sat at — sit White, matched Black.
-		// Move our seat to the assigned side once the game starts and we know it. One-shot;
-		// also cleared if the request never became a game. (A picked colour was already
-		// moved at pick time; this then no-ops.)
-		if ( _seatAlignPending && Lichess() is { } lc )
-		{
-			if ( lc is { Playing: true, LocalSeat: { } seat } )
-			{
-				LobbyPlayer.Local?.SwitchSeat( seat );
-				_seatAlignPending = false;
-			}
-			else if ( !lc.Engaged )
-			{
-				_seatAlignPending = false;
-			}
-		}
 	}
 
 	static bool BothSeated() =>
@@ -1081,15 +661,13 @@
 					src?.DrawOffered, src?.DrawPending,
 					src?.TakebackOffered, src?.TakebackPending,
 					src?.CanTakeback, PremoveUci(), src?.PremoveDropped ),
-				// Seek/challenge setup prefs, plus the challenge-waiting state: the
-				// "waiting for X to accept" line and the cancel button both hang off
-				// Challenging, and ChallengeOpponent names who (stable while it's set).
-				System.HashCode.Combine( _seekRated, _seekColor, _challengeRated,
+				// The waiting-on-an-opponent state (a seek, a named challenge, or a
+				// shareable link): the status line and the cancel button hang off
+				// Challenging/Opening, ChallengeOpponent names who, and the link section
+				// shows ShareUrl with the "Copied ✓" flash. The seek/challenge/link
+				// PREFERENCES moved to SetupPanel with the setup block (M17), and hash there.
+				System.HashCode.Combine(
 					Lichess()?.Challenging, Lichess()?.ChallengeOpponent,
-					// The shareable-link section: its chips, the "waiting" flag, the url to
-					// hand out, and the "Copied ✓" feedback (self-clears on a timer, so it
-					// must be hashed or it would stick).
-					System.HashCode.Combine( _openRated, _openColor, Lichess()?.Opening,
-						Lichess()?.ShareUrl, _shareCopied < 2f ) ) ) );
+					Lichess()?.Opening, Lichess()?.ShareUrl, _shareCopied < 2f ) ) );
 	}
 }

@@ -54,10 +54,10 @@
 		flex-direction: column;
 		align-items: stretch;
 		justify-content: flex-start;
-		padding: 9px 12px;
-		border-radius: 7.5px;
+		padding: $wall-pad;
+		border-radius: $wall-radius;
 		font-family: $wall-font;
-		gap: 4px;
+		gap: $wall-gap;
 		/* Shrink toward the floor-anchored BOTTOM edge (see FitToHeight in OnUpdate) so a
 		   down-scale keeps FloorAnchor accurate. No-op at today's three lines. */
 		transform-origin: 50% 100%;
@@ -70,21 +70,21 @@
 	}
 
 	.title {
-		font-size: 13px;
+		font-size: $wall-fs-title;
 		font-weight: bold;
 		letter-spacing: 3px;
 		text-align: center;
 	}
 
 	.tagline {
-		font-size: 5.5px;
+		font-size: $wall-fs-body;
 		text-align: center;
 		letter-spacing: 0.75px;
 	}
 
 	.divider {
-		height: 0.75px;
-		margin: 1.5px 0;
+		height: $wall-divider-h;
+		margin: $wall-divider-gap 0;
 	}
 
 	/* The whole point of the board, so it is sized like it: bigger than the title,
@@ -93,7 +93,7 @@
 	   13px title rather than derived from Box.Rect, which doesn't work on a
 	   WorldPanel. */
 	.prompt {
-		font-size: 15px;
+		font-size: $wall-fs-hero;
 		font-weight: bold;
 		letter-spacing: 1.5px;
 		text-align: center;

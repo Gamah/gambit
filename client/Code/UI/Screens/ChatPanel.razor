@@ -6,57 +6,19 @@
 @inherits PanelComponent
 
 @*
-	Lobby text chat now runs on the ENGINE'S built-in overlay (ChatShowUI is true in
-	Platform.config), so this panel no longer draws a feed or an input box — the engine
-	does both, and messages still route/filter through the host. All that's left here is a
-	small hint glyph telling a roaming player which key opens chat.
+	Lobby text chat runs on the ENGINE'S built-in overlay (ChatShowUI is true in
+	Platform.config): the feed and input box are the engine's, and messages still
+	route/filter through the host. This used to also draw the "which key opens chat" hint,
+	but that moved to VoicePanel (M17) so all the bottom-left UX-glyph hints — Chat over G
+	(voice) over B (mute) — are drawn by one panel and share the keycap glyph style, each
+	read live from its binding (Input.GetButtonOrigin).
 
-	This used to be a 288-line custom chat box (feed + TextEntry + fade + word-wrap),
-	copied from rotaliate and kept alive only by turning the engine overlay off to redraw
-	it worse. terryball threw the same box away ("use the built-in chat"); this is Gambit
-	catching up.
-
-	The Chat action is bound to T in Input.config and the overlay opens on it; the keycap
-	is read live from the binding (Input.GetButtonOrigin) so a rebind can never make this
-	hint lie — the old panel claimed the key was "rebindable in Settings" when nothing
-	anywhere wrote a rebind.
+	So this panel now draws nothing. It survives only for the IsOpen stub below, which is
+	wired into lobby.scene (a serialized component, not self-attaching) and read by
+	LobbyPlayer — removing the class would orphan that scene entry.
 *@
 
-<root>
-	@if ( CanOpen )
-	{
-		<div class="chat-hint">
-			<div class="key">@ChatKeyLabel()</div>
-			<div>Chat</div>
-		</div>
-	}
-</root>
-
-<style>
-	root {
-		width: 100%;
-		height: 100%;
-		pointer-events: none;
-		z-index: 90;
-	}
-
-	.chat-hint {
-		position: absolute;
-		left: 16px;
-		top: 50%;
-		flex-direction: row;
-		gap: 6px;
-		font-size: 14px;
-		color: rgba(255, 165, 0, 0.7);
-		text-shadow: 0px 1px 3px rgba(0, 0, 0, 0.8);
-		pointer-events: none;
-	}
-
-	.chat-hint .key {
-		color: rgba(255, 165, 0, 1);
-		font-weight: bold;
-	}
-</style>
+<root></root>
 
 @code
 {
@@ -65,17 +27,4 @@
 	/// that gate is dead code, and that's fine (the engine already stops WASD leaking into
 	/// the world while its chat box has focus).</summary>
 	public static bool IsOpen => false;
-
-	// Only hint while roaming — a seated player is looking at a board, not the room.
-	static bool CanOpen => LobbyPlayer.Local != null && !LobbyPlayer.Local.Engaged;
-
-	// The current chat key, read live from the binding so the hint can't drift from it.
-	// Falls back to "T" (the Input.config default) if the origin can't be resolved yet.
-	static string ChatKeyLabel()
-	{
-		var origin = Input.GetButtonOrigin( "Chat" );
-		return string.IsNullOrEmpty( origin ) ? "T" : origin.ToUpper();
-	}
-
-	protected override int BuildHash() => HashCode.Combine( CanOpen, ChatKeyLabel() );
 }

@@ -175,6 +175,15 @@ function namesFrom(pgn) {
   return { white: w?.[1] || 'Anonymous', black: b?.[1] || 'Anonymous' };
 }
 
+// The raw [TimeControl] header, or null. The list has the full PGN in hand, so it
+// reads the tag with a regex rather than replaying the whole game (loadGame parses
+// it properly, but a list of 200 games shouldn't). Absent on games archived before
+// Gambit wrote the tag — those show "—", same as a game with no result.
+function tcFrom(pgn) {
+  const m = pgn.match(/^\s*\[TimeControl\s+"([^"]*)"\]/m);
+  return m?.[1] || null;
+}
+
 async function loadList() {
   show(null);
   status('Loading your games\u2026');
@@ -190,7 +199,7 @@ async function loadList() {
     for (const g of games) {
       const { white, black } = namesFrom(g.pgn);
       const tr = document.createElement('tr');
-      for (const [text, cls] of [[fmtDate(g.played_at), ''], [white, ''], [black, ''], [g.result, 'r result']]) {
+      for (const [text, cls] of [[fmtDate(g.played_at), ''], [fmtTimeControl(tcFrom(g.pgn)) || '—', 'tc'], [white, ''], [black, ''], [g.result, 'r result']]) {
         const td = document.createElement('td');
         td.className = cls;
         td.textContent = text;

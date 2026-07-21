@@ -719,6 +719,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			_spawned.Add( station );
 
 			var component = station.AddComponent<ChessStation>();
+			component.Number = i;   // same index the plaque shows (BuildStationPlaque below)
 			component.WhiteAnchor = BuildSeatAnchor( station, "WhiteAnchor", -1f );
 			component.BlackAnchor = BuildSeatAnchor( station, "BlackAnchor", +1f );
 			// Top-down (nadir) anchors for 2D play mode (M16) — a second per-seat camera target,
@@ -879,6 +880,15 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	const float ClockLength = 24f;    // along X, about the board's own width
 	const float ClockDepth = 1.6f;    // across Y — thin, it shares this margin with a tray
 	const float ClockHeight = 2.2f;   // a low plinth, not a tower: it must not fence the board
+
+	/// <summary>Slide the whole clock assembly toward the board (+Y) so it sits nearer the
+	/// playing area than out at the table's −Y edge — about half the clock's height. Moves ONLY
+	/// the clock's placement; <see cref="ClockCenterY"/> (whose margin budget the tray shares) is
+	/// untouched, so the tray stays put. Tunable, and worth a look in-editor: at half-height it
+	/// brings the strip's board-side face close to the frame (the −Y clearance to the frame edge
+	/// is only about ClockBoardGap + ClockDepth/2 ≈ 1.0), so dial it down if it crowds the near
+	/// rank.</summary>
+	const float ClockForwardSlide = ClockHeight * 0.5f;   // ≈ 1.1
 
 	/// <summary>
 	/// Tilt of everything standing on the clock. Negative pitches it up, so it reads from the
@@ -1162,7 +1172,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		var clock = new GameObject( true, "TableClock" );
 		clock.Parent = station;
 		// −Y: White's side, opposite the plaque at +Y.
-		clock.LocalPosition = new Vector3( 0f, -ClockCenterY, TableTopZ ) * s;
+		clock.LocalPosition = new Vector3( 0f, -ClockCenterY + ClockForwardSlide, TableTopZ ) * s;
 
 		// The body: a low strip sitting on the tabletop, centred on its own height. The
 		// plates stand on it and the bar is inlaid between them.

@@ -83,6 +83,19 @@ const (
 	// who doesn't. Two minutes is far longer than a person takes to answer a
 	// challenge they are awake for.
 	challengeAnswerTTL = 2 * time.Minute
+
+	// A LIVE relayed game whose seat has stopped polling for this long is treated as
+	// ABANDONED — the player closed the editor, crashed, or walked away — and the
+	// relay resigns it on their behalf (see watchAbandonment). A game only ends on
+	// lichess when someone resigns, flags, or draws; a dropped client does none of
+	// those, so without this the opponent waits out the whole clock. Well clear of
+	// pollHold plus a reconnect/hotload grace, so a blip or an editor rebuild can't
+	// resign a game the player is still in.
+	abandonTTL = 30 * time.Second
+
+	// How often the per-game watcher checks a live game for abandonment. Bounds how
+	// long after abandonTTL the resign actually fires.
+	abandonCheckInterval = 10 * time.Second
 )
 
 // Play status values, as seen by the client.
@@ -299,6 +312,13 @@ type play struct {
 	finished time.Time
 	cancel   context.CancelFunc
 
+	// lastPoll is when each seat's client last polled this game's state — the
+	// liveness signal the abandonment watcher reads. A live game whose seat falls
+	// silent past abandonTTL is resigned on their behalf. mu-guarded.
+	lastPoll map[int64]time.Time
+	// abandonResigned makes that resign fire at most once. mu-guarded.
+	abandonResigned bool
+
 	// soloColor is which side lichess gave our one player, learned from gameFull.
 	// Empty until then — a seek gets 50/50 and we don't get to choose.
 	// soloLichessID is what we match gameFull's players against. Both mu-guarded.
@@ -316,11 +336,12 @@ type play struct {
 
 func newPlay(req PlayRequest) *play {
 	p := &play{
-		req:     req,
-		created: time.Now(),
-		intents: map[int64]bool{},
-		changed: make(chan struct{}),
-		state:   PlayState{Status: playWaiting, Seek: req.solo(), Opponent: req.Opponent},
+		req:      req,
+		created:  time.Now(),
+		intents:  map[int64]bool{},
+		lastPoll: map[int64]time.Time{},
+		changed:  make(chan struct{}),
+		state:    PlayState{Status: playWaiting, Seek: req.solo(), Opponent: req.Opponent},
 	}
 	// A solo flow has one known player and one stranger; which colour they get is
 	// lichess's to confirm, so neither seat is filled in until gameFull lands.
@@ -398,6 +419,14 @@ func (p *play) seatOf(steamID int64) (string, bool) {
 	return "", false
 }
 
+// isLive reports whether a game has actually started and is not over — the state the
+// one-game-per-player gate blocks a second of.
+func (p *play) isLive() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.started && p.finished.IsZero() && p.state.Status != playFailed
+}
+
 // done reports whether this play can be swept.
 func (p *play) done(now time.Time) bool {
 	p.mu.Lock()
@@ -411,6 +440,47 @@ func (p *play) done(now time.Time) bool {
 		return true
 	}
 	return false
+}
+
+// markPolled records that a seat's client just polled — the liveness signal the
+// abandonment watcher reads.
+func (p *play) markPolled(steamID int64) {
+	p.mu.Lock()
+	p.lastPoll[steamID] = time.Now()
+	p.mu.Unlock()
+}
+
+// seatSteamIDs is the Gambit players in this game — one for a solo flow, two for a
+// paired one. The stranger in a solo flow has no SteamID and is not here. Immutable
+// (reads p.req only), so it needs no lock.
+func (p *play) seatSteamIDs() []int64 {
+	if p.req.solo() {
+		return []int64{p.req.SoloSteamID}
+	}
+	return []int64{p.req.WhiteSteamID, p.req.BlackSteamID}
+}
+
+// abandonedSeat returns the SteamID of a seat whose client has fallen silent past
+// abandonTTL, or 0 if every seat is still polling (or we already resigned). A seat
+// that has not polled at all is measured from p.created, so it still gets the full
+// grace before it counts as gone — clients poll from the waiting phase on, so this
+// is really the "stopped mid-game" case.
+func (p *play) abandonedSeat(now time.Time) int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.abandonResigned {
+		return 0
+	}
+	for _, id := range p.seatSteamIDs() {
+		last := p.lastPoll[id]
+		if last.IsZero() {
+			last = p.created
+		}
+		if now.Sub(last) > abandonTTL {
+			return id
+		}
+	}
+	return 0
 }
 
 // relay owns every live relayed game. One per process.
@@ -587,6 +657,18 @@ func (r *relay) credentials(ctx context.Context, steamID int64) (token, username
 func (r *relay) Join(ctx context.Context, steamID int64, req PlayRequest) (*play, error) {
 	r.sweep()
 
+	// One relayed game per player at a time. lichess does not DOCUMENT permission to
+	// play concurrent games through the Board API — the event stream is one-per-token,
+	// and the Board API docs are silent on running multiple board games at once (the one
+	// public thread reports the streams interfere and was closed privately). So we relay
+	// only a player's FIRST live game; any further table they sit at plays locally, on
+	// gamchess alone. Defensive — the client gates this too, and refuses to offer lichess
+	// at a second table. Excludes THIS game's id so the paired flow's second seat and any
+	// re-post still get through.
+	if r.hasOtherLivePlay(steamID, req.ClientGameID) {
+		return nil, errors.New("you already have a live lichess game — finish it before starting another (this table can still play a local game)")
+	}
+
 	// One outstanding solo request per user — see relay.pending for why a seek
 	// must be alone (lichess's one-event-stream-per-token rule) and why a
 	// challenge shares the slot anyway (a player sits at one board).
@@ -633,6 +715,28 @@ func (r *relay) Join(ctx context.Context, steamID int64, req PlayRequest) (*play
 	return p, nil
 }
 
+// hasOtherLivePlay reports whether steamID is seated in a live play OTHER than
+// exceptClientGameID — the one-relayed-game-per-player gate (see Join). Snapshots the
+// map under the lock, then tests each play without holding it (isLive/seatOf take their
+// own locks).
+func (r *relay) hasOtherLivePlay(steamID int64, exceptClientGameID string) bool {
+	r.mu.Lock()
+	others := make([]*play, 0, len(r.plays))
+	for id, p := range r.plays {
+		if id != exceptClientGameID {
+			others = append(others, p)
+		}
+	}
+	r.mu.Unlock()
+
+	for _, p := range others {
+		if _, seated := p.seatOf(steamID); seated && p.isLive() {
+			return true
+		}
+	}
+	return false
+}
+
 // Lookup finds an existing play. No creation — polling must not conjure one.
 func (r *relay) Lookup(clientGameID string) (*play, bool) {
 	r.mu.Lock()
@@ -652,6 +756,12 @@ func (r *relay) run(ctx context.Context, p *play) {
 	if p.req.solo() {
 		defer r.releasePending(p.req.SoloSteamID, p.req.ClientGameID)
 	}
+
+	// Resign a live game whose client stops polling, so an abandoned game (editor
+	// closed, crash, walk-away) doesn't leave the opponent to wait out the clock.
+	// Runs alongside the game under the same ctx and exits when the game ends.
+	go r.watchAbandonment(ctx, p)
+
 	switch {
 	case p.req.Seek:
 		r.runSeek(ctx, p)
@@ -1189,6 +1299,72 @@ func (r *relay) streamGame(ctx context.Context, p *play, token, gameID string) {
 		case <-time.After(streamRetryDelay):
 		}
 	}
+}
+
+// watchAbandonment resigns a LIVE relayed game whose seat has stopped polling, so a
+// player who closed the editor or crashed doesn't leave their opponent to wait out
+// the clock. Runs for one game, alongside streamGame under the same ctx, and exits
+// when the game ends or is cancelled.
+//
+// Only a live game (GameID set, not finished) is a candidate — the waiting flows are
+// already bounded by their own TTLs (challengeAnswerTTL, the seek's held context).
+// The resign travels through lichess normally: it ends the game there, streamGame
+// sees the finished state and publishes it, and the opponent is released exactly as a
+// manual resign would release them.
+func (r *relay) watchAbandonment(ctx context.Context, p *play) {
+	tick := time.NewTicker(abandonCheckInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+
+		st, _ := p.snapshot()
+		if st.Finished || st.Status == playFailed {
+			return
+		}
+		if st.GameID == "" {
+			continue // not live yet — waiting flows have their own bounds
+		}
+
+		seat := p.abandonedSeat(time.Now())
+		if seat == 0 {
+			continue
+		}
+
+		p.mu.Lock()
+		p.abandonResigned = true // once, even if the resign below fails (etiquette: no retry storms)
+		p.mu.Unlock()
+		r.resignAbandoned(p, seat, st.GameID)
+		return
+	}
+}
+
+// resignAbandoned resigns gameID with the abandoning seat's OWN token — for a paired
+// game that is the seat that left, so the present player wins rather than waits;
+// for a solo game it is the one player, and the stranger's game simply ends. Runs on
+// a fresh context (the game's own may be about to be cancelled) and is best-effort:
+// if the token is gone or the POST fails there is nothing to fall back on, and the
+// game will still end when the abandoned side flags.
+func (r *relay) resignAbandoned(p *play, steamID int64, gameID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	token, _, err := r.credentials(ctx, steamID)
+	if err != nil {
+		r.log.Warn("could not resign an abandoned game: no token",
+			zap.String("game_id", gameID), zap.Error(err))
+		return
+	}
+	if err := lichess.Resign(ctx, token, gameID); err != nil {
+		r.log.Warn("could not resign an abandoned game",
+			zap.String("game_id", gameID), zap.Error(err))
+		return
+	}
+	r.log.Info("resigned an abandoned relayed game (client stopped polling)",
+		zap.String("game_id", gameID), zap.Int64("steam_id", steamID))
 }
 
 // resolveSoloColor learns which side our one player was given, by matching their

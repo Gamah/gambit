@@ -218,9 +218,29 @@ public sealed class LocalGameController : Component, IBoardGame
 	/// (over or not) — the view renders Game instead of the start position.</summary>
 	public bool HasGame => Game != null;
 
-	/// <summary>Local player's seat at this table, or null when not seated here.</summary>
-	public ChessSeat? LocalSeat =>
-		ChessStation.Active == Station && Station != null ? ChessStation.ActiveSeat : null;
+	/// <summary>Local player's seat at this table by OCCUPANCY (the [Sync] SteamId), or
+	/// null if they don't hold a seat here.
+	///
+	/// <para><b>Occupancy, not the camera (M17).</b> This used to read
+	/// <c>ChessStation.Active == Station ? ActiveSeat</c> — which is the seat the camera is
+	/// AT. That was fine until standing up stopped releasing the seat: now you can hold a
+	/// live game and roam, and a camera-derived seat would read null the instant you got up,
+	/// so <see cref="FirePremove"/> would drop your premove and <see cref="IsMyTurn"/> would
+	/// forget it's your move — the game would think you left. Reading the networked
+	/// occupancy keeps "which side am I playing" true while you walk around, the same way
+	/// LichessGameController.LocalSeat reads gamchess's your_color rather than the camera.</para></summary>
+	public ChessSeat? LocalSeat
+	{
+		get
+		{
+			if ( Station is not { } s ) return null;
+			ulong me = Connection.Local?.SteamId ?? 0;
+			if ( me == 0 ) return null;
+			if ( s.WhiteSteamId == me ) return ChessSeat.White;
+			if ( s.BlackSteamId == me ) return ChessSeat.Black;
+			return null;
+		}
+	}
 
 	/// <summary>Seconds left on a seat's clock — the seam's copy. Null when nothing is
 	/// live or the game is untimed.</summary>
@@ -335,14 +355,12 @@ public sealed class LocalGameController : Component, IBoardGame
 		// POST wins and can't be corrected.
 		if ( !_historyIntact ) return;
 
-		// Same rule, different cause: a LICHESS game's moves went to the relay and
-		// never touched this ChessGame, so _historyIntact is still true and every
-		// guard above passes — but BuildPgn() would produce headers with no moves,
-		// no clocks and Result "*". Archiving that would be permanent (the POST is
-		// idempotent on client_game_id, so it could never be corrected).
-		//
-		// lichess holds that game and gamchess relayed it. Wiring the relay's final
-		// state into the archive is worth doing; posting a stub is not.
+		// A LICHESS game's moves went to the relay and never touched THIS ChessGame,
+		// so _historyIntact is still true and every guard above passes — but BuildPgn()
+		// here would produce headers with no moves. That game is archived from the side
+		// that actually holds it: LichessGameController.TryArchiveFinished, off its own
+		// _game (rebuilt from lichess's move list) with the lichess names and result.
+		// So this path stays out of its way.
 		if ( LichessGame ) return;
 
 		// Claim it BEFORE awaiting: OnUpdate runs every frame and would otherwise
@@ -353,7 +371,9 @@ public sealed class LocalGameController : Component, IBoardGame
 			string.IsNullOrEmpty( OverResult ) ? "*" : OverResult );
 	}
 
-	static async Task ArchiveGame( string id, string pgn, ulong white, ulong black, string result )
+	/// <summary>Best-effort archive POST, shared with the lichess relay path
+	/// (LichessGameController archives finished relayed games the same way).</summary>
+	internal static async Task ArchiveGame( string id, string pgn, ulong white, ulong black, string result )
 	{
 		var res = await GamchessApi.PostGame( id, pgn, white, black, result );
 		if ( res.Ok ) return;

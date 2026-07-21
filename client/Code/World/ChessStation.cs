@@ -27,6 +27,10 @@ public sealed class ChessStation : Component
 	/// <summary>Which seat the local player took at <see cref="Active"/>.</summary>
 	public static ChessSeat ActiveSeat { get; private set; }
 
+	/// <summary>This table's number, as shown on its plaque. Set by ChessRing at build
+	/// time; used by the roaming "your game on Table N is live" reminder.</summary>
+	public int Number { get; set; }
+
 	/// <summary>Camera lock target for the White seat (outward side). Set by
 	/// ChessRing at build time.</summary>
 	[Property] public GameObject WhiteAnchor { get; set; }
@@ -129,7 +133,12 @@ public sealed class ChessStation : Component
 	/// the host request races other players, and OnUpdate reconciles if we lose.</summary>
 	public void Enter( ChessSeat seat )
 	{
-		if ( Active != null || SeatTaken( seat ) ) return;
+		// A seat someone ELSE holds is off-limits; my OWN seat I may re-take — that is
+		// how you sit back down after standing up to roam mid-game (LeaveCameraKeepSeat
+		// dropped the camera but kept the occupancy, so SeatSteamId is still mine).
+		ulong mine = Connection.Local?.SteamId ?? 0;
+		if ( Active != null ) return;
+		if ( SeatTaken( seat ) && SeatSteamId( seat ) != mine ) return;
 		// This GO is about to be destroyed mid-slide — don't lock onto it
 		if ( ChessRing.Instance?.Rebuilding ?? false ) return;
 
@@ -137,6 +146,7 @@ public sealed class ChessStation : Component
 		ActiveSeat = seat;
 		// Fully qualified — "Game" alone can resolve to Sandbox.Game under `using Sandbox`
 		// DisplayName is the Steam persona name, so the seat label matches the name tag.
+		// Idempotent host-side when I already hold this seat (a re-sit after roaming).
 		RequestEnter( (int)seat, Gambit.Game.PlayerData.Load()?.DisplayName() );
 	}
 
@@ -145,6 +155,19 @@ public sealed class ChessStation : Component
 		if ( Active != this ) return;
 		Active = null;
 		RequestLeave( (int)ActiveSeat );
+	}
+
+	/// <summary>Leave the seat's CAMERA (roam) but KEEP the networked claim, so a live
+	/// game keeps running and this client keeps polling it — standing up mid-game without
+	/// resigning (resign is its own explicit action now). No RequestLeave, so the [Sync]
+	/// occupancy stays ours and nobody can take the seat while we're away; walk back and
+	/// Enter the same seat to resume. The relay stays alive because the controller stays
+	/// Engaged and polling (nothing disengages it on camera loss); gamchess only resigns
+	/// on a client that ACTUALLY stops polling (its abandonment sweep).</summary>
+	public void LeaveCameraKeepSeat()
+	{
+		if ( Active != this ) return;
+		Active = null;
 	}
 
 	/// <summary>Move the local occupant to the OTHER seat at this table, without leaving

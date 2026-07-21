@@ -29,8 +29,17 @@
 		var mutedCount = VoicePrefs.MutedCount;
 	}
 
-	@* Always-visible key hints — G (voice) over B (mute). White key-cap glyph style. *@
+	@* Always-visible key hints, bottom-left, white key-cap glyph style: Chat over G (voice)
+	   over B (mute). Chat lives here rather than in ChatPanel so all three UX-glyph hints
+	   are drawn by one panel — and its keycap is read live from the binding
+	   (Input.GetButtonOrigin), the same input-driven affordance as the rest, so a rebind
+	   can't make it lie. Engine chat owns the actual feed/input; this is only the "which key
+	   opens it" cue. *@
 	<div class="voice-hints">
+		<div class="hint">
+			<div class="key">@ChatKeyLabel()</div>
+			<div class="label">Chat</div>
+		</div>
 		<div class="hint @( enabled ? "on" : "off" )">
 			<div class="key">G</div>
 			<div class="label">@ChipLabel</div>
@@ -222,6 +231,15 @@
 		}
 	}
 
+	// The chat keycap, read live from the Chat binding so the hint can't drift from it —
+	// engine chat opens on this key. Falls back to the Input.config default "T" until the
+	// origin resolves. (Moved here from ChatPanel so all the UX-glyph hints live together.)
+	private static string ChatKeyLabel()
+	{
+		var origin = Input.GetButtonOrigin( "Chat" );
+		return string.IsNullOrEmpty( origin ) ? "T" : origin.ToUpper();
+	}
+
 	protected override int BuildHash()
 	{
 		var screen = Driver;
@@ -242,6 +260,7 @@
 			screen?.SelectedIndex ?? -1,
 			screen?.Roster.Count ?? 0,
 			VoicePrefs.MutedCount,
-			speaking );
+			speaking,
+			ChatKeyLabel() );
 	}
 }

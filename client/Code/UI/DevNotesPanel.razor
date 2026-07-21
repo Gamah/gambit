@@ -40,19 +40,21 @@
 		flex-direction: column;
 		align-items: stretch;
 		justify-content: flex-start;
-		padding: 9px 12px;
-		border: 1.5px solid rgba(255, 165, 0, 0.25);
-		border-radius: 7.5px;
+		padding: $wall-pad;
+		border: $wall-border solid rgba(255, 165, 0, 0.25);
+		border-radius: $wall-radius;
 		font-family: $wall-font;
-		gap: 4px;
+		gap: $wall-gap;
 	}
 
 	.board > div {
 		flex-shrink: 0;
 	}
 
+	/* Amber title colour is deliberate — this is the dev-notes WARNING board (kept, per
+	   the note in .board above); only the SIZE joins the shared scale. */
 	.title {
-		font-size: 10px;
+		font-size: $wall-fs-title-sm;
 		font-weight: bold;
 		color: rgba(255, 165, 0, 0.9);
 		letter-spacing: 3px;
@@ -60,8 +62,8 @@
 	}
 
 	.divider {
-		height: 0.75px;
-		margin: 1.5px 0;
+		height: $wall-divider-h;
+		margin: $wall-divider-gap 0;
 	}
 
 	.dev-notice {

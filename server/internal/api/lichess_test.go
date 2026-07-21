@@ -901,3 +901,105 @@ func TestChallengeStateShape(t *testing.T) {
 		t.Fatalf("a solo flow fills no seat up front: %+v", st)
 	}
 }
+
+// ── Abandonment (a client that stops polling a live game) ──
+
+// A paired game where one seat's client falls silent past abandonTTL is the seat the
+// relay resigns on their behalf — the other seat, still polling, is left alone.
+func TestAbandonedSeatDetectsAStaleClient(t *testing.T) {
+	p := newPlay(PlayRequest{ClientGameID: validUUID, WhiteSteamID: 1001, BlackSteamID: 1002,
+		LimitSeconds: 180, IncrementSec: 2})
+	now := time.Now()
+
+	// Both seats just polled → nobody abandoned.
+	p.markPolled(1001)
+	p.markPolled(1002)
+	if got := p.abandonedSeat(now); got != 0 {
+		t.Fatalf("both seats fresh, want 0, got %d", got)
+	}
+
+	// White still polling, Black gone quiet past the TTL → Black is the abandoned seat.
+	p.mu.Lock()
+	p.lastPoll[1002] = now.Add(-abandonTTL - time.Second)
+	p.mu.Unlock()
+	if got := p.abandonedSeat(now); got != 1002 {
+		t.Fatalf("black is stale, want 1002, got %d", got)
+	}
+}
+
+// A seat that never polled is measured from the game's creation, so it still gets the
+// full grace before it counts as gone; and once resigned, the sweep reports nothing
+// more (the resign fires at most once).
+func TestAbandonedSeatGraceAndOnce(t *testing.T) {
+	p := newPlay(PlayRequest{ClientGameID: validUUID, WhiteSteamID: 1001, BlackSteamID: 1002})
+	now := time.Now()
+
+	// Freshly created, nobody has polled yet → still within grace, nobody abandoned.
+	if got := p.abandonedSeat(now); got != 0 {
+		t.Fatalf("fresh game within grace, want 0, got %d", got)
+	}
+
+	// Past the TTL from creation with no poll → the first unpolled seat is abandoned.
+	future := now.Add(2 * abandonTTL)
+	if got := p.abandonedSeat(future); got != 1001 {
+		t.Fatalf("want 1001 abandoned, got %d", got)
+	}
+
+	// Once resigned, no seat is reported again — the guard that makes the resign fire once.
+	p.mu.Lock()
+	p.abandonResigned = true
+	p.mu.Unlock()
+	if got := p.abandonedSeat(future); got != 0 {
+		t.Fatalf("after resign, want 0, got %d", got)
+	}
+}
+
+// A solo flow (seek / open link / challenge) has one Gambit seat; when that one
+// client stops polling, it is the seat to resign.
+func TestAbandonedSeatSolo(t *testing.T) {
+	p := newPlay(PlayRequest{ClientGameID: validUUID, Open: true, SoloSteamID: 1001})
+	now := time.Now()
+
+	p.markPolled(1001)
+	if got := p.abandonedSeat(now); got != 0 {
+		t.Fatalf("fresh solo player, want 0, got %d", got)
+	}
+
+	p.mu.Lock()
+	p.lastPoll[1001] = now.Add(-abandonTTL - time.Second)
+	p.mu.Unlock()
+	if got := p.abandonedSeat(now); got != 1001 {
+		t.Fatalf("stale solo player, want 1001, got %d", got)
+	}
+}
+
+// One relayed game per player: lichess does not document permission to play concurrent
+// games through the Board API, so a player already in a live relayed game may not start
+// a second — that table falls back to a local game instead.
+func TestOneRelayedGamePerPlayer(t *testing.T) {
+	r := newRelay(zap.NewNop(), nil, nil)
+
+	// A live game White (1001) is already in.
+	const otherUUID = "b7e1c2d3-4f5a-4b6c-8d9e-0f1a2b3c4d5e"
+	live := newPlay(PlayRequest{ClientGameID: validUUID, WhiteSteamID: 1001, BlackSteamID: 1002})
+	live.started = true
+	r.plays[validUUID] = live
+
+	// White trying to start a DIFFERENT game elsewhere is refused.
+	if _, err := r.Join(context.Background(), 1001, PlayRequest{
+		ClientGameID: otherUUID, WhiteSteamID: 1001, BlackSteamID: 1003}); err == nil {
+		t.Fatal("a player already in a live game must not start a second relayed game")
+	}
+
+	// A player NOT in that game is unaffected.
+	if _, err := r.Join(context.Background(), 1003, PlayRequest{
+		ClientGameID: otherUUID, WhiteSteamID: 1003, BlackSteamID: 1004}); err != nil {
+		t.Fatalf("an uninvolved player must still start a game: %v", err)
+	}
+
+	// Re-posting the SAME game (the paired flow's second seat) is never blocked by the gate.
+	if _, err := r.Join(context.Background(), 1002, PlayRequest{
+		ClientGameID: validUUID, WhiteSteamID: 1001, BlackSteamID: 1002}); err != nil {
+		t.Fatalf("the same game's other seat must still join: %v", err)
+	}
+}

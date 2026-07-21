@@ -13,6 +13,19 @@
 *@
 
 <root>
+	@* Roaming reminder: you stood up from a live game without resigning (M17), so your
+	   clock is still running on a board you've walked away from. Only while roaming — hidden
+	   the moment you sit back at any board. *@
+	@if ( !( LobbyPlayer.Local?.Engaged ?? false ) && LobbyPlayer.Local?.RoamingLiveGames() is { Count: > 0 } liveTables )
+	{
+		<div class="live-reminders">
+			@foreach ( var t in liveTables )
+			{
+				<div class="live-reminder">@LiveReminder( t )</div>
+			}
+		</div>
+	}
+
 	@if ( LobbyPlayer.Local?.Engaged ?? false )
 	{
 		<div class="leave-btn" onclick="@Leave">✕  @LeaveLabel()</div>
@@ -85,6 +98,31 @@
 		background-color: #ff2d55;
 	}
 
+	/* Roaming "your game is live" reminders — one row per game, top-RIGHT, right-justified
+	   and growing DOWN; each row grows LEFT as its text lengthens (the right edge is pinned).
+	   max-width keeps a long row from running off the left of the screen. Only while not
+	   seated. Sits below the top-right .leave-btn's row, but that button is seated-only so
+	   they never show together. */
+	.live-reminders {
+		position: absolute;
+		right: 16px;
+		top: 16px;
+		max-width: 60%;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 8px;
+		pointer-events: none;
+	}
+	.live-reminder {
+		flex-shrink: 0;
+		white-space: nowrap;
+		text-align: right;
+		font-size: 16px;
+		font-weight: bold;
+		color: rgba(255, 214, 120, 0.95);
+		text-shadow: 0px 2px 4px rgba(0, 0, 0, 0.8);
+	}
+
 	.prompt {
 		position: absolute;
 		bottom: 120px;
@@ -107,15 +145,33 @@
 
 @code
 {
-	// Standing up mid-game resigns, so leaving a chess seat runs through the
-	// two-stage RequestLeave; wall boards close immediately as before.
+	// Standing up NO LONGER resigns (decoupled M17): this just gets you out of the seat
+	// to roam, keeping the seat and any live game (RequestLeave). Resign is its own
+	// confirmed button on the seated HUD. Wall boards close as before.
 	void Leave() => LobbyPlayer.Local?.RequestLeave();
 
-	static string LeaveLabel()
+	static string LeaveLabel() => ChessStation.Active == null ? "Close" : "Stand Up";
+
+	// The roaming reminder for a game you stood up from. A premove stays armed when you
+	// stand up (it lives on the controller, not the seat) and fires when your opponent
+	// moves — showing it here is how you can tell it survived walking away.
+	static string LiveReminder( ChessStation t )
 	{
-		if ( ChessStation.Active == null ) return "Close";
-		if ( LobbyPlayer.Local?.LeaveArmed ?? false ) return "Resign & Stand Up?";
-		return "Stand Up";
+		string pm = LobbyPlayer.Local?.PremoveAt( t );
+		string prem = pm is { Length: >= 4 } ? $" · premove {pm[..2]}→{pm[2..4]} still armed" : "";
+		return $"♟  Your game on Table {t.Number} is live{prem} — sit back down to play";
+	}
+
+	/// <summary>Signature of the whole roaming-reminder state — every live table you've
+	/// walked away from plus its premove — so BuildHash repaints when any of them changes.</summary>
+	static int RoamingReminderHash()
+	{
+		var p = LobbyPlayer.Local;
+		if ( p == null ) return 0;
+		int h = 0;
+		foreach ( var t in p.RoamingLiveGames() )
+			h = System.HashCode.Combine( h, t.Number, p.PremoveAt( t ) );
+		return h;
 	}
 
 	static string BoardPrompt( Gambit.World.SettingsStation b ) => b.Kind switch
@@ -139,5 +195,8 @@
 			LobbyPlayer.Local?.NearbyBoard?.Kind,
 			LobbyPlayer.Local?.NearbyInfo?.Kind, DiscordButton.SinceCopied < 2f,
 			System.HashCode.Combine( LobbyPlayer.Local?.NearbySpectator != null,
-				LobbyPlayer.Local?.LeaveArmed ) );
+				LobbyPlayer.Local?.LeaveArmed,
+				// The roaming reminder: repaint when a table appears/clears or a premove
+				// arms/fires on any game you've walked away from (one row per game).
+				RoamingReminderHash() ) );
 }
