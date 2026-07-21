@@ -935,14 +935,19 @@ public sealed class SeatedTerry : Component
 
 		// A hand only fires while its player is actually SITTING here — LobbyPlayer.SeatedAt,
 		// not mere occupancy. Post-M17 you can keep a live game and roam, so the IK must not
-		// reach across the room to a board you stood up from, nor fire on a SECOND table you
-		// also hold. SeatedAt is the camera for the local player and the NETWORKED sitting
-		// station for a proxy — so this holds on every screen, not just the one that stood
-		// up. Clear the hand and rest the pose so a mid-gesture doesn't freeze mid-air.
+		// reach a board you stood up from, nor fire on a SECOND table you also hold. SeatedAt
+		// is the camera for the local player and the NETWORKED sitting station for a proxy, so
+		// this holds on every screen.
+		//
+		// Crucially we do NOTHING to the avatar's hand here — no ClearHandPose. A player in
+		// TWO games resolves to the SAME avatar from BOTH tables' SeatedTerry, so if the
+		// not-sitting table cleared the hand it would fight the sitting table's ApplyHandPose
+		// every frame — the exact cross-board flicker this gate is meant to stop. Standing up
+		// clears the hand once (Disengage / UpdateProxySeating); the sitting table owns it
+		// after that. We only rest THIS table's own pose tracking so it starts clean on return.
 		if ( avatar.IsValid()
 			&& !( avatar.SeatedAt is { } sa && sa.Station == station && sa.Seat == seat ) )
 		{
-			avatar.ClearHandPose();
 			pose = HandPose.None with { Ply = game.MoveCount };
 			return;
 		}

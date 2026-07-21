@@ -687,15 +687,17 @@ public sealed class LobbyPlayer : Component
 		Disengage( keepSeat: false );
 	}
 
-	/// <summary>The table where the local player has a LIVE game they've stepped away from
-	/// — seated (occupancy still ours) at a board whose game is running, while our camera
-	/// is not at that board. Null if none. Drives the roaming reminder, so you don't forget
-	/// a game (and a ticking clock) you walked away from. Covers a relayed lichess game and
-	/// a local two-seat game alike.</summary>
-	public ChessStation RoamingLiveGame()
+	/// <summary>Every table where the local player has a LIVE game they've stepped away from
+	/// — seated (occupancy still ours) at a board whose game is running, while our camera is
+	/// not at that board. Empty if none. Drives the roaming reminder, so you don't forget a
+	/// game (and a ticking clock) you walked away from — one row per game, since with the
+	/// stand-up decouple you can hold several at once. Covers relayed lichess and local
+	/// two-seat games alike.</summary>
+	public List<ChessStation> RoamingLiveGames()
 	{
+		var games = new List<ChessStation>();
 		ulong mine = Connection.Local?.SteamId ?? 0;
-		if ( mine == 0 ) return null;
+		if ( mine == 0 ) return games;
 
 		foreach ( var s in Scene.GetAllComponents<ChessStation>() )
 		{
@@ -705,9 +707,9 @@ public sealed class LobbyPlayer : Component
 			var lichess = Gambit.Game.LichessGameController.For( s );
 			var local = Gambit.Game.LocalGameController.For( s );
 			if ( ( lichess is { Engaged: true, Playing: true } ) || ( local is { Playing: true } ) )
-				return s;
+				games.Add( s );
 		}
-		return null;
+		return games;
 	}
 
 	/// <summary>The armed premove UCI at station <paramref name="s"/>, or null. Read off

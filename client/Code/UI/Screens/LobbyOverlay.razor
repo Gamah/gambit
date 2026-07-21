@@ -16,9 +16,14 @@
 	@* Roaming reminder: you stood up from a live game without resigning (M17), so your
 	   clock is still running on a board you've walked away from. Only while roaming — hidden
 	   the moment you sit back at any board. *@
-	@if ( !( LobbyPlayer.Local?.Engaged ?? false ) && LobbyPlayer.Local?.RoamingLiveGame() is { } liveTable )
+	@if ( !( LobbyPlayer.Local?.Engaged ?? false ) && LobbyPlayer.Local?.RoamingLiveGames() is { Count: > 0 } liveTables )
 	{
-		<div class="live-reminder">@LiveReminder( liveTable )</div>
+		<div class="live-reminders">
+			@foreach ( var t in liveTables )
+			{
+				<div class="live-reminder">@LiveReminder( t )</div>
+			}
+		</div>
 	}
 
 	@if ( LobbyPlayer.Local?.Engaged ?? false )
@@ -93,19 +98,25 @@
 		background-color: #ff2d55;
 	}
 
-	/* Roaming "your game is live" banner — top-centre, only while not seated. Never
-	   coincides with .leave-btn (top-right, seated-only), so they don't collide. */
-	.live-reminder {
+	/* Roaming "your game is live" reminders — one row per game, left side, starting at
+	   vertical centre and growing DOWN. Only while not seated, so it never coincides with
+	   the seated-only .leave-btn (top-right). */
+	.live-reminders {
 		position: absolute;
-		top: 14px;
-		left: 0;
-		right: 0;
-		justify-content: center;
+		left: 24px;
+		top: 50%;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+		pointer-events: none;
+	}
+	.live-reminder {
+		flex-shrink: 0;
+		white-space: nowrap;
 		font-size: 16px;
 		font-weight: bold;
 		color: rgba(255, 214, 120, 0.95);
 		text-shadow: 0px 2px 4px rgba(0, 0, 0, 0.8);
-		pointer-events: none;
 	}
 
 	.prompt {
@@ -147,6 +158,18 @@
 		return $"♟  Your game on Table {t.Number} is live{prem} — sit back down to play";
 	}
 
+	/// <summary>Signature of the whole roaming-reminder state — every live table you've
+	/// walked away from plus its premove — so BuildHash repaints when any of them changes.</summary>
+	static int RoamingReminderHash()
+	{
+		var p = LobbyPlayer.Local;
+		if ( p == null ) return 0;
+		int h = 0;
+		foreach ( var t in p.RoamingLiveGames() )
+			h = System.HashCode.Combine( h, t.Number, p.PremoveAt( t ) );
+		return h;
+	}
+
 	static string BoardPrompt( Gambit.World.SettingsStation b ) => b.Kind switch
 	{
 		Gambit.World.SettingsStation.StationKind.Host => "to change host settings",
@@ -169,8 +192,7 @@
 			LobbyPlayer.Local?.NearbyInfo?.Kind, DiscordButton.SinceCopied < 2f,
 			System.HashCode.Combine( LobbyPlayer.Local?.NearbySpectator != null,
 				LobbyPlayer.Local?.LeaveArmed,
-				// The roaming reminder: repaint when it appears/clears, the table changes, or a
-				// premove arms/fires on the game you walked away from.
-				LobbyPlayer.Local?.RoamingLiveGame()?.Number,
-				LobbyPlayer.Local?.PremoveAt( LobbyPlayer.Local?.RoamingLiveGame() ) ) );
+				// The roaming reminder: repaint when a table appears/clears or a premove
+				// arms/fires on any game you've walked away from (one row per game).
+				RoamingReminderHash() ) );
 }
