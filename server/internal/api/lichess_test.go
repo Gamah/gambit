@@ -972,3 +972,34 @@ func TestAbandonedSeatSolo(t *testing.T) {
 		t.Fatalf("stale solo player, want 1001, got %d", got)
 	}
 }
+
+// One relayed game per player: lichess does not document permission to play concurrent
+// games through the Board API, so a player already in a live relayed game may not start
+// a second — that table falls back to a local game instead.
+func TestOneRelayedGamePerPlayer(t *testing.T) {
+	r := newRelay(zap.NewNop(), nil, nil)
+
+	// A live game White (1001) is already in.
+	const otherUUID = "b7e1c2d3-4f5a-4b6c-8d9e-0f1a2b3c4d5e"
+	live := newPlay(PlayRequest{ClientGameID: validUUID, WhiteSteamID: 1001, BlackSteamID: 1002})
+	live.started = true
+	r.plays[validUUID] = live
+
+	// White trying to start a DIFFERENT game elsewhere is refused.
+	if _, err := r.Join(context.Background(), 1001, PlayRequest{
+		ClientGameID: otherUUID, WhiteSteamID: 1001, BlackSteamID: 1003}); err == nil {
+		t.Fatal("a player already in a live game must not start a second relayed game")
+	}
+
+	// A player NOT in that game is unaffected.
+	if _, err := r.Join(context.Background(), 1003, PlayRequest{
+		ClientGameID: otherUUID, WhiteSteamID: 1003, BlackSteamID: 1004}); err != nil {
+		t.Fatalf("an uninvolved player must still start a game: %v", err)
+	}
+
+	// Re-posting the SAME game (the paired flow's second seat) is never blocked by the gate.
+	if _, err := r.Join(context.Background(), 1002, PlayRequest{
+		ClientGameID: validUUID, WhiteSteamID: 1001, BlackSteamID: 1002}); err != nil {
+		t.Fatalf("the same game's other seat must still join: %v", err)
+	}
+}

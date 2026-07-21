@@ -692,6 +692,23 @@ public sealed class LobbyPlayer : Component
 		return null;
 	}
 
+	/// <summary>The table where the local player already has a live LICHESS game, other
+	/// than <paramref name="except"/> — or null. Gates a SECOND lichess game: lichess does
+	/// not document permission to play concurrent games through the Board API, so we relay
+	/// only the first and any further table plays locally (SetupPanel hides the lichess
+	/// options; the relay refuses server-side as a backstop). Only a lichess game counts —
+	/// you can have local two-seat games at as many tables as you like.</summary>
+	public ChessStation LichessGameElsewhere( ChessStation except )
+	{
+		foreach ( var s in Scene.GetAllComponents<ChessStation>() )
+		{
+			if ( s == except ) continue;
+			if ( Gambit.Game.LichessGameController.For( s ) is { Engaged: true, Playing: true } )
+				return s;
+		}
+		return null;
+	}
+
 	/// <summary>Resign the live game at the seat we're engaged at — the explicit,
 	/// two-stage button on the seated HUD, unrelated to standing up. A first call arms
 	/// the confirm (the button shows "Sure?"), a second within the window commits: it

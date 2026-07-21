@@ -55,6 +55,13 @@
 		{
 			<div class="setup-hint">Link a lichess account at the east wall to play real games from this table</div>
 		}
+		@* One lichess game at a time: lichess doesn't document permission to play concurrent
+		   games through the Board API, so if you're already playing one at another table this
+		   table plays locally instead. (Local two-seat games have no such limit.) *@
+		else if ( LobbyPlayer.Local?.LichessGameElsewhere( Station() ) is { } busyTable )
+		{
+			<div class="setup-hint">You're playing a lichess game at Table @busyTable.Number — finish it before starting another. This table plays a local game.</div>
+		}
 		else
 		{
 			@* Play the person opposite you. Both seats must opt in — and gamchess
@@ -473,7 +480,9 @@
 			BothSeated(), ctrl?.LocalSeat,
 			System.HashCode.Combine(
 				ctrl?.WhiteReady, ctrl?.BlackReady, ctrl?.WhiteLichess, ctrl?.BlackLichess,
-				ctrl?.BothWantLichess, LichessLinkState.Linked, LichessLinkState.Username ),
+				ctrl?.BothWantLichess, LichessLinkState.Linked, LichessLinkState.Username,
+				// The one-game gate: repaint when a lichess game starts/ends at another table.
+				LobbyPlayer.Local?.LichessGameElsewhere( Station() )?.Number ),
 			System.HashCode.Combine( _seekRated, _seekColor, _challengeRated, _openRated, _openColor ) );
 	}
 }

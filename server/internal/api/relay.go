@@ -419,6 +419,14 @@ func (p *play) seatOf(steamID int64) (string, bool) {
 	return "", false
 }
 
+// isLive reports whether a game has actually started and is not over — the state the
+// one-game-per-player gate blocks a second of.
+func (p *play) isLive() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.started && p.finished.IsZero() && p.state.Status != playFailed
+}
+
 // done reports whether this play can be swept.
 func (p *play) done(now time.Time) bool {
 	p.mu.Lock()
@@ -649,6 +657,18 @@ func (r *relay) credentials(ctx context.Context, steamID int64) (token, username
 func (r *relay) Join(ctx context.Context, steamID int64, req PlayRequest) (*play, error) {
 	r.sweep()
 
+	// One relayed game per player at a time. lichess does not DOCUMENT permission to
+	// play concurrent games through the Board API — the event stream is one-per-token,
+	// and the Board API docs are silent on running multiple board games at once (the one
+	// public thread reports the streams interfere and was closed privately). So we relay
+	// only a player's FIRST live game; any further table they sit at plays locally, on
+	// gamchess alone. Defensive — the client gates this too, and refuses to offer lichess
+	// at a second table. Excludes THIS game's id so the paired flow's second seat and any
+	// re-post still get through.
+	if r.hasOtherLivePlay(steamID, req.ClientGameID) {
+		return nil, errors.New("you already have a live lichess game — finish it before starting another (this table can still play a local game)")
+	}
+
 	// One outstanding solo request per user — see relay.pending for why a seek
 	// must be alone (lichess's one-event-stream-per-token rule) and why a
 	// challenge shares the slot anyway (a player sits at one board).
@@ -693,6 +713,28 @@ func (r *relay) Join(ctx context.Context, steamID int64, req PlayRequest) (*play
 		go r.run(gameCtx, p)
 	}
 	return p, nil
+}
+
+// hasOtherLivePlay reports whether steamID is seated in a live play OTHER than
+// exceptClientGameID — the one-relayed-game-per-player gate (see Join). Snapshots the
+// map under the lock, then tests each play without holding it (isLive/seatOf take their
+// own locks).
+func (r *relay) hasOtherLivePlay(steamID int64, exceptClientGameID string) bool {
+	r.mu.Lock()
+	others := make([]*play, 0, len(r.plays))
+	for id, p := range r.plays {
+		if id != exceptClientGameID {
+			others = append(others, p)
+		}
+	}
+	r.mu.Unlock()
+
+	for _, p := range others {
+		if _, seated := p.seatOf(steamID); seated && p.isLive() {
+			return true
+		}
+	}
+	return false
 }
 
 // Lookup finds an existing play. No creation — polling must not conjure one.

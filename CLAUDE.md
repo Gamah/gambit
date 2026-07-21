@@ -475,6 +475,18 @@ published rules (`lichess.org/page/api-tips`) are short and we follow all of the
   player's game just ends). The TTL is well clear of `pollHold` + a reconnect/hotload grace so a
   blip can't resign a live game, and it fires once (no retry storm). **So: closing the editor
   mid-game will lose that lichess game after ~30–40s — by design.**
+- **ONE relayed lichess game per player at a time; further tables play locally.** You can sit at
+  N tables and play N games (M17 decoupled seat/camera/relay), but only the FIRST is on lichess —
+  the rest are gamchess-only local games. **This is a deliberate gate, not a code limit reached:**
+  lichess does **not document permission** to play concurrent games through the Board API (the
+  event stream is one-per-token, the Board API docs are silent on multiple board games, and the
+  one public thread reports the streams *interfere* and was closed privately — checked
+  2026-07, `lichess.org/api` + the api forum). Re-derived here rather than assumed; if lichess
+  ever documents an allowance, this gate is what to lift. Enforced in two places: `relay.Join`
+  refuses a second live play for the same SteamID (`hasOtherLivePlay`), and `SetupPanel` hides the
+  lichess options at a table when `LobbyPlayer.LichessGameElsewhere` finds one already live —
+  showing "playing at Table N, this table plays a local game" instead. **Local two-seat games have
+  no such limit** — the gate is lichess-specific.
 
 The accommodation channel is **Discord `#lichess-api-support`** (`https://discord.gg/MS9MejQqha`)
 — **not email**; there is no API branch in their contact form. Bring real traffic numbers and the
