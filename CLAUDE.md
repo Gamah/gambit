@@ -23,6 +23,26 @@ in git. Two consequences worth knowing before editing either file:
   purpose: when you close a row, ask what a future session would get wrong without it, and put
   *that* here. Nothing copies itself across.
 
+### Cutting a release (sbox.game)
+
+Gambit publishes to **sbox.game** with a version and a **"changes"** field — the changelog
+players see. Version scheme is **Alpha 0.0.x** (2D play mode was `0.0.1`; the M17 branch is
+`0.0.2`). The changes field is written in **five sbox.game categories, in this order**:
+
+> **Added · Improved · Fixed · Removed · Known issues**
+
+- Write **player-facing** notes — what changed in the *game*, not the code. "Play from multiple
+  tables at once", not "gated `LocalSeat` on occupancy". The code reasoning stays in git/CLAUDE.md.
+- **Every feature branch's PR carries its own draft notes in these five categories** — a
+  `## Release notes (Alpha 0.0.x)` section in the PR body. A release is usually several merged
+  branches, so **the session that actually cuts it just rolls up the open PRs' notes** into one
+  "changes" block (concatenate + de-dup) rather than reconstructing them from the commit log.
+- **Known issues** = deliberate limitations and shipped-but-unverified items worth flagging — *not*
+  a bug backlog (that's PLAN.md). Say what a player would actually hit, and whether it's by design.
+- This dev host has no s&box toolchain, so **client changes are review-only until tested in the
+  editor**. Each PR should list its "needs editor verification" items; the cutter confirms that
+  list was walked before publishing.
+
 ### Lichess: real games, and gamchess holds the token
 
 Gambit plays **real lichess games** from a table (M8): link your lichess account, and a game
