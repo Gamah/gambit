@@ -119,7 +119,7 @@
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 			<div class="section-header" style="color:@WallTheme.AccentCss;">PLAY ON LICHESS FOR REAL</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Link a lichess account at the board next door and a game here can be a real game there, in your real lichess history — against the person opposite you, a lichess player you name, a random stranger from lichess's lobby, or anyone you send a shareable link to (they play you in a browser, no account needed their side).</div>
+			<div class="body" style="color:@WallTheme.TextDim;">Link a lichess account at the east wall and a game here can be a real game there, in your real lichess history — against the person opposite you, a lichess player you name, a random stranger from lichess's lobby, or anyone you send a shareable link to (they play you in a browser, no account needed their side).</div>
 			@* The consent model in one line, and it read as ambiguous until said outright:
 			   a game at a table is local and private; lichess only ever hears about it
 			   when a player picks one of the flows above. This sentence carries it. *@
@@ -257,11 +257,6 @@
 		white-space: pre-wrap;
 	}
 
-	.note {
-		font-size: 19px;
-		font-style: italic;
-	}
-
 	.dev-notice {
 		font-size: 21px;
 		color: rgba(255, 165, 0, 0.85);
@@ -347,22 +342,9 @@
 		text-align: center;
 	}
 
-	/* The 10+0-only caveat stands out in amber. */
+	/* Amber warning copy — currently the "turning this off" unlink caveats. */
 	.section-header.warn { color: rgba(255, 180, 40, 0.95); }
 	.body.warn-body { color: rgba(255, 210, 130, 0.9); }
-
-
-	.prizes-notice {
-		justify-content: center;
-		margin-top: 10px;
-		padding: 14px 22px;
-		background-color: rgba(44, 200, 20, 0.25);
-		border: 2px solid rgba(88, 101, 242, 0.6);
-		border-radius: $wall-radius;
-		font-size: 22px;
-		color: rgba(255, 255, 255, 0.9);
-		font-weight: bold;
-	}
 </style>
 
 @code
