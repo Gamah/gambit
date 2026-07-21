@@ -1127,7 +1127,21 @@ public sealed class LobbyPlayer : Component
 		// was tuned against that near-board eye yaw, so leave that path untouched.
 		if ( _controller is { UseAnimatorControls: false }
 			&& SeatedAt is { } s && SeatFacing( s.Station, s.Seat ) is { } face )
+		{
 			r.WorldRotation = face;
+
+			// Blank, level stare. The head/eye aim and the shoulder LEAN are driven from
+			// EyeAngles, which — for a seated proxy — are [Sync]'d from the owner's, frozen
+			// at the pre-sit ROAMING look the instant E was pressed (the same stale source
+			// the body-facing above corrects). Left alone, a seated Terry keeps gazing off
+			// wherever they were last looking, head cocked. With the body now squared to the
+			// board, point the eyes and head LEVEL along it (Z-flattened, so no up/down tilt)
+			// and drop the body lean to zero. aim_body IS the lean — see CitizenAnimationHelper.
+			var level = face.Forward.WithZ( 0f ).Normal;
+			r.SetLookDirection( "aim_eyes", level, 1f );
+			r.SetLookDirection( "aim_head", level, 1f );
+			r.SetLookDirection( "aim_body", level, 0f );
+		}
 	}
 
 	/// <summary>Stand the citizen back up. Pairs with <see cref="ApplySitPose"/>; the
