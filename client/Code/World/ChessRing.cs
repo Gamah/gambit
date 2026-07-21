@@ -881,17 +881,25 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	const float ClockHeight = 2.2f;   // a low plinth, not a tower: it must not fence the board
 
 	/// <summary>
-	/// Tilt of everything standing on the clock. Negative pitches it up, so it reads from the
-	/// seats rather than presenting its edge — the same way you read a real chess clock beside
-	/// a board: nobody is square to it, everybody is looking down at it.
+	/// Tilt of everything standing on the clock, in degrees of pitch. <b>0 stands the plates
+	/// fully UPRIGHT</b> (vertical, facing +Y across the board); negative pitches them back so
+	/// the face angles up toward the seated players' downward gaze.
 	///
-	/// <para><b>This is coupled to <see cref="ClockPlateHeight"/> and <see cref="ClockDepth"/>
-	/// and cannot be tuned alone.</b> The plates lean BACK out of a 1.6-deep strip, so a
-	/// plate's height projects sin(tilt) of itself straight back into Y — a tall plate at a
-	/// steep tilt leans out over the board and clips the a-file. At 2.9 high and 30° that is
-	/// ±0.725 of Y, inside the strip's own ±0.8. Raise one and lower the other, or the clock
-	/// grows into the board.</para></summary>
-	const float ClockFaceTilt = -30f;
+	/// <para><b>The readability tradeoff, kept here because it is easy to lose:</b> upright
+	/// reads as a clean standing clock, but the seats are at ±X while the face points +Y, so a
+	/// fully vertical face is seen more edge-on from a seat than a tipped-up one is — which is
+	/// why a real chess clock beside a board is tipped up, and why this was -30. If the seated
+	/// read suffers, dial a small negative back in; it is a code default on the runtime-built
+	/// ring, so an edit-and-hotload, not a scene tweak.</para>
+	///
+	/// <para><b>Coupled to <see cref="ClockPlateHeight"/> and <see cref="ClockDepth"/>:</b> a
+	/// plate's height projects sin(tilt) of itself back into Y, so a tall plate at a steep tilt
+	/// leans out over the board and clips the a-file. At UPRIGHT (0) that projection is ZERO —
+	/// the plate stands straight up in Z and takes nothing from the board — so the constraint
+	/// only bites as the tilt steepens (at 2.9 high and 30° it was ±0.725 of Y, inside the
+	/// strip's own ±0.8). <see cref="ClockPlaneOriginZ"/> recomputes off the same cos(tilt), so
+	/// the plate's bottom edge stays flush on the body at any tilt.</para></summary>
+	const float ClockFaceTilt = 0f;
 
 	// ── The text span, and why it is NOT the plate ──
 	//
@@ -1204,9 +1212,10 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		// at its own player's end. See ClockPlateOffsetX: White is −X.
 		plate.LocalPosition = new Vector3(
 			( white ? -ClockPlateOffsetX : ClockPlateOffsetX ), 0f, ClockPlaneOriginZ ) * s;
-		// Tipped up and facing +Y across the board. Both plates share this one facing rather
-		// than each aiming at its own seat: neither player is square to it, both are looking
-		// down at the table anyway, and that is how a real chess clock's two dials work.
+		// Upright (ClockFaceTilt 0) and facing +Y across the board. Both plates share this one
+		// facing rather than each aiming at its own seat: that is how a real chess clock's two
+		// dials work. A negative ClockFaceTilt tips the face up toward the seats' downward gaze
+		// (see that constant for the readability tradeoff).
 		plate.LocalRotation = Rotation.From( ClockFaceTilt, 90f, 0f );
 
 		var box = AddBoxGo( plate, "Face", Vector3.Zero,
