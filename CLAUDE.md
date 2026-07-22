@@ -230,6 +230,20 @@ opponent needs no lichess account.
   `wdraw`/`bdraw`/`wtakeback`/`btakeback`, which lichess **omits when false** rather than
   sending false. Nothing may report an offer landed from a status code. This is why the
   takeback button is hidden before move 2 rather than shown and dead.
+- **A declined DRAW is INVISIBLE on the Board API — and this is where draw and takeback
+  DIVERGE.** Re-derived from lila master 2026-07-22. Both offers push a `gameState` on the
+  *offer* (`Drawer.yes`/`Takebacker.yes` → `publishDrawOffer`/`publishTakebackOffer` →
+  `BoardDrawOffer`/`BoardTakebackOffer` bus → `GameStateStream.pushState`). But on the
+  *decline*, only **takeback** publishes: `Takebacker.no` calls `publishTakebackOffer`, so a
+  declined takeback clears `wtakeback`/`btakeback` on the next `gameState`. **`Drawer.no` does
+  NOT** — it clears `isOfferingDraw` and emits only `Event.DrawOffer(by = none)`, which feeds
+  lila's own web round-socket, never a bus channel the Board/Bot stream subscribes to. So a
+  declined draw pushes NOTHING: the offerer keeps seeing the stale `wdraw`/`bdraw` from their
+  own offer until the opponent's next MOVE (which auto-clears it) or an ACCEPT (which ends the
+  game). There is no wire signal for an explicit draw decline, so no client may show "waiting
+  for a reply" on a lichess draw — `GameHud` says **"Draw offered. Lichess won't signal a
+  decline."** for a lichess game, and keeps the honest "waiting for your opponent" only for a
+  takeback (whose decline IS pushed) and for a LOCAL draw (whose decline is relayed).
 - **Draw and takeback are ONE endpoint each, not three.** `/draw/{accept}` and
   `/takeback/{accept}`: offering and accepting are the same call, and the path segment is
   parsed by lila's `Form.trueish` (`1|true|True|on|yes`) — so decline is "any non-truthy
