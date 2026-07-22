@@ -230,6 +230,25 @@ opponent needs no lichess account.
   `wdraw`/`bdraw`/`wtakeback`/`btakeback`, which lichess **omits when false** rather than
   sending false. Nothing may report an offer landed from a status code. This is why the
   takeback button is hidden before move 2 rather than shown and dead.
+- **A declined DRAW is INVISIBLE on the Board API — and this is where draw and takeback
+  DIVERGE.** Re-derived from lila master 2026-07-22. Both offers push a `gameState` on the
+  *offer* (`Drawer.yes`/`Takebacker.yes` → `publishDrawOffer`/`publishTakebackOffer` →
+  `BoardDrawOffer`/`BoardTakebackOffer` bus → `GameStateStream.pushState`). But on the
+  *decline*, only **takeback** publishes: `Takebacker.no` calls `publishTakebackOffer`, so a
+  declined takeback clears `wtakeback`/`btakeback` on the next `gameState`. **`Drawer.no` does
+  NOT** — it clears `isOfferingDraw` and emits only `Event.DrawOffer(by = none)`, which feeds
+  lila's own web round-socket, never a bus channel the Board/Bot stream subscribes to. So a
+  declined draw pushes NOTHING to the board stream. **The CLEAR is never its own event
+  either** — lila clears the flag only via `Drawer.no`, and a move routes through it too
+  (`MovePlayer.scala:77` fires an implicit decline on the opponent's reply). Even that
+  declining move's own `gameState` is built one line *before* the clear (`notifyMove`, `:73`),
+  so it still carries `wdraw:true`; the flag only reads false on a LATER move's full snapshot
+  (rebuilt from a DB that already cleared it — `wdraw`/`bdraw` are omitted-when-false, so
+  "absent" = cleared). Earliest the offerer's own next move (~2 plies out), and on a bare
+  decline **never**. So no client may show "waiting for a reply" on a lichess draw — `GameHud`
+  says **"Draw offered. Lichess won't signal a decline."** for a lichess game, and keeps the
+  honest "waiting for your opponent" only for a takeback (whose decline IS pushed) and for a
+  LOCAL draw (whose decline is relayed).
 - **Draw and takeback are ONE endpoint each, not three.** `/draw/{accept}` and
   `/takeback/{accept}`: offering and accepting are the same call, and the path segment is
   parsed by lila's `Form.trueish` (`1|true|True|on|yes`) — so decline is "any non-truthy
