@@ -108,10 +108,17 @@
 				   master 2026-07-22). So between offer and the opponent's next move we can't
 				   tell "still deciding" from "said no", and "waiting for your opponent" is a
 				   promise of a reply we can never observe. Say the offer is out instead. An
-				   ACCEPT still shows (the game ends as a draw) and the offer auto-clears on
-				   the next move — only an explicit decline is silent. Takeback is NOT the
-				   same: Takebacker.no DOES publishTakebackOffer, so its "waiting" copy below
-				   is honest and stays; a LOCAL draw decline is relayed and clears too. *@
+				   ACCEPT still shows (the game ends as a draw), but the CLEAR is never its own
+				   event: lila only clears the flag via Drawer.no (both on an explicit decline
+				   AND on the opponent's reply move — MovePlayer.scala:77 fires an implicit
+				   decline), which publishes nothing to the board bus. Even the declining
+				   move's own gameState (notifyMove, :73) is built BEFORE that clear (:77), so
+				   it still carries wdraw:true. The flag only reads false on a LATER move's
+				   full snapshot (rebuilt from a DB that already cleared it; wdraw is
+				   omitted-when-false) — earliest our own next move, ~2 plies out, and never on
+				   a bare decline. Takeback is NOT the same: Takebacker.no DOES
+				   publishTakebackOffer, so its "waiting" copy below is honest and stays; a
+				   LOCAL draw decline is relayed and clears too. *@
 				@if ( OnLichess() )
 				{
 					<div class="reason">Draw offered. Lichess won't signal a decline.</div>
