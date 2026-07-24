@@ -91,9 +91,13 @@ public static class MatchmakingApi
 		[JsonPropertyName( "time_control" )] public string TimeControl { get; set; }
 		[JsonPropertyName( "status" )] public string Status { get; set; }
 		[JsonPropertyName( "created_at" )] public string CreatedAt { get; set; }
-		// Present only on the opener's own poll of a matched row.
+		// Present only on a participant's poll of a matched row: their colour, the relay
+		// game_id, and — for the opener host, which seats both — the assigned SteamIDs.
 		[JsonPropertyName( "your_color" )] public string YourColor { get; set; }
 		[JsonPropertyName( "game_id" )] public string GameId { get; set; }
+		[JsonPropertyName( "white_steam_id" )] public string WhiteSteamID { get; set; }
+		[JsonPropertyName( "black_steam_id" )] public string BlackSteamID { get; set; }
+		[JsonPropertyName( "opponent_name" )] public string OpponentName { get; set; }
 	}
 
 	public sealed class MatchList

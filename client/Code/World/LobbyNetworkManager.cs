@@ -200,7 +200,7 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 	string NameFor( ulong steamId )
 	{
 		foreach ( var c in _conns )
-			if ( c.SteamId == steamId ) return c.DisplayName;
+			if ( (ulong)c.SteamId == steamId ) return c.DisplayName;
 		return "Player";
 	}
 

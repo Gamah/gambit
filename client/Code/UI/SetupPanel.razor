@@ -610,11 +610,12 @@
 				// The one-game gate: repaint when a lichess game starts/ends at another table.
 				LobbyPlayer.Local?.LichessGameElsewhere( Station() )?.Number ),
 			System.HashCode.Combine( _seekRated, _seekColor, _challengeRated, _openRated, _openColor,
-				// Computer opponent: repaint when one is added/removed at this table, when the
-				// opposite seat frees up (CanAddBot), or when the player picks a difficulty.
-				ctrl?.HasBotOpponent, ctrl?.CanAddBot, _botLevel,
-				// Matchmaking: the waiting state, the status line, and how many open games
-				// are listed — enough to repaint as adverts come and go.
-				System.HashCode.Combine( Matchmaking.Waiting, Matchmaking.Status, Matchmaking.OpenGames.Length ) ) );
+				// Computer opponent: repaint when one is added/removed at this table, or when
+				// the opposite seat frees up (CanAddBot).
+				ctrl?.HasBotOpponent, ctrl?.CanAddBot,
+				// Difficulty pick + matchmaking (waiting state, status line, and how many open
+				// games are listed) — nested to stay within Combine's 8-arg limit.
+				System.HashCode.Combine( _botLevel, Matchmaking.Waiting, Matchmaking.Status,
+					Matchmaking.OpenGames.Length ) ) );
 	}
 }
