@@ -16,7 +16,7 @@ public enum GameResult { Ongoing, WhiteWon, BlackWon, Draw }
 /// Moves in and out are UCI ("e2e4", "e7e8q" — castling as king move "e1g1"),
 /// matching the wire format of NetChessMove.
 /// </summary>
-public sealed class ChessGame
+public sealed partial class ChessGame
 {
 	readonly ChessLib.ChessBoard _board;
 
