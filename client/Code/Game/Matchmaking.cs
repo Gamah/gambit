@@ -70,6 +70,32 @@ public static class Matchmaking
 
 	// ── Actions (from the setup panel) ──
 
+	/// <summary>One-button matchmaking: JOIN a waiting game if there is one, otherwise POST
+	/// your own and wait. This is the "I want to play, put me in the queue" action — no
+	/// browsing a list. First player in posts and waits; the next player's QuickPlay finds
+	/// it and joins. (A rare simultaneous double-post just leaves two waiters; either can
+	/// cancel and re-queue — good enough until the pool gets busy.)</summary>
+	public static async void QuickPlay( int tcIndex )
+	{
+		if ( Waiting || _busy ) return;
+		_tcIndex = TimeControl.IsValidIndex( tcIndex ) ? tcIndex : TimeControl.DefaultIndex;
+		_mode = OpenMode == "join" ? "join" : "relay";
+
+		_busy = true;
+		Status = "Looking for a game…";
+		MatchmakingApi.MatchItem pick = null;
+		try
+		{
+			var res = await MatchmakingApi.List();
+			var list = res.Ok ? GamchessApi.Deserialize<MatchmakingApi.MatchList>( res.Body ) : null;
+			pick = list?.Matches?.FirstOrDefault( g => g.Mode == _mode );
+		}
+		finally { _busy = false; }
+
+		if ( pick != null ) Join( pick.Id );  // an opponent is waiting — take it
+		else OpenGame( _tcIndex );             // nobody yet — post and wait
+	}
+
 	/// <summary>Advertise a game at the given control, in the current <see cref="OpenMode"/>.</summary>
 	public static async void OpenGame( int tcIndex )
 	{
@@ -254,7 +280,16 @@ public static class Matchmaking
 	{
 		if ( string.IsNullOrEmpty( gameId ) || ChessStation.Active is not { } station ) return false;
 		if ( RelayGameController.For( station ) is not { } relay ) return false;
-		relay.Engage( gameId, colorWord == "white", TimeControl.At( _tcIndex ).PgnSpec );
+
+		bool white = colorWord == "white";
+		relay.Engage( gameId, white, TimeControl.At( _tcIndex ).PgnSpec );
+
+		// gamchess assigned our colour; the camera is still at the seat we walked up to.
+		// Flip to the assigned side so we view the board the right way up (same cosmetic
+		// seat-align lichess's random-colour link does — SwitchSeat no-ops if already there).
+		var seat = white ? ChessSeat.White : ChessSeat.Black;
+		if ( ChessStation.ActiveSeat != seat )
+			LobbyPlayer.Local?.SwitchSeat( seat );
 		return true;
 	}
 

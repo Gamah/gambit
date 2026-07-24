@@ -69,13 +69,12 @@
 			}
 		}
 
-		@* Find an opponent online (M19). Post THIS table as open, or join someone else's —
-		   the joiner drops into the opener's lobby and both are seated on RANDOM sides
-		   (the opener can't pick White). Only a lobby host can post (their lobby is the
-		   connect target); anyone can join. No lichess needed — just a Steam identity. *@
+		@* Play online (M19). ONE button — a queue, not a lobby list: it joins a waiting
+		   opponent if there is one, otherwise posts you and waits for the next. Sides are
+		   always random. No lichess needed — just a Steam identity. *@
 		@if ( ShowMatchmaking( ctrl ) )
 		{
-			<div class="setup-label">FIND AN OPPONENT ONLINE</div>
+			<div class="setup-label">PLAY ONLINE</div>
 			@if ( Matchmaking.Waiting )
 			{
 				<div class="setup-hint">@Matchmaking.Status</div>
@@ -83,28 +82,12 @@
 			}
 			else
 			{
-				@if ( Matchmaking.CanOpen )
-				{
-					<div class="seek-row">
-						<div class="chip @( Matchmaking.OpenMode == "relay" ? "on" : "" )" onclick="@( () => SetOpenMode( "relay" ) )">Play here</div>
-						<div class="chip @( Matchmaking.OpenMode == "join" ? "on" : "" )" onclick="@( () => SetOpenMode( "join" ) )">Join up</div>
-					</div>
-					<div class="button online" onclick="@( () => Matchmaking.OpenGame( ctrl.TimeControlIndex ) )">🌐 Post my game — random sides</div>
-					<div class="setup-hint">@OpenModeHint()</div>
-				}
-				@if ( Matchmaking.OpenGames.Length > 0 )
-				{
-					<div class="setup-hint">Open games (sides are random):</div>
-					@foreach ( var g in Matchmaking.OpenGames )
-					{
-						var gid = g.Id;
-						<div class="online-row" onclick="@( () => Matchmaking.Join( gid ) )">@OnlineRowText( g )</div>
-					}
-				}
-				else
-				{
-					<div class="setup-hint">No open games right now.</div>
-				}
+				<div class="seek-row">
+					<div class="chip @( Matchmaking.OpenMode == "relay" ? "on" : "" )" onclick="@( () => SetOpenMode( "relay" ) )">Play here</div>
+					<div class="chip @( Matchmaking.OpenMode == "join" ? "on" : "" )" onclick="@( () => SetOpenMode( "join" ) )">Join up</div>
+				</div>
+				<div class="button online" onclick="@( () => Matchmaking.QuickPlay( ctrl.TimeControlIndex ) )">♟ Play a random opponent</div>
+				<div class="setup-hint">@OpenModeHint()</div>
 				@if ( !string.IsNullOrEmpty( Matchmaking.Status ) )
 				{
 					<div class="setup-hint">@Matchmaking.Status</div>
@@ -598,11 +581,6 @@
 				_seatAlignPending = false;
 			}
 		}
-
-		// While the online-opponent block is showing and we're not already waiting on our
-		// own advert, keep the open-games list fresh (Matchmaking throttles the poll).
-		if ( ShowMatchmaking( Controller() ) && !Matchmaking.Waiting )
-			Matchmaking.WantList();
 	}
 
 	/// <summary>Repaint triggers — everything this panel's markup reads. Flat, unlike the
