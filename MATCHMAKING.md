@@ -4,6 +4,26 @@
 the code. Player-facing copy stays in the info boards; the gamchess wire contract stays in
 `README.md`; this file is the architecture and the traps.
 
+## Built so far / what remains
+
+- ✅ **gamchess backend — DONE, compiles + vets + tests green** on this host. Directory
+  (`internal/api/matchmaking.go`, `store/matchmaking.go`, migration `00004`) and the relay
+  live-game (`internal/api/relaygame.go`, relay store, `relay_games` table). Pure logic
+  (clock ticking/flag, time-control parse, colour, coin fairness) is unit-tested; the
+  DB-integration paths (open/join CAS, expiry) run via `make test` with Postgres.
+- ✅ **Client API layer — DONE (review-only).** `Api/MatchmakingApi.cs`: the five directory
+  calls + the three relay-game calls + response DTOs.
+- ⬜ **Client controllers + UI — REMAINING (review-only, the big untestable part):**
+  - `GamchessRelayController : IBoardGame` (Mode B) — a sibling of `LichessGameController`
+    (~1200 lines): POST local moves, poll opponent moves, run the ticking clock down locally
+    (never HIGH), render through the `Source =>` seam. The largest piece; mirror the lichess one.
+  - A lobby-level matchmaking coordinator: open/list/poll/cancel, and on a Mode-A join
+    `Networking.Connect(lobby_id)`; on the opener side, the **host reserved-seat handshake**
+    that seats both players on gamchess's assigned colour when they arrive (the untestable crux).
+  - `SetupPanel` UI: "OR FIND AN OPPONENT ONLINE" — mode toggle, list yourself, browse+join,
+    random-sides copy.
+  - Info-board copy (`InfoScreen` Welcome) — a new way to play.
+
 ## The goal, in the user's words
 
 > "Add matchmaking to gamchess so people who are in **solo sessions** can see a game to
