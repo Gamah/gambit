@@ -389,53 +389,75 @@ public sealed class LocalGameController : Component, IBoardGame
 	{
 		if ( Station == null ) return;
 
-		bool whiteSeated = Station.WhiteSteamId != 0;
-		bool blackSeated = Station.BlackSteamId != 0;
+		bool whiteHuman = Station.WhiteSteamId != 0;
+		bool blackHuman = Station.BlackSteamId != 0;
 
-		// An empty seat is never ready. Without this a player who readied up, stood, and
-		// was replaced would hand their ready to the new occupant — who'd find themselves
-		// in a game they never agreed to, on someone else's time control.
-		if ( !whiteSeated ) WhiteReady = false;
-		if ( !blackSeated ) BlackReady = false;
+		// An empty HUMAN seat is never ready. Without this a player who readied up, stood,
+		// and was replaced would hand their ready to the new occupant — who'd find
+		// themselves in a game they never agreed to, on someone else's time control. (A bot
+		// seat is "ready" by being a bot — see whiteReadyToStart below — not via this flag.)
+		if ( !whiteHuman ) WhiteReady = false;
+		if ( !blackHuman ) BlackReady = false;
 
 		// Same reasoning, and it matters more here: inheriting someone else's lichess
 		// opt-in would mean a game played on the new occupant's real lichess account
-		// because the previous occupant asked for it.
-		if ( !whiteSeated ) WhiteLichess = false;
-		if ( !blackSeated ) BlackLichess = false;
+		// because the previous occupant asked for it. A bot never opts in.
+		if ( !whiteHuman ) WhiteLichess = false;
+		if ( !blackHuman ) BlackLichess = false;
+
+		// A computer opponent never sits alone. Once no human is at the table and no game is
+		// live, drop any bot so the table returns to idle instead of a bot playing nobody.
+		// Guarded on "not playing" so a human LEAVING mid-game still resigns through the
+		// abandon path below (which counts the bot as filling its seat) rather than being
+		// silently reset here.
+		if ( Phase != PhasePlaying && !whiteHuman && !blackHuman )
+		{
+			Station.ClearBot( ChessSeat.White );
+			Station.ClearBot( ChessSeat.Black );
+		}
+
+		// "Filled" counts a bot; "ready to start" treats a bot seat as permanently ready.
+		bool whiteFilled = whiteHuman || Station.WhiteBot != 0;
+		bool blackFilled = blackHuman || Station.BlackBot != 0;
+		bool whiteReadyToStart = Station.WhiteBot != 0 || WhiteReady;
+		bool blackReadyToStart = Station.BlackBot != 0 || BlackReady;
 
 		switch ( Phase )
 		{
 			case PhaseIdle:
-				// Both seated is no longer enough — both must also ready up, which is
-				// what leaves a window to pick a time control.
-				if ( whiteSeated && blackSeated && WhiteReady && BlackReady )
+				// Both seats filled is no longer enough — both must also ready up (a bot is
+				// always ready), which is what leaves a window to pick a time control.
+				if ( whiteFilled && blackFilled && whiteReadyToStart && blackReadyToStart )
 					HostStartFresh();
 				break;
 
 			case PhasePlaying:
-				if ( whiteSeated && blackSeated )
+				if ( whiteFilled && blackFilled )
 				{
 					HostTickClocks();
+					HostBotOffers();
+					HostDriveBot();
 					break;
 				}
 
-				// A seat emptied mid-game (stand up or disconnect — ChessStation
-				// has already reconciled occupancy): leaving is resigning once
-				// the game actually began; an unmoved board just resets.
+				// A seat emptied mid-game. Only a human can (a bot is only ever cleared above,
+				// when the table isn't playing), so this is always a human leaving: resign the
+				// departed side once the game began; an unmoved board just resets. The bot seat
+				// still counts as filled, so "which side left" is the unfilled one.
 				if ( ( Game?.MoveCount ?? 0 ) == 0 )
 					HostSetIdle();
 				else
-					NetAbandon( GameId, whiteLeft: !whiteSeated );
+					NetAbandon( GameId, whiteLeft: !whiteFilled );
 				break;
 
 			case PhaseOver:
-				// Result stays on display while anyone lingers; a vacated table resets.
-				// Any restart — rematch or fresh pairing — goes through ready, which
-				// HostEnd cleared, so nobody is dragged into a game by sitting still.
-				if ( !whiteSeated && !blackSeated )
+				// Result stays on display while a human lingers; a table with no human resets.
+				// Any restart — rematch or fresh pairing — goes through ready, which HostEnd
+				// cleared, so nobody is dragged into a game by sitting still. (A bot is kept
+				// through the result so "Play the computer" starts a rematch in one click.)
+				if ( !whiteHuman && !blackHuman )
 					HostSetIdle();
-				else if ( whiteSeated && blackSeated && WhiteReady && BlackReady )
+				else if ( whiteFilled && blackFilled && whiteReadyToStart && blackReadyToStart )
 					HostStartFresh();
 				break;
 		}
@@ -518,6 +540,7 @@ public sealed class LocalGameController : Component, IBoardGame
 		_whiteRemaining = tc.InitialSeconds;
 		_blackRemaining = tc.InitialSeconds;
 		_hostPly = 0;
+		_botThinkPly = -1; // re-arm the bot's think timer for the new game
 		PublishClocks();
 
 		// Consumed by the start, so a rematch needs a fresh pair of presses.
@@ -646,6 +669,192 @@ public sealed class LocalGameController : Component, IBoardGame
 
 		Phase = PhaseOver;
 	}
+
+	// ── Computer opponent (solo play, M19) ──
+	//
+	// A player who hasn't linked (or registered) a lichess account still gets a game: the
+	// built-in engine (ChessGame.BestMove) fills the other seat. It is a LOCAL game like any
+	// two-seat one — no lichess, no gamchess dependency, and it works at any time control,
+	// bullet included, because nothing here has to pass lichess's speed floors.
+	//
+	// The bot is a host-driven virtual occupant: ChessStation carries its difficulty on the
+	// seat (SteamId 0 — it is never an account), and the HOST computes its moves and relays
+	// them down the SAME NetChessMove path a human move takes, so the board, sounds, clocks,
+	// spectator mirror and archive all treat it as an ordinary move with no extra plumbing.
+	//
+	// The search runs on a WORKER THREAD (GameTask.RunInThreadAsync), never inline: the
+	// vendored move generator is slow enough that a mid-game Hard search is most of a second,
+	// and blocking the host frame for that would hitch every table in the ring. It searches a
+	// THROWAWAY position rebuilt from the FEN, not the live Game, so the worker never races
+	// the main thread's reads of Game. The move is applied back on the main thread, and only
+	// if nothing moved on under it while it thought.
+
+	bool _botThinking;      // a worker-thread search is in flight for this table
+	int _botThinkPly = -1;  // ply the current "pose" timer was armed for
+	RealTimeUntil _botThinkUntil;
+
+	/// <summary>Host-side: if a computer opponent is on the move, pose briefly then kick off
+	/// its search on a worker thread. Called every host frame of a live game; a no-op (two
+	/// cheap field reads) when a human is on the move or a two-human game is running.</summary>
+	void HostDriveBot()
+	{
+		if ( Game == null || GameOver || LichessGame ) return;
+
+		var toMove = Game.WhiteToMove ? ChessSeat.White : ChessSeat.Black;
+		int level = Station.SeatBot( toMove );
+		if ( level == 0 ) return;      // a human is on the move
+		if ( _botThinking ) return;    // already computing this move
+
+		// A short "pose" before the search launches so the bot doesn't snap instantly
+		// (Easy's search is milliseconds). Re-armed the first frame it becomes the bot's turn.
+		if ( _botThinkPly != Game.MoveCount )
+		{
+			_botThinkPly = Game.MoveCount;
+			_botThinkUntil = BotPoseSeconds( toMove );
+		}
+		if ( (float)_botThinkUntil > 0f ) return;
+
+		_botThinking = true;
+		_ = HostComputeBotMove( GameId, _takebackEpoch, Game.MoveCount, Game.Fen,
+			(BotLevel)level, GameId * 4096 + Game.MoveCount );
+	}
+
+	/// <summary>Search on a worker thread, then apply on the main thread — but only if the
+	/// game is still exactly where it was when the search started. Anything that moved the
+	/// position under it (a takeback, the game ending, a resync) discards the result.</summary>
+	async Task HostComputeBotMove( int gameId, int epoch, int ply, string fen, BotLevel level, int seed )
+	{
+		string uci = null;
+		try
+		{
+			// The heavy part, off the main thread. A fresh ChessGame from the FEN is fully
+			// isolated from the live Game, so mutating its board during search races nothing.
+			uci = await GameTask.RunInThreadAsync( () =>
+				ChessGame.TryFromFen( fen, out var pos ) ? pos.BestMove( level, seed ) : null );
+		}
+		catch ( Exception )
+		{
+			// The task source cancels when the component/context goes invalid (table torn
+			// down mid-search) — nothing to do but drop the move.
+			return;
+		}
+		finally
+		{
+			_botThinking = false;
+		}
+
+		// Back on the main thread. Re-validate everything the move depends on before playing.
+		if ( !Networking.IsHost || uci == null ) return;
+		if ( gameId != GameId || Phase != PhasePlaying || GameOver ) return;
+		if ( epoch != _takebackEpoch ) return;                  // a takeback rewound mid-think
+		if ( Game == null || Game.MoveCount != ply || Game.Fen != fen ) return; // position advanced
+		if ( Station == null ) return;
+
+		var toMove = Game.WhiteToMove ? ChessSeat.White : ChessSeat.Black;
+		if ( Station.SeatBot( toMove ) == 0 ) return;           // no longer a bot's turn
+
+		if ( Game.ApplyUci( uci ) )
+			NetChessMove( GameId, _takebackEpoch, uci, Game.Fen );
+	}
+
+	/// <summary>Seconds the bot visibly "poses" before searching. Capped to a fraction of its
+	/// own clock so posing can never flag it on a fast control — the SEARCH also runs on its
+	/// clock, but is bounded by the engine's node cap.</summary>
+	float BotPoseSeconds( ChessSeat seat )
+	{
+		const float pose = 0.5f;
+		if ( Tc.IsUnlimited ) return pose;
+		float remaining = seat == ChessSeat.White ? _whiteRemaining : _blackRemaining;
+		float cap = remaining * 0.15f;
+		return pose < cap ? pose : cap;
+	}
+
+	/// <summary>Host-side: answer the human's standing offers on the bot's behalf. The
+	/// computer accepts a takeback (friendly for casual play — let them undo a blunder) and
+	/// declines a draw (it plays on to a finish). Without this, a draw or takeback button in a
+	/// solo game would offer into a void and sit there forever.</summary>
+	void HostBotOffers()
+	{
+		ChessSeat? bot = Station.WhiteBot != 0 ? ChessSeat.White
+			: Station.BlackBot != 0 ? ChessSeat.Black
+			: null;
+		if ( bot is not { } botSeat ) return;
+		bool botWhite = botSeat == ChessSeat.White;
+
+		// The human's offers stand on the OTHER seat.
+		if ( botWhite ? BlackTakebackOffer : WhiteTakebackOffer )
+		{
+			HostApplyTakeback( acceptedByWhite: botWhite );
+			return;
+		}
+		if ( botWhite ? BlackDrawOffer : WhiteDrawOffer )
+		{
+			if ( botWhite ) BlackDrawOffer = false; else WhiteDrawOffer = false;
+		}
+	}
+
+	/// <summary>The seat label a computer opponent shows on the board and HUD.</summary>
+	static string BotName( BotLevel level ) => level switch
+	{
+		BotLevel.Easy => "Computer (Easy)",
+		BotLevel.Medium => "Computer (Medium)",
+		BotLevel.Hard => "Computer (Hard)",
+		_ => "Computer",
+	};
+
+	/// <summary>Local seated player: fill the opposite seat with a computer opponent at the
+	/// given difficulty and start the game (a bot seat is always "ready", so readying the
+	/// caller is the last thing the start condition waits on). Also used to re-arm a rematch
+	/// after a result, and to change difficulty on an idle table.</summary>
+	public void PlayComputer( BotLevel level )
+	{
+		if ( LocalSeat == null || Playing ) return;
+		if ( level == BotLevel.None ) return;
+		RequestPlayComputerHost( (int)level );
+	}
+
+	[Rpc.Host]
+	void RequestPlayComputerHost( int level )
+	{
+		if ( Station == null || Phase == PhasePlaying ) return;
+		if ( level < (int)BotLevel.Easy || level > (int)BotLevel.Hard ) return;
+		if ( !IsSeatedCaller( out var seat ) ) return;
+
+		var botSeat = seat == ChessSeat.White ? ChessSeat.Black : ChessSeat.White;
+		// A computer only ever fills an EMPTY side — never displaces a second human.
+		if ( Station.SeatHasHuman( botSeat ) ) return;
+
+		Station.SetBot( botSeat, level, BotName( (BotLevel)level ) );
+
+		// Ready the caller; HostUpdate starts the game on its next tick.
+		if ( seat == ChessSeat.White ) WhiteReady = true; else BlackReady = true;
+	}
+
+	/// <summary>Local seated player: remove the computer opponent (to play a person instead).
+	/// Idle/over tables only — the host enforces that.</summary>
+	public void RemoveComputer()
+	{
+		if ( LocalSeat == null || Playing ) return;
+		RequestRemoveComputerHost();
+	}
+
+	[Rpc.Host]
+	void RequestRemoveComputerHost()
+	{
+		if ( Station == null || Phase == PhasePlaying ) return;
+		if ( !IsSeatedCaller( out var seat ) ) return;
+		Station.ClearBot( seat == ChessSeat.White ? ChessSeat.Black : ChessSeat.White );
+	}
+
+	/// <summary>A computer opponent holds a seat at this table.</summary>
+	public bool HasBotOpponent =>
+		Station != null && ( Station.WhiteBot != 0 || Station.BlackBot != 0 );
+
+	/// <summary>The opposite seat is free for a computer opponent: the local player holds a
+	/// seat and the other side has no human on it.</summary>
+	public bool CanAddBot =>
+		!Playing && LocalSeat is { } seat && Station != null
+		&& !Station.SeatHasHuman( seat == ChessSeat.White ? ChessSeat.Black : ChessSeat.White );
 
 	// ── Moves ──
 

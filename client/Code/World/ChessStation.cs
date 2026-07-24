@@ -52,9 +52,45 @@ public sealed class ChessStation : Component
 	[Sync( SyncFlags.FromHost )] public ulong BlackSteamId { get; set; }
 	[Sync( SyncFlags.FromHost )] public string BlackName { get; set; }
 
+	/// <summary>Difficulty of the computer opponent occupying each seat, as a
+	/// <see cref="Gambit.Chess.BotLevel"/> cast to int — 0 means "no bot" (a human seat,
+	/// or empty). Host-authoritative like the SteamIds, so everyone sees the "Computer
+	/// (Hard)" opponent and a spectator can watch the game. A bot seat carries a
+	/// <see cref="WhiteName"/>/<see cref="BlackName"/> too (its label) but SteamId 0 — it
+	/// is never a real account, so it never authorises an RPC or archives as anyone. Placed
+	/// and cleared by LocalGameController (which knows the game phase); this just holds it.</summary>
+	[Sync( SyncFlags.FromHost )] public int WhiteBot { get; set; }
+	[Sync( SyncFlags.FromHost )] public int BlackBot { get; set; }
+
+	/// <summary>Difficulty of the bot in a seat (0 = none).</summary>
+	public int SeatBot( ChessSeat seat ) => seat == ChessSeat.White ? WhiteBot : BlackBot;
+
+	/// <summary>A computer opponent holds this seat.</summary>
+	public bool SeatIsBot( ChessSeat seat ) => SeatBot( seat ) != 0;
+
+	/// <summary>A real human holds this seat.</summary>
+	public bool SeatHasHuman( ChessSeat seat ) => SeatSteamId( seat ) != 0;
+
+	/// <summary>Any real human is seated at this table (a bot alone doesn't count).</summary>
+	public bool AnyHumanSeated => WhiteSteamId != 0 || BlackSteamId != 0;
+
+	/// <summary>Host-side: seat a computer opponent (with its label), or clear one. A bot
+	/// never occupies a SteamId — it is not an account — so a real player can never
+	/// inherit its seat the way they can inherit an emptied human one.</summary>
+	internal void SetBot( ChessSeat seat, int level, string name )
+	{
+		if ( seat == ChessSeat.White ) { WhiteBot = level; WhiteName = name; }
+		else { BlackBot = level; BlackName = name; }
+	}
+
+	internal void ClearBot( ChessSeat seat )
+	{
+		if ( seat == ChessSeat.White ) { if ( WhiteBot != 0 ) { WhiteBot = 0; WhiteName = null; } }
+		else { if ( BlackBot != 0 ) { BlackBot = 0; BlackName = null; } }
+	}
 
 	public bool SeatTaken( ChessSeat seat ) =>
-		SeatSteamId( seat ) != 0 || ( Active == this && ActiveSeat == seat );
+		SeatSteamId( seat ) != 0 || SeatIsBot( seat ) || ( Active == this && ActiveSeat == seat );
 
 	public bool AnySeatTaken =>
 		WhiteSteamId != 0 || BlackSteamId != 0 || Active == this;

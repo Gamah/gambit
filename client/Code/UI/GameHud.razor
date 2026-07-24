@@ -11,16 +11,18 @@
 
 @*
 	Seated-game HUD: seat names, whose turn, the status/turn line, standing draw and
-	takeback offers, the SAN move list, the waiting-on-an-opponent controls (a seek, a
-	named challenge, a shareable link), and resign, plus the result after the game.
+	takeback offers, the waiting-on-an-opponent controls (a seek, a named challenge, a
+	shareable link), and resign, plus the result after the game.
 	Attached to the scene ScreenPanel at runtime by LobbyPlayer.EnsureGameHud.
 	Screen-space overlay: the board itself is the 3D world — this sits in a column on the
 	right edge, clear of the board (px values are uncalibrated, tune in-editor).
 
-	Two pieces split out of here in M17 (this file was 1089 lines): the pre-game SETUP
-	block (time control + the four lichess start flows + Ready) is now <SetupPanel />,
-	rendered in-column where the block was; the PROMOTION picker is now <PromotionPanel />,
-	a full-screen sibling of the column. Both are nested @inherits Panel widgets that
+	Pieces split out of here to keep this column short: the pre-game SETUP block (time
+	control + the four lichess start flows + Ready) is <SetupPanel /> (M17), rendered
+	in-column where the block was; the PROMOTION picker is <PromotionPanel /> (M17), a
+	full-screen sibling; and the SAN MOVE LIST is now <MoveHistoryPanel /> (M19), its own
+	column on the LEFT edge — a long game used to push this whole right-hand menu down and
+	shove the buttons off the bottom. All three are nested @inherits Panel widgets that
 	re-resolve the controllers off ChessStation.Active and carry their own style and
 	repaint hash — s&box panel stylesheets don't reliably cross a nested-panel boundary,
 	so a split panel that leaned on this file's <style> would render unstyled.
@@ -166,15 +168,9 @@
 			   style, and keeps ticking through a seek to resolve the assigned seat. *@
 			<SetupPanel />
 
-			@if ( Source()?.Game != null )
-			{
-				<div class="moves">
-					@foreach ( var row in MoveRows( Source() ) )
-					{
-						<div class="move-row">@row</div>
-					}
-				</div>
-			}
+			@* The SAN move list moved to its own column on the LEFT (M19, MoveHistoryPanel):
+			   a long game used to push this whole right-hand menu down and shove the buttons
+			   off the bottom. It's a sibling below, not here. *@
 
 			@* Waiting on an opponent who isn't in this lobby — a lobby seek, or a
 			   named user who hasn't accepted our challenge yet. Cancelling is what
@@ -257,6 +253,7 @@
 			}
 		</div>
 
+		<MoveHistoryPanel />
 		<PromotionPanel />
 	}
 </root>
@@ -352,16 +349,6 @@
 	/* Same purple as the board's premove highlight (ChessBoardView.PremoveTint) —
 	   the line and the squares are one statement. */
 	.reason.premove { color: rgba(197, 120, 240, 0.95); }
-
-	.moves {
-		flex-direction: column;
-		max-height: 180px;
-		overflow: hidden;
-		background-color: rgba(255, 255, 255, 0.05);
-		border-radius: 6px;
-		padding: 6px 10px;
-	}
-	.move-row { font-size: 13px; font-family: monospace; color: rgba(255, 255, 255, 0.8); }
 
 	.button {
 		padding: 6px 12px;
@@ -624,25 +611,6 @@
 		if ( src.IsMyTurn )
 			return src.Game.IsCheck ? "Your move — check!" : "Your move";
 		return src.Game.WhiteToMove ? "White is thinking…" : "Black is thinking…";
-	}
-
-	/// <summary>Last few full-move rows, "12. Nf3 Nc6" style. The list column is
-	/// fixed-height with overflow hidden (drag-scroll fights clicks — CLAUDE.md),
-	/// so we render only the tail.</summary>
-	static IEnumerable<string> MoveRows( IBoardGame src )
-	{
-		var san = src?.Game?.SanMoves;
-		if ( san == null || san.Count == 0 ) yield break;
-
-		const int maxRows = 12;
-		int totalRows = ( san.Count + 1 ) / 2;
-		for ( int row = Math.Max( 0, totalRows - maxRows ); row < totalRows; row++ )
-		{
-			int i = row * 2;
-			string line = $"{row + 1}. {san[i]}";
-			if ( i + 1 < san.Count ) line += $"  {san[i + 1]}";
-			yield return line;
-		}
 	}
 
 	/// <summary>Repaint triggers. The seat lines are still hashed as their rendered

@@ -6,6 +6,7 @@
 @using Gambit.World;
 @using Gambit.Game;
 @using Gambit.Api;
+@using Gambit.Chess;
 @namespace Gambit.UI
 @inherits Panel
 
@@ -43,6 +44,30 @@
 					onclick="@( () => ctrl.RequestSetTimeControl( index ) )">@TimeControl.All[index].Name</div>
 			}
 		</div>
+
+		@* Play the computer (M19). The solo entry point — a full local game against the
+		   built-in engine, needing no lichess account and no second player, at ANY time
+		   control (bullet included: nothing here has to clear lichess's speed floors).
+		   Shown to a seated player whose opposite side has no human, or whenever a computer
+		   is already at the table (change its difficulty, or start a rematch). *@
+		@if ( ctrl.CanAddBot || ctrl.HasBotOpponent )
+		{
+			<div class="setup-label">PLAY THE COMPUTER</div>
+			<div class="seek-row">
+				<div class="chip @( _botLevel == BotLevel.Easy ? "on" : "" )" onclick="@( () => SetBotLevel( BotLevel.Easy ) )">Easy</div>
+				<div class="chip @( _botLevel == BotLevel.Medium ? "on" : "" )" onclick="@( () => SetBotLevel( BotLevel.Medium ) )">Medium</div>
+				<div class="chip @( _botLevel == BotLevel.Hard ? "on" : "" )" onclick="@( () => SetBotLevel( BotLevel.Hard ) )">Hard</div>
+			</div>
+			<div class="button bot" onclick="@( () => ctrl.PlayComputer( _botLevel ) )">♟ Play the computer</div>
+			@if ( ctrl.HasBotOpponent )
+			{
+				<div class="setup-remove" onclick="@( () => ctrl.RemoveComputer() )">Remove computer — play a person instead</div>
+			}
+			else
+			{
+				<div class="setup-hint">No account needed. Play a full game against the built-in engine.</div>
+			}
+		}
 
 		@* Lichess (M8). Two ways to put a real game on your lichess record: play the
 		   person opposite you, or play a stranger. Each is offered only where it could
@@ -161,6 +186,11 @@
 		{
 			<div class="button ready @( LocalReady( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleReady() )">@ReadyText( ctrl )</div>
 		}
+		else if ( ctrl.CanAddBot || ctrl.HasBotOpponent )
+		{
+			@* A solo player has a real action above — don't tell them to go find a person. *@
+			<div class="setup-hint">Waiting for a second player — or play the computer above.</div>
+		}
 		else
 		{
 			<div class="setup-hint">Ready unlocks when both seats fill</div>
@@ -211,6 +241,19 @@
 		justify-content: center;
 	}
 	.button:hover { background-color: rgba(90, 140, 255, 0.45); }
+
+	/* Play-the-computer: a violet tint, distinct from lichess's white and Ready's green. */
+	.button.bot { background-color: rgba(150, 120, 235, 0.3); }
+	.button.bot:hover { background-color: rgba(150, 120, 235, 0.5); }
+
+	/* A quiet, clickable "remove computer" line — reads as a link, not a button. */
+	.setup-remove {
+		font-size: 12px;
+		color: rgba(255, 255, 255, 0.5);
+		cursor: pointer;
+		pointer-events: all;
+	}
+	.setup-remove:hover { color: rgba(255, 180, 180, 0.9); }
 
 	.button.ready { background-color: rgba(127, 212, 127, 0.22); }
 	.button.ready:hover { background-color: rgba(127, 212, 127, 0.4); }
@@ -327,6 +370,12 @@
 		if ( ctrl?.LocalSeat is not { } seat ) return null;
 		return seat == ChessSeat.White ? "White" : "Black";
 	}
+
+	// ── Computer opponent (this player's chosen difficulty; doesn't outlive the HUD) ──
+
+	BotLevel _botLevel = BotLevel.Medium;
+
+	void SetBotLevel( BotLevel level ) { _botLevel = level; StateHasChanged(); }
 
 	// ── Seek preferences (this player's, for their next seek; don't outlive the HUD) ──
 
@@ -483,6 +532,9 @@
 				ctrl?.BothWantLichess, LichessLinkState.Linked, LichessLinkState.Username,
 				// The one-game gate: repaint when a lichess game starts/ends at another table.
 				LobbyPlayer.Local?.LichessGameElsewhere( Station() )?.Number ),
-			System.HashCode.Combine( _seekRated, _seekColor, _challengeRated, _openRated, _openColor ) );
+			System.HashCode.Combine( _seekRated, _seekColor, _challengeRated, _openRated, _openColor,
+				// Computer opponent: repaint when one is added/removed at this table, when the
+				// opposite seat frees up (CanAddBot), or when the player picks a difficulty.
+				ctrl?.HasBotOpponent, ctrl?.CanAddBot, _botLevel ) );
 	}
 }
