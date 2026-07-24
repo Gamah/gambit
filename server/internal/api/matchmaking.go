@@ -135,12 +135,11 @@ func (h *handler) postMatchmaking(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/v1/matchmaking — open games, not your own, newest first.
 func (h *handler) listMatchmaking(w http.ResponseWriter, r *http.Request) {
-	steamID, ok := h.requireSteam(w, r)
-	if !ok {
+	if _, ok := h.requireSteam(w, r); !ok {
 		return
 	}
 	limit := clampInt(r.URL.Query().Get("limit"), maxMatchListLimit, 1, maxMatchListLimit)
-	matches, err := store.ListOpenMatches(r.Context(), h.db, steamID, limit)
+	matches, err := store.ListOpenMatches(r.Context(), h.db, limit)
 	if err != nil {
 		h.log.Error("list matches failed", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -191,7 +190,10 @@ func (h *handler) getMatchmaking(w http.ResponseWriter, r *http.Request) {
 
 	out := matchListJSON(m)
 	if m.Status == "matched" {
-		out.YourColor = colorFor(m, steamID)
+		// The poller is the opener (only the opener polls a match for its outcome), so
+		// your_color is the opener's colour. The joiner already got its colour from the
+		// join response — role-based, so it holds even when both SteamIDs are equal.
+		out.YourColor = colorWord(m.OpenerColor)
 		if m.GameID != nil {
 			out.GameID = *m.GameID
 		}
@@ -229,10 +231,8 @@ func (h *handler) joinMatchmaking(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if m.OpenerSteamID == joiner {
-		writeError(w, http.StatusBadRequest, "you can't join your own game")
-		return
-	}
+	// Self-join is allowed: playing yourself is a feature (and the one-machine test
+	// path). The two sides are told apart by opener_color, not by SteamID.
 	if m.Status != "open" {
 		writeError(w, http.StatusConflict, "that game is no longer open")
 		return
@@ -243,14 +243,20 @@ func (h *handler) joinMatchmaking(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The coin flip — gamchess assigns sides, neither client picks. crypto/rand so
-	// it isn't a predictable PRNG a client could line up against.
-	white, black := m.OpenerSteamID, joiner
+	// The coin flip — gamchess assigns sides, neither client picks (crypto/rand so it
+	// isn't a predictable PRNG). openerColor is the side the OPENER plays; the joiner
+	// plays the other. Stored so self-play (opener == joiner) still has two distinct
+	// sides addressable by role rather than by an ambiguous SteamID.
+	openerColor := "w"
 	if coinHeads() {
+		openerColor = "b"
+	}
+	white, black := m.OpenerSteamID, joiner
+	if openerColor == "b" {
 		white, black = joiner, m.OpenerSteamID
 	}
 
-	claimed, err := store.ClaimMatch(ctx, h.db, id, joiner, white, black, nil)
+	claimed, err := store.ClaimMatch(ctx, h.db, id, joiner, white, black, openerColor, nil)
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "someone else just took that game")
 		return
@@ -263,7 +269,7 @@ func (h *handler) joinMatchmaking(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]string{
 		"mode":       claimed.Mode,
-		"your_color": colorFor(claimed, joiner),
+		"your_color": oppositeColorWord(openerColor), // the joiner plays the other side
 	}
 	switch claimed.Mode {
 	case "join":
@@ -326,13 +332,25 @@ func matchListJSON(m store.Match) matchJSON {
 	}
 }
 
-// colorFor is the side steamID plays in a matched game, "white"/"black"/"".
-func colorFor(m store.Match, steamID int64) string {
-	if m.WhiteSteamID != nil && *m.WhiteSteamID == steamID {
+// colorWord expands a stored "w"/"b" to "white"/"black" (or "" for neither). Role-based,
+// so it is correct even in self-play where a SteamID comparison would be ambiguous.
+func colorWord(short string) string {
+	switch short {
+	case "w":
 		return "white"
-	}
-	if m.BlackSteamID != nil && *m.BlackSteamID == steamID {
+	case "b":
 		return "black"
+	}
+	return ""
+}
+
+// oppositeColorWord is colorWord of the other side.
+func oppositeColorWord(short string) string {
+	switch short {
+	case "w":
+		return "black"
+	case "b":
+		return "white"
 	}
 	return ""
 }

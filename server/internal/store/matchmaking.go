@@ -29,19 +29,20 @@ type Match struct {
 	BlackSteamID  *int64
 	JoinerSteamID *int64
 	GameID        *string
+	OpenerColor   string // "w"/"b" once matched — the colour the OPENER plays
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
 
 const matchCols = `id, opener_steam_id, opener_name, lobby_id, mode, time_control,
                    status, white_steam_id, black_steam_id, joiner_steam_id, game_id,
-                   created_at, updated_at`
+                   opener_color, created_at, updated_at`
 
 func scanMatch(row pgx.Row) (Match, error) {
 	var m Match
 	err := row.Scan(&m.ID, &m.OpenerSteamID, &m.OpenerName, &m.LobbyID, &m.Mode,
 		&m.TimeControl, &m.Status, &m.WhiteSteamID, &m.BlackSteamID, &m.JoinerSteamID,
-		&m.GameID, &m.CreatedAt, &m.UpdatedAt)
+		&m.GameID, &m.OpenerColor, &m.CreatedAt, &m.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Match{}, ErrNotFound
 	}
@@ -81,12 +82,14 @@ func OpenMatch(ctx context.Context, db *pgxpool.Pool, m Match) (Match, error) {
 	return out, nil
 }
 
-// ListOpenMatches returns open advertisements NOT opened by exclude, newest first.
-func ListOpenMatches(ctx context.Context, db *pgxpool.Pool, exclude int64, limit int) ([]Match, error) {
+// ListOpenMatches returns open advertisements, newest first. It NO LONGER excludes
+// the caller's own: self-play (joining your own advert) is allowed, so you must be
+// able to see it. The client marks its own row.
+func ListOpenMatches(ctx context.Context, db *pgxpool.Pool, limit int) ([]Match, error) {
 	rows, err := db.Query(ctx, `
 		SELECT `+matchCols+` FROM matchmaking
-		WHERE status='open' AND opener_steam_id <> $1
-		ORDER BY created_at DESC LIMIT $2`, exclude, limit)
+		WHERE status='open'
+		ORDER BY created_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list matches: %w", err)
 	}
@@ -108,19 +111,22 @@ func MatchByID(ctx context.Context, db *pgxpool.Pool, id string) (Match, error) 
 }
 
 // ClaimMatch atomically flips an OPEN match to matched, recording the joiner, the
-// (already coin-flipped) colours and — for a relay game — its game_id. The
-// WHERE status='open' is the whole point: two joiners race, exactly one row is
-// updated, the loser gets ErrConflict. A player can't join their own match
-// (the caller checks, and opener<>joiner is asserted here too).
-func ClaimMatch(ctx context.Context, db *pgxpool.Pool, id string, joiner, white, black int64, gameID *string) (Match, error) {
+// (already coin-flipped) colours, the opener's colour and — for a relay game — its
+// game_id. The WHERE status='open' is the whole point: two joiners race, exactly one
+// row is updated, the loser gets ErrConflict.
+//
+// Self-join is ALLOWED (opener may equal joiner) — playing yourself is a feature and
+// the one-machine test path. opener_color is what lets the two sides be told apart
+// even when both SteamIDs are identical.
+func ClaimMatch(ctx context.Context, db *pgxpool.Pool, id string, joiner, white, black int64, openerColor string, gameID *string) (Match, error) {
 	m, err := scanMatch(db.QueryRow(ctx, `
 		UPDATE matchmaking
 		SET status='matched', joiner_steam_id=$2, white_steam_id=$3, black_steam_id=$4,
-		    game_id=$5, updated_at=NOW()
-		WHERE id=$1 AND status='open' AND opener_steam_id <> $2
-		RETURNING `+matchCols, id, joiner, white, black, gameID))
+		    opener_color=$5, game_id=$6, updated_at=NOW()
+		WHERE id=$1 AND status='open'
+		RETURNING `+matchCols, id, joiner, white, black, openerColor, gameID))
 	if errors.Is(err, ErrNotFound) {
-		return Match{}, ErrConflict // gone, already matched, or self-join
+		return Match{}, ErrConflict // gone or already matched
 	}
 	return m, err
 }

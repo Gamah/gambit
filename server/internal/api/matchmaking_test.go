@@ -2,8 +2,6 @@ package api
 
 import (
 	"testing"
-
-	"github.com/gamah/gambit/server/internal/store"
 )
 
 func TestParseTimeControl(t *testing.T) {
@@ -33,23 +31,19 @@ func TestParseTimeControl(t *testing.T) {
 	}
 }
 
-func TestColorFor(t *testing.T) {
-	white := int64(11111111111111111)
-	black := int64(22222222222222222)
-	other := int64(33333333333333333)
-	m := store.Match{WhiteSteamID: &white, BlackSteamID: &black}
-
-	if got := colorFor(m, white); got != "white" {
-		t.Errorf("white seat = %q, want white", got)
+func TestColorWords(t *testing.T) {
+	// Role-based, so it holds in self-play where a SteamID compare would be ambiguous.
+	if colorWord("w") != "white" || colorWord("b") != "black" || colorWord("") != "" {
+		t.Fatalf("colorWord wrong: %q %q %q", colorWord("w"), colorWord("b"), colorWord(""))
 	}
-	if got := colorFor(m, black); got != "black" {
-		t.Errorf("black seat = %q, want black", got)
+	if oppositeColorWord("w") != "black" || oppositeColorWord("b") != "white" || oppositeColorWord("") != "" {
+		t.Fatalf("oppositeColorWord wrong")
 	}
-	if got := colorFor(m, other); got != "" {
-		t.Errorf("non-participant = %q, want empty", got)
-	}
-	if got := colorFor(store.Match{}, white); got != "" {
-		t.Errorf("unmatched = %q, want empty", got)
+	// The invariant self-play relies on: opener and joiner always get opposite sides.
+	for _, c := range []string{"w", "b"} {
+		if colorWord(c) == oppositeColorWord(c) {
+			t.Fatalf("opener and joiner got the same side for %q", c)
+		}
 	}
 }
 
