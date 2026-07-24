@@ -1328,6 +1328,22 @@ public sealed class LocalGameController : Component, IBoardGame
 		RequestSetTimeControlHost( index );
 	}
 
+	/// <summary>Host-side: set this table's control directly (no seated-caller check) —
+	/// matchmaking (M19) picks the control the opener advertised before force-seating.</summary>
+	internal void HostSetTimeControlIndex( int index )
+	{
+		if ( !Networking.IsHost || Phase == PhasePlaying ) return;
+		if ( TimeControl.IsValidIndex( index ) ) TimeControlIndex = index;
+	}
+
+	/// <summary>Host-side: mark a seat ready without a request — matchmaking auto-readies
+	/// both paired seats so the game starts as soon as both are filled (M19).</summary>
+	internal void HostForceReady( ChessSeat seat )
+	{
+		if ( !Networking.IsHost ) return;
+		if ( seat == ChessSeat.White ) WhiteReady = true; else BlackReady = true;
+	}
+
 	[Rpc.Host]
 	void RequestSetTimeControlHost( int index )
 	{

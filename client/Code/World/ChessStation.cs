@@ -83,6 +83,12 @@ public sealed class ChessStation : Component
 		else { BlackBot = level; BlackName = name; }
 	}
 
+	/// <summary>Host-side: seat a specific player on a specific side, bypassing the
+	/// walk-up claim — used by matchmaking (M19) to drop two paired players onto a table
+	/// on gamchess's assigned colours. The seated client's own <c>Enter</c> re-claims the
+	/// seat idempotently (and refreshes the name) when it auto-engages.</summary>
+	internal void HostForceSeat( ChessSeat seat, ulong steamId, string name ) => SetSeat( seat, steamId, name );
+
 	internal void ClearBot( ChessSeat seat )
 	{
 		if ( seat == ChessSeat.White ) { if ( WhiteBot != 0 ) { WhiteBot = 0; WhiteName = null; } }

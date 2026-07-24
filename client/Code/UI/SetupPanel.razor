@@ -69,6 +69,48 @@
 			}
 		}
 
+		@* Find an opponent online (M19). Post THIS table as open, or join someone else's —
+		   the joiner drops into the opener's lobby and both are seated on RANDOM sides
+		   (the opener can't pick White). Only a lobby host can post (their lobby is the
+		   connect target); anyone can join. No lichess needed — just a Steam identity. *@
+		@if ( ShowMatchmaking( ctrl ) )
+		{
+			<div class="setup-label">FIND AN OPPONENT ONLINE</div>
+			@if ( Matchmaking.Waiting )
+			{
+				<div class="setup-hint">@Matchmaking.Status</div>
+				<div class="setup-remove" onclick="@( () => Matchmaking.CancelOpen() )">Cancel — stop looking</div>
+			}
+			else
+			{
+				@if ( Matchmaking.CanOpen )
+				{
+					<div class="button online" onclick="@( () => Matchmaking.OpenGame( ctrl.TimeControlIndex ) )">🌐 Post my game — random sides</div>
+				}
+				else
+				{
+					<div class="setup-hint">Only the lobby host can post a game; you can still join one below.</div>
+				}
+				@if ( Matchmaking.OpenGames.Length > 0 )
+				{
+					<div class="setup-hint">Open games (sides are random):</div>
+					@foreach ( var g in Matchmaking.OpenGames )
+					{
+						var gid = g.Id;
+						<div class="online-row" onclick="@( () => Matchmaking.Join( gid ) )">@OnlineRowText( g )</div>
+					}
+				}
+				else
+				{
+					<div class="setup-hint">No open games right now.</div>
+				}
+				@if ( !string.IsNullOrEmpty( Matchmaking.Status ) )
+				{
+					<div class="setup-hint">@Matchmaking.Status</div>
+				}
+			}
+		}
+
 		@* Lichess (M8). Two ways to put a real game on your lichess record: play the
 		   person opposite you, or play a stranger. Each is offered only where it could
 		   actually work — the two flows have DIFFERENT speed floors (blitz for a
@@ -246,6 +288,21 @@
 	.button.bot { background-color: rgba(150, 120, 235, 0.3); }
 	.button.bot:hover { background-color: rgba(150, 120, 235, 0.5); }
 
+	/* Find-an-opponent-online: a teal tint, its own family again. */
+	.button.online { background-color: rgba(60, 190, 190, 0.3); }
+	.button.online:hover { background-color: rgba(60, 190, 190, 0.5); }
+	/* A joinable open game — a clickable list row. */
+	.online-row {
+		font-size: 13px;
+		padding: 5px 8px;
+		border-radius: 5px;
+		cursor: pointer;
+		pointer-events: all;
+		background-color: rgba(60, 190, 190, 0.12);
+		color: rgba(255, 255, 255, 0.85);
+	}
+	.online-row:hover { background-color: rgba(60, 190, 190, 0.3); }
+
 	/* A quiet, clickable "remove computer" line — reads as a link, not a button. */
 	.setup-remove {
 		font-size: 12px;
@@ -376,6 +433,21 @@
 	BotLevel _botLevel = BotLevel.Medium;
 
 	void SetBotLevel( BotLevel level ) { _botLevel = level; StateHasChanged(); }
+
+	// ── Find an opponent online (matchmaking, M19) ──
+
+	/// <summary>Show the online-opponent block when seated at an idle table with the
+	/// opposite side free — the same "solo player looking for a game" gate as the
+	/// computer option (a table already holding a bot or a second human isn't looking).</summary>
+	static bool ShowMatchmaking( LocalGameController ctrl ) =>
+		ctrl is { CanAddBot: true, HasBotOpponent: false };
+
+	static string OnlineRowText( MatchmakingApi.MatchItem g )
+	{
+		string who = string.IsNullOrEmpty( g.OpenerName ) ? "Someone" : g.OpenerName;
+		string tc = string.IsNullOrEmpty( g.TimeControl ) ? "" : $" · {g.TimeControl}";
+		return $"▶ {who}{tc}";
+	}
 
 	// ── Seek preferences (this player's, for their next seek; don't outlive the HUD) ──
 
@@ -513,6 +585,11 @@
 				_seatAlignPending = false;
 			}
 		}
+
+		// While the online-opponent block is showing and we're not already waiting on our
+		// own advert, keep the open-games list fresh (Matchmaking throttles the poll).
+		if ( ShowMatchmaking( Controller() ) && !Matchmaking.Waiting )
+			Matchmaking.WantList();
 	}
 
 	/// <summary>Repaint triggers — everything this panel's markup reads. Flat, unlike the
@@ -535,6 +612,9 @@
 			System.HashCode.Combine( _seekRated, _seekColor, _challengeRated, _openRated, _openColor,
 				// Computer opponent: repaint when one is added/removed at this table, when the
 				// opposite seat frees up (CanAddBot), or when the player picks a difficulty.
-				ctrl?.HasBotOpponent, ctrl?.CanAddBot, _botLevel ) );
+				ctrl?.HasBotOpponent, ctrl?.CanAddBot, _botLevel,
+				// Matchmaking: the waiting state, the status line, and how many open games
+				// are listed — enough to repaint as adverts come and go.
+				System.HashCode.Combine( Matchmaking.Waiting, Matchmaking.Status, Matchmaking.OpenGames.Length ) ) );
 	}
 }

@@ -68,10 +68,14 @@ type matchJSON struct {
 	TimeControl string `json:"time_control"`
 	Status      string `json:"status"`
 	CreatedAt   string `json:"created_at"`
-	// Set only on the opener's own poll of a matched row, so they learn the
-	// outcome: their colour, and (relay) the game to start relaying.
-	YourColor string `json:"your_color,omitempty"`
-	GameID    string `json:"game_id,omitempty"`
+	// Set only on a participant's poll of a matched row, so they learn the outcome:
+	// their colour, (relay) the game to start relaying, and — for the opener host,
+	// which seats both players — who plays which side. SteamIDs are strings.
+	YourColor    string `json:"your_color,omitempty"`
+	GameID       string `json:"game_id,omitempty"`
+	WhiteSteamID string `json:"white_steam_id,omitempty"`
+	BlackSteamID string `json:"black_steam_id,omitempty"`
+	OpponentName string `json:"opponent_name,omitempty"`
 }
 
 // POST /api/v1/matchmaking — advertise an open game. Opener is the verified caller.
@@ -190,6 +194,13 @@ func (h *handler) getMatchmaking(w http.ResponseWriter, r *http.Request) {
 		out.YourColor = colorFor(m, steamID)
 		if m.GameID != nil {
 			out.GameID = *m.GameID
+		}
+		// The opener host seats both players, so it needs the assignment as SteamIDs.
+		if m.WhiteSteamID != nil {
+			out.WhiteSteamID = strconv.FormatInt(*m.WhiteSteamID, 10)
+		}
+		if m.BlackSteamID != nil {
+			out.BlackSteamID = strconv.FormatInt(*m.BlackSteamID, 10)
 		}
 	}
 	writeJSON(w, http.StatusOK, out)

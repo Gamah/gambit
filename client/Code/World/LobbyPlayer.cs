@@ -219,6 +219,11 @@ public sealed class LobbyPlayer : Component
 			return;
 		}
 
+		// Cross-session matchmaking (M19): poll our own open advert, and auto-engage the
+		// seat a match dropped us into. Client-local; a no-op unless we're waiting or just
+		// joined. Runs even while engaged — a joiner needs to be seated into their game.
+		Gambit.Game.Matchmaking.Tick();
+
 		// Fell off the map: only possible while roaming (the controller is off while
 		// engaged), so catch it before the engage/leave handling below.
 		if ( !Engaged && !_leaving && WorldPosition.z < FallKillZ )
