@@ -58,7 +58,7 @@
 				<div class="chip @( _botLevel == BotLevel.Medium ? "on" : "" )" onclick="@( () => SetBotLevel( BotLevel.Medium ) )">Medium</div>
 				<div class="chip @( _botLevel == BotLevel.Hard ? "on" : "" )" onclick="@( () => SetBotLevel( BotLevel.Hard ) )">Hard</div>
 			</div>
-			<div class="button bot" onclick="@( () => ctrl.PlayComputer( _botLevel ) )">♟ Play the computer (@_botLevel)</div>
+			<div class="button bot" onclick="@( () => ctrl.PlayComputer( _botLevel ) )">♟ Play the computer</div>
 			@if ( ctrl.HasBotOpponent )
 			{
 				<div class="setup-remove" onclick="@( () => ctrl.RemoveComputer() )">Remove computer — play a person instead</div>
