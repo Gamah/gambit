@@ -99,10 +99,11 @@
 {
 	static LocalGameController Controller() => LocalGameController.For( ChessStation.Active );
 	static LichessGameController Lichess() => LichessGameController.For( ChessStation.Active );
+	static RelayGameController Relay() => RelayGameController.For( ChessStation.Active );
 
 	/// <summary>Whichever controller owns this board — the same seam the HUD, the view and
 	/// the sounds resolve through, so the history can't describe a different game.</summary>
-	static IBoardGame Source() => BoardGame.Source( Controller(), Lichess() );
+	static IBoardGame Source() => BoardGame.Source( Controller(), Lichess(), Relay() );
 
 	/// <summary>Only while seated with the camera settled — mirrors GameHud.Visible so the
 	/// two columns appear and disappear together.</summary>

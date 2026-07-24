@@ -33,11 +33,12 @@ public sealed class TableSounds : Component
 	[Property] public ChessStation Station { get; set; }
 	[Property] public LocalGameController Controller { get; set; }
 	[Property] public LichessGameController Lichess { get; set; }
+	[Property] public RelayGameController Relay { get; set; }
 
 	/// <summary>Whichever game owns this board — resolved exactly as
 	/// <see cref="ChessBoardView.Source"/> does, and for the same reason. If these two
 	/// ever disagree, the board and its sounds are describing different games.</summary>
-	IBoardGame Source => BoardGame.Source( Controller, Lichess );
+	IBoardGame Source => BoardGame.Source( Controller, Lichess, Relay );
 
 	/// <summary>Am I the one sitting here? Decides 2D vs positional for everything.</summary>
 	bool Mine => ChessStation.Active == Station;

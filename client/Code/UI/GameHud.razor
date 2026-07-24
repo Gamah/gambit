@@ -92,6 +92,22 @@
 				}
 
 			}
+			@* A gamchess relay game (matchmaking, M19): gamchess is the authority, so read
+			   the relay controller's state, not the idle local table's. *@
+			else if ( OnRelay() )
+			{
+				var rc = Relay();
+				@if ( rc.GameOver )
+				{
+					<div class="status over">@rc.ResultString</div>
+					<div class="reason">@rc.OverReason</div>
+					<div class="button" onclick="@( () => LeaveRelay() )">New game — clear the board</div>
+				}
+				else
+				{
+					<div class="status turn">@TurnText( Source() )</div>
+				}
+			}
 			else if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
 			{
 				<div class="status">@WaitingText()</div>
@@ -285,8 +301,10 @@
 			   resigns, so this button is the ONLY way to end a live game from the board. *@
 			@if ( ( Source()?.Playing ?? false ) )
 			{
-				<div class="button resign" onclick="@( () => LobbyPlayer.Local?.Resign() )">
-					@( ( LobbyPlayer.Local?.LeaveArmed ?? false ) ? "Sure? Resign the game" : "Resign" )
+				@* Relay resigns in one click (no LobbyPlayer arming — that's a
+				   local/lichess seat concept); everything else keeps the two-stage confirm. *@
+				<div class="button resign" onclick="@( () => ResignBoard() )">
+					@( ( !OnRelay() && ( LobbyPlayer.Local?.LeaveArmed ?? false ) ) ? "Sure? Resign the game" : "Resign" )
 				</div>
 			}
 		</div>
@@ -470,10 +488,17 @@
 	/// <summary>The lichess controller beside the table we're seated at.</summary>
 	static LichessGameController Lichess() => LichessGameController.For( ChessStation.Active );
 
+	/// <summary>The gamchess relay controller beside the table (matchmaking, M19).</summary>
+	static RelayGameController Relay() => RelayGameController.For( ChessStation.Active );
+
+	/// <summary>A gamchess relay game (online opponent, or yourself across two hosts) owns
+	/// this board right now.</summary>
+	static bool OnRelay() => Relay() is { Engaged: true };
+
 	/// <summary>Whichever controller owns this board. Goes through BoardGame.Source, the
 	/// one copy of that resolution — the view, the sounds and the table clock all ask it
 	/// too, so none of them can end up describing a different game from this HUD.</summary>
-	static IBoardGame Source() => BoardGame.Source( Controller(), Lichess() );
+	static IBoardGame Source() => BoardGame.Source( Controller(), Lichess(), Relay() );
 
 	/// <summary>A real lichess game owns this board right now — the HUD reads
 	/// lichess's state instead of the local table's.</summary>
@@ -504,6 +529,23 @@
 	{
 		Lichess()?.DismissFinished();
 		Controller()?.RequestNewGame();
+		StateHasChanged();
+	}
+
+	/// <summary>Clear a finished relay game off the board (matchmaking, M19) and return the
+	/// table to setup — the relay equivalent of NewGame.</summary>
+	void LeaveRelay()
+	{
+		Relay()?.Disengage();
+		StateHasChanged();
+	}
+
+	/// <summary>Resign whichever game owns the board — the relay controller resigns through
+	/// gamchess, everything else through LobbyPlayer (the two-stage local/lichess resign).</summary>
+	void ResignBoard()
+	{
+		if ( OnRelay() ) Relay()?.Resign();
+		else LobbyPlayer.Local?.Resign();
 		StateHasChanged();
 	}
 
@@ -748,6 +790,9 @@
 				// PREFERENCES moved to SetupPanel with the setup block (M17), and hash there.
 				System.HashCode.Combine(
 					Lichess()?.Challenging, Lichess()?.ChallengeOpponent,
-					Lichess()?.Opening, Lichess()?.ShareUrl, _shareCopied < 2f ) ) );
+					Lichess()?.Opening, Lichess()?.ShareUrl, _shareCopied < 2f ),
+				// Relay (matchmaking, M19): which branch shows and its result. Moves and turn
+				// already ride src.Game.MoveCount / src.IsMyTurn above.
+				System.HashCode.Combine( OnRelay(), Relay()?.GameOver, Relay()?.OverReason ) ) );
 	}
 }

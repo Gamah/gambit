@@ -50,6 +50,10 @@ public sealed class ChessBoardView : Component
 	/// game is running at this table (M8).</summary>
 	[Property] public LichessGameController Lichess { get; set; }
 
+	/// <summary>Set by ChessRing at build. Drives the board while a gamchess RELAY game
+	/// (matchmaking, M19) is running at this table.</summary>
+	[Property] public RelayGameController Relay { get; set; }
+
 	/// <summary>Which controller owns the board.
 	///
 	/// <para>Nothing below ever branches on the source, and it is why M8 needed no
@@ -60,7 +64,7 @@ public sealed class ChessBoardView : Component
 	/// the sounds and the table clock all ask it, so they cannot end up describing
 	/// different games. The lichess controller claims the board only once the local player
 	/// has opted in at this table; otherwise the local game owns it, unchanged.</para></summary>
-	IBoardGame Source => BoardGame.Source( Controller, Lichess );
+	IBoardGame Source => BoardGame.Source( Controller, Lichess, Relay );
 
 	/// <summary>The local player may arm a premove right now: a live game they're
 	/// seated in, with the BOARD saying the opponent is on move.

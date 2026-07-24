@@ -85,11 +85,12 @@
 			{
 				@if ( Matchmaking.CanOpen )
 				{
+					<div class="seek-row">
+						<div class="chip @( Matchmaking.OpenMode == "relay" ? "on" : "" )" onclick="@( () => SetOpenMode( "relay" ) )">Play here</div>
+						<div class="chip @( Matchmaking.OpenMode == "join" ? "on" : "" )" onclick="@( () => SetOpenMode( "join" ) )">Join up</div>
+					</div>
 					<div class="button online" onclick="@( () => Matchmaking.OpenGame( ctrl.TimeControlIndex ) )">🌐 Post my game — random sides</div>
-				}
-				else
-				{
-					<div class="setup-hint">Only the lobby host can post a game; you can still join one below.</div>
+					<div class="setup-hint">@OpenModeHint()</div>
 				}
 				@if ( Matchmaking.OpenGames.Length > 0 )
 				{
@@ -364,6 +365,11 @@
 	static ChessStation Station() => ChessStation.Active;
 	static LocalGameController Controller() => LocalGameController.For( ChessStation.Active );
 	static LichessGameController Lichess() => LichessGameController.For( ChessStation.Active );
+	static RelayGameController Relay() => RelayGameController.For( ChessStation.Active );
+
+	/// <summary>A gamchess relay game (matchmaking) owns this board right now — the setup
+	/// block hides under it, same as under a lichess game.</summary>
+	static bool OnRelay() => Relay() is { Engaged: true };
 
 	/// <summary>A real lichess game owns this board right now.</summary>
 	static bool OnLichess() => Lichess() is { Engaged: true };
@@ -386,7 +392,7 @@
 	/// finished lichess game with no time control and no Ready — the pair would have to
 	/// stand up and re-sit to play again.</para></summary>
 	static bool ShowSetup( LocalGameController ctrl ) =>
-		ctrl != null && !ctrl.Playing && !LichessInFlight();
+		ctrl != null && !ctrl.Playing && !LichessInFlight() && !OnRelay();
 
 	static bool BothSeated() =>
 		Station() is { } s && s.WhiteSteamId != 0 && s.BlackSteamId != 0;
@@ -446,8 +452,15 @@
 	{
 		string who = string.IsNullOrEmpty( g.OpenerName ) ? "Someone" : g.OpenerName;
 		string tc = string.IsNullOrEmpty( g.TimeControl ) ? "" : $" · {g.TimeControl}";
-		return $"▶ {who}{tc}";
+		string mode = g.Mode == "join" ? " · join up" : "";
+		return $"▶ {who}{tc}{mode}";
 	}
+
+	void SetOpenMode( string mode ) { Matchmaking.OpenMode = mode; StateHasChanged(); }
+
+	static string OpenModeHint() => Matchmaking.OpenMode == "join"
+		? "Your opponent hops into your lobby and plays at this table."
+		: "You both stay in your own lobbies; the game runs on the server. This is how you play yourself across two windows.";
 
 	// ── Seek preferences (this player's, for their next seek; don't outlive the HUD) ──
 
@@ -616,6 +629,6 @@
 				// Difficulty pick + matchmaking (waiting state, status line, and how many open
 				// games are listed) — nested to stay within Combine's 8-arg limit.
 				System.HashCode.Combine( _botLevel, Matchmaking.Waiting, Matchmaking.Status,
-					Matchmaking.OpenGames.Length ) ) );
+					Matchmaking.OpenGames.Length, Matchmaking.OpenMode, OnRelay() ) ) );
 	}
 }

@@ -42,10 +42,16 @@ public static class Matchmaking
 	/// <summary>A one-line status for the panel ("Waiting for an opponent…", an error…).</summary>
 	public static string Status { get; private set; } = "";
 
-	/// <summary>Only a lobby HOST can advertise a joinable game — the lobby_id is the
-	/// host's SteamId, and a joined client can't hand out a lobby that isn't theirs. A
-	/// non-host can still browse and join.</summary>
-	public static bool CanOpen => Networking.IsHost;
+	/// <summary>Anyone may advertise a game. (A 'join' game needs the opener to be the
+	/// lobby host — the lobby_id is their host SteamId — but a 'relay' game needs no lobby
+	/// at all, so posting is always available and the mode decides the rest.)</summary>
+	public static bool CanOpen => true;
+
+	/// <summary>How this player's next posted game runs: "relay" (both stay put, gamchess
+	/// relays — the self-play / two-hosts path) or "join" (the joiner enters your lobby).
+	/// Relay is the default because it needs no shared lobby and is the one that works when
+	/// both sides are the same Steam account.</summary>
+	public static string OpenMode { get; set; } = "relay";
 
 	// ── Internals ──
 
@@ -53,6 +59,7 @@ public static class Matchmaking
 	static RealTimeUntil _listNext;   // browser: refresh the open list
 	static bool _busy;                // an HTTP call is in flight
 	static int _tcIndex = TimeControl.DefaultIndex; // the control the opener advertised
+	static string _mode = "relay";                  // the mode of our own open advert
 
 	// Set once a match seats us: auto-engage the seat our SteamId lands in. Survives
 	// Networking.Connect (static state, not in the scene the connect tears down).
@@ -63,16 +70,20 @@ public static class Matchmaking
 
 	// ── Actions (from the setup panel) ──
 
-	/// <summary>Advertise this lobby as open to a join-up game at the given control.</summary>
+	/// <summary>Advertise a game at the given control, in the current <see cref="OpenMode"/>.</summary>
 	public static async void OpenGame( int tcIndex )
 	{
 		if ( !CanOpen || Waiting || _busy ) return;
 		_tcIndex = TimeControl.IsValidIndex( tcIndex ) ? tcIndex : TimeControl.DefaultIndex;
+		_mode = OpenMode == "join" ? "join" : "relay";
 		_busy = true;
 		Status = "Posting your game…";
 		try
 		{
-			var res = await MatchmakingApi.Open( "join", LocalSteam.ToString(),
+			// 'join' hands out our lobby (host SteamId) as the connect target; 'relay'
+			// needs no lobby, so it posts none.
+			string lobby = _mode == "join" ? LocalSteam.ToString() : "";
+			var res = await MatchmakingApi.Open( _mode, lobby,
 				TimeControl.At( _tcIndex ).PgnSpec, LocalName );
 			var ok = res.Ok ? GamchessApi.Deserialize<MatchmakingApi.OpenResponse>( res.Body ) : null;
 			if ( ok?.Id is string id )
@@ -130,13 +141,18 @@ public static class Matchmaking
 			var join = GamchessApi.Deserialize<MatchmakingApi.JoinResponse>( res.Body );
 			if ( join == null ) { Status = "Couldn't join."; return; }
 
-			if ( join.Mode != "join" )
+			if ( join.Mode == "relay" )
 			{
-				// Relay mode's client controller isn't wired in this build — decline
-				// cleanly rather than connect nowhere. (Backend is ready; see MATCHMAKING.md.)
-				Status = "That game plays over the server, which this build doesn't support yet.";
+				// Both players stay put; gamchess relays. Engage the relay controller on
+				// the table we're sitting at (this is how you play yourself across hosts).
+				if ( EngageRelay( join.GameId, join.YourColor ) )
+					Status = "";
+				else
+					Status = "Sit at a table to play.";
 				return;
 			}
+
+			// 'join' mode: enter the opener's lobby.
 			if ( string.IsNullOrEmpty( join.LobbyId ) )
 			{
 				Status = "The game didn't return a lobby to join.";
@@ -183,6 +199,13 @@ public static class Matchmaking
 				Status = "Opponent found — starting.";
 				SeatMatchAsHost( m );
 			}
+			else if ( m.Status == "matched" && m.Mode == "relay" )
+			{
+				MyMatchId = null;
+				// The opener engages the relay game on their own table. game_id is set once
+				// the joiner joined (the join created the relay game). your_color is ours.
+				Status = EngageRelay( m.GameId, m.YourColor ) ? "" : "Sit at a table to play.";
+			}
 			else if ( m.Status == "closed" )
 			{
 				MyMatchId = null;
@@ -222,6 +245,17 @@ public static class Matchmaking
 
 		// We are one of the two — engage our own assigned seat (found by occupancy).
 		_awaitSeat = true;
+	}
+
+	/// <summary>Engage a gamchess relay game on the table we're sitting at. Both players do
+	/// this and stay in their own lobbies — the game runs on gamchess. Returns false if
+	/// we're not seated at a table (nowhere to render the game).</summary>
+	static bool EngageRelay( string gameId, string colorWord )
+	{
+		if ( string.IsNullOrEmpty( gameId ) || ChessStation.Active is not { } station ) return false;
+		if ( RelayGameController.For( station ) is not { } relay ) return false;
+		relay.Engage( gameId, colorWord == "white", TimeControl.At( _tcIndex ).PgnSpec );
+		return true;
 	}
 
 	/// <summary>Once our SteamId has been seated at a table (by us as host, or by the

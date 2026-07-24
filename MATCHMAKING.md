@@ -13,16 +13,22 @@ the code. Player-facing copy stays in the info boards; the gamchess wire contrac
   DB-integration paths (open/join CAS, expiry) run via `make test` with Postgres.
 - ✅ **Client API layer — DONE (review-only).** `Api/MatchmakingApi.cs`: the five directory
   calls + the three relay-game calls + response DTOs.
-- ⬜ **Client controllers + UI — REMAINING (review-only, the big untestable part):**
-  - `GamchessRelayController : IBoardGame` (Mode B) — a sibling of `LichessGameController`
-    (~1200 lines): POST local moves, poll opponent moves, run the ticking clock down locally
-    (never HIGH), render through the `Source =>` seam. The largest piece; mirror the lichess one.
-  - A lobby-level matchmaking coordinator: open/list/poll/cancel, and on a Mode-A join
-    `Networking.Connect(lobby_id)`; on the opener side, the **host reserved-seat handshake**
-    that seats both players on gamchess's assigned colour when they arrive (the untestable crux).
-  - `SetupPanel` UI: "OR FIND AN OPPONENT ONLINE" — mode toggle, list yourself, browse+join,
-    random-sides copy.
-  - Info-board copy (`InfoScreen` Welcome) — a new way to play.
+- ✅ **Self-play (server) — DONE + tested.** Join your own advert; the two sides are told
+  apart by `opener_color` (role), not SteamID. This is a real feature and the one-machine
+  test path (two editors on one Steam account are one SteamID).
+- ✅ **Client Mode A ("Join up") — built (review-only).** Coordinator + `Networking.Connect` +
+  host force-seat + auto-engage + SetupPanel UI. NOTE: needs two DISTINCT Steam identities —
+  two same-account editors can't share one s&box lobby, so Mode A is not the self-play path.
+- ✅ **Client Mode B ("Play in current sessions" / relay) — built (review-only). This is the
+  self-play / two-hosts path.** `RelayGameController : IBoardGame` (`Code/Game/`): optimistic
+  local move + POST, poll+rebuild from gamchess's move list, local clock countdown (never
+  reads HIGH), draw/resign via RelayAction, and archives the finished game (self-play included).
+  Integrated into the `Source =>` seam (3-arg now) across ChessBoardView / TableClock /
+  TableSounds / GameHud / MoveHistoryPanel / SetupPanel, wired by ChessRing beside the other
+  controllers. Matchmaking engages it on a relay join/match; SetupPanel has a Play-here/Join-up
+  toggle. **Entirely untestable on this host — expect editor fixup.**
+- ⬜ Remaining: Mode A's reserved-seat timing (untestable), takeback in relay (deliberately
+  off in v1), SeatedTerry/LobbyPlayer relay-awareness (cosmetic — hands/roam reminders).
 
 ## The goal, in the user's words
 

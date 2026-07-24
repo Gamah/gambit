@@ -33,6 +33,7 @@ public sealed class TableClock : Component
 	/// same refs, same seam, so all three answer for the same game.</summary>
 	[Property] public LocalGameController Controller { get; set; }
 	[Property] public LichessGameController Lichess { get; set; }
+	[Property] public RelayGameController Relay { get; set; }
 
 	// The plates. Text panel + the plate mesh behind it, per seat — the mesh is here so the
 	// ticking side's plate can lighten with its text.
@@ -64,7 +65,7 @@ public sealed class TableClock : Component
 	/// never from zero.</summary>
 	[Property] public Vector3 BarFillBasePosition { get; set; }
 
-	IBoardGame Source => BoardGame.Source( Controller, Lichess );
+	IBoardGame Source => BoardGame.Source( Controller, Lichess, Relay );
 
 	protected override void OnUpdate()
 	{
