@@ -1,0 +1,135 @@
+@using System;
+@using System.Collections.Generic;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.World;
+@using Gambit.Game;
+@namespace Gambit.UI
+@inherits Panel
+
+@*
+	The SAN move list, in its own panel on the LEFT edge of the screen.
+
+	Split out of GameHud (M19): the move list used to live in the right-hand .hud column,
+	where a long game pushed the whole board menu down the screen — the controls a player
+	actually clicks (Ready, resign, offers, New game) drifted off the bottom as the history
+	grew. Moving it to its own column on the opposite edge keeps the board menu a fixed size
+	whatever the game length, and gives the history the room to be read.
+
+	Same split rules as SetupPanel/PromotionPanel: a nested @inherits Panel that re-resolves
+	the controllers off ChessStation.Active and carries its OWN style and repaint hash —
+	s&box panel stylesheets don't reliably cross a nested-panel boundary, so a split panel
+	that leaned on GameHud's <style> would render unstyled. Nested inside GameHud's root, so
+	it lives and dies with the seated HUD and needs no separate self-attach.
+
+	Display-only: no pointer input (like the board itself), so it never eats a board click.
+	It renders only the TAIL of a long game (overflow hidden, no scroll — a scroll panel
+	drag-pans and fights input, CLAUDE.md), which also keeps it bounded on screen.
+*@
+
+<root>
+	@{ var src = Source(); }
+	@if ( Visible() && src?.Game is { MoveCount: > 0 } )
+	{
+		<div class="history">
+			<div class="hist-title">MOVES</div>
+			<div class="moves">
+				@* One whole "12. Nf3 Nc6" string per div — never inline spans in a flex
+				   row (they split into items and the source whitespace renders literally,
+				   CLAUDE.md UI Gotchas). *@
+				@foreach ( var line in MoveRows( src ) )
+				{
+					<div class="move-row">@line</div>
+				}
+			</div>
+		</div>
+	}
+</root>
+
+<style>
+	/* Full-screen pass-through; the history box pins to the LEFT edge, mirroring the
+	   .hud column's right:24px/top:2%. Display-only, so pointer-events stays off. */
+	root {
+		position: absolute;
+		left: 0; top: 0;
+		width: 100%; height: 100%;
+		pointer-events: none;
+		z-index: 50;
+	}
+
+	.history {
+		position: absolute;
+		left: 24px;
+		top: 2%;
+		width: 170px;
+		flex-direction: column;
+		gap: 5px;
+		padding: 12px;
+		background-color: rgba(10, 10, 14, 0.78);
+		border-radius: 10px;
+		color: rgba(255, 255, 255, 0.9);
+	}
+
+	.hist-title {
+		font-size: 12px;
+		letter-spacing: 2px;
+		color: rgba(255, 255, 255, 0.45);
+	}
+
+	.moves {
+		flex-direction: column;
+		/* Show a long tail — this panel exists to have the room the HUD column didn't.
+		   Overflow hidden (no scroll) renders only what fits; MoveRows caps the tail. */
+		max-height: 60%;
+		overflow: hidden;
+		background-color: rgba(255, 255, 255, 0.05);
+		border-radius: 6px;
+		padding: 6px 10px;
+	}
+	.move-row {
+		font-size: 13px;
+		font-family: monospace;
+		color: rgba(255, 255, 255, 0.8);
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+</style>
+
+@code
+{
+	static LocalGameController Controller() => LocalGameController.For( ChessStation.Active );
+	static LichessGameController Lichess() => LichessGameController.For( ChessStation.Active );
+
+	/// <summary>Whichever controller owns this board — the same seam the HUD, the view and
+	/// the sounds resolve through, so the history can't describe a different game.</summary>
+	static IBoardGame Source() => BoardGame.Source( Controller(), Lichess() );
+
+	/// <summary>Only while seated with the camera settled — mirrors GameHud.Visible so the
+	/// two columns appear and disappear together.</summary>
+	static bool Visible() =>
+		ChessStation.Active != null && ( LobbyPlayer.Local?.CameraSettled ?? false );
+
+	/// <summary>The move rows, "12. Nf3 Nc6" style, latest-first-fit. Renders only the tail
+	/// (overflow is hidden, not scrolled — see the header), so a long game shows its recent
+	/// moves rather than its opening. A generous cap now that this has its own column.</summary>
+	static IEnumerable<string> MoveRows( IBoardGame src )
+	{
+		var san = src?.Game?.SanMoves;
+		if ( san == null || san.Count == 0 ) yield break;
+
+		const int maxRows = 24;
+		int totalRows = ( san.Count + 1 ) / 2;
+		for ( int row = Math.Max( 0, totalRows - maxRows ); row < totalRows; row++ )
+		{
+			int i = row * 2;
+			string line = $"{row + 1}. {san[i]}";
+			if ( i + 1 < san.Count ) line += $"  {san[i + 1]}";
+			yield return line;
+		}
+	}
+
+	/// <summary>Repaint only when the move count changes (a move, a takeback, a new game) or
+	/// the panel's visibility flips. Cheap — no per-frame churn.</summary>
+	protected override int BuildHash() =>
+		System.HashCode.Combine( Visible(), Source()?.Game?.MoveCount );
+}
