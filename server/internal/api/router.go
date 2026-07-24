@@ -123,6 +123,9 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 	h.relay = newRelay(log, db, h.keys)
 	h.tv = newTv(log)
 
+	// Reap matchmaking adverts whose opener vanished without cancelling (M19).
+	go h.runMatchmakingSweep(context.Background())
+
 	mux := http.NewServeMux()
 
 	// Liveness. Deliberately unwrapped: no auth, no rate limit.
@@ -146,6 +149,23 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/games", h.postGame)
 	mux.HandleFunc("GET /api/v1/games", h.listGames)
 	mux.HandleFunc("GET /api/v1/games/{id}", h.getGame)
+
+	// Matchmaking (M19): the directory of solo players open to a game. gamchess
+	// pairs them and assigns a RANDOM colour; it does not run 'join'-mode games
+	// (the joiner Networking.Connect()s into the opener's lobby). Session-gated —
+	// an open advert is attributable to a verified SteamID.
+	mux.HandleFunc("POST /api/v1/matchmaking", h.postMatchmaking)
+	mux.HandleFunc("GET /api/v1/matchmaking", h.listMatchmaking)
+	mux.HandleFunc("GET /api/v1/matchmaking/{id}", h.getMatchmaking)
+	mux.HandleFunc("POST /api/v1/matchmaking/{id}/join", h.joinMatchmaking)
+	mux.HandleFunc("DELETE /api/v1/matchmaking/{id}", h.deleteMatchmaking)
+
+	// Relay games (M19, 'relay' mode): a gamchess-authoritative live game between
+	// two players who never share a lobby. The one game type that REQUIRES gamchess.
+	// Membership-gated: only the two players.
+	mux.HandleFunc("GET /api/v1/relaygame/{id}", h.getRelayGame)
+	mux.HandleFunc("POST /api/v1/relaygame/{id}/move", h.postRelayMove)
+	mux.HandleFunc("POST /api/v1/relaygame/{id}/{action}", h.postRelayAction)
 
 	// Lichess account linking (M8), in a browser. Grouped with the auth routes
 	// because that is what they are: an OAuth flow, Steam-session gated.
