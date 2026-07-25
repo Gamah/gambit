@@ -203,13 +203,23 @@ public sealed class LichessGameController : Component, IBoardGame
 	/// clock reaching 0 clamps at 0 and waits for lichess to call the flag.</para></summary>
 	public float? SeatClock( ChessSeat seat )
 	{
-		if ( !Playing || State is null ) return null;
+		if ( State is null ) return null;
 		if ( Local?.Tc.IsUnlimited ?? false ) return null;
 
+		// A FINISHED game freezes both clocks on their final banked values (snapped
+		// on the finishing state, like every other). Without this SeatClock reads null
+		// the instant lichess says "finished" — and TableClock.Face then falls back to
+		// the STARTING time control, so the clocks visibly reset to the full time control
+		// a beat before the board resets. Freeze here so clocks and board reset together.
+		bool finished = State is { finished: true };
+		if ( !Playing && !finished ) return null;
+
 		float bank = seat == ChessSeat.White ? _whiteBank : _blackBank;
-		// Only the side to move is spending time. The idle side's bank is exact
-		// however stale the frame is, so the lag applies to the ticking seat alone —
-		// subtracting it from both would invent a loss of time that never happened.
+		// Only the side to move in a LIVE game is spending time. The idle side's bank is
+		// exact however stale the frame is, and a finished game's clocks are frozen on both
+		// sides — so the lag/countdown applies to the ticking seat alone (TickingSeat is
+		// null unless Playing, so a finished game always takes the frozen branch below).
+		// Subtracting from anything else would invent a loss of time that never happened.
 		if ( TickingSeat != seat ) return MathF.Max( 0f, bank );
 		return MathF.Max( 0f, bank - _bankLag - (float)_sinceBank );
 	}
@@ -900,8 +910,9 @@ public sealed class LichessGameController : Component, IBoardGame
 		// on a timed-out poll would reset the countdown to an already-stale value, so the
 		// clock would tick down then jump back UP — the sawtooth that reads HIGH. Placed
 		// before Rebuild so nothing reads a half-updated board; the banks don't depend on
-		// it. A finished game doesn't tick (SeatClock returns null once !Playing), so
-		// snapping through the game-over branch below is harmless.
+		// it. Snapping through the game-over branch below is not just harmless but REQUIRED:
+		// the finishing state carries the final clocks, and SeatClock now freezes both banks
+		// on them for a finished game (rather than reading null and resetting the face).
 		if ( clockNews )
 		{
 			_whiteBank = st.white_time_ms / 1000f;
