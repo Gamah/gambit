@@ -82,12 +82,8 @@
 			}
 			else
 			{
-				<div class="seek-row">
-					<div class="chip @( Matchmaking.OpenMode == "relay" ? "on" : "" )" onclick="@( () => SetOpenMode( "relay" ) )">Play here</div>
-					<div class="chip @( Matchmaking.OpenMode == "join" ? "on" : "" )" onclick="@( () => SetOpenMode( "join" ) )">Join up</div>
-				</div>
 				<div class="button online" onclick="@( () => Matchmaking.QuickPlay( ctrl.TimeControlIndex ) )">♟ Play a random opponent</div>
-				<div class="setup-hint">@OpenModeHint()</div>
+				<div class="setup-hint">You both stay in your own lobbies; the game runs on the server. Sides are random. This is how you play a stranger — or yourself across two windows.</div>
 				@if ( !string.IsNullOrEmpty( Matchmaking.Status ) )
 				{
 					<div class="setup-hint">@Matchmaking.Status</div>

@@ -184,6 +184,14 @@ public static class Matchmaking
 				Status = "The game didn't return a lobby to join.";
 				return;
 			}
+			// Never Networking.Connect to our OWN lobby — same-account (e.g. two editors)
+			// self-connect just spins the engine's connect loop and hangs. Join-up needs two
+			// separate Steam accounts; on one machine use Play-here (relay) instead.
+			if ( join.LobbyId == LocalSteam.ToString() )
+			{
+				Status = "That's your own lobby — Join-up needs two separate Steam accounts. Use Play-here on one machine.";
+				return;
+			}
 
 			// Arm the auto-seat: once the opener's host seats us, engage that seat. The
 			// side is gamchess's (join.YourColor) but we needn't store it — we engage
