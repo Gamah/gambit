@@ -115,28 +115,41 @@
 
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
-			@* The table's four tabs (SetupPanel), shown as the newcomer will see them so they
-			   recognise the bar when they sit. Order matches the real tab bar exactly (Lichess,
-			   Gamchess, Local, Computer) and each pill wears its mode's button-family colour —
-			   white for lichess, teal for online, green for local, violet for the computer.
-			   Keep each description to a POINTER: the depth lives in the sections below (lichess,
-			   archive) and at the table itself, so this stays an orientation map, not a second
-			   copy to rot. The Gamchess line keeps the RANDOM-colour promise and drops the old
-			   "post or join" wording — Join-up was removed (it's one-button QuickPlay now).
-			   Computer keeps "Bullet included", the one place a fully-local game out-reaches a
-			   real one: it clears none of lichess's speed floors. *@
+			@* A LIVE, clickable mock of the table's four tabs (SetupPanel) — tap one and only
+			   that mode's line shows, so the section stays one line tall instead of four. Order
+			   matches the real tab bar exactly (Lichess, Gamchess, Local, Computer); the selected
+			   pill lights up in its mode's button-family colour — white for lichess, teal for
+			   online, green for local, violet for the computer — so the newcomer learns the bar
+			   AND the colours. Each blurb is a POINTER only: the depth lives in the sections below
+			   (lichess, archive) and at the table itself, so this can't rot into a second copy.
+			   The Gamchess line keeps the RANDOM-colour promise and drops the old "post or join"
+			   wording — Join-up was removed (it's one-button QuickPlay now). Computer keeps
+			   "Bullet included", the one place a fully-local game out-reaches a real one: it
+			   clears none of lichess's speed floors. *@
 			<div class="section-header" style="color:@WallTheme.AccentCss;">FOUR WAYS TO PLAY</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Sit down and you'll find four tabs across the top of the table panel — pick how you want to play:</div>
+			<div class="body" style="color:@WallTheme.TextDim;">These four tabs sit at the top of the table panel — tap one to see how it plays:</div>
 			<div class="tab-demo-bar">
-				<div class="tab-demo lichess">Lichess</div>
-				<div class="tab-demo gamchess">Gamchess</div>
-				<div class="tab-demo local">Local</div>
-				<div class="tab-demo computer">Computer</div>
+				<div class="tab-demo lichess @( _playTab == "lichess" ? "on" : "" )" onclick="@( () => SetPlayTab( "lichess" ) )">Lichess</div>
+				<div class="tab-demo gamchess @( _playTab == "gamchess" ? "on" : "" )" onclick="@( () => SetPlayTab( "gamchess" ) )">Gamchess</div>
+				<div class="tab-demo local @( _playTab == "local" ? "on" : "" )" onclick="@( () => SetPlayTab( "local" ) )">Local</div>
+				<div class="tab-demo computer @( _playTab == "computer" ? "on" : "" )" onclick="@( () => SetPlayTab( "computer" ) )">Computer</div>
 			</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Lichess — a real, rated-history game on lichess: the person opposite, a player you name, a random stranger, or anyone you send a link. Needs a linked account (more below).</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Gamchess — get paired with a real person from another lobby. You're dropped straight into a game on a RANDOM colour, so nobody picks their own side. No account needed.</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Local — just the two of you on this board, the person sitting opposite. No account, no server.</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Computer — a full solo game against the built-in engine: Easy, Medium or Hard, at any speed (Bullet included). No account, no second player.</div>
+			@if ( _playTab == "gamchess" )
+			{
+				<div class="body play-desc" style="color:@WallTheme.TextDim;">Get paired with a real person from another lobby. You're dropped straight into a game on a RANDOM colour, so nobody picks their own side. No account needed.</div>
+			}
+			else if ( _playTab == "local" )
+			{
+				<div class="body play-desc" style="color:@WallTheme.TextDim;">Just the two of you on this board — the person sitting opposite. No account, no server.</div>
+			}
+			else if ( _playTab == "computer" )
+			{
+				<div class="body play-desc" style="color:@WallTheme.TextDim;">A full solo game against the built-in engine: Easy, Medium or Hard, at any speed (Bullet included). No account, no second player.</div>
+			}
+			else
+			{
+				<div class="body play-desc" style="color:@WallTheme.TextDim;">A real, rated-history game on lichess — against the person opposite, a player you name, a random stranger, or anyone you send a link. Needs a linked account (more below).</div>
+			}
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 			<div class="section-header" style="color:@WallTheme.AccentCss;">YOUR GAMES ARE KEPT</div>
@@ -295,10 +308,10 @@
 		white-space: pre-wrap;
 	}
 
-	/* A non-interactive mock of the table's four-tab bar (SetupPanel). Single-line pills
-	   in a flex row — the proven .seek-row/.chip shape — one per mode, each wearing that
-	   mode's button-family colour so the newcomer recognises the bar (and the colours)
-	   when they sit down. */
+	/* A LIVE, clickable mock of the table's four-tab bar (SetupPanel). Single-line pills
+	   in a flex row — the proven .seek-row/.chip shape. Unselected pills are neutral grey
+	   (same as a real inactive tab); the SELECTED pill lights up in its mode's button-family
+	   colour, so the newcomer learns the bar and the colours at once. */
 	.tab-demo-bar {
 		flex-direction: row;
 		gap: 4px;
@@ -314,11 +327,23 @@
 		letter-spacing: 1px;
 		padding: 9px 4px;
 		border-radius: 7px 7px 0 0;
+		cursor: pointer;
+		pointer-events: all;
+		background-color: rgba(255, 255, 255, 0.06);
+		color: rgba(255, 255, 255, 0.5);
 	}
-	.tab-demo.lichess { background-color: rgba(240, 240, 240, 0.8); color: rgba(15, 15, 15, 0.95); }
-	.tab-demo.gamchess { background-color: rgba(60, 190, 190, 0.4); color: white; }
-	.tab-demo.local { background-color: rgba(127, 212, 127, 0.45); color: white; }
-	.tab-demo.computer { background-color: rgba(150, 120, 235, 0.4); color: white; }
+	.tab-demo:hover { background-color: rgba(255, 255, 255, 0.14); color: rgba(255, 255, 255, 0.85); }
+	.tab-demo.on.lichess { background-color: rgba(240, 240, 240, 0.8); color: rgba(15, 15, 15, 0.95); }
+	.tab-demo.on.gamchess { background-color: rgba(60, 190, 190, 0.5); color: white; }
+	.tab-demo.on.local { background-color: rgba(127, 212, 127, 0.55); color: white; }
+	.tab-demo.on.computer { background-color: rgba(150, 120, 235, 0.5); color: white; }
+
+	/* Reserve room for the tallest blurb (the two-line lichess one) so switching tabs
+	   doesn't make the bar above jump. */
+	.play-desc {
+		min-height: 50px;
+		padding-top: 2px;
+	}
 
 	.dev-notice {
 		font-size: 21px;
@@ -412,6 +437,12 @@
 
 @code
 {
+	// ── FOUR WAYS TO PLAY: which tab's blurb is showing (welcome page only). Defaults to
+	// the first tab, matching the table's bar order. Session-local; doesn't persist. ──
+	string _playTab = "lichess";
+
+	void SetPlayTab( string t ) { _playTab = t; StateHasChanged(); }
+
 	string DiscordLabel() =>
 		DiscordButton.SinceCopied < 2f
 			? "✓  Discord invite copied to clipboard"
@@ -492,5 +523,5 @@
 			DevNotesPanel.Notes.Count, DiscordButton.SinceCopied < 2f, SettingsModel.SettingsVersion,
 			HashCode.Combine( LichessLinkState.Linked, LichessLinkState.Username,
 				LichessLinkState.Offline, LichessButton.SinceCopied < 2f,
-				LichessButton.SinceSecurityCopied < 2f, _unlinking ) );
+				LichessButton.SinceSecurityCopied < 2f, _unlinking, _playTab ) );
 }

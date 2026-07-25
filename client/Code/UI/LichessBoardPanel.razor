@@ -6,21 +6,41 @@
 @namespace Gambit.UI
 @inherits PanelComponent
 
-@* Display-only lichess board on the east wall (see InfoWall). A title card: it
-   says whether you're linked and to invite a press of E. Everything that matters
-   — the copyable link URL, the disclosure, the unlink button — lives in the
-   engaged InfoScreen, because none of it is readable from across the room.
+@* Display-only lichess board on the east wall (see InfoWall). A scaled-down echo of the
+   engaged InfoScreen's LICHESS page — same title, same green "linked as …" box, same white
+   lichess-styled button — so from across the room it previews the page you open with E.
+   Everything ACTIONABLE (the copyable link URL, the disclosure, the unlink button) still
+   lives only in the engaged page; the button here is a look, not a control (no pointer
+   input on a wall board).
 
    Link state is read from LichessLinkState, which does the polling; this panel
    never calls gamchess itself. *@
 
 <root>
+	@* Scaled-down echo of the engaged InfoScreen's LICHESS page: the same title, the same
+	   green "✓ linked as …" box when linked, and the same white lichess-styled button — so
+	   from across the room it reads as the page you'll open, not a bare status line. The
+	   button is a LOOK, not a control (this is a display board, no pointer input); the real
+	   copyable link/unlink live in the engaged page. *@
 	<div class="board" style="background-color:@WallTheme.Bg; border-color:@WallTheme.Border;">
 		<div class="title" style="color:@WallTheme.Text;">LICHESS</div>
 		<div class="subtitle" style="color:@WallTheme.TextFaint;">real games on your record</div>
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
-		<div class="status @( LichessLinkState.Linked ? "linked" : "" )" style="color:@StatusColor()">@StatusLine()</div>
-		<div class="hint" style="color:@WallTheme.TextFaint;">@HintLine()</div>
+
+		@if ( !GamchessAuth.Available )
+		{
+			<div class="intro" style="color:@WallTheme.TextFaint;">Steam required — lichess is off in this build.</div>
+		}
+		else if ( LichessLinkState.Linked )
+		{
+			<div class="linked-row">✓  linked as @LichessLinkState.Username</div>
+			<div class="cta">Press E to play</div>
+		}
+		else
+		{
+			<div class="intro" style="color:@WallTheme.TextDim;">@( LichessLinkState.Offline ? "Offline — can't check your link right now." : "Link an account to play real, rated games from a table." )</div>
+			<div class="cta">Press E to link</div>
+		}
 	</div>
 </root>
 
@@ -75,27 +95,42 @@
 		margin: $wall-divider-gap 0;
 	}
 
-	/* One div per line — a div's auto height doesn't grow for wrapped text. */
-	.status {
-		font-size: $wall-fs-body;
+	/* The not-linked / edge-case line under the divider. One div per line — a div's auto
+	   height doesn't grow for wrapped text. */
+	.intro {
+		font-size: $wall-fs-fine;
 		text-align: center;
 		justify-content: center;
 	}
 
-	/* When linked, mirror the engaged panel's green "✓ linked as …" box so the wall
-	   reads the same across the room. Static green (not theme-driven) on purpose —
-	   linked-confirmation is a fixed meaning, like the engaged panel's .linked-row. */
-	.status.linked {
+	/* The green "✓ linked as …" box — the engaged panel's .linked-row, scaled to the wall.
+	   Static green (not theme-driven) on purpose: linked-confirmation is a fixed meaning. */
+	.linked-row {
+		justify-content: center;
 		padding: 3px 6px;
 		border-radius: $wall-radius;
 		background-color: rgba(130, 220, 130, 0.12);
 		border: $wall-border solid rgba(130, 220, 130, 0.45);
+		color: rgba(150, 235, 150, 0.95);
+		font-size: $wall-fs-body;
 		font-weight: bold;
+		text-align: center;
 	}
 
-	.hint {
-		font-size: $wall-fs-fine;
-		letter-spacing: 2px;
+	/* The engaged panel's white lichess button, scaled down. A LOOK, not a control —
+	   this board takes no pointer input; it just makes the wall read like the page you
+	   open with E. lichess's own black-on-white, so it reads as "this goes to lichess". */
+	.cta {
+		justify-content: center;
+		margin-top: 2px;
+		padding: 3px 6px;
+		border-radius: $wall-radius;
+		background-color: rgba(240, 240, 240, 0.2);
+		border: $wall-border solid rgba(240, 240, 240, 0.55);
+		color: rgba(255, 255, 255, 0.92);
+		font-size: $wall-fs-body;
+		font-weight: bold;
+		letter-spacing: 1px;
 		text-align: center;
 	}
 </style>
@@ -104,22 +139,6 @@
 {
 	/// <summary>World units to keep between the content's bottom edge and the floor.</summary>
 	[Property] public float FloorClearance { get; set; } = 60f;
-
-	string StatusLine()
-	{
-		if ( !GamchessAuth.Available ) return "Steam required";
-		if ( LichessLinkState.Linked ) return $"linked as {LichessLinkState.Username}";
-		if ( LichessLinkState.Offline ) return "offline";
-		return "not linked";
-	}
-
-	string StatusColor() =>
-		LichessLinkState.Linked ? "rgba(150, 235, 150, 0.95)" : WallTheme.TextDim;
-
-	/// <summary>Point a press of E at the right next step — link if you haven't, play if
-	/// you have. Everything actionable lives in the engaged InfoScreen; this only nudges.</summary>
-	string HintLine() =>
-		LichessLinkState.Linked ? "Press E to play" : "Press E to link";
 
 	protected override int BuildHash() =>
 		HashCode.Combine( LichessLinkState.Linked, LichessLinkState.Username,
