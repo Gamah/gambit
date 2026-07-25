@@ -36,7 +36,11 @@
 			}
 			else if ( LichessLinkState.Linked )
 			{
-				<div class="linked-row">✓  linked as @LichessLinkState.Username</div>
+				@* ONE interpolated string, not "literal ✓ linked as" + "@Username" — mixing a
+				   text node and an @expression in a panel div renders them as two flex items, so
+				   the username lost its leading space and drew in a different size (the "asgamah"
+				   bug). A single @() expression is one text node. *@
+				<div class="linked-row">@($"✓  linked as {LichessLinkState.Username}")</div>
 				<div class="body" style="color:@WallTheme.TextDim;">Sit at a table with another linked player. When you both choose "play on lichess", a real game runs on lichess between your accounts and shows up in your lichess history.</div>
 				<div class="body" style="color:@WallTheme.TextDim;">Or sit alone and play a stranger: challenge a lichess player by name, or take a random opponent from lichess's lobby.</div>
 				<div class="body" style="color:@WallTheme.TextDim;">Or get a shareable link and send it to anyone — they open it in a browser and play you here on the board, no lichess account needed on their side.</div>
