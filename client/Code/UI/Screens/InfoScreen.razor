@@ -137,7 +137,14 @@
 			@* Each tab now reveals its OWN deeper section, not just a one-liner: Lichess opens
 			   "Play on lichess for real", Gamchess opens "Your games are kept". Local and
 			   Computer stay a single blurb. So the reader drills into one mode at a time
-			   instead of scrolling every section at once. *@
+			   instead of scrolling every section at once.
+
+			   The wrapper is a FIXED-HEIGHT box (min-height, sized to the tallest tab — Lichess)
+			   so the card DOESN'T resize as you click through tabs. Short tabs render inside the
+			   same box with slack below; the on-screen board stays put and FitToHeight computes
+			   one constant scale. If Lichess ever outgrows the box it'll start resizing again —
+			   bump .tab-body min-height to match its rendered height. *@
+			<div class="tab-body">
 			@if ( _playTab == "gamchess" )
 			{
 				<div class="body play-desc" style="color:@WallTheme.TextDim;">Get paired with a real person from another lobby. You're dropped straight into a game on a RANDOM colour, so nobody picks their own side. No account needed.</div>
@@ -198,6 +205,7 @@
 				   fixed 1400-1800 to everyone: a control became a true sentence. *@
 				<div class="body" style="color:@WallTheme.TextDim;">You don't pick a rating range for a stranger. lichess picks one around your real lichess rating — it knows what you're rated and we don't, so we let it choose.</div>
 			}
+			</div>
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 			<div class="section-header" style="color:@WallTheme.AccentCss;">THE TV / SPECTATOR BOARD</div>
@@ -351,6 +359,20 @@
 		min-height: 50px;
 		padding-top: 2px;
 	}
+
+	/* Fixed-height container for the selected tab's content: sized to the TALLEST tab
+	   (Lichess), so the whole card is the same height on every tab and the on-screen board
+	   never resizes as you click through. Short tabs (Local/Computer) render at the top with
+	   empty space below — the trade for a board that stays put. min-height, not height, so
+	   Lichess can't clip; if it ever exceeds this the card resizes again, so keep this >=
+	   Lichess's rendered height (tune once in-editor). */
+	.tab-body {
+		flex-direction: column;
+		gap: 8px;
+		min-height: 640px;
+		justify-content: flex-start;
+	}
+	.tab-body > div { flex-shrink: 0; }
 
 	.dev-notice {
 		font-size: 21px;
