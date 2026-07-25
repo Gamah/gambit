@@ -116,15 +116,15 @@
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 			@* A LIVE, clickable mock of the table's four tabs (SetupPanel) — tap one and only
-			   that mode's line shows, so the section stays one line tall instead of four. Order
-			   matches the real tab bar exactly (Lichess, Gamchess, Local, Computer); the selected
-			   pill lights up in its mode's button-family colour — white for lichess, teal for
-			   online, green for local, violet for the computer — so the newcomer learns the bar
-			   AND the colours. Each blurb is a POINTER only: the depth lives in the sections below
-			   (lichess, archive) and at the table itself, so this can't rot into a second copy.
-			   The Gamchess line keeps the RANDOM-colour promise and drops the old "post or join"
-			   wording — Join-up was removed (it's one-button QuickPlay now). Computer keeps
-			   "Bullet included", the one place a fully-local game out-reaches a real one: it
+			   that mode's content shows, so the reader drills into one way to play at a time
+			   instead of scrolling all four. Order matches the real tab bar exactly (Lichess,
+			   Gamchess, Local, Computer); the selected pill lights up in its mode's button-family
+			   colour — white for lichess, teal for online, green for local, violet for the
+			   computer — so the newcomer learns the bar AND the colours. Lichess and Gamchess
+			   each open a fuller sub-section (see the branches); Local and Computer are a single
+			   blurb. The Gamchess blurb keeps the RANDOM-colour promise and drops the old "post
+			   or join" wording — Join-up was removed (it's one-button QuickPlay now). Computer
+			   keeps "Bullet included", the one place a fully-local game out-reaches a real one: it
 			   clears none of lichess's speed floors. *@
 			<div class="section-header" style="color:@WallTheme.AccentCss;">FOUR WAYS TO PLAY</div>
 			<div class="body" style="color:@WallTheme.TextDim;">These four tabs sit at the top of the table panel — tap one to see how it plays:</div>
@@ -134,9 +134,23 @@
 				<div class="tab-demo local @( _playTab == "local" ? "on" : "" )" onclick="@( () => SetPlayTab( "local" ) )">Local</div>
 				<div class="tab-demo computer @( _playTab == "computer" ? "on" : "" )" onclick="@( () => SetPlayTab( "computer" ) )">Computer</div>
 			</div>
+			@* Each tab now reveals its OWN deeper section, not just a one-liner: Lichess opens
+			   "Play on lichess for real", Gamchess opens "Your games are kept". Local and
+			   Computer stay a single blurb. So the reader drills into one mode at a time
+			   instead of scrolling every section at once. *@
 			@if ( _playTab == "gamchess" )
 			{
 				<div class="body play-desc" style="color:@WallTheme.TextDim;">Get paired with a real person from another lobby. You're dropped straight into a game on a RANDOM colour, so nobody picks their own side. No account needed.</div>
+
+				<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+				@* The archive lives under Gamchess by request. Copy stays GENERAL — "finished
+				   games", not "gamchess games" — because a local or computer game is archived
+				   too; and "saved", not "every game saved", since gamchess is never required and
+				   a game plays on (unstored) when it's down: promising "every" would be false in
+				   exactly the case the player can't see. *@
+				<div class="section-header sub" style="color:@WallTheme.AccentCss;">YOUR GAMES ARE KEPT</div>
+				<div class="body" style="color:@WallTheme.TextDim;">Finished games are saved and replayable at chess.gamah.net — sign in with Steam. Your archive is private: you only ever see games you sat in.</div>
 			}
 			else if ( _playTab == "local" )
 			{
@@ -148,61 +162,46 @@
 			}
 			else
 			{
-				<div class="body play-desc" style="color:@WallTheme.TextDim;">A real, rated-history game on lichess — against the person opposite, a player you name, a random stranger, or anyone you send a link. Needs a linked account (more below).</div>
+				@* Blurb reshaped to a LEAD-IN (no opponent list) so it doesn't duplicate the
+				   section's own first line, which now sits directly below it. *@
+				<div class="body play-desc" style="color:@WallTheme.TextDim;">A real, rated-history game on your lichess record — the game you play here is the game on lichess. Needs a linked account:</div>
+
+				<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+				<div class="section-header sub" style="color:@WallTheme.AccentCss;">PLAY ON LICHESS FOR REAL</div>
+				<div class="body" style="color:@WallTheme.TextDim;">Link a lichess account at the east wall and a game here can be a real game there, in your real lichess history — against the person opposite you, a lichess player you name, a random stranger from lichess's lobby, or anyone you send a shareable link to (they play you in a browser, no account needed their side).</div>
+				@* The consent model in one line, and it read as ambiguous until said outright:
+				   a game at a table is local and private; lichess only ever hears about it
+				   when a player picks one of the flows above. This sentence carries it. *@
+				<div class="body" style="color:@WallTheme.TextFaint;">Sitting down together doesn't put your game on lichess. A game here is local and touches no lichess account unless you choose one of the options above — so two linked players who just want a quiet game get exactly that.</div>
+				@* Named because they're the controls a lichess player expects to find and
+				   would otherwise assume are missing. Premove is deliberately described
+				   by what it does, not by its name: it is the only one of the three that
+				   isn't a request to the opponent, and it works at every table, not just
+				   a lichess one. *@
+				<div class="body" style="color:@WallTheme.TextDim;">Offer a draw or ask for a takeback from the game panel — your opponent has to agree. And on their turn, at any table, you can click out your reply in advance: it plays the moment they move, costing you no clock.</div>
+
+				@* THE question players actually ask, and the one that read as a bug: why
+				   is there no "find a random opponent" button at a blitz table? The answer
+				   is lichess's, not ours — the LOBBY floor is higher than the CHALLENGE
+				   floor — and a player has no way to know that. The distinction that makes
+				   the copy true: naming an opponent (either the seat opposite or a lichess
+				   username) is a challenge and reaches blitz; only the random-lobby seek is
+				   rapid+. If these floors ever change, the truth is
+				   LichessTable.CanMirror/CanSeek; this is copy, not the rule. *@
+				<div class="body" style="color:@WallTheme.TextDim;">Naming your opponent — the person opposite you, or a lichess player by username — works from Blitz 3+0 up, Unlimited included. A random stranger from lichess's lobby is Rapid 10+0 or Classical 30+0 only: lichess won't put faster games in its lobby, an Unlimited game has no clock to match on, and Bullet can't reach lichess at all. Those are lichess's rules, not ours.</div>
+
+				@* There is no rating control here, and that is deliberate — see CLAUDE.md's
+				   ratingRange trap. lichess matches a seek to a band around your real
+				   rating whether we ask or not, and it knows your rating where we don't.
+				   This line exists because we deleted a "Near my rating" chip that sent a
+				   fixed 1400-1800 to everyone: a control became a true sentence. *@
+				<div class="body" style="color:@WallTheme.TextDim;">You don't pick a rating range for a stranger. lichess picks one around your real lichess rating — it knows what you're rated and we don't, so we let it choose.</div>
 			}
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
-			<div class="section-header" style="color:@WallTheme.AccentCss;">YOUR GAMES ARE KEPT</div>
-			@* "Finished games are saved", not "every finished game is saved": the archive
-			   is best-effort by design. gamchess is never required, so if it's down the
-			   game plays on and nothing is stored — promising "every" would be false in
-			   exactly the case the player can't see. *@
-			<div class="body" style="color:@WallTheme.TextDim;">Finished games are saved and replayable at chess.gamah.net — sign in with Steam. Your archive is private: you only ever see games you sat in.</div>
-
-			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
-
-			<div class="section-header" style="color:@WallTheme.AccentCss;">PLAY ON LICHESS FOR REAL</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Link a lichess account at the east wall and a game here can be a real game there, in your real lichess history — against the person opposite you, a lichess player you name, a random stranger from lichess's lobby, or anyone you send a shareable link to (they play you in a browser, no account needed their side).</div>
-			@* The consent model in one line, and it read as ambiguous until said outright:
-			   a game at a table is local and private; lichess only ever hears about it
-			   when a player picks one of the flows above. This sentence carries it. *@
-			<div class="body" style="color:@WallTheme.TextFaint;">Sitting down together doesn't put your game on lichess. A game here is local and touches no lichess account unless you choose one of the options above — so two linked players who just want a quiet game get exactly that.</div>
-			@* Named because they're the controls a lichess player expects to find and
-			   would otherwise assume are missing. Premove is deliberately described
-			   by what it does, not by its name: it is the only one of the three that
-			   isn't a request to the opponent, and it works at every table, not just
-			   a lichess one. *@
-			<div class="body" style="color:@WallTheme.TextDim;">Offer a draw or ask for a takeback from the game panel — your opponent has to agree. And on their turn, at any table, you can click out your reply in advance: it plays the moment they move, costing you no clock.</div>
-
-			@* THE question players actually ask, and the one that read as a bug: why
-			   is there no "find a random opponent" button at a blitz table? The answer
-			   is lichess's, not ours — the LOBBY floor is higher than the CHALLENGE
-			   floor — and a player has no way to know that. The distinction that makes
-			   the copy true: naming an opponent (either the seat opposite or a lichess
-			   username) is a challenge and reaches blitz; only the random-lobby seek is
-			   rapid+. If these floors ever change, the truth is
-			   LichessTable.CanMirror/CanSeek; this is copy, not the rule. *@
-			<div class="body" style="color:@WallTheme.TextDim;">Naming your opponent — the person opposite you, or a lichess player by username — works from Blitz 3+0 up, Unlimited included. A random stranger from lichess's lobby is Rapid 10+0 or Classical 30+0 only: lichess won't put faster games in its lobby, an Unlimited game has no clock to match on, and Bullet can't reach lichess at all. Those are lichess's rules, not ours.</div>
-
-			@* There is no rating control here, and that is deliberate — see CLAUDE.md's
-			   ratingRange trap. lichess matches a seek to a band around your real
-			   rating whether we ask or not, and it knows your rating where we don't.
-			   This line exists because we deleted a "Near my rating" chip that sent a
-			   fixed 1400-1800 to everyone: a control became a true sentence. *@
-			<div class="body" style="color:@WallTheme.TextDim;">You don't pick a rating range for a stranger. lichess picks one around your real lichess rating — it knows what you're rated and we don't, so we let it choose.</div>
-
-			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
-
-			<div class="section-header" style="color:@WallTheme.AccentCss;">THE BIG BOARD</div>
+			<div class="section-header" style="color:@WallTheme.AccentCss;">THE TV / SPECTATOR BOARD</div>
 			<div class="body" style="color:@WallTheme.TextDim;">The north wall shows a live game: any table in this room, or lichess TV — the best game in progress on lichess right now. Walk up and press E to change channel, or turn TV off.</div>
-
-			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
-
-			@* Lobby chat + proximity voice (M12). Chat is the engine's own overlay now (T), voice is
-			   the terryball-derived proximity mic. Master voice is OFF until pressed, said plainly —
-			   nobody's mic is live without their say-so. The range knobs live on the world board. *@
-			<div class="section-header" style="color:@WallTheme.AccentCss;">TALK TO THE ROOM</div>
-			<div class="body" style="color:@WallTheme.TextDim;">Press T to chat — a text box the whole lobby sees. For voice, press G to turn your mic on (it starts off; hold V to talk if you use push-to-talk). People near you hear you and you hear them, fading with distance — press B to mute someone. How far voices carry, seated and roaming, is on the world-settings board.</div>
 
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
@@ -300,6 +299,14 @@
 		font-size: 18px;
 		font-weight: bold;
 		letter-spacing: 3px;
+	}
+
+	/* A section nested INSIDE a play tab (Lichess → "Play on lichess for real",
+	   Gamchess → "Your games are kept"). Slightly smaller than a top-level header so the
+	   hierarchy reads — it belongs to the tab above it, not to the page. */
+	.section-header.sub {
+		font-size: 16px;
+		letter-spacing: 2px;
 	}
 
 	.body {
