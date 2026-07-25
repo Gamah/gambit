@@ -17,9 +17,10 @@
 <root>
 	<div class="board" style="background-color:@WallTheme.Bg; border-color:@WallTheme.Border;">
 		<div class="title" style="color:@WallTheme.Text;">LICHESS</div>
+		<div class="subtitle" style="color:@WallTheme.TextFaint;">real games on your record</div>
 		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
-		<div class="status" style="color:@StatusColor()">@StatusLine()</div>
-		<div class="hint" style="color:@WallTheme.TextFaint;">Press E</div>
+		<div class="status @( LichessLinkState.Linked ? "linked" : "" )" style="color:@StatusColor()">@StatusLine()</div>
+		<div class="hint" style="color:@WallTheme.TextFaint;">@HintLine()</div>
 	</div>
 </root>
 
@@ -61,6 +62,14 @@
 		text-align: center;
 	}
 
+	/* A stable value-proposition line under the title — echoes the engaged panel's tone
+	   without restoring any fact that rots (see the header note). */
+	.subtitle {
+		font-size: $wall-fs-fine;
+		letter-spacing: 1px;
+		text-align: center;
+	}
+
 	.divider {
 		height: $wall-divider-h;
 		margin: $wall-divider-gap 0;
@@ -70,6 +79,18 @@
 	.status {
 		font-size: $wall-fs-body;
 		text-align: center;
+		justify-content: center;
+	}
+
+	/* When linked, mirror the engaged panel's green "✓ linked as …" box so the wall
+	   reads the same across the room. Static green (not theme-driven) on purpose —
+	   linked-confirmation is a fixed meaning, like the engaged panel's .linked-row. */
+	.status.linked {
+		padding: 3px 6px;
+		border-radius: $wall-radius;
+		background-color: rgba(130, 220, 130, 0.12);
+		border: $wall-border solid rgba(130, 220, 130, 0.45);
+		font-weight: bold;
 	}
 
 	.hint {
@@ -93,7 +114,12 @@
 	}
 
 	string StatusColor() =>
-		LichessLinkState.Linked ? "rgba(130, 220, 130, 0.9)" : WallTheme.TextDim;
+		LichessLinkState.Linked ? "rgba(150, 235, 150, 0.95)" : WallTheme.TextDim;
+
+	/// <summary>Point a press of E at the right next step — link if you haven't, play if
+	/// you have. Everything actionable lives in the engaged InfoScreen; this only nudges.</summary>
+	string HintLine() =>
+		LichessLinkState.Linked ? "Press E to play" : "Press E to link";
 
 	protected override int BuildHash() =>
 		HashCode.Combine( LichessLinkState.Linked, LichessLinkState.Username,

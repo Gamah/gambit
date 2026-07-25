@@ -113,13 +113,30 @@
 			   one thing here that contradicts what the paragraph above promises. *@
 			<div class="body" style="color:@WallTheme.TextDim;">You click the square you want. If you'd rather aim by looking, switch AIM AT THE BOARD to LOOK at the south wall: once a game starts the pointer hides, a crosshair marks the middle of your view, and you play the square it is over. Escape switches the pointer back on, and off again — while you're aiming it doesn't stand you up, so use the ✕ Stand Up button for that. The pointer also comes back by itself whenever you have to choose a promotion.</div>
 
-			@* The solo entry point (M19). Deliberately says "any speed, Bullet included" — a
-			   computer game is fully local, so it clears none of lichess's speed floors, which
-			   is the one place it's more capable than a real game, not less. *@
-			<div class="body" style="color:@WallTheme.TextDim;">No one to play? Sit down and choose "Play the computer" — Easy, Medium or Hard. It's a full game against the built-in engine: no account and no second player needed, at any speed (Bullet included). Take back a move if you slip; it's a local game like any other, so it's saved to your archive and never touches lichess.</div>
-			@* Matchmaking (M19). Random sides is the promise — say it here too. *@
-			<div class="body" style="color:@WallTheme.TextDim;">Want a real person from another lobby? At a table, use "Find an opponent online": post your game or join someone else's. You'll be paired and dropped straight into a game — on a RANDOM colour, so nobody picks their own side. No lichess needed.</div>
+			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
+			@* The table's four tabs (SetupPanel), shown as the newcomer will see them so they
+			   recognise the bar when they sit. Order matches the real tab bar exactly (Lichess,
+			   Gamchess, Local, Computer) and each pill wears its mode's button-family colour —
+			   white for lichess, teal for online, green for local, violet for the computer.
+			   Keep each description to a POINTER: the depth lives in the sections below (lichess,
+			   archive) and at the table itself, so this stays an orientation map, not a second
+			   copy to rot. The Gamchess line keeps the RANDOM-colour promise and drops the old
+			   "post or join" wording — Join-up was removed (it's one-button QuickPlay now).
+			   Computer keeps "Bullet included", the one place a fully-local game out-reaches a
+			   real one: it clears none of lichess's speed floors. *@
+			<div class="section-header" style="color:@WallTheme.AccentCss;">FOUR WAYS TO PLAY</div>
+			<div class="body" style="color:@WallTheme.TextDim;">Sit down and you'll find four tabs across the top of the table panel — pick how you want to play:</div>
+			<div class="tab-demo-bar">
+				<div class="tab-demo lichess">Lichess</div>
+				<div class="tab-demo gamchess">Gamchess</div>
+				<div class="tab-demo local">Local</div>
+				<div class="tab-demo computer">Computer</div>
+			</div>
+			<div class="body" style="color:@WallTheme.TextDim;">Lichess — a real, rated-history game on lichess: the person opposite, a player you name, a random stranger, or anyone you send a link. Needs a linked account (more below).</div>
+			<div class="body" style="color:@WallTheme.TextDim;">Gamchess — get paired with a real person from another lobby. You're dropped straight into a game on a RANDOM colour, so nobody picks their own side. No account needed.</div>
+			<div class="body" style="color:@WallTheme.TextDim;">Local — just the two of you on this board, the person sitting opposite. No account, no server.</div>
+			<div class="body" style="color:@WallTheme.TextDim;">Computer — a full solo game against the built-in engine: Easy, Medium or Hard, at any speed (Bullet included). No account, no second player.</div>
 			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 			<div class="section-header" style="color:@WallTheme.AccentCss;">YOUR GAMES ARE KEPT</div>
@@ -277,6 +294,31 @@
 		line-height: 1.35;
 		white-space: pre-wrap;
 	}
+
+	/* A non-interactive mock of the table's four-tab bar (SetupPanel). Single-line pills
+	   in a flex row — the proven .seek-row/.chip shape — one per mode, each wearing that
+	   mode's button-family colour so the newcomer recognises the bar (and the colours)
+	   when they sit down. */
+	.tab-demo-bar {
+		flex-direction: row;
+		gap: 4px;
+		margin: 4px 0 2px 0;
+	}
+	.tab-demo {
+		flex-grow: 1;
+		flex-shrink: 0;
+		white-space: nowrap;
+		justify-content: center;
+		font-size: 17px;
+		font-weight: bold;
+		letter-spacing: 1px;
+		padding: 9px 4px;
+		border-radius: 7px 7px 0 0;
+	}
+	.tab-demo.lichess { background-color: rgba(240, 240, 240, 0.8); color: rgba(15, 15, 15, 0.95); }
+	.tab-demo.gamchess { background-color: rgba(60, 190, 190, 0.4); color: white; }
+	.tab-demo.local { background-color: rgba(127, 212, 127, 0.45); color: white; }
+	.tab-demo.computer { background-color: rgba(150, 120, 235, 0.4); color: white; }
 
 	.dev-notice {
 		font-size: 21px;
