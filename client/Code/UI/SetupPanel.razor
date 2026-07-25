@@ -11,18 +11,30 @@
 @inherits Panel
 
 @*
-	The table's pre-game setup: the time-control picker, the four lichess start flows
-	(play the person opposite, seek a stranger, challenge a named player, hand out a
-	shareable link), and the Ready button. Shown whenever the table is not mid-game, so
-	it covers both a fresh table and the rematch after a result.
+	The table's pre-game setup, organised as FOUR tabs over one shared time-control
+	picker: Lichess (the four real-lichess start flows), Gamchess (server matchmaking —
+	play a stranger, or yourself across two windows), Local (the two-seat game on this
+	board), and Computer (the built-in engine). Shown whenever the table is not mid-game,
+	so it covers both a fresh table and the rematch after a result.
+
+	All four tabs are ALWAYS in the bar. Local and Lichess are always usable; Gamchess and
+	Computer grey out and render a one-line reason (GamchessWhyNot / ComputerWhyNot) when
+	there is no open opposite seat for them — so the four modes stay discoverable rather
+	than a tab appearing and vanishing as seats fill.
+
+	TIME CONTROL is shared and sits ABOVE the tabs, because every mode reads it — the
+	local Ready game, PlayComputer, matchmaking's QuickPlay, and every lichess flow all
+	key off ctrl.TimeControlIndex / ctrl.Tc. Ready straddles two tabs on purpose: it is
+	the same ctrl.ToggleReady on Local (a plain two-seat game) and on Lichess (after
+	both seats opt into "play this game on lichess"), so it renders on both.
 
 	Split out of GameHud (M17). It is the sole owner of the seek/challenge/link
 	preferences (_seekRated/_seekColor/_challengeRated/_openRated/_openColor), the
 	challenge TextEntry, the seat-align-once machinery (_seatAlignPending, resolved in
-	Tick), and every TimeControl.All / LichessTable call — so it carries its own state,
-	its own style, and its own repaint hash. Re-resolving Controller()/Lichess() off
-	ChessStation.Active per panel (rather than threading them in) is the sanctioned
-	pattern: they are cheap statics keyed on the one active station.
+	Tick), the active tab (_tab), and every TimeControl.All / LichessTable call — so it
+	carries its own state, its own style, and its own repaint hash. Re-resolving
+	Controller()/Lichess() off ChessStation.Active per panel (rather than threading them
+	in) is the sanctioned pattern: they are cheap statics keyed on the one active station.
 
 	Carries its OWN style: s&box panel stylesheets do not reliably cross a nested-panel
 	boundary (each nested Panel in the menu addon ships its own .scss), so the setup
@@ -45,37 +57,150 @@
 			}
 		</div>
 
-		@* Play the computer (M19). The solo entry point — a full local game against the
-		   built-in engine, needing no lichess account and no second player, at ANY time
-		   control (bullet included: nothing here has to clear lichess's speed floors).
-		   Shown to a seated player whose opposite side has no human, or whenever a computer
-		   is already at the table (change its difficulty, or start a rematch). *@
-		@if ( ctrl.CanAddBot || ctrl.HasBotOpponent )
+		@{ var tab = ActiveTab( ctrl ); }
+		<div class="tab-bar">
+			<div class="tab @( tab == "lichess" ? "on" : "" )" onclick="@( () => SetTab( "lichess" ) )">Lichess</div>
+			<div class="tab @( tab == "gamchess" ? "on" : "" ) @( GamchessWhyNot( ctrl ) != null ? "disabled" : "" )" onclick="@( () => SetTab( "gamchess" ) )">Gamchess</div>
+			<div class="tab @( tab == "local" ? "on" : "" )" onclick="@( () => SetTab( "local" ) )">Local</div>
+			<div class="tab @( tab == "computer" ? "on" : "" ) @( ComputerWhyNot( ctrl ) != null ? "disabled" : "" )" onclick="@( () => SetTab( "computer" ) )">Computer</div>
+		</div>
+
+		@* Every tab is always present; the two conditional modes (Gamchess, Computer) grey
+		   out and explain why when they can't be used, rather than vanishing from the bar. *@
+
+		@* ── LICHESS (M8): four ways to put a real game on your lichess record — play the
+		   person opposite, seek a stranger, challenge a named player, or hand out a
+		   shareable link. Each is offered only where it could actually work; the flows have
+		   DIFFERENT speed floors (blitz for a challenge, rapid for a seek), which is
+		   lichess's rule, not ours.
+
+		   No "already engaged" branch needed: ShowSetup is false whenever lichess owns the
+		   board, so this block is only ever reached with no lichess game in flight. ── *@
+		@if ( tab == "lichess" )
 		{
-			<div class="setup-label">PLAY THE COMPUTER</div>
-			<div class="seek-row">
-				<div class="chip @( _botLevel == BotLevel.Easy ? "on" : "" )" onclick="@( () => SetBotLevel( BotLevel.Easy ) )">Easy</div>
-				<div class="chip @( _botLevel == BotLevel.Medium ? "on" : "" )" onclick="@( () => SetBotLevel( BotLevel.Medium ) )">Medium</div>
-				<div class="chip @( _botLevel == BotLevel.Hard ? "on" : "" )" onclick="@( () => SetBotLevel( BotLevel.Hard ) )">Hard</div>
-			</div>
-			<div class="button bot" onclick="@( () => ctrl.PlayComputer( _botLevel ) )">♟ Play the computer</div>
-			@if ( ctrl.HasBotOpponent )
+			@if ( !LichessLinkState.Linked )
 			{
-				<div class="setup-remove" onclick="@( () => ctrl.RemoveComputer() )">Remove computer — play a person instead</div>
+				<div class="setup-hint">Link a lichess account at the east wall to play real games from this table</div>
+			}
+			@* One lichess game at a time: lichess doesn't document permission to play concurrent
+			   games through the Board API, so if you're already playing one at another table this
+			   table plays locally instead. (Local two-seat games have no such limit.) *@
+			else if ( LobbyPlayer.Local?.LichessGameElsewhere( Station() ) is { } busyTable )
+			{
+				<div class="setup-hint">You're playing a lichess game at Table @busyTable.Number — finish it before starting another. This table plays a local game.</div>
 			}
 			else
 			{
-				<div class="setup-hint">No account needed. Play a full game against the built-in engine.</div>
+				@* Play the person opposite you. Both seats must opt in — and gamchess
+				   independently requires both to ask, so this is the agreement, not the
+				   authorisation. Ready (below) completes it, the same button as a local game. *@
+				@if ( LichessTable.CanMirror( ctrl.Tc ) )
+				{
+					<div class="button lichess @( LocalLichess( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleLichess() )">@LichessText( ctrl )</div>
+					@if ( LichessOptInHint( ctrl ) is string hint )
+					{
+						<div class="setup-hint">@hint</div>
+					}
+					@if ( BothSeated() )
+					{
+						<div class="button ready @( LocalReady( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleReady() )">@ReadyText( ctrl )</div>
+					}
+				}
+				else
+				{
+					<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
+				}
+
+				@* Or play a stranger. Needs nobody's agreement but yours: you're spending
+				   your own grant on an opponent who opted in on lichess, in their own client,
+				   by their own choice. Works alone at a table.
+
+				   The HEADER is outside the CanSeek check on purpose. It used to be inside, so
+				   picking Blitz made the whole section vanish and the only trace was a hint the
+				   player had no reason to read — the feature looked missing rather than
+				   unavailable, and that cost a round of "the board only supports two people in
+				   sbox". A control that can't be offered still has to say so where it would
+				   have been. *@
+				<div class="setup-label">OR PLAY A RANDOM OPPONENT</div>
+				@if ( LichessTable.CanSeek( ctrl.Tc ) )
+				{
+					<div class="seek-row">
+						<div class="chip @( _seekRated ? "on" : "" )" onclick="@( () => ToggleSeekRated() )">@( _seekRated ? "Rated" : "Casual" )</div>
+						<div class="chip @( _seekColor != "random" ? "on" : "" )" onclick="@( () => CycleSeekColor() )">@SeekColorText()</div>
+					</div>
+					<div class="button lichess" onclick="@( () => StartSeek() )">♞ Find a game on lichess</div>
+					<div class="setup-hint">@SeekHint()</div>
+				}
+				else
+				{
+					<div class="setup-hint">@LichessTable.WhySeekNot( ctrl.Tc )</div>
+				}
+
+				@* Or challenge a SPECIFIC lichess player by name. Same speed floor as playing
+				   the person opposite (blitz), NOT the seek's (rapid) — so it shares CanMirror,
+				   and only needs a seat (for the colour it plays).
+
+				   The header is outside the CanMirror check for the same reason the seek's is
+				   outside CanSeek: a control that can't be offered still has to say so where it
+				   would have been, or its absence reads as a bug. Gated on holding a seat,
+				   though — with no seat there is no side to challenge with, and nothing useful
+				   to say about that. *@
+				@if ( LichessSeatColor( ctrl ) is string seatColor )
+				{
+					<div class="setup-label">OR CHALLENGE A LICHESS PLAYER</div>
+					@if ( LichessTable.CanMirror( ctrl.Tc ) )
+					{
+						<div class="seek-row">
+							<div class="chip @( _challengeRated ? "on" : "" )" onclick="@( () => ToggleChallengeRated() )">@( _challengeRated ? "Rated" : "Casual" )</div>
+							<div class="chip">You play @seatColor</div>
+						</div>
+						<TextEntry @ref="_challengeEntry" placeholder="lichess username" class="challenge-entry" maxlength="30" />
+						<div class="button lichess" onclick="@( () => StartChallenge() )">♞ Send the challenge</div>
+						<div class="setup-hint">@ChallengeHint()</div>
+					}
+					else
+					{
+						<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
+					}
+				}
+
+				@* Or hand out a link an ANONYMOUS browser player opens to play YOU on this
+				   board — no lichess account needed their side. gamchess seats your account in
+				   an open challenge and relays your side here (server runOpen). Blitz+ only
+				   (your side plays via the Board API), and the colour chip is which side YOU
+				   take — picking it moves your seat to match. *@
+				@if ( LichessSeatColor( ctrl ) is not null )
+				{
+					<div class="setup-label">OR GET A SHAREABLE LINK</div>
+					@if ( LichessTable.CanMirror( ctrl.Tc ) )
+					{
+						<div class="seek-row">
+							<div class="chip @( _openRated ? "on" : "" )" onclick="@( () => ToggleOpenRated() )">@( _openRated ? "Rated" : "Casual" )</div>
+							<div class="chip @( _openColor != "random" ? "on" : "" )" onclick="@( () => CycleOpenColor() )">@OpenColorText()</div>
+						</div>
+						<div class="button lichess" onclick="@( () => StartOpenLink() )">♞ Get a shareable link</div>
+						<div class="setup-hint">Send the link to anyone — they open it in a browser and play you here. No account needed.</div>
+					}
+					else
+					{
+						<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
+					}
+				}
 			}
 		}
 
-		@* Play online (M19). ONE button — a queue, not a lobby list: it joins a waiting
-		   opponent if there is one, otherwise posts you and waits for the next. Sides are
-		   always random. No lichess needed — just a Steam identity. *@
-		@if ( ShowMatchmaking( ctrl ) )
+		@* ── GAMCHESS (M19): server matchmaking. ONE button — a queue, not a lobby list:
+		   it joins a waiting opponent if there is one, otherwise posts you and waits for the
+		   next. Sides are always random. No lichess needed — just a Steam identity. Greyed
+		   out (with the reason) when you're not seated with the opposite side open. ── *@
+		else if ( tab == "gamchess" )
 		{
 			<div class="setup-label">PLAY ONLINE</div>
-			@if ( Matchmaking.Waiting )
+			@if ( GamchessWhyNot( ctrl ) is string why )
+			{
+				<div class="setup-hint">@why</div>
+			}
+			else if ( Matchmaking.Waiting )
 			{
 				<div class="setup-hint">@Matchmaking.Status</div>
 				<div class="setup-remove" onclick="@( () => Matchmaking.CancelOpen() )">Cancel — stop looking</div>
@@ -91,131 +216,54 @@
 			}
 		}
 
-		@* Lichess (M8). Two ways to put a real game on your lichess record: play the
-		   person opposite you, or play a stranger. Each is offered only where it could
-		   actually work — the two flows have DIFFERENT speed floors (blitz for a
-		   challenge, rapid for a seek), which is lichess's rule, not ours.
-
-		   No "already engaged" branch needed: ShowSetup is false whenever lichess owns
-		   the board, so this block is only ever reached with no lichess game in flight. *@
-		@if ( !LichessLinkState.Linked )
+		@* ── LOCAL: the two-seat game on this board. Always available; Ready is the same
+		   button as the lichess "play opposite" flow (ctrl.ToggleReady). ── *@
+		else if ( tab == "local" )
 		{
-			<div class="setup-hint">Link a lichess account at the east wall to play real games from this table</div>
-		}
-		@* One lichess game at a time: lichess doesn't document permission to play concurrent
-		   games through the Board API, so if you're already playing one at another table this
-		   table plays locally instead. (Local two-seat games have no such limit.) *@
-		else if ( LobbyPlayer.Local?.LichessGameElsewhere( Station() ) is { } busyTable )
-		{
-			<div class="setup-hint">You're playing a lichess game at Table @busyTable.Number — finish it before starting another. This table plays a local game.</div>
-		}
-		else
-		{
-			@* Play the person opposite you. Both seats must opt in — and gamchess
-			   independently requires both to ask, so this is the agreement, not the
-			   authorisation. *@
-			@if ( LichessTable.CanMirror( ctrl.Tc ) )
+			<div class="setup-hint">Play the person sitting opposite you on this board. No account needed.</div>
+			@if ( BothSeated() )
 			{
-				<div class="button lichess @( LocalLichess( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleLichess() )">@LichessText( ctrl )</div>
-				@if ( LichessOptInHint( ctrl ) is string hint )
-				{
-					<div class="setup-hint">@hint</div>
-				}
+				<div class="button ready @( LocalReady( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleReady() )">@ReadyText( ctrl )</div>
+			}
+			else if ( ShowComputerTab( ctrl ) )
+			{
+				<div class="setup-hint">Waiting for a second player — or play the computer on the Computer tab.</div>
 			}
 			else
 			{
-				<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
+				<div class="setup-hint">Ready unlocks when both seats fill.</div>
 			}
+		}
 
-			@* Or play a stranger. Needs nobody's agreement but yours: you're spending
-			   your own grant on an opponent who opted in on lichess, in their own client,
-			   by their own choice. Works alone at a table.
-
-			   The HEADER is outside the CanSeek check on purpose. It used to be inside, so
-			   picking Blitz made the whole section vanish and the only trace was a hint the
-			   player had no reason to read — the feature looked missing rather than
-			   unavailable, and that cost a round of "the board only supports two people in
-			   sbox". A control that can't be offered still has to say so where it would
-			   have been. *@
-			<div class="setup-label">OR PLAY A RANDOM OPPONENT</div>
-			@if ( LichessTable.CanSeek( ctrl.Tc ) )
+		@* ── COMPUTER (M19): a full local game against the built-in engine, at ANY time
+		   control (bullet included: nothing here has to clear lichess's speed floors). No
+		   account, no second player. Greyed out (with the reason) when there's no empty seat
+		   for the computer to take. ── *@
+		else if ( tab == "computer" )
+		{
+			@if ( ComputerWhyNot( ctrl ) is string why )
 			{
+				<div class="setup-label">PLAY THE COMPUTER</div>
+				<div class="setup-hint">@why</div>
+			}
+			else
+			{
+				<div class="setup-label">DIFFICULTY</div>
 				<div class="seek-row">
-					<div class="chip @( _seekRated ? "on" : "" )" onclick="@( () => ToggleSeekRated() )">@( _seekRated ? "Rated" : "Casual" )</div>
-					<div class="chip @( _seekColor != "random" ? "on" : "" )" onclick="@( () => CycleSeekColor() )">@SeekColorText()</div>
+					<div class="chip @( _botLevel == BotLevel.Easy ? "on" : "" )" onclick="@( () => SetBotLevel( BotLevel.Easy ) )">Easy</div>
+					<div class="chip @( _botLevel == BotLevel.Medium ? "on" : "" )" onclick="@( () => SetBotLevel( BotLevel.Medium ) )">Medium</div>
+					<div class="chip @( _botLevel == BotLevel.Hard ? "on" : "" )" onclick="@( () => SetBotLevel( BotLevel.Hard ) )">Hard</div>
 				</div>
-				<div class="button lichess" onclick="@( () => StartSeek() )">♞ Find a game on lichess</div>
-				<div class="setup-hint">@SeekHint()</div>
-			}
-			else
-			{
-				<div class="setup-hint">@LichessTable.WhySeekNot( ctrl.Tc )</div>
-			}
-
-			@* Or challenge a SPECIFIC lichess player by name. Same speed floor as playing
-			   the person opposite (blitz), NOT the seek's (rapid) — so it shares CanMirror,
-			   and only needs a seat (for the colour it plays).
-
-			   The header is outside the CanMirror check for the same reason the seek's is
-			   outside CanSeek: a control that can't be offered still has to say so where it
-			   would have been, or its absence reads as a bug. Gated on holding a seat,
-			   though — with no seat there is no side to challenge with, and nothing useful
-			   to say about that. *@
-			@if ( LichessSeatColor( ctrl ) is string seatColor )
-			{
-				<div class="setup-label">OR CHALLENGE A LICHESS PLAYER</div>
-				@if ( LichessTable.CanMirror( ctrl.Tc ) )
+				<div class="button bot" onclick="@( () => ctrl.PlayComputer( _botLevel ) )">♟ Play the computer</div>
+				@if ( ctrl.HasBotOpponent )
 				{
-					<div class="seek-row">
-						<div class="chip @( _challengeRated ? "on" : "" )" onclick="@( () => ToggleChallengeRated() )">@( _challengeRated ? "Rated" : "Casual" )</div>
-						<div class="chip">You play @seatColor</div>
-					</div>
-					<TextEntry @ref="_challengeEntry" placeholder="lichess username" class="challenge-entry" maxlength="30" />
-					<div class="button lichess" onclick="@( () => StartChallenge() )">♞ Send the challenge</div>
-					<div class="setup-hint">@ChallengeHint()</div>
+					<div class="setup-remove" onclick="@( () => ctrl.RemoveComputer() )">Remove computer — play a person instead</div>
 				}
 				else
 				{
-					<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
+					<div class="setup-hint">No account needed. Play a full game against the built-in engine.</div>
 				}
 			}
-
-			@* Or hand out a link an ANONYMOUS browser player opens to play YOU on this
-			   board — no lichess account needed their side. gamchess seats your account in
-			   an open challenge and relays your side here (server runOpen). Blitz+ only
-			   (your side plays via the Board API), and the colour chip is which side YOU
-			   take — picking it moves your seat to match. *@
-			@if ( LichessSeatColor( ctrl ) is not null )
-			{
-				<div class="setup-label">OR GET A SHAREABLE LINK</div>
-				@if ( LichessTable.CanMirror( ctrl.Tc ) )
-				{
-					<div class="seek-row">
-						<div class="chip @( _openRated ? "on" : "" )" onclick="@( () => ToggleOpenRated() )">@( _openRated ? "Rated" : "Casual" )</div>
-						<div class="chip @( _openColor != "random" ? "on" : "" )" onclick="@( () => CycleOpenColor() )">@OpenColorText()</div>
-					</div>
-					<div class="button lichess" onclick="@( () => StartOpenLink() )">♞ Get a shareable link</div>
-					<div class="setup-hint">Send the link to anyone — they open it in a browser and play you here. No account needed.</div>
-				}
-				else
-				{
-					<div class="setup-hint">@LichessTable.WhyNot( ctrl.Tc )</div>
-				}
-			}
-		}
-
-		@if ( BothSeated() )
-		{
-			<div class="button ready @( LocalReady( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleReady() )">@ReadyText( ctrl )</div>
-		}
-		else if ( ctrl.CanAddBot || ctrl.HasBotOpponent )
-		{
-			@* A solo player has a real action above — don't tell them to go find a person. *@
-			<div class="setup-hint">Waiting for a second player — or play the computer above.</div>
-		}
-		else
-		{
-			<div class="setup-hint">Ready unlocks when both seats fill</div>
 		}
 	}
 </root>
@@ -250,6 +298,29 @@
 		color: white;
 	}
 	.setup-hint { font-size: 12px; color: rgba(255, 255, 255, 0.45); }
+
+	/* The four-mode tab bar. Sits between the shared time control and the per-tab body;
+	   the active tab picks up the same blue as a selected time control so "selected"
+	   reads one way across the panel. */
+	.tab-bar { flex-direction: row; gap: 3px; margin-top: 6px; }
+	.tab {
+		flex-grow: 1;
+		justify-content: center;
+		font-size: 12px;
+		padding: 5px 6px;
+		border-radius: 5px 5px 0 0;
+		cursor: pointer;
+		pointer-events: all;
+		background-color: rgba(255, 255, 255, 0.05);
+		color: rgba(255, 255, 255, 0.5);
+	}
+	.tab:hover { background-color: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.8); }
+	.tab.on { background-color: rgba(90, 140, 255, 0.4); color: white; }
+	/* A mode that can't be used right now: dimmed, but still clickable — its body explains
+	   why. Kept in the bar (not hidden) so the four modes are always discoverable. */
+	.tab.disabled { color: rgba(255, 255, 255, 0.28); }
+	.tab.disabled:hover { background-color: rgba(255, 255, 255, 0.05); color: rgba(255, 255, 255, 0.4); }
+	.tab.disabled.on { background-color: rgba(120, 120, 130, 0.35); color: rgba(255, 255, 255, 0.6); }
 
 	/* Shared .button base — a private copy, because GameHud's stylesheet is not
 	   guaranteed to reach this nested panel (see the header comment). */
@@ -412,6 +483,52 @@
 		if ( ctrl?.LocalSeat is not { } seat ) return null;
 		return seat == ChessSeat.White ? "White" : "Black";
 	}
+
+	// ── Tabs (Local / Computer / Gamchess / Lichess) ──
+
+	/// <summary>The selected tab, or null for "auto" — which picks Computer when a bot is
+	/// already at the table (so the rematch/remove controls are front and centre) and Local
+	/// otherwise. Once the player clicks a tab this holds their choice for the life of the
+	/// panel; every tab is always selectable (the two conditional modes self-explain when
+	/// unusable), so there is nothing to fall back from.</summary>
+	string _tab;
+
+	void SetTab( string t ) { _tab = t; StateHasChanged(); }
+
+	/// <summary>The Computer tab is USABLE whenever a computer could be added OR one is
+	/// already here (to change difficulty, rematch, or remove it). Same gate as the old
+	/// inline "PLAY THE COMPUTER" block. The tab is always SHOWN; this only decides whether
+	/// it renders its controls or a greyed-out reason.</summary>
+	static bool ShowComputerTab( LocalGameController ctrl ) =>
+		ctrl != null && ( ctrl.CanAddBot || ctrl.HasBotOpponent );
+
+	/// <summary>Why the Computer tab can't be used right now, or null when it can. The
+	/// computer plays the empty seat, so it needs a seated player with the opposite side
+	/// open.</summary>
+	static string ComputerWhyNot( LocalGameController ctrl )
+	{
+		if ( ShowComputerTab( ctrl ) ) return null;
+		return "The computer plays the empty seat opposite — sit down at a table with the other side open.";
+	}
+
+	/// <summary>Why the Gamchess (online matchmaking) tab can't be used right now, or null
+	/// when it can. Needs the same open-opposite-seat as the computer, and additionally is
+	/// blocked while a computer holds this table (remove it first).</summary>
+	static string GamchessWhyNot( LocalGameController ctrl )
+	{
+		if ( ShowMatchmaking( ctrl ) ) return null;
+		if ( ctrl?.HasBotOpponent ?? false )
+			return "A computer is at this table — remove it on the Computer tab to play a stranger online.";
+		return "Sit down at a table with the opposite side open to play a random opponent online.";
+	}
+
+	/// <summary>Which tab actually renders. Every tab is always present, and the two
+	/// conditional ones (Gamchess, Computer) show a greyed-out reason instead of vanishing —
+	/// so a stored pick never needs a fall-back. The auto-default (before the player picks)
+	/// lands on Computer when a bot is already here, Local otherwise; both are always usable,
+	/// so the default is never a disabled tab.</summary>
+	string ActiveTab( LocalGameController ctrl ) =>
+		_tab ?? ( ( ctrl?.HasBotOpponent ?? false ) ? "computer" : "local" );
 
 	// ── Computer opponent (this player's chosen difficulty; doesn't outlive the HUD) ──
 
@@ -600,9 +717,9 @@
 				// Computer opponent: repaint when one is added/removed at this table, or when
 				// the opposite seat frees up (CanAddBot).
 				ctrl?.HasBotOpponent, ctrl?.CanAddBot,
-				// Difficulty pick + matchmaking (waiting state, status line, and how many open
-				// games are listed) — nested to stay within Combine's 8-arg limit.
+				// Difficulty pick + matchmaking + active tab (which body renders) — nested to
+				// stay within Combine's 8-arg limit.
 				System.HashCode.Combine( _botLevel, Matchmaking.Waiting, Matchmaking.Status,
-					Matchmaking.OpenGames.Length, Matchmaking.OpenMode, OnRelay() ) ) );
+					Matchmaking.OpenGames.Length, Matchmaking.OpenMode, OnRelay(), _tab ) ) );
 	}
 }
