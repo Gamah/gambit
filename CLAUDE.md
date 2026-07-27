@@ -10,18 +10,11 @@ This file is the durable reference: how the game is built and the s&box lore tha
 biting. **`PLAN.md` is only upcoming work and open issues** — read it for what's left,
 not for how things work.
 
-**`PLAN.md` is one flat table of things that need doing, ranked 1–100, highest first.** It
-carries no milestone structure and no history: a milestone that shipped leaves nothing behind
-in it, because the reasoning that outlives the work belongs *here* and everything else belongs
-in git. Two consequences worth knowing before editing either file:
-
-- **The rank is a priority, not a schedule, and rows are not branches.** Group rows into
-  branches when you pick them up — several small rows on one wall or one panel are usually one
-  branch; one big row (chat, voice, the viewer) is usually its own. The table is flat so it can
-  be regrouped freely.
-- **A shipped row is deleted, not ticked.** So the way work reaches this file is by hand and on
-  purpose: when you close a row, ask what a future session would get wrong without it, and put
-  *that* here. Nothing copies itself across.
+`PLAN.md` follows the global flat-ranked-backlog format (see the global instructions) — this
+repo is where that format came from. What is worth knowing here: **grouping rows into branches
+is a judgement call** — several small rows on one wall or one panel are usually one branch; one
+big row (chat, voice, the viewer) is usually its own. The table is flat so it can be regrouped
+freely.
 
 ### Cutting a release (sbox.game)
 
@@ -58,11 +51,10 @@ ripped out on `m7-gamchess-identity` and M8 was a clean-slate rebuild against re
 facts. The `lichess-final` tag holds the old one for reference only; do not restore those
 files.
 
-**Re-derive the API facts. This rule keeps earning its keep.** Everything below was read from
-the live `lichess-org/api` OpenAPI spec and `lichess-org/lila` master on 2026-07-15, not
-recalled. Re-read before trusting any of it — a stale constraint is worse than none. Facts
-marked **[SOURCE]** are inferred from lila's source, not a documented contract, and can change
-without notice.
+**Provenance for everything below:** read from the live `lichess-org/api` OpenAPI spec and
+`lichess-org/lila` master on **2026-07-15**, not recalled. Re-read before trusting any of it.
+Facts marked **[SOURCE]** are inferred from lila's source, not a documented contract, and can
+change without notice.
 
 #### The custody decision: gamchess holds the token (position 2)
 
@@ -590,7 +582,7 @@ Three long-standing claims in this file were **wrong** and are now removed:
    is one function each side, exactly as TV was.
 
 Status: gamchess client + server built, plus the M8 lichess link + Board API relay. The
-**Go half compiles and its tests pass** (fetch a Go 1.22 toolchain into scratch; `go test
+**Go half compiles and its tests pass** (Go 1.22 from `~/.local/share/toolchains/`; `go test
 ./... -race`). The **engine half has never been compiled** — this host has no s&box toolchain
 — so expect a fixup pass on first open in the editor. Nothing is deployed (no Docker here).
 
@@ -640,14 +632,12 @@ never go back in the root file — they match at any depth and would swallow `se
 
 **Paths in csproj/slnx** assume Steam at `D:\Steam\`; the editor regenerates them.
 
-This dev host has **no s&box toolchain** — no *engine* code compiles or runs locally.
-Verify by careful review + grep; the user tests in their editor.
-
-**Three things DO run here, and all three are gates worth using:**
+No *engine* code compiles or runs on this host. **Three things DO run here, and all three
+are gates worth using:**
 - `node scripts/chess_js_perft.mjs` — the web viewer's chess rules.
-- **The Go server.** No toolchain is installed, but one can be fetched into scratch
-  (`go1.22.x.linux-amd64.tar.gz`) and `go build/vet/test ./... -race` all pass. `server/` is
-  fully testable; do not claim otherwise.
+- **The Go server.** Go 1.22 lives in `~/.local/share/toolchains/` (fetch
+  `go1.22.x.linux-amd64.tar.gz` there once if it is missing); `go build/vet/test ./... -race`
+  all pass. `server/` is fully testable; do not claim otherwise.
 - **Sandbox-free C#** via a scratch csproj (see below) — which now includes `Code/Game/
   LichessTable.cs`, the client's copy of lichess's speed floors.
 
@@ -986,8 +976,8 @@ contract change is one commit across both halves.
 
 ### Asset licensing
 
-All art must be **CC0**, with **one documented exception** (below). Record provenance in
-`Assets/ATTRIBUTION.md` even for CC0.
+Provenance goes in `Assets/ATTRIBUTION.md`, CC0 included. This repo has **one documented
+exception** to the CC0 rule (below).
 
 Nothing else is licensed in: pieces are runtime meshes from `ChessSetBuilder`, floor
 glyphs are our own DejaVu raster, sounds are synthesized by `scripts/gen_sounds.py`, and
@@ -1031,9 +1021,9 @@ Reading a `gambit_gamchess_ping` failure (verified in-editor 2026-07-15):
 
 ### gamchess deployment facts
 
-**Never deployed** (this host has no Docker). The Go DOES now compile and test here when a
-toolchain is fetched into scratch — `make test` runs `go test ./... -race` in a container on a
-machine that has Docker, and the same suite passes locally with a downloaded Go 1.22. If you
+**Never deployed** (this host has no Docker). The Go DOES compile and test here with the
+shared toolchain — `make test` runs `go test ./... -race` in a container on a
+machine that has Docker, and the same suite passes locally with Go 1.22. If you
 are changing the server, run the tests; "can't build it here" is no longer true for Go.
 
 **Secrets live in `.env` and are generated, not requested.** lichess issues nothing — no client
@@ -1148,8 +1138,6 @@ Deviating from them is how un-compilable mistakes get in.
   the trailing headers dictionary is undocumented in `../sbox-docs` but works
 - **Hotload**: C# changes hotload in milliseconds. Procedural builders rebuild via
   `[EditorEvent.Hotload]` in `Editor/HotloadRebuild.cs` — keep new builders registered there
-- **Razor usings**: `System`, `Sandbox`, `Sandbox.UI`, `Sandbox.Rendering` are NOT
-  auto-imported in `.razor` — add `@using` explicitly
 - **Self-attaching UI**: **GameHud, SpectatorScreen, and the M12 voice pair (VoiceScreen +
   VoicePanel)** — those, and no others — attach themselves to the scene ScreenPanel at runtime
   (`LobbyPlayer` walks `Scene.GetAllComponents<ScreenPanel>()` in `EnsureGameHud` /
@@ -1177,70 +1165,55 @@ Deviating from them is how un-compilable mistakes get in.
   it from a **`GameObjectSystem`** onto a runtime `NetworkMode.Never` GO. `LocalMusicSystem` does
   the latter for the Skafinity trio (player + board + `MusicBoardScreen`), mirroring terryball's
   `LocalHudSystem`; a `GameObjectSystem` is instantiated locally on every machine independent of
-  the snapshot, which is the whole point. **Never author a client-local screen or audio component
-  in the scene** — put it on a code-built `Never` object.
+  the snapshot, which is the whole point.
 
 ## s&box API Whitelist
 
-s&box enforces an API whitelist — blocked calls produce `error SB1000`.
-See `../sbox-docs/docs/code/code-basics/api-whitelist.md`.
-
-| ❌ Blocked | ✅ Use instead |
-|---|---|
-| `Array.Clone()` | manual `for` loop copy |
-| `Console.WriteLine` | `Log.Info` / `Log.Warning` / `Log.Error` |
-| `System.IO.*` | `FileSystem.Data` |
-
-Rule of thumb: avoid `System.Private.CoreLib` reflection/process/threading/IO. This is
-why the vendored chess library needed patching and why SHA-256 is hand-rolled. When in
-doubt check `https://sbox.game/api/` or file a false-positive at
-`https://github.com/Facepunch/sbox-public/issues`.
+The whitelist itself is in `~/.claude/sbox.md`. Gambit-specific consequence: it is why the
+vendored chess library needed patching and why SHA-256 is hand-rolled here.
 
 ## World Scale Rules (read before placing/sizing anything)
 
-- **Never trust code defaults or docs for component property values** — the scene
-  overrides them and gets retuned in-editor. `grep Assets/scenes/lobby.scene` for
-  current values before sizing anything.
-- **…but confirm the component still has a class, because the scene lies too.** The rule
-  above assumes every scene entry is real. `lobby.scene` carried **eight components from the
-  rotaliate fork with no class anywhere in `client/Code/`** — every property on them inert,
-  and two of them actively contradicting the code that really runs: `ArcadeRing`'s
-  `BoardSize: 28` next to the real `ChessRing`'s **26**, and `SpectatorBoard`'s
-  `ClearAboveWall: 20` next to the real `SpectatorWall`'s **18**. Grepping the scene and
-  believing it got you the wrong number, **the exact inverse of this rule**. They are deleted
-  now; the habit is the point — `grep -r "class Foo" client/Code/` before trusting a scene
-  value.
+The generic ones — never trust code defaults over the scene, `box.vmdl` is not 1x1x1,
+no `BoxCollider` on a non-uniformly scaled GO, WorldPanel scale is a multiplier on
+intrinsic pixels — are in `~/.claude/sbox.md`. Gambit-specific:
+
+- **The scene lies too, and this repo has the scar.** `lobby.scene` carried **eight
+  components from the rotaliate fork with no class anywhere in `client/Code/`** — every
+  property on them inert, and two actively contradicting the code that really runs:
+  `ArcadeRing`'s `BoardSize: 28` next to the real `ChessRing`'s **26**, and
+  `SpectatorBoard`'s `ClearAboveWall: 20` next to the real `SpectatorWall`'s **18**. So
+  grepping the scene and believing it got the wrong number — the exact inverse of the
+  usual rule. They are deleted now; the habit is the point:
+  `grep -r "class Foo" client/Code/` before trusting a scene value.
 - **A runtime-built component runs on code defaults and cannot be retuned in-editor.**
-  `SpectatorWall` is not in the scene at all (`LobbyRoom.EnsureSpectatorWall()` builds it), so
-  every one of its values is a code default. A design pass on the north wall is an
-  edit-and-hotload loop, not a scene-tweak loop — unlike east and south.
-- The player is ~72 units tall — the human-scale yardstick.
-- `models/dev/box.vmdl` is **NOT 1×1×1**: to make a box of size S,
-  `LocalScale = S / Model.Bounds.Size` per axis — use/copy `ChessRing.AddBox`.
-- Never put a `BoxCollider` on a non-uniformly scaled GO — it silently freezes physics.
-  Colliders on uniformly-scaled parents, visuals on scaled children.
+  `SpectatorWall` is not in the scene at all (`LobbyRoom.EnsureSpectatorWall()` builds
+  it), so every one of its values is a code default. A design pass on the north wall is
+  an edit-and-hotload loop, not a scene-tweak loop — unlike east and south.
+- The player is ~72 units tall — the human-scale yardstick. `ChessRing.AddBox` is the
+  local `box.vmdl` helper.
 - **A tilted object's EDGE is not half its size from its centre — derive the edge through
-  the rotation, never place it by the number that would be right if it were flat.** This has
-  now cost two rounds on two different objects. The table plaque dropped its centre by
+  the rotation, never place it by the number that would be right if it were flat.** This
+  has now cost two rounds on two different objects. The table plaque dropped its centre by
   `h·cos(tilt)` and forgot the `h·sin(tilt)` the same tilt swings sideways, so its top edge
-  was at the right height but tucked under the tabletop. The clock then centred its plates on
-  the body's top *surface* — so a box centred on its origin buried half of every plate in the
-  body, and buried the shorter material bar **entirely**, where it could never have rendered
-  at all. Both times the arithmetic looked obviously right on the page and the room disagreed.
-  `ChessRing.ClockPlaneOriginZ` is the worked example: surface + `h/2·cos(tilt)`, derived once
-  and shared by everything in the plane, which is also what keeps their bottom edges level for
-  free. **Nothing on this host can render, so a placement bug ships unless the edge is computed
-  — check where the EDGES land, not where the centre does.**
-- A WorldPanel GO's scale is a multiplier on the panel's intrinsic pixel size, not world
-  units; the panel plane is local **Y (width) / Z (height)**. World-size and text size
-  are coupled — to grow a board without growing text, scale the GO up and divide
-  stylesheet px by the same factor.
+  was at the right height but tucked under the tabletop. The clock then centred its plates
+  on the body's top *surface* — so a box centred on its origin buried half of every plate
+  in the body, and buried the shorter material bar **entirely**, where it could never have
+  rendered at all. Both times the arithmetic looked obviously right on the page and the
+  room disagreed. `ChessRing.ClockPlaneOriginZ` is the worked example: surface +
+  `h/2·cos(tilt)`, derived once and shared by everything in the plane, which is also what
+  keeps their bottom edges level for free. **Nothing on this host can render, so a
+  placement bug ships unless the edge is computed — check where the EDGES land, not the
+  centre.**
 - `FacePlayer` yaw-billboards a GO toward the camera; fronts face **+forward**.
 - There is **no documented API to open a URL / Steam overlay** — show links as copyable
-  text — any future link-sharing has to be click-to-copy.
-  Click-to-copy pattern: `DiscordButton.Copy()`.
+  text; any link-sharing has to be click-to-copy (`DiscordButton.Copy()`).
 
 ## UI Gotchas (learned the hard way)
+
+The generic panel rules — `pointer-events` not inheriting, panels as flex containers,
+`transform: scale`, `overflow: scroll` vs drag, font sizes from `Box.Rect`, the Body-child
+renderer — are in `~/.claude/sbox.md`. What follows is what this repo paid for on top.
 
 - **Board vs Screen vocabulary**: a *board* is a display-only WorldPanel in the world
   (takes no pointer input); a *screen* is an interactive ScreenPanel shown while engaged
@@ -1287,15 +1260,8 @@ doubt check `https://sbox.game/api/` or file a false-positive at
   about chess pieces — the geometric-shape block characters are the same trap. `GameHud`
   uses them safely at 13px in a HUD; at 76px on a world panel they render as two big
   square blocks that shove the actual content off the face. Use letters.
-- `transform: scale` misplaces panel content — use explicitly sized wrappers.
-- `pointer-events: all` must be set per interactive element; it does not inherit.
-- Panels are flex containers: inline `<span>`s inside a text div become separate flex
-  items; source newlines render as literal whitespace — keep each text div's content on
-  one line. A div's auto height does not grow for wrapped text — use one div per line in
-  a flex column.
-- **…which means every text div in a flex row needs `white-space: nowrap` AND
-  `flex-shrink: 0`.** These two are one rule, and it is the single most expensive line in
-  this file. A flex item's *default* is to shrink when the row is tight; a shrunk text div
+- **Every text div in a flex row needs `white-space: nowrap` AND `flex-shrink: 0`.**
+  These two are one rule, and it is the single most expensive line in this file. A flex item's *default* is to shrink when the row is tight; a shrunk text div
   doesn't ellipsize, it **wraps**; and the rule above then clips it to a sliver of its
   first line. The result is not a missing element or an error — it is a **few visible
   pixels of the middle of your text**, which reads as a rendering bug anywhere but the
@@ -1305,16 +1271,9 @@ doubt check `https://sbox.game/api/` or file a false-positive at
   time. Short strings hide it — "W" cannot wrap, so a one-character label renders fine
   next to a four-character one that doesn't. **If some text on a panel renders and some
   doesn't, check the string lengths before you check anything else.**
-- Deriving font sizes from `Panel.Box.Rect` on a WorldPanel doesn't work — use fixed px
-  in intrinsic pixel space, calibrated against a known-good panel.
-- Don't make a panel `overflow: scroll` if it has draggable controls — s&box drag-scrolls
-  it and fights the clicks.
 - A free-floating interactive panel kills roaming mouselook — gate interactive screens on
   being engaged at a station, and free the cursor there
   (`UseLookControls=false`+`UseInputControls=false`, restored on close).
-- The citizen `SkinnedModelRenderer` must live on a `Body` child GO, never on the
-  PlayerController's own GO (animator writes to it every frame — welds the player to
-  world origin otherwise).
 - No documented API to add buttons to the built-in escape menu; Escape leaves the station
   via `Input.EscapePressed`.
 - If a board click doesn't land, a HUD panel is eating it — the `Select`/mouse1 action
@@ -1407,9 +1366,7 @@ Three facts worth keeping:
   needs it) and shows a short one.
 
 Music is the `gamah.skafinity` library — source-committed under
-`client/Libraries/gamah.skafinity/` (s&box pattern: libraries are source and
-auto-referenced by living there; do NOT add a `PackageReferences` entry — that
-double-registers the compiler). The player + panel are built client-local by
+`client/Libraries/gamah.skafinity/`. The player + panel are built client-local by
 `LocalMusicSystem` (never scene-authored — see the #12 rule above); the panel is enabled
 only while engaged at the music wall board.
 
