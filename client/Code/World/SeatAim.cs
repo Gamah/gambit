@@ -13,7 +13,7 @@ namespace Gambit.World;
 /// CENTRE of the screen is the one you pick). Which one is live is <see cref="Aiming"/>, and
 /// exactly three things read it: <see cref="ChessBoardView"/> (which ray to pick with),
 /// <see cref="LobbyPlayer"/> (the camera offset and the Escape key), and
-/// <see cref="AimToggleButton"/> (the banner's label).</para>
+/// <see cref="Gambit.UI.GameHud"/> (the crosshair, and which way Escape goes next).</para>
 ///
 /// <para><b>The cursor is the default, and look aim is the exception.</b> Even with the
 /// setting on, the cursor stays active until a game is actually PLAYING: an empty seat, a
@@ -24,9 +24,8 @@ namespace Gambit.World;
 ///
 /// <para><b>Three ways back to the cursor mid-game, and they are not the same.</b>
 /// <list type="bullet">
-/// <item><see cref="Suspend"/> — the player asked (Escape, or the plate over the clock).
-/// It sticks until they ask for aim back, and it is the only one that survives a modal
-/// closing.</item>
+/// <item><see cref="Suspend"/> — the player asked, by pressing Escape. It sticks until they
+/// press Escape again, and it is the only one that survives a modal closing.</item>
 /// <item>A MODAL is up (<see cref="ModalOpen"/>) — the promotion picker, which appears
 /// mid-game with no warning and would otherwise be unanswerable. The cursor is released
 /// automatically and aim resumes the moment it is answered, WITHOUT clearing a suspend the
@@ -46,9 +45,27 @@ public static class SeatAim
 	/// centre-screen. False means the cursor is live, which is every other case.</summary>
 	public static bool Aiming { get; private set; }
 
-	/// <summary>The player asked for the cursor back mid-game (Escape, or the plate over the
-	/// clock). Cleared when they ask for aim back, and when the game stops being live.</summary>
+	/// <summary>The player pressed Escape for the cursor mid-game. Cleared when they press it
+	/// again, and when the game stops being live.</summary>
 	static bool _suspended;
+
+	/// <summary>The player has the cursor back BY CHOICE, with aim still available — the half
+	/// of the cycle <see cref="Aiming"/> cannot describe, because "not aiming" is also every
+	/// table where the feature is off. <see cref="Gambit.UI.GameHud"/> reads it to say which
+	/// way Escape goes next; nothing decides anything on it.</summary>
+	public static bool Suspended => _suspended && Toggleable;
+
+	/// <summary>Escape means "switch the cursor on/off" right now, rather than "stand up":
+	/// the setting is on, a game is live, and no modal has already taken the mouse. Set
+	/// per-frame by <see cref="Update"/> and cleared by <see cref="Clear"/>, so a player who
+	/// is not seated at a live game always has plain old Escape.
+	///
+	/// <para><b>The consequence is deliberate and worth stating.</b> While this is true,
+	/// Escape does NOT stand you up — the HUD's Leave button does, and one Escape puts a
+	/// cursor on the screen to click it with. Escape is the only key that works with the
+	/// pointer hidden, so it belongs to the mode it can be used in; leaving is a thing you do
+	/// with a cursor anyway.</para></summary>
+	public static bool Toggleable { get; private set; }
 
 	/// <summary>A modal that needs the pointer is up — set per-frame by
 	/// <see cref="LobbyPlayer"/> from the board view's pending promotion. Deliberately NOT
@@ -88,7 +105,13 @@ public static class SeatAim
 		if ( !playing )
 			_suspended = false;
 
-		bool aiming = Enabled && playing && !_suspended && !modalOpen;
+		// Whether Escape is the cursor toggle this frame. A modal is excluded on purpose: it
+		// has already taken the mouse and gives it back by itself, so there is nothing for a
+		// toggle to do — and pressing Escape at a picker must not leave a suspend behind that
+		// the player never asked for.
+		Toggleable = Enabled && playing && !modalOpen;
+
+		bool aiming = Toggleable && !_suspended;
 
 		if ( aiming )
 		{
@@ -106,8 +129,8 @@ public static class SeatAim
 		ApplyCursor( aiming );
 	}
 
-	/// <summary>Give the cursor back on the player's own say-so (Escape, or the plate over
-	/// the clock). Sticks until <see cref="Resume"/> or the game ending.</summary>
+	/// <summary>Give the cursor back on the player's own say-so (Escape). Sticks until
+	/// <see cref="Resume"/> or the game ending.</summary>
 	public static void Suspend()
 	{
 		_suspended = true;
@@ -115,12 +138,14 @@ public static class SeatAim
 		ApplyCursor( false );
 	}
 
-	/// <summary>Back into aim on the player's say-so (the plate over the clock). A no-op
-	/// unless the setting is on — the plate isn't shown otherwise, but nothing here relies
-	/// on that.</summary>
+	/// <summary>Back into aim on the player's say-so (Escape again). A no-op unless the
+	/// setting is on, which is what <see cref="Toggleable"/> already gates.</summary>
 	public static void Resume() => _suspended = false;
 
-	/// <summary>The plate over the clock: one control, both directions.</summary>
+	/// <summary>Escape, while <see cref="Toggleable"/>: one key, both directions. There is no
+	/// second control — a world-space button was built for this and thrown away, because a
+	/// plate on the table is one more thing to find, aim at and click in the mode whose whole
+	/// point is that you are not using a pointer.</summary>
 	public static void Toggle()
 	{
 		if ( Aiming ) Suspend();
@@ -133,6 +158,7 @@ public static class SeatAim
 	{
 		_suspended = false;
 		ModalOpen = false;
+		Toggleable = false;    // Escape is plain old Escape again the moment you are up
 		Aiming = false;
 		LookOffset = default;
 		ApplyCursor( false );
@@ -162,64 +188,8 @@ public static class SeatAim
 	}
 
 	/// <summary>Where a board pick comes from this frame: the mouse in cursor mode, the
-	/// centre of the screen in aim mode.
-	///
-	/// <para>One function so the board view and the banner cannot disagree about what
-	/// the player is pointing at — a button that could only be clicked with a cursor would be
-	/// unreachable in precisely the mode it exists to escape.</para></summary>
+	/// centre of the screen — where <see cref="Gambit.UI.GameHud"/> draws the crosshair — in
+	/// aim mode. One function, so nothing that picks can disagree with what is drawn.</summary>
 	public static Vector2 PickPixel() =>
 		Aiming ? new Vector2( Screen.Width, Screen.Height ) * 0.5f : Mouse.Position;
-
-	/// <summary>
-	/// Does a ray hit the aim banner? A rectangle on a plane TILTED about the station's X
-	/// axis — the clock's plane — in station-local space.
-	///
-	/// <para><b>It is here, and it is scalar, so it can be RUN.</b> The corner plate this
-	/// replaced lay in the tabletop surface, so it could borrow
-	/// <see cref="ChessBoardView.SquareUnderCursor"/>'s arithmetic and inherit its
-	/// correctness. A tilted plane cannot, and this host cannot render — so rather than a
-	/// second geometry nobody can check, the whole test is plain floats with no engine type
-	/// in it and <c>scripts/seataim_harness</c> runs it.</para>
-	///
-	/// <para>The plane's basis, derived once: the banner's normal is
-	/// <c>(0, cos t, −sin t)</c>, its LENGTH axis is the station's X, and its UP-the-plane
-	/// axis is the cross of those, <c>(0, sin t, cos t)</c>. At <c>t = 0</c> that degenerates
-	/// to an upright plate facing +Y, which is the sanity check to hold it to.</para>
-	/// </summary>
-	/// <param name="tiltDegrees">The plate's pitch — <c>ChessRing.ClockFaceTilt</c>, negative
-	/// for a face angled UP and toward the board.</param>
-	/// <param name="centerY">Plate centre, station-local. X is always 0 (dead centre).</param>
-	/// <param name="faceOutset">How far the FRONT face stands off that centre along the
-	/// normal — half the plate's thickness. Pick the face, not the mid-plane.</param>
-	public static bool PlateHit(
-		float originX, float originY, float originZ,
-		float dirX, float dirY, float dirZ,
-		float centerY, float centerZ, float faceOutset, float tiltDegrees,
-		float halfLength, float halfHeight )
-	{
-		float t = tiltDegrees * ( MathF.PI / 180f );
-		float ct = MathF.Cos( t ), st = MathF.Sin( t );
-
-		// Plane normal, and the plate's own up-the-plane axis (normal × length axis).
-		float nY = ct, nZ = -st;
-		float uY = st, uZ = ct;
-
-		float denom = dirY * nY + dirZ * nZ;
-		if ( MathF.Abs( denom ) < 0.0001f ) return false;   // ray parallel to the face
-
-		// The face sits faceOutset along the normal from the centre.
-		float cY = centerY + nY * faceOutset;
-		float cZ = centerZ + nZ * faceOutset;
-
-		float hit = ( ( cY - originY ) * nY + ( cZ - originZ ) * nZ ) / denom;
-		if ( hit <= 0f ) return false;                      // behind the camera
-
-		// Where it lands, relative to the plate centre, in the plate's own two axes.
-		float pX = originX + dirX * hit;
-		float pY = originY + dirY * hit - cY;
-		float pZ = originZ + dirZ * hit - cZ;
-
-		return MathF.Abs( pX ) <= halfLength
-			&& MathF.Abs( pY * uY + pZ * uZ ) <= halfHeight;
-	}
 }

@@ -944,10 +944,10 @@ must read the lichess source, not `ctrl`.
 A world-settings picker (**AIM AT THE BOARD — CURSOR / LOOK**) chooses how a seated player
 picks a square. CURSOR is everything before P99 and stays the default. LOOK hides the pointer,
 turns the seated view with the mouse, and picks whatever is under the **centre of the screen**.
-`World/SeatAim.cs` is the whole state machine and the only thing that decides; three places act
-on it (`ChessBoardView` for the ray, `LobbyPlayer` for the camera offset and Escape,
-`AimToggleButton` for the label) and `GameHud` only DRAWS it (the crosshair and the "the buttons
-are asleep" hint). `PlayerData.LookAimAtBoard` says whether the player wants it at all.
+`World/SeatAim.cs` is the whole state machine and the only thing that decides; two places act on
+it (`ChessBoardView` for the ray, `LobbyPlayer` for the camera offset and Escape) and `GameHud`
+only DRAWS it (the crosshair, and which way Escape goes next).
+`PlayerData.LookAimAtBoard` says whether the player wants it at all.
 
 - **The cursor is still the default state, even with LOOK on.** Aim engages only while a game
   is **Playing** (off the `IBoardGame` seam, so a lichess game aims like a local one — reading
@@ -960,14 +960,30 @@ are asleep" hint). `PlayerData.LookAimAtBoard` says whether the player wants it 
   corner panel — it marks a point in the world, not a line of HUD). 50%/50% because that is
   literally what `SeatAim.PickPixel` returns; centred with negative margins rather than a
   `transform`. A ring around a dot so it survives both a white square and a dark one.
-- **Three ways back to the cursor, and they differ.** The player's own (Escape / the plate over
-  the clock) **sticks**; a **modal** (the promotion picker, an offer standing against you) releases
-  and **restores by itself** without undoing a suspend the player asked for; and the game
-  **ending** clears everything, so the next game starts in aim rather than remembering a key
-  pressed twenty minutes ago.
-- **Escape is two-stage**, like the resign button: while aim owns the mouse, Escape hands the
-  cursor back; once it is out, Escape is the plain stand-up it always was. It has to be a key —
-  with no pointer on screen, a panel button is not a way out.
+- **Three ways back to the cursor, and they differ.** The player's own (Escape) **sticks**; a
+  **modal** (the promotion picker, an offer standing against you) releases and **restores by
+  itself** without undoing a suspend the player asked for; and the game **ending** clears
+  everything, so the next game starts in aim rather than remembering a key pressed twenty
+  minutes ago.
+- **ESCAPE IS THE WHOLE CONTROL, and it CYCLES: cursor off, on, off.** While `SeatAim.Toggleable`
+  (the setting on, a game live, no modal), Escape switches the pointer and **does not stand you
+  up** — the HUD's Leave button does, and one Escape puts a cursor on the screen to click it
+  with. That trade is deliberate: Escape is the only key that works with the pointer hidden, so
+  it belongs to the mode it can be used in, and leaving is something you do with a cursor anyway.
+  Everywhere else — roaming, an idle seat, a finished game, the setting off, a picker open —
+  Escape is the plain stand-up it has always been. **`GameHud` says both halves out loud**
+  ("Esc for the cursor" / "Esc to aim again, Leave to stand up"), because with one key doing two
+  things and no pointer to explore with, an unsaid rule is an unfindable one.
+  → **There is no world-space button, and two were built and thrown away.** First two flat plates
+  in each seat's near-left tabletop corner (a corner is a different world axis per seat, so it
+  needed one each plus a yaw-180 flip to keep the words unmirrored); then ONE plate floating over
+  the clock in the clock's own facing, which fixed the handedness and the duplication and was
+  still wrong — **a control you have to find, aim at and click is a poor answer in the mode whose
+  whole point is that you are not pointing at anything.** It cost `AimToggleButton`, a tilted-plane
+  hit test (`SeatAim.PlateHit`) and its harness coverage, all deleted. If a world-space control
+  is ever wanted again, the thing to reach for is `WorldInput` (see the UI Gotchas section), not
+  a rebuild of that plane arithmetic — and the reason to want one has to be better than "there
+  should be a button".
 - **The mechanism is one engine switch, and that is why it can't get out of step.**
   `Mouse.Visibility = Hidden` locks the pointer AND is exactly what makes `Input.AnalogLook`
   report movement (the engine zeroes AnalogLook whenever a cursor is visible). **Never set
@@ -975,50 +991,21 @@ are asleep" hint). `PlayerData.LookAimAtBoard` says whether the player wants it 
   global, so a forgotten reset would leave a roaming player with no pointer and no mouselook.
   `Disengage` clears it first thing and the roaming path re-asserts it, because not every way
   to stop being seated goes through `Disengage`.
-- **The banner** (`World/AimToggleButton.cs` + `ChessRing.BuildAimToggleView`) is **ONE** mesh
-  plate **floating above the middle of the clock**, in the clock's own tilted plane and centred
-  over the material bar, carrying one string that flips between "USE CURSOR" and "USE AIM". It
-  is **client-local `NotSaved | NotNetworked`, built lazily by the driver on the station** — not
-  for the chair's runtime-model reason but because its VISIBILITY is a different answer on every
-  machine, which is precisely what leaks through a joiner's snapshot.
-  → **It started as two flat plates in each seat's near-left tabletop corner, and the move is
-  the interesting part.** A corner is a different world axis per seat (+Y for White, −Y for
-  Black), so it needed a plate each and a yaw-180 flip to keep the words unmirrored. Over the
-  clock it inherits the clock's whole argument — the seats are at ±X, a face at −Y is square to
-  neither and readable to both — so **one plate serves both seats and there is no handedness to
-  get wrong**, and it hangs where a player is already looking rather than out on bare table.
-  → **It FLOATS rather than standing in the gap between the two dials** because that gap is
-  spoken for: the lead badge is dead centre in it and its position is room-confirmed and
-  explicitly not to be re-derived (`ClockLeadDropZ`). Air above the assembly was unclaimed.
-  `AimFloatGap` (1.8) is the knob, and it is a gap between **edges derived through the tilt**
-  (`ClockPlaneRise`), never between flat halves — the rule that has now cost this table three
-  objects.
-  → **The label is short for a geometric reason.** A one-string panel scales off the span it
-  fills lengthwise, so the text's world HEIGHT is the plate's length ÷ the character count:
-  "ENABLE CURSOR" rendered ~0.25 of a clock digit, "USE CURSOR" renders ~0.4. Lengthening the
-  plate to make the words bigger eventually needs `AimPlateHeight` too, or the text overflows.
-  → **The pick is the one thing that got harder, and it is paid for in the harness.** A plate
-  in the tabletop surface could borrow `ChessBoardView.SquareUnderCursor`'s arithmetic; a tilted
-  one cannot. So the whole test is `SeatAim.PlateHit` — plain floats, no engine type, run by
-  `scripts/seataim_harness` (both extents, the basis, a ray from straight above, the parallel
-  and behind-the-camera cases, and that the FRONT face is what gets picked). The pick POINT is
-  still `SeatAim.PickPixel`, so the board and the banner can never disagree about where you are
-  pointing.
 - **The camera offset composes in EULER space**, not as a quaternion post-multiply: a seat
   anchor is already pitched steeply down (the 2D nadir one looks straight down), so turning
   about its own tilted up-axis would roll the horizon. The offset is clamped (±45° yaw, ±30°
   pitch) — the board is the point of the view — and **persists** when the cursor comes back, so
   releasing it hands you a pointer rather than snapping the view.
-- **The banner is the first thing this table puts in the AIR**, and that is the new budget to
-  mind: the Y-margin note governs the tabletop, and nothing governs what is above it except the
-  seat's own view. It sits ≈7.5 above the tabletop (≈1.8 clear of the clock's top edge), which
-  is between the seats and nothing — but it is the number to check first if a seat's view of
-  the far rank ever looks obstructed.
-- Proven on this host: `SeatAim` runs its whole truth table **plus the banner's hit test** in a
-  shim harness (see the Sandbox-free C# section). What it can't prove is that the banner is
-  **in frame** and at a comfortable height from the seat — arithmetic puts it low-centre in 3D,
-  in the clock's own facing — so that is a **room** check, with `AimFloatGap` for how high it
-  hangs and `AimPlateLength`/`AimPlateHeight` for how big it is.
+- **Nothing was added to the world in the end** — no tabletop geometry, no margin spent, and the
+  Y-margin budget note is untouched. The whole feature is one state machine, one key, one
+  crosshair and a HUD line.
+- Proven on this host: `SeatAim` runs its whole truth table in a shim harness (see the
+  Sandbox-free C# section), **including which way Escape goes** — `Toggleable` is asserted true
+  for a live game with the setting on and false for a modal, a dead game, the setting off and
+  standing up, because getting it wrong in either direction either traps the player in their
+  seat or takes the toggle away. What it can't prove is the FEEL: whether the crosshair reads
+  over both square colours, and whether losing Escape-to-stand mid-game is annoying in practice.
+  Both are **room** checks.
 
 ### Dev console commands
 `gambit_gamchess_ping` — is gamchess up?
@@ -1376,9 +1363,11 @@ renderer — are in `~/.claude/sbox.md`. What follows is what this repo paid for
   that feeds a RAY into the UI system, so world panels with `pointer-events: auto` become
   clickable by looking at them (it uses the cursor ray when `Mouse.Active`, the GameObject's
   forward otherwise, and honours `WorldPanel.InteractionRange`, default 1000). Nothing in this
-  repo or any sibling has ever used it — P99's corner plate picks itself with the board's own
-  plane arithmetic instead, deliberately, because an unproven input path cannot be tested on
-  this host. It is the thing to reach for if world-space controls ever become a category.
+  repo or any sibling has ever used it — P99 built two world-space buttons with hand-rolled
+  plane arithmetic instead (an unproven input path cannot be tested on this host) and then
+  **deleted them both**, keeping the key. So the repo still has no world-space control, and
+  `WorldInput` remains the thing to reach for if they ever become a category — rather than a
+  third hand-rolled ray test.
 - **`⬜`/`⬛` are emoji too.** The "panel glyphs paint as colour emoji" rule is not only
   about chess pieces — the geometric-shape block characters are the same trap. `GameHud`
   uses them safely at 13px in a HUD; at 76px on a world panel they render as two big

@@ -816,8 +816,8 @@ public sealed class ChessBoardView : Component
 		if ( ring == null || camera == null || Station == null ) return -1;
 
 		// Cursor mode picks under the pointer; LOOK aim (P99) picks under the centre of the
-		// screen. SeatAim.PickPixel is the only place that chooses, so the board and the
-		// table's aim banner can never disagree about where the player is pointing.
+		// screen. SeatAim.PickPixel is the only place that chooses, so the square you pick
+		// and the crosshair GameHud draws can never disagree.
 		var ray = camera.ScreenPixelToRay( SeatAim.PickPixel() );
 
 		// Station-local ray (stations are unscaled, yaw-only)

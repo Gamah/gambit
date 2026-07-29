@@ -214,13 +214,21 @@
 			}
 
 			@* Look aim (P99) hides the pointer, so every button below it is real and
-			   unclickable — which reads as a broken HUD unless it says so. It names both
-			   ways back, because they are the two the player has: the key, and the plate
-			   over the clock. The promotion picker needs neither — it frees the cursor by
-			   itself and takes aim back when it's answered. *@
+			   unclickable — which reads as a broken HUD unless it says so.
+
+			   Both halves of the cycle get a line, because Escape is the ONLY control: with
+			   the pointer back there is otherwise nothing on screen saying how to aim again,
+			   and nothing saying that Escape has stopped being the way out of the seat — so
+			   the second line names the Leave button rather than leaving a player pressing
+			   Escape at a HUD that will not stand them up. The promotion picker needs
+			   neither: it frees the cursor by itself and takes aim back when it's answered. *@
 			@if ( Gambit.World.SeatAim.Aiming )
 			{
-				<div class="aim-hint">Look aim — Esc, or the clock plate, for the cursor.</div>
+				<div class="aim-hint">Look aim — Esc for the cursor.</div>
+			}
+			else if ( Gambit.World.SeatAim.Suspended )
+			{
+				<div class="aim-hint">Cursor — Esc to aim again, Leave to stand up.</div>
 			}
 
 			@* Draw offers and takebacks. Read off the seam, so they work at a lichess
@@ -752,9 +760,10 @@
 					src?.TakebackOffered, src?.TakebackPending,
 					src?.CanTakeback, PremoveUci(), src?.PremoveDropped,
 					// Look aim (P99): the crosshair and the hint above both appear and
-					// vanish with it, and nothing else in this hash changes when the mouse
-					// mode does. 8 of 8.
-					Gambit.World.SeatAim.Aiming ),
+					// vanish with these, and nothing else in this hash changes when the
+					// mouse mode does. Suspended is its own state, not !Aiming — "not
+					// aiming" is also every table where the feature is off. 9 of 9.
+					Gambit.World.SeatAim.Aiming, Gambit.World.SeatAim.Suspended ),
 				// The waiting-on-an-opponent state (a seek, a named challenge, or a
 				// shareable link): the status line and the cancel button hang off
 				// Challenging/Opening, ChallengeOpponent names who, and the link section

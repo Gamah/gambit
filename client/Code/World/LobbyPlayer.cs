@@ -239,15 +239,22 @@ public sealed class LobbyPlayer : Component
 			// SeatAim decides whether Escape means "give me the cursor" or "stand up".
 			UpdateSeatAim();
 
-			// Escape gives the CURSOR back before it stands you up. Two stages, like the
-			// resign button: while look aim owns the mouse there is nothing else Escape
-			// could sensibly mean, and a player who wanted to leave presses it twice —
-			// which is also the only key that works when the pointer is hidden. Once the
-			// cursor is out, Escape is the plain stand-up it has always been.
-			if ( Input.EscapePressed && SeatAim.Aiming )
+			// With look aim on and a game live, Escape CYCLES the cursor: off, on, off. It
+			// is the whole control — there is no world-space button, and there was one
+			// briefly (a plate on the tabletop, then a banner over the clock) before it was
+			// thrown away as one more thing to find and aim at in the mode whose point is
+			// that you are not pointing at anything.
+			//
+			// So Escape does NOT stand you up while that is true (SeatAim.Toggleable), and
+			// that is the deliberate trade: it is the only key that works with the pointer
+			// hidden, so it belongs to the mode it can be used in. One press puts a cursor
+			// on the screen, and the HUD's Leave button — which needs one anyway — is how
+			// you get up. Everywhere else (roaming, an idle seat, a finished game, the
+			// setting off, a picker open) Escape is the plain stand-up it has always been.
+			if ( Input.EscapePressed && SeatAim.Toggleable )
 			{
 				Input.EscapePressed = false;
-				SeatAim.Suspend();
+				SeatAim.Toggle();
 				return;
 			}
 
@@ -2598,8 +2605,10 @@ public sealed class LobbyPlayer : Component
 
 		// What counts as modal: the promotion picker (which appears mid-game with no warning
 		// and cannot be answered without a pointer), and an offer the OPPONENT has standing.
-		// An offer you simply play on through keeps the cursor out until it resolves — the
-		// plate over the clock takes aim back in one click if you'd rather ignore it.
+		// An offer you simply play on through keeps the cursor out until it resolves, which
+		// also means Escape is the plain stand-up for as long as it stands (SeatAim.Toggleable
+		// excludes a modal) — you have a pointer and the whole HUD in that window, so Escape
+		// meaning what it means everywhere else is the least surprising thing it can do.
 		var view = station.Components.Get<ChessBoardView>();
 		bool modal = view?.PendingPromotion != null
 			|| src is { DrawOffered: true } or { TakebackOffered: true };
