@@ -798,11 +798,16 @@ public sealed class ChessBoardView : Component
 	public void CancelPromotion() => PendingPromotion = null;
 
 	/// <summary>
-	/// Board square under the mouse cursor: the cursor ray projected onto the
+	/// Board square the player is pointing at: their pick ray projected onto the
 	/// board-surface plane, in station-local space. Pieces deliberately do NOT
-	/// intercept the ray — the pick is always the square under the cursor on
+	/// intercept the ray — the pick is always the square under the point on
 	/// the board itself, so tall pieces never block or divert selection. (The
 	/// cells are visuals without colliders; plane math beats scene tracing.)
+	///
+	/// <para>Which ray that is comes from <see cref="SeatAim"/> — the pointer in cursor
+	/// mode, the centre of the screen in look aim (P99). Nothing else changes: the
+	/// hovered square is already highlighted, and in aim mode that highlight IS the
+	/// reticle, which is why look aim needs no crosshair of its own.</para>
 	/// </summary>
 	int SquareUnderCursor()
 	{
@@ -810,7 +815,10 @@ public sealed class ChessBoardView : Component
 		var camera = Scene?.Camera;
 		if ( ring == null || camera == null || Station == null ) return -1;
 
-		var ray = camera.ScreenPixelToRay( Mouse.Position );
+		// Cursor mode picks under the pointer; LOOK aim (P99) picks under the centre of the
+		// screen. SeatAim.PickPixel is the only place that chooses, so the square you pick
+		// and the crosshair GameHud draws can never disagree.
+		var ray = camera.ScreenPixelToRay( SeatAim.PickPixel() );
 
 		// Station-local ray (stations are unscaled, yaw-only)
 		var origin = Station.GameObject.WorldTransform.PointToLocal( ray.Position );

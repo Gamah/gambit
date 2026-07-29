@@ -34,6 +34,24 @@
 *@
 
 <root>
+	@* The crosshair (P99). Look aim picks the square under the CENTRE of the screen
+	   (SeatAim.PickPixel), and with the pointer hidden there is otherwise nothing on screen
+	   saying where that is — the player is aiming an invisible cursor. It sits OUTSIDE the
+	   .hud block and outside Visible(), because it is not HUD furniture: it marks a point in
+	   the world, it belongs at the centre of the SCREEN rather than in the corner panel, and
+	   SeatAim.Aiming is already the tighter condition (seated, playing, cursor ours).
+
+	   A dot inside a ring, not a plus: the ring is what keeps it visible against a white
+	   square and the dot against a dark one, and it stays small enough not to cover the
+	   piece it is over. pointer-events: none like everything else here — this MARKS the
+	   pick, it must never intercept it. *@
+	@if ( Gambit.World.SeatAim.Aiming )
+	{
+		<div class="crosshair">
+			<div class="dot"></div>
+		</div>
+	}
+
 	@if ( Visible() )
 	{
 		var ctrl = Controller();
@@ -195,6 +213,26 @@
 				</div>
 			}
 
+			@* Look aim (P99) hides the pointer, so every button below it is real and
+			   unclickable — which reads as a broken HUD unless it says so.
+
+			   Both halves of the cycle get a line, because Escape is the ONLY control: with
+			   the pointer back there is otherwise nothing on screen saying how to aim again,
+			   and nothing saying that Escape has stopped being the way out of the seat — so
+			   the second line names the way out by the label it actually carries: LobbyOverlay's
+			   always-visible "✕ Stand Up" button, NOT this HUD's Resign (which is a different
+			   thing since M17 decoupled them, and naming the wrong one here would send a player
+			   who wanted to stretch their legs into a two-click resign). The promotion picker needs
+			   neither: it frees the cursor by itself and takes aim back when it's answered. *@
+			@if ( Gambit.World.SeatAim.Aiming )
+			{
+				<div class="aim-hint">Look aim — Esc for the cursor.</div>
+			}
+			else if ( Gambit.World.SeatAim.Suspended )
+			{
+				<div class="aim-hint">Cursor — Esc to aim again, ✕ Stand Up to leave.</div>
+			}
+
 			@* Draw offers and takebacks. Read off the seam, so they work at a lichess
 			   table AND a local one.
 
@@ -301,6 +339,42 @@
 	/* The setup block moved to SetupPanel (M17), but the shareable-link "waiting"
 	   controls below still use this one hint style, so it stays. */
 	.setup-hint { font-size: 12px; color: rgba(255, 255, 255, 0.45); }
+
+	/* The look-aim crosshair, dead centre of the screen — SeatAim.PickPixel's own
+	   Screen.Width/Height × 0.5, which is why it is 50% and not a tuned offset.
+	   Centred with negative margins rather than a transform: half its own size, and it
+	   keeps the one CSS property this repo has a scar over out of the layout. */
+	.crosshair {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: 16px;
+		height: 16px;
+		margin-left: -8px;
+		margin-top: -8px;
+		align-items: center;
+		justify-content: center;
+		border-radius: 8px;
+		border: 2px solid rgba(0, 0, 0, 0.55);
+		pointer-events: none;
+	}
+
+	.crosshair .dot {
+		width: 5px;
+		height: 5px;
+		border-radius: 3px;
+		background-color: rgba(255, 255, 255, 0.92);
+	}
+
+	/* Look aim's "the buttons below are asleep" line. Warmer than .setup-hint because
+	   it is the answer to "why is nothing clicking", not background information.
+	   nowrap + flex-shrink: 0 for the reason every text div in this repo carries them. */
+	.aim-hint {
+		font-size: 12px;
+		color: rgba(255, 214, 138, 0.75);
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
 
 	/* Lichess opt-in: lichess's own black/white, so it reads as "this leaves
 	   Gambit" rather than as another table control. */
@@ -662,6 +736,11 @@
 	{
 		var ctrl = Controller();
 		var src = Source();
+
+		// Look aim's three exclusive states as one hashable value — see its line below.
+		static int AimHashState() =>
+			Gambit.World.SeatAim.Aiming ? 2 : Gambit.World.SeatAim.Suspended ? 1 : 0;
+
 		return System.HashCode.Combine(
 			Visible(), ctrl?.GameId, src?.Game?.MoveCount, ctrl?.GameOver,
 			src?.IsMyTurn, View()?.PendingPromotion != null,
@@ -686,7 +765,14 @@
 				System.HashCode.Combine(
 					src?.DrawOffered, src?.DrawPending,
 					src?.TakebackOffered, src?.TakebackPending,
-					src?.CanTakeback, PremoveUci(), src?.PremoveDropped ),
+					src?.CanTakeback, PremoveUci(), src?.PremoveDropped,
+					// Look aim (P99): the crosshair and the hint above both appear and
+					// vanish with it. ONE value, not two, because HashCode.Combine takes
+					// at most 8 arguments and this is the 8th — and because the three
+					// states are exclusive anyway: aiming, cursor-by-choice, or neither
+					// ("not aiming" is also every table where the feature is off, which is
+					// why Suspended can't just be !Aiming). 8 of 8.
+					AimHashState() ),
 				// The waiting-on-an-opponent state (a seek, a named challenge, or a
 				// shareable link): the status line and the cancel button hang off
 				// Challenging/Opening, ChallengeOpponent names who, and the link section

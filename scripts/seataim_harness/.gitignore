@@ -1,0 +1,4 @@
+# Scoped to this harness by living here — the root .gitignore deliberately refuses
+# unanchored bin/ and obj/ entries, because they would also swallow server/bin/.
+bin/
+obj/

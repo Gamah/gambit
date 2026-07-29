@@ -235,6 +235,29 @@ public sealed class LobbyPlayer : Component
 
 		if ( Engaged )
 		{
+			// Cursor vs LOOK aim at the board (P99), before the Escape handling below —
+			// SeatAim decides whether Escape means "give me the cursor" or "stand up".
+			UpdateSeatAim();
+
+			// With look aim on and a game live, Escape CYCLES the cursor: off, on, off. It
+			// is the whole control — there is no world-space button, and there was one
+			// briefly (a plate on the tabletop, then a banner over the clock) before it was
+			// thrown away as one more thing to find and aim at in the mode whose point is
+			// that you are not pointing at anything.
+			//
+			// So Escape does NOT stand you up while that is true (SeatAim.Toggleable), and
+			// that is the deliberate trade: it is the only key that works with the pointer
+			// hidden, so it belongs to the mode it can be used in. One press puts a cursor
+			// on the screen, and the HUD's Leave button — which needs one anyway — is how
+			// you get up. Everywhere else (roaming, an idle seat, a finished game, the
+			// setting off, a picker open) Escape is the plain stand-up it has always been.
+			if ( Input.EscapePressed && SeatAim.Toggleable )
+			{
+				Input.EscapePressed = false;
+				SeatAim.Toggle();
+				return;
+			}
+
 			// Escape or Back stands up / closes the wall board. (Start auto-sets
 			// EscapePressed; the Back button is wired through the "Back" action.)
 			// Standing up mid-game NO LONGER resigns (M17) — RequestLeave just gets you
@@ -270,6 +293,13 @@ public sealed class LobbyPlayer : Component
 				UpdateLockedCamera();
 			return;
 		}
+
+		// Roaming: the mouse is never ours. Disengage already clears it, but this is a
+		// GLOBAL and the ways to stop being engaged are not all Disengage (a respawn, a
+		// hotload, a station destroyed under us), so the roaming path re-asserts it rather
+		// than trusting every one of them. A cursor that never comes back is unrecoverable
+		// without standing up, which is exactly what a stuck player cannot do.
+		if ( SeatAim.Aiming ) SeatAim.Clear();
 
 		// Chat typing: keep the controller off so WASD keystrokes don't walk the
 		// avatar, and skip interaction handling until the box closes.
@@ -2460,6 +2490,12 @@ public sealed class LobbyPlayer : Component
 	{
 		_switching = false; // standing up cancels any in-flight seat-switch schwoop
 
+		// Hand the mouse back before anything else can return early. Look aim hides the
+		// cursor through a GLOBAL (Mouse.Visibility), so a path that stands up without
+		// clearing it leaves a roaming player with no pointer and every wall board dead —
+		// which is why this is the first line and not part of the chess-seat branch below.
+		SeatAim.Clear();
+
 		// Wall boards never moved the camera — just re-enable look and close the panel.
 		if ( ChessStation.Active == null && BoardEngaged )
 		{
@@ -2542,6 +2578,44 @@ public sealed class LobbyPlayer : Component
 		_controller.EyeAngles = _eyeFrom;
 	}
 
+	/// <summary>Drive the cursor-vs-look-aim state for the seat we're engaged at (P99).
+	/// Everything it needs comes off the <see cref="Gambit.Game.IBoardGame"/> seam, so a
+	/// lichess game at a table aims exactly like a local one — reading
+	/// <c>LocalGameController</c> here would be the M8-silence mistake again, since during
+	/// a lichess game its Playing is stale by construction.
+	///
+	/// <para>A WALL board is not a board you aim at: it engages the camera without a seat,
+	/// its whole UI is a screen panel, and it must keep the cursor. Same for the seat blend
+	/// — taking the mouse mid-schwoop would swing a view that is still moving on its own.</para></summary>
+	void UpdateSeatAim()
+	{
+		var station = ChessStation.Active;
+		if ( station == null || _switching || !CameraSettled )
+		{
+			// Wall boards (and the blend into a seat) are always cursor. Clear() rather than
+			// leave the last seat's state standing: it is a global, and the one thing that
+			// must never happen is a hidden cursor with nothing to aim at.
+			if ( station == null ) SeatAim.Clear();
+			return;
+		}
+
+		var src = Gambit.Game.BoardGame.Source(
+			Gambit.Game.LocalGameController.For( station ),
+			Gambit.Game.LichessGameController.For( station ) );
+
+		// What counts as modal: the promotion picker (which appears mid-game with no warning
+		// and cannot be answered without a pointer), and an offer the OPPONENT has standing.
+		// An offer you simply play on through keeps the cursor out until it resolves, which
+		// also means Escape is the plain stand-up for as long as it stands (SeatAim.Toggleable
+		// excludes a modal) — you have a pointer and the whole HUD in that window, so Escape
+		// meaning what it means everywhere else is the least surprising thing it can do.
+		var view = station.Components.Get<ChessBoardView>();
+		bool modal = view?.PendingPromotion != null
+			|| src is { DrawOffered: true } or { TakebackOffered: true };
+
+		SeatAim.Update( src?.Playing ?? false, modal );
+	}
+
 	/// <summary>Ease the camera to the local player's seat anchor. The anchor is
 	/// pre-aimed down at the board center by ChessRing, so no target math here.
 	///
@@ -2560,7 +2634,31 @@ public sealed class LobbyPlayer : Component
 		float t = Math.Clamp( _engageTime / CamBlendTime, 0f, 1f );
 		t = 1f - MathF.Pow( 1f - t, 3f ); // ease-out cubic, same curve as the leave blend
 
+		// Look aim (P99) turns the seated view by an offset FROM the anchor, never instead
+		// of it: the anchor stays the one place that decides where a seat looks (and which
+		// anchor — 2D picks the nadir one above), so the clamped offset rides on top and the
+		// blend eases into it for free. Zero offset reproduces the anchor exactly, which is
+		// cursor mode and roaming.
+		//
+		// YAW is applied in WORLD space (pre-multiplied about world up) and PITCH in the
+		// camera's own (post-multiplied), which is the only composition that behaves at every
+		// anchor this has to serve. The two wrong ways, both tried:
+		//   · post-multiplying the yaw turns about the CAMERA's up, and a seat anchor is
+		//     already pitched ~63° down at the board — so "pan left" comes out as a rolling
+		//     horizon.
+		//   · decomposing the anchor to Angles and adding is worse, because the 2D nadir
+		//     anchor looks STRAIGHT DOWN: that is the Euler singularity, and the yaw it
+		//     round-trips to is not the seat's board-forward up-hint the anchor was built
+		//     with. It would silently re-orient the 2D board — a whole play mode broken by a
+		//     line that reads as trivially correct.
+		// A zero offset multiplies by two identities, so cursor mode and roaming are the
+		// pre-P99 rotation bit for bit.
+		var off = SeatAim.LookOffset;
+		var aimed = Rotation.FromAxis( Vector3.Up, off.yaw )
+			* anchor.WorldRotation
+			* Rotation.FromPitch( off.pitch );
+
 		_cameraObject.WorldPosition = Vector3.Lerp( _camFromPos, anchor.WorldPosition, t );
-		_cameraObject.WorldRotation = Rotation.Slerp( _camFromRot, anchor.WorldRotation, t );
+		_cameraObject.WorldRotation = Rotation.Slerp( _camFromRot, aimed, t );
 	}
 }

@@ -641,9 +641,12 @@ are gates worth using:**
 - **Sandbox-free C#** via a scratch csproj (see below) — which now includes `Code/Game/
   LichessTable.cs`, the client's copy of lichess's speed floors.
 
-**Sandbox-free C# is genuinely testable here**, and worth reaching for: `dotnet` (10.x) is
-installed, and everything under `Code/Chess/` — plus `Code/Game/TimeControl.cs` — has no
-engine dependency. A scratch csproj that `<Compile
+**Sandbox-free C# is genuinely testable here**, and worth reaching for: `dotnet` (10.x) lives
+at **`~/.local/share/toolchains/dotnet10/`** (put it on PATH for the command; it is NOT on the
+default PATH, and it was absent altogether on 2026-07-29 — refetch with `dot.net/v1/dotnet-install.sh
+--channel 10.0 --install-dir ~/.local/share/toolchains/dotnet10` if it goes missing again, and
+don't unpack it in the working tree). Everything under `Code/Chess/` — plus
+`Code/Game/TimeControl.cs` — has no engine dependency. A scratch csproj that `<Compile
 Include>`s those files runs real games, real PGN, real perft. Two settings matter:
 `<TargetFramework>net10.0` (net8 builds but won't launch — only the 10.x runtime is here)
 and `<ImplicitUsings>enable`, because the vendored library leans on s&box's global usings
@@ -651,6 +654,18 @@ for `System.Collections.Generic`. Verified 2026-07-15. This is also how the vend
 were proven originally, how a `[TimeControl]`-bearing PGN was checked against the real
 writer, and how `LichessTable`'s challenge/seek floors were checked against every preset in
 `TimeControl.All` — prefer it over review whenever the code can be isolated from Sandbox.
+
+**A SHIM is a legitimate third option, and P99 is the worked example.** `Code/World/SeatAim.cs`
+(the cursor-vs-look-aim state machine) touches `Mouse`, `Input` and `Screen`, so it is not
+Sandbox-free and can never move under `Code/Chess/` — but the three symbols it uses are tiny, and
+~50 lines of stand-in (`MouseVisibility`, an `Input.AnalogLook` that reproduces the engine's own
+"zero while a cursor is visible" gate, a `PlayerData` holding one bool) compile the **real file**
+verbatim and run its whole truth table: aim engages on Playing, Escape suspends and the suspend
+sticks, a modal releases and restores without eating the player's own suspend, the offset clamps
+and never rolls, standing up always hands the mouse back. It is committed as
+`scripts/seataim_harness/` (`dotnet run`) so the claim stays checkable. Worth doing when the
+logic is a state machine and the engine surface is small — and worth NOT doing when the shim would have to
+reimplement engine behaviour to be meaningful, because then it only tests the shim.
 
 **This cuts both ways: it is worth MOVING code to make it testable.** `Code/Chess/
 CapturedMaterial.cs` (the captured-piece trays' material derivation, M11) lives under
@@ -923,6 +938,74 @@ must read the lichess source, not `ctrl`.
   network status icon → "Join via new instance".
 - Small race window (~RTT) if two players press E on the same seat — host picks the
   winner; known limitation.
+
+### Cursor vs LOOK aim at the board (P99)
+
+A world-settings picker (**AIM AT THE BOARD — CURSOR / LOOK**) chooses how a seated player
+picks a square. CURSOR is everything before P99 and stays the default. LOOK hides the pointer,
+turns the seated view with the mouse, and picks whatever is under the **centre of the screen**.
+`World/SeatAim.cs` is the whole state machine and the only thing that decides; two places act on
+it (`ChessBoardView` for the ray, `LobbyPlayer` for the camera offset and Escape) and `GameHud`
+only DRAWS it (the crosshair, and which way Escape goes next).
+`PlayerData.LookAimAtBoard` says whether the player wants it at all.
+
+- **The cursor is still the default state, even with LOOK on.** Aim engages only while a game
+  is **Playing** (off the `IBoardGame` seam, so a lichess game aims like a local one — reading
+  `LocalGameController` here would be the M8-silence mistake again). An empty seat, the setup
+  panel and a finished game all need a pointer, so they keep one. **This is the feature's
+  shape, not a caveat**: the ask was "the cursor is active until a game is playing".
+- **The crosshair is part of the mechanism, not decoration.** With the pointer hidden the pick
+  point is invisible, so `GameHud` draws a dot-in-a-ring at dead centre (`.crosshair`, gated on
+  `SeatAim.Aiming` alone and deliberately OUTSIDE the HUD's own `Visible()` block and its
+  corner panel — it marks a point in the world, not a line of HUD). 50%/50% because that is
+  literally what `SeatAim.PickPixel` returns; centred with negative margins rather than a
+  `transform`. A ring around a dot so it survives both a white square and a dark one.
+- **Three ways back to the cursor, and they differ.** The player's own (Escape) **sticks**; a
+  **modal** (the promotion picker, an offer standing against you) releases and **restores by
+  itself** without undoing a suspend the player asked for; and the game **ending** clears
+  everything, so the next game starts in aim rather than remembering a key pressed twenty
+  minutes ago.
+- **ESCAPE IS THE WHOLE CONTROL, and it CYCLES: cursor off, on, off.** While `SeatAim.Toggleable`
+  (the setting on, a game live, no modal), Escape switches the pointer and **does not stand you
+  up** — the HUD's Leave button does, and one Escape puts a cursor on the screen to click it
+  with. That trade is deliberate: Escape is the only key that works with the pointer hidden, so
+  it belongs to the mode it can be used in, and leaving is something you do with a cursor anyway.
+  Everywhere else — roaming, an idle seat, a finished game, the setting off, a picker open —
+  Escape is the plain stand-up it has always been. **`GameHud` says both halves out loud**
+  ("Esc for the cursor" / "Esc to aim again, Leave to stand up"), because with one key doing two
+  things and no pointer to explore with, an unsaid rule is an unfindable one.
+  → **There is no world-space button, and two were built and thrown away.** First two flat plates
+  in each seat's near-left tabletop corner (a corner is a different world axis per seat, so it
+  needed one each plus a yaw-180 flip to keep the words unmirrored); then ONE plate floating over
+  the clock in the clock's own facing, which fixed the handedness and the duplication and was
+  still wrong — **a control you have to find, aim at and click is a poor answer in the mode whose
+  whole point is that you are not pointing at anything.** It cost `AimToggleButton`, a tilted-plane
+  hit test (`SeatAim.PlateHit`) and its harness coverage, all deleted. If a world-space control
+  is ever wanted again, the thing to reach for is `WorldInput` (see the UI Gotchas section), not
+  a rebuild of that plane arithmetic — and the reason to want one has to be better than "there
+  should be a button".
+- **The mechanism is one engine switch, and that is why it can't get out of step.**
+  `Mouse.Visibility = Hidden` locks the pointer AND is exactly what makes `Input.AnalogLook`
+  report movement (the engine zeroes AnalogLook whenever a cursor is visible). **Never set
+  `Visible` — set `Auto`**: Auto already shows a cursor while clickable UI is up, and this is a
+  global, so a forgotten reset would leave a roaming player with no pointer and no mouselook.
+  `Disengage` clears it first thing and the roaming path re-asserts it, because not every way
+  to stop being seated goes through `Disengage`.
+- **The camera offset composes in EULER space**, not as a quaternion post-multiply: a seat
+  anchor is already pitched steeply down (the 2D nadir one looks straight down), so turning
+  about its own tilted up-axis would roll the horizon. The offset is clamped (±45° yaw, ±30°
+  pitch) — the board is the point of the view — and **persists** when the cursor comes back, so
+  releasing it hands you a pointer rather than snapping the view.
+- **Nothing was added to the world in the end** — no tabletop geometry, no margin spent, and the
+  Y-margin budget note is untouched. The whole feature is one state machine, one key, one
+  crosshair and a HUD line.
+- Proven on this host: `SeatAim` runs its whole truth table in a shim harness (see the
+  Sandbox-free C# section), **including which way Escape goes** — `Toggleable` is asserted true
+  for a live game with the setting on and false for a modal, a dead game, the setting off and
+  standing up, because getting it wrong in either direction either traps the player in their
+  seat or takes the toggle away. What it can't prove is the FEEL: whether the crosshair reads
+  over both square colours, and whether losing Escape-to-stand mid-game is annoying in practice.
+  Both are **room** checks.
 
 ### Dev console commands
 `gambit_gamchess_ping` — is gamchess up?
@@ -1256,6 +1339,35 @@ renderer — are in `~/.claude/sbox.md`. What follows is what this repo paid for
   White, so **a wrong side is visible in the diff**. The panel had to reason about a
   WorldPanel's content-space handedness for the same fact and got it backwards, rendering
   each player their opponent's clock.
+  → **Checked against the siblings and the engine (2026-07-29, at the owner's ask), and the
+  rule is narrower than "one string".** terryball composes multi-element WorldPanels that
+  work: `PinReadout.razor` lays a title over a count over a ten-pin triangle, and
+  `LaneConsole.razor` a whole scorecard — both by putting flex layout **directly on `root`**
+  (`width/height`, `flex-direction: column`, padding, background) with **no absolutely
+  positioned anything**, and `flex-shrink: 0` + `nowrap` on every text div. So the real,
+  mechanical rule is the one already stated above: ***`position: absolute` retargets to the
+  nearest positioned ancestor.*** Gambit's shape is absolute-positioned, and *that* is what
+  cannot be composed — a second child breaks it. A flex-only root composes fine.
+  **Both are true, and the choice is a real one:** ours survives a WorldPanel whose pixel
+  space is set from code and needs nothing centred by hand; terryball's costs a layout pass
+  this host cannot see. **Keep copying the one-string shape for anything that goes on a mesh
+  plate** (it is also how the arithmetic stays checkable here) — but "a second string needs a
+  second mesh" is a house style, not an engine limit, and a genuinely page-like world board
+  should use terryball's flex-on-root shape rather than being carved into five meshes.
+  → Two engine facts worth having while doing either, read from `sbox-public` the same day:
+  a world panel's root keeps **`Scale = 2`** (`Sandbox.UI.WorldPanel`'s ctor; its
+  `UpdateScale` override is deliberately empty), so **the CSS layout area is `PanelSize / 2`**
+  — proportions are unaffected (px lengths cascade by the same Scale, which is why the clock's
+  chars×advance÷width arithmetic still holds), but a px value compared against a raw
+  `PanelSize` is off by 2×. And **`WorldInput` exists**: a `Component` you hang on the camera
+  that feeds a RAY into the UI system, so world panels with `pointer-events: auto` become
+  clickable by looking at them (it uses the cursor ray when `Mouse.Active`, the GameObject's
+  forward otherwise, and honours `WorldPanel.InteractionRange`, default 1000). Nothing in this
+  repo or any sibling has ever used it — P99 built two world-space buttons with hand-rolled
+  plane arithmetic instead (an unproven input path cannot be tested on this host) and then
+  **deleted them both**, keeping the key. So the repo still has no world-space control, and
+  `WorldInput` remains the thing to reach for if they ever become a category — rather than a
+  third hand-rolled ray test.
 - **`⬜`/`⬛` are emoji too.** The "panel glyphs paint as colour emoji" rule is not only
   about chess pieces — the geometric-shape block characters are the same trap. `GameHud`
   uses them safely at 13px in a HUD; at 76px on a world panel they render as two big
