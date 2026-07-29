@@ -219,8 +219,10 @@
 			   Both halves of the cycle get a line, because Escape is the ONLY control: with
 			   the pointer back there is otherwise nothing on screen saying how to aim again,
 			   and nothing saying that Escape has stopped being the way out of the seat — so
-			   the second line names the Leave button rather than leaving a player pressing
-			   Escape at a HUD that will not stand them up. The promotion picker needs
+			   the second line names the way out by the label it actually carries: LobbyOverlay's
+			   always-visible "✕ Stand Up" button, NOT this HUD's Resign (which is a different
+			   thing since M17 decoupled them, and naming the wrong one here would send a player
+			   who wanted to stretch their legs into a two-click resign). The promotion picker needs
 			   neither: it frees the cursor by itself and takes aim back when it's answered. *@
 			@if ( Gambit.World.SeatAim.Aiming )
 			{
@@ -228,7 +230,7 @@
 			}
 			else if ( Gambit.World.SeatAim.Suspended )
 			{
-				<div class="aim-hint">Cursor — Esc to aim again, Leave to stand up.</div>
+				<div class="aim-hint">Cursor — Esc to aim again, ✕ Stand Up to leave.</div>
 			}
 
 			@* Draw offers and takebacks. Read off the seam, so they work at a lichess
