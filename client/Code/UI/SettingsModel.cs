@@ -107,6 +107,15 @@ public static class SettingsModel
 			PlayerData.ClampPlayMode( data.PlayMode ),
 			v => Mutate( d => d.PlayMode = v ) ) );
 
+		// How a seated player aims at their own board (P99). CURSOR is the pre-P99 behaviour
+		// (locked camera, pointer picks the square); LOOK hides the cursor, turns the seated
+		// view with the mouse and picks whatever the centre of the screen is on. Client-local,
+		// and it only ever applies to a game that is actually PLAYING — see SeatAim.
+		rows.Add( PickerRow( "AIM AT THE BOARD",
+			new[] { ("cursor", "CURSOR"), ("look", "LOOK") },
+			data.LookAimAtBoard ? "look" : "cursor",
+			v => Mutate( d => d.LookAimAtBoard = v == "look" ) ) );
+
 		// Proximity-voice hearing range (M12): how far THIS client hears others, split by whether
 		// you're seated or roaming. Range is a receive-side, per-client value (the falloff is applied
 		// on the receiver), which is why it belongs here on the world board rather than being networked.

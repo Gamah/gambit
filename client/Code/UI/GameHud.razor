@@ -195,6 +195,16 @@
 				</div>
 			}
 
+			@* Look aim (P99) hides the pointer, so every button below it is real and
+			   unclickable — which reads as a broken HUD unless it says so. It names both
+			   ways back, because they are the two the player has: the key, and the plate
+			   on the table's near-left corner. The promotion picker needs neither — it
+			   frees the cursor by itself and takes aim back when it's answered. *@
+			@if ( Gambit.World.SeatAim.Aiming )
+			{
+				<div class="aim-hint">Look aim — Esc, or the corner plate, for the cursor.</div>
+			}
+
 			@* Draw offers and takebacks. Read off the seam, so they work at a lichess
 			   table AND a local one.
 
@@ -301,6 +311,16 @@
 	/* The setup block moved to SetupPanel (M17), but the shareable-link "waiting"
 	   controls below still use this one hint style, so it stays. */
 	.setup-hint { font-size: 12px; color: rgba(255, 255, 255, 0.45); }
+
+	/* Look aim's "the buttons below are asleep" line. Warmer than .setup-hint because
+	   it is the answer to "why is nothing clicking", not background information.
+	   nowrap + flex-shrink: 0 for the reason every text div in this repo carries them. */
+	.aim-hint {
+		font-size: 12px;
+		color: rgba(255, 214, 138, 0.75);
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
 
 	/* Lichess opt-in: lichess's own black/white, so it reads as "this leaves
 	   Gambit" rather than as another table control. */
@@ -686,7 +706,10 @@
 				System.HashCode.Combine(
 					src?.DrawOffered, src?.DrawPending,
 					src?.TakebackOffered, src?.TakebackPending,
-					src?.CanTakeback, PremoveUci(), src?.PremoveDropped ),
+					src?.CanTakeback, PremoveUci(), src?.PremoveDropped,
+					// Look aim (P99): the hint above appears and vanishes with it, and
+					// nothing else in this hash changes when the mouse mode does. 8 of 8.
+					Gambit.World.SeatAim.Aiming ),
 				// The waiting-on-an-opponent state (a seek, a named challenge, or a
 				// shareable link): the status line and the cancel button hang off
 				// Challenging/Opening, ChallengeOpponent names who, and the link section

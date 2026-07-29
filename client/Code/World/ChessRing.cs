@@ -786,6 +786,13 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 				// chairs reads as a table you can't sit at.
 				BuildStationChair( station, component, ChessSeat.White );
 				BuildStationChair( station, component, ChessSeat.Black );
+				// The cursor/aim plate at each seat's near-left corner (P99). Both are built
+				// and each is shown only to its own seat: the geometry is then fixed and only
+				// VISIBILITY is seat-dependent, which is the half of this that a client can
+				// get wrong cheaply. "Left" is a different world axis per seat, so a single
+				// shared plate would be in the wrong corner for one of them.
+				BuildAimToggle( station, component, ChessSeat.White );
+				BuildAimToggle( station, component, ChessSeat.Black );
 			}
 		}
 
@@ -1243,6 +1250,136 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		worldPanel.PanelSize = new Vector2( ClockPxWidth, ClockPxHeight );
 
 		text = face.AddComponent<Gambit.UI.TableClockTextPanel>();
+	}
+
+	// ── The cursor/aim plate (P99) ──
+	//
+	// A flat plate lying ON the tabletop in a seat's near-LEFT corner, carrying one string.
+	// Flat, not tilted like the plaque and the clock, and that is the cheap decision here:
+	// a plate in the surface plane is picked by the same plane arithmetic the board squares
+	// already use (AimToggleButton.HitTest), so there is no second geometry to get wrong on
+	// a host that cannot render. It is read at the same steep angle as the board itself.
+	//
+	// It fits because the CORNERS of the tabletop are the one part of the margin budget
+	// nothing else claimed: the trays and the clock all run |x| <= 13 or less, and the board
+	// frame stops at 14.5, so x 15..19 by y 14.5..21 is bare table on both diagonals. The
+	// clock's own margin note is the thing to re-read before putting anything else there.
+	const float AimPlateThickness = 0.4f;   // the trays' thickness — an applique, not a block
+	const float AimPlateWidthX = 4f;        // across the seat's view
+	const float AimPlateLengthY = 6.5f;     // along it — this is the reading direction
+	const float AimPlateMargin = 0.5f;      // bare plate around the text, all round
+
+	/// <summary>Plate centre, station-local base units. Tucked into the corner by the same
+	/// <see cref="TrayEdgeGap"/> the trays keep off the tabletop's edge, so it sits in the
+	/// corner the way they sit in the margin rather than at its own hand-set inset.</summary>
+	static float AimCenterX => TopSizeX * 0.5f - TrayEdgeGap - AimPlateWidthX * 0.5f;
+	float AimCenterY => MarginOuterY - TrayEdgeGap - AimPlateLengthY * 0.5f;
+
+	static float AimTextSpanLength => AimPlateLengthY - 2f * AimPlateMargin;
+	static float AimTextSpanHeight => AimPlateWidthX - 2f * AimPlateMargin;
+
+	/// <summary>The longest label the plate can ever show, in characters — taken from the
+	/// labels themselves, never typed. Exactly <see cref="ClockMaxChars"/>'s reasoning: the
+	/// clock face was sized against "3:00" while the menu could produce "30:00", and every
+	/// Rapid table rendered a quarter too wide. Here the two strings differ by three
+	/// characters, so sizing against the short one would overflow on every toggle.</summary>
+	static int AimMaxChars => Math.Max(
+		AimToggleButton.CursorLabel.Length, AimToggleButton.AimLabel.Length );
+
+	/// <summary>MUST match TableClockTextPanel's `font-size` — the label reuses that panel,
+	/// so it inherits that file's one number-in-two-places caveat too. It sets the panel's
+	/// pixel RESOLUTION, not the text's size: to make the words bigger, turn
+	/// <see cref="AimPlateLengthY"/> (or shrink the margin).</summary>
+	const float AimFontPx = 130f;
+
+	static float AimPxWidth => AimMaxChars * ClockCharAdvanceEm * AimFontPx / ClockTextFitFraction;
+	static float AimPxHeight => AimPxWidth * AimTextSpanHeight / AimTextSpanLength;
+
+	/// <summary>One seat's cursor/aim plate, at ITS near-left corner: the near side is that
+	/// seat's own end of the table (White is −X), and "left" is +Y for White, −Y for Black —
+	/// s&amp;box is Y-left, so the two corners are diagonally opposite and no single plate
+	/// could serve both.
+	///
+	/// <para><b>The rotation is the fiddly part.</b> The plate faces UP (pitch −90 puts its
+	/// local +X, a WorldPanel's normal, along world +Z), and the YAW then decides which way
+	/// the words read: a panel's text runs along its GameObject's local +Y, which is the
+	/// LEFT axis, and that has to point at the seated player's RIGHT. For Black (at +X,
+	/// facing −X) right is +Y, so yaw 0; White faces the other way, so yaw 180. Get this
+	/// backwards and the label renders mirrored — the same handedness trap that once gave
+	/// each player their opponent's clock, which is why it is spelled out rather than tuned.</para>
+	///
+	/// <para>Everything the button needs to pick itself (surface height, centre, half extent)
+	/// is handed over in station-local world units from the numbers used to BUILD it, so the
+	/// hit rectangle cannot drift from the plate the player can see.</para></summary>
+	void BuildAimToggle( GameObject station, ChessStation component, ChessSeat seat )
+	{
+		// The DRIVER on the station (networked with it, like StationChair's); the plate
+		// itself is built client-locally by the driver. Splitting them this way is not
+		// tidiness — see BuildAimToggleView.
+		var driver = station.AddComponent<AimToggleButton>();
+		driver.Station = component;
+		driver.Seat = seat;
+
+		if ( !_runtimeBuilt )
+			BuildAimToggleView( station, seat, null );  // editor preview only
+	}
+
+	/// <summary>Name of a seat's cursor/aim plate GameObject — one place, because the driver
+	/// has to find and replace whatever the ring's editor preview left behind.</summary>
+	public static string AimToggleName( ChessSeat seat ) =>
+		seat == ChessSeat.White ? "AimToggle White" : "AimToggle Black";
+
+	/// <summary>Build one seat's plate, NotSaved | NotNetworked, and hand its parts to
+	/// <paramref name="driver"/> (null for the editor preview, which has no driver).
+	///
+	/// <para><b>Client-local for a networking reason, not the chair's model-path one.</b> A
+	/// box.vmdl plate would cross the wire perfectly well — what must not cross is its
+	/// VISIBILITY. This plate is shown only to the one player sitting in this seat, so its
+	/// enabled state is a different answer on every machine; on a networked object that is
+	/// exactly the shape that leaks, since a joiner rebuilds Snapshot objects from the
+	/// HOST's live state (the music board rendered open and unstyled for precisely this).
+	/// Built per client, the question never arises.</para></summary>
+	public GameObject BuildAimToggleView( GameObject station, ChessSeat seat, AimToggleButton driver )
+	{
+		float s = TableScale;
+		bool white = seat == ChessSeat.White;
+		float sx = white ? -1f : 1f;   // that seat's own end of the table
+		float sy = white ? 1f : -1f;   // and its LEFT from there
+
+		var go = new GameObject( true, AimToggleName( seat ) );
+		go.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
+		go.Parent = station;
+		go.LocalPosition = new Vector3(
+			sx * AimCenterX, sy * AimCenterY, TableTopZ + AimPlateThickness * 0.5f ) * s;
+		go.LocalRotation = Rotation.From( -90f, white ? 180f : 0f, 0f );
+
+		// Plate-local: thickness along its normal (+X, now world +Z), length along +Y,
+		// width along +Z — the same box convention as the clock's plates.
+		var box = AddBoxGo( go, "Plate", Vector3.Zero,
+			new Vector3( AimPlateThickness, AimPlateLengthY, AimPlateWidthX ) * s,
+			null, ClockPlateColor );
+
+		var face = new GameObject( true, "Text" );
+		face.Parent = go;
+		face.LocalPosition = new Vector3( AimPlateThickness * 0.5f + ClockTextOutset, 0f, 0f ) * s;
+		// Derived from the TEXT SPAN, not the plate — see BuildClockPlate: scale off the
+		// plate and AimPlateMargin becomes a zoom knob instead of a margin.
+		face.LocalScale = ( AimTextSpanLength * s ) / ( AimPxWidth * PxToWorld );
+		face.AddComponent<WorldPanel>().PanelSize = new Vector2( AimPxWidth, AimPxHeight );
+		var label = face.AddComponent<Gambit.UI.TableClockTextPanel>();
+
+		if ( driver != null )
+		{
+			driver.Label = label;
+			driver.Plate = box?.GetComponent<ModelRenderer>();
+			// The hit rectangle comes from the numbers that BUILT the plate, in station-local
+			// world units — so what the player can click is exactly what they can see.
+			driver.SurfaceZ = ( TableTopZ + AimPlateThickness ) * s;
+			driver.Center = new Vector2( sx * AimCenterX, sy * AimCenterY ) * s;
+			driver.HalfExtent = new Vector2( AimPlateWidthX, AimPlateLengthY ) * 0.5f * s;
+		}
+
+		return go;
 	}
 
 	/// <summary>The material bar: a track that is ALWAYS drawn, and a fill growing from dead

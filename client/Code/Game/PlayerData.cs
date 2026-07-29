@@ -63,6 +63,22 @@ public sealed class PlayerData
 	/// (0.25–3×; higher = pops change faster).</summary>
 	public float FloorPopRate { get; set; } = 1f;
 
+	/// <summary>How a seated player aims at their board: <c>false</c> = the mouse CURSOR
+	/// (the camera is locked and the pointer picks the square), <c>true</c> = LOOK aim
+	/// (the cursor is hidden, the mouse turns the seated view, and the square under the
+	/// centre of the screen is the one you pick).
+	///
+	/// <para><b>Look aim does not mean "no cursor while seated".</b> The cursor is still
+	/// active for everything that isn't the live game — an empty seat, the setup panel,
+	/// a finished game — and comes back on demand (Escape, the table's corner button)
+	/// and automatically for anything modal (the promotion picker). See
+	/// <see cref="Gambit.World.SeatAim"/>, which owns that state machine; this flag only
+	/// says whether the player wants look aim at all.</para>
+	///
+	/// <para>Client-local and cosmetic, like <see cref="PlayMode"/> — nothing networked,
+	/// and a missing key deserializes to <c>false</c>, which is the pre-P99 behaviour.</para></summary>
+	public bool LookAimAtBoard { get; set; } = false;
+
 	// ── Lichess TV on the north wall (M9) ──
 	/// <summary>Is lichess TV one of the sources the north wall cycles through?
 	/// <para><b>Default on.</b> TV needs no lichess account and no linking — the feed
