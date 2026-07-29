@@ -734,6 +734,11 @@
 	{
 		var ctrl = Controller();
 		var src = Source();
+
+		// Look aim's three exclusive states as one hashable value — see its line below.
+		static int AimHashState() =>
+			Gambit.World.SeatAim.Aiming ? 2 : Gambit.World.SeatAim.Suspended ? 1 : 0;
+
 		return System.HashCode.Combine(
 			Visible(), ctrl?.GameId, src?.Game?.MoveCount, ctrl?.GameOver,
 			src?.IsMyTurn, View()?.PendingPromotion != null,
@@ -760,10 +765,12 @@
 					src?.TakebackOffered, src?.TakebackPending,
 					src?.CanTakeback, PremoveUci(), src?.PremoveDropped,
 					// Look aim (P99): the crosshair and the hint above both appear and
-					// vanish with these, and nothing else in this hash changes when the
-					// mouse mode does. Suspended is its own state, not !Aiming — "not
-					// aiming" is also every table where the feature is off. 9 of 9.
-					Gambit.World.SeatAim.Aiming, Gambit.World.SeatAim.Suspended ),
+					// vanish with it. ONE value, not two, because HashCode.Combine takes
+					// at most 8 arguments and this is the 8th — and because the three
+					// states are exclusive anyway: aiming, cursor-by-choice, or neither
+					// ("not aiming" is also every table where the feature is off, which is
+					// why Suspended can't just be !Aiming). 8 of 8.
+					AimHashState() ),
 				// The waiting-on-an-opponent state (a seek, a named challenge, or a
 				// shareable link): the status line and the cancel button hang off
 				// Challenging/Opening, ChallengeOpponent names who, and the link section
