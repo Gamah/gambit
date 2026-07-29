@@ -13,7 +13,7 @@ namespace Gambit.World;
 /// CENTRE of the screen is the one you pick). Which one is live is <see cref="Aiming"/>, and
 /// exactly three things read it: <see cref="ChessBoardView"/> (which ray to pick with),
 /// <see cref="LobbyPlayer"/> (the camera offset and the Escape key), and
-/// <see cref="AimToggleButton"/> (the corner button's label).</para>
+/// <see cref="AimToggleButton"/> (the banner's label).</para>
 ///
 /// <para><b>The cursor is the default, and look aim is the exception.</b> Even with the
 /// setting on, the cursor stays active until a game is actually PLAYING: an empty seat, a
@@ -24,8 +24,9 @@ namespace Gambit.World;
 ///
 /// <para><b>Three ways back to the cursor mid-game, and they are not the same.</b>
 /// <list type="bullet">
-/// <item><see cref="Suspend"/> — the player asked (Escape, or the corner button). It sticks
-/// until they ask for aim back, and it is the only one that survives a modal closing.</item>
+/// <item><see cref="Suspend"/> — the player asked (Escape, or the plate over the clock).
+/// It sticks until they ask for aim back, and it is the only one that survives a modal
+/// closing.</item>
 /// <item>A MODAL is up (<see cref="ModalOpen"/>) — the promotion picker, which appears
 /// mid-game with no warning and would otherwise be unanswerable. The cursor is released
 /// automatically and aim resumes the moment it is answered, WITHOUT clearing a suspend the
@@ -45,8 +46,8 @@ public static class SeatAim
 	/// centre-screen. False means the cursor is live, which is every other case.</summary>
 	public static bool Aiming { get; private set; }
 
-	/// <summary>The player asked for the cursor back mid-game (Escape or the corner button).
-	/// Cleared when they ask for aim back, and when the game stops being live.</summary>
+	/// <summary>The player asked for the cursor back mid-game (Escape, or the plate over the
+	/// clock). Cleared when they ask for aim back, and when the game stops being live.</summary>
 	static bool _suspended;
 
 	/// <summary>A modal that needs the pointer is up — set per-frame by
@@ -105,8 +106,8 @@ public static class SeatAim
 		ApplyCursor( aiming );
 	}
 
-	/// <summary>Give the cursor back on the player's own say-so (Escape, or the corner
-	/// button). Sticks until <see cref="Resume"/> or the game ending.</summary>
+	/// <summary>Give the cursor back on the player's own say-so (Escape, or the plate over
+	/// the clock). Sticks until <see cref="Resume"/> or the game ending.</summary>
 	public static void Suspend()
 	{
 		_suspended = true;
@@ -114,11 +115,12 @@ public static class SeatAim
 		ApplyCursor( false );
 	}
 
-	/// <summary>Back into aim on the player's say-so (the corner button). A no-op unless the
-	/// setting is on — the button isn't shown otherwise, but nothing here relies on that.</summary>
+	/// <summary>Back into aim on the player's say-so (the plate over the clock). A no-op
+	/// unless the setting is on — the plate isn't shown otherwise, but nothing here relies
+	/// on that.</summary>
 	public static void Resume() => _suspended = false;
 
-	/// <summary>The corner button: one control, both directions.</summary>
+	/// <summary>The plate over the clock: one control, both directions.</summary>
 	public static void Toggle()
 	{
 		if ( Aiming ) Suspend();
@@ -162,9 +164,62 @@ public static class SeatAim
 	/// <summary>Where a board pick comes from this frame: the mouse in cursor mode, the
 	/// centre of the screen in aim mode.
 	///
-	/// <para>One function so the board view and the corner button cannot disagree about what
+	/// <para>One function so the board view and the banner cannot disagree about what
 	/// the player is pointing at — a button that could only be clicked with a cursor would be
 	/// unreachable in precisely the mode it exists to escape.</para></summary>
 	public static Vector2 PickPixel() =>
 		Aiming ? new Vector2( Screen.Width, Screen.Height ) * 0.5f : Mouse.Position;
+
+	/// <summary>
+	/// Does a ray hit the aim banner? A rectangle on a plane TILTED about the station's X
+	/// axis — the clock's plane — in station-local space.
+	///
+	/// <para><b>It is here, and it is scalar, so it can be RUN.</b> The corner plate this
+	/// replaced lay in the tabletop surface, so it could borrow
+	/// <see cref="ChessBoardView.SquareUnderCursor"/>'s arithmetic and inherit its
+	/// correctness. A tilted plane cannot, and this host cannot render — so rather than a
+	/// second geometry nobody can check, the whole test is plain floats with no engine type
+	/// in it and <c>scripts/seataim_harness</c> runs it.</para>
+	///
+	/// <para>The plane's basis, derived once: the banner's normal is
+	/// <c>(0, cos t, −sin t)</c>, its LENGTH axis is the station's X, and its UP-the-plane
+	/// axis is the cross of those, <c>(0, sin t, cos t)</c>. At <c>t = 0</c> that degenerates
+	/// to an upright plate facing +Y, which is the sanity check to hold it to.</para>
+	/// </summary>
+	/// <param name="tiltDegrees">The plate's pitch — <c>ChessRing.ClockFaceTilt</c>, negative
+	/// for a face angled UP and toward the board.</param>
+	/// <param name="centerY">Plate centre, station-local. X is always 0 (dead centre).</param>
+	/// <param name="faceOutset">How far the FRONT face stands off that centre along the
+	/// normal — half the plate's thickness. Pick the face, not the mid-plane.</param>
+	public static bool PlateHit(
+		float originX, float originY, float originZ,
+		float dirX, float dirY, float dirZ,
+		float centerY, float centerZ, float faceOutset, float tiltDegrees,
+		float halfLength, float halfHeight )
+	{
+		float t = tiltDegrees * ( MathF.PI / 180f );
+		float ct = MathF.Cos( t ), st = MathF.Sin( t );
+
+		// Plane normal, and the plate's own up-the-plane axis (normal × length axis).
+		float nY = ct, nZ = -st;
+		float uY = st, uZ = ct;
+
+		float denom = dirY * nY + dirZ * nZ;
+		if ( MathF.Abs( denom ) < 0.0001f ) return false;   // ray parallel to the face
+
+		// The face sits faceOutset along the normal from the centre.
+		float cY = centerY + nY * faceOutset;
+		float cZ = centerZ + nZ * faceOutset;
+
+		float hit = ( ( cY - originY ) * nY + ( cZ - originZ ) * nZ ) / denom;
+		if ( hit <= 0f ) return false;                      // behind the camera
+
+		// Where it lands, relative to the plate centre, in the plate's own two axes.
+		float pX = originX + dirX * hit;
+		float pY = originY + dirY * hit - cY;
+		float pZ = originZ + dirZ * hit - cZ;
+
+		return MathF.Abs( pX ) <= halfLength
+			&& MathF.Abs( pY * uY + pZ * uZ ) <= halfHeight;
+	}
 }

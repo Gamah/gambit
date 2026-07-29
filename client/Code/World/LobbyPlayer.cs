@@ -2599,7 +2599,7 @@ public sealed class LobbyPlayer : Component
 		// What counts as modal: the promotion picker (which appears mid-game with no warning
 		// and cannot be answered without a pointer), and an offer the OPPONENT has standing.
 		// An offer you simply play on through keeps the cursor out until it resolves — the
-		// corner button takes aim back in one click if you'd rather ignore it.
+		// plate over the clock takes aim back in one click if you'd rather ignore it.
 		var view = station.Components.Get<ChessBoardView>();
 		bool modal = view?.PendingPromotion != null
 			|| src is { DrawOffered: true } or { TakebackOffered: true };

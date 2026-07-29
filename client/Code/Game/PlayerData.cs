@@ -70,7 +70,7 @@ public sealed class PlayerData
 	///
 	/// <para><b>Look aim does not mean "no cursor while seated".</b> The cursor is still
 	/// active for everything that isn't the live game — an empty seat, the setup panel,
-	/// a finished game — and comes back on demand (Escape, the table's corner button)
+	/// a finished game — and comes back on demand (Escape, the plate over the table's clock)
 	/// and automatically for anything modal (the promotion picker). See
 	/// <see cref="Gambit.World.SeatAim"/>, which owns that state machine; this flag only
 	/// says whether the player wants look aim at all.</para>

@@ -786,13 +786,11 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 				// chairs reads as a table you can't sit at.
 				BuildStationChair( station, component, ChessSeat.White );
 				BuildStationChair( station, component, ChessSeat.Black );
-				// The cursor/aim plate at each seat's near-left corner (P99). Both are built
-				// and each is shown only to its own seat: the geometry is then fixed and only
-				// VISIBILITY is seat-dependent, which is the half of this that a client can
-				// get wrong cheaply. "Left" is a different world axis per seat, so a single
-				// shared plate would be in the wrong corner for one of them.
-				BuildAimToggle( station, component, ChessSeat.White );
-				BuildAimToggle( station, component, ChessSeat.Black );
+				// The cursor/aim banner floating above the clock (P99). ONE per table, not
+				// one per seat: it hangs over the centre of the clock in the clock's own
+				// facing, so it reads from both seats exactly as the two dials do, and the
+				// local player is the only one who can ever be seated here.
+				BuildAimToggle( station, component );
 			}
 		}
 
@@ -1044,6 +1042,17 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	static float ClockPlaneOriginZ =>
 		ClockHeight + ClockPlateHeight * 0.5f * MathF.Cos( ClockFaceTilt * ( MathF.PI / 180f ) );
 
+	/// <summary>How much of a tilted plate's own half-height is spent going UP — the whole
+	/// reason a tilted object's edge is not half its size from its centre. Everything in this
+	/// plane derives its edges through this rather than through the flat number.</summary>
+	static float ClockPlaneRise( float height ) =>
+		height * 0.5f * MathF.Cos( ClockFaceTilt * ( MathF.PI / 180f ) );
+
+	/// <summary>The clock's TOP edge, clock-local (so measured from the tabletop). Derived
+	/// through the tilt, per the rule on <see cref="ClockPlaneOriginZ"/> — it is what the aim
+	/// banner floats above, and typing it would be the same mistake one object further on.</summary>
+	static float ClockTopZ => ClockPlaneOriginZ + ClockPlaneRise( ClockPlateHeight );
+
 	// ── The material bar ──
 	//
 	// Mesh, not a div. A track that is ALWAYS there, and a fill growing from dead centre toward
@@ -1252,31 +1261,49 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		text = face.AddComponent<Gambit.UI.TableClockTextPanel>();
 	}
 
-	// ── The cursor/aim plate (P99) ──
+	// ── The cursor/aim banner (P99) ──
 	//
-	// A flat plate lying ON the tabletop in a seat's near-LEFT corner, carrying one string.
-	// Flat, not tilted like the plaque and the clock, and that is the cheap decision here:
-	// a plate in the surface plane is picked by the same plane arithmetic the board squares
-	// already use (AimToggleButton.HitTest), so there is no second geometry to get wrong on
-	// a host that cannot render. It is read at the same steep angle as the board itself.
+	// One plate FLOATING above the middle of the clock, in the clock's own tilted plane and
+	// centred over the material bar, carrying one string.
 	//
-	// It fits because the CORNERS of the tabletop are the one part of the margin budget
-	// nothing else claimed: the trays and the clock all run |x| <= 13 or less, and the board
-	// frame stops at 14.5, so x 15..19 by y 14.5..21 is bare table on both diagonals. The
-	// clock's own margin note is the thing to re-read before putting anything else there.
-	const float AimPlateThickness = 0.4f;   // the trays' thickness — an applique, not a block
-	const float AimPlateWidthX = 4f;        // across the seat's view
-	const float AimPlateLengthY = 6.5f;     // along it — this is the reading direction
+	// It started in a seat's near-LEFT corner of the tabletop, which cost two plates (a
+	// corner is a different world axis per seat, so no single one could serve both) and put
+	// the control somewhere the player has no other reason to look. Over the clock it joins
+	// the row they are already reading, and it inherits the clock's whole argument for that
+	// facing: the seats are at ±X, a face at −Y pointing +Y is square to neither and readable
+	// to both, because both are looking down at the table anyway. ONE plate now, and the
+	// label reads the LOCAL player's state — see AimToggleButton.
+	//
+	// It floats rather than standing in the gap between the two dials because that gap is
+	// spoken for: the lead badge is dead centre in it, room-confirmed, and its position is
+	// explicitly not to be re-derived (see ClockLeadDropZ). Air above the assembly is the one
+	// place in this margin nothing has claimed.
+	//
+	// The cost, paid deliberately: the pick is no longer the tabletop-plane test the board
+	// squares use, but a ray against a TILTED plane. That is new geometry on a host that
+	// cannot render, so the arithmetic lives in SeatAim.PlateHit — Sandbox-free, and run by
+	// scripts/seataim_harness rather than reasoned about.
+	const float AimPlateThickness = 0.3f;   // an applique, not a block — it is read face-on
+	const float AimPlateLength = 12f;       // along X, centred: this is the reading direction
+	const float AimPlateHeight = 2.2f;      // in the tilted plane, a shade under a dial's 2.9
 	const float AimPlateMargin = 0.5f;      // bare plate around the text, all round
 
-	/// <summary>Plate centre, station-local base units. Tucked into the corner by the same
-	/// <see cref="TrayEdgeGap"/> the trays keep off the tabletop's edge, so it sits in the
-	/// corner the way they sit in the margin rather than at its own hand-set inset.</summary>
-	static float AimCenterX => TopSizeX * 0.5f - TrayEdgeGap - AimPlateWidthX * 0.5f;
-	float AimCenterY => MarginOuterY - TrayEdgeGap - AimPlateLengthY * 0.5f;
+	/// <summary>Clear air between the clock's top EDGE and the banner's bottom EDGE — both
+	/// derived through the tilt (<see cref="ClockPlaneRise"/>), never from the flat halves.
+	/// This is the knob for "how high does it float": turn this, not <see cref="AimCenterZ"/>,
+	/// which is what keeps the gap the gap however the plate is resized.</summary>
+	const float AimFloatGap = 1.8f;
 
-	static float AimTextSpanLength => AimPlateLengthY - 2f * AimPlateMargin;
-	static float AimTextSpanHeight => AimPlateWidthX - 2f * AimPlateMargin;
+	/// <summary>Banner centre, station-local base units. X is dead centre; Y is the clock's
+	/// own strip (it hangs directly over the body, so it shares the clock GO's offset rather
+	/// than being placed beside it); Z clears the clock's top edge by <see cref="AimFloatGap"/>.
+	/// ≈ 7.5 above the tabletop at the current numbers.</summary>
+	float AimCenterY => -ClockCenterY + ClockForwardSlide;
+	static float AimCenterZ =>
+		TableTopZ + ClockTopZ + AimFloatGap + ClockPlaneRise( AimPlateHeight );
+
+	static float AimTextSpanLength => AimPlateLength - 2f * AimPlateMargin;
+	static float AimTextSpanHeight => AimPlateHeight - 2f * AimPlateMargin;
 
 	/// <summary>The longest label the plate can ever show, in characters — taken from the
 	/// labels themselves, never typed. Exactly <see cref="ClockMaxChars"/>'s reasoning: the
@@ -1289,45 +1316,45 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// <summary>MUST match TableClockTextPanel's `font-size` — the label reuses that panel,
 	/// so it inherits that file's one number-in-two-places caveat too. It sets the panel's
 	/// pixel RESOLUTION, not the text's size: to make the words bigger, turn
-	/// <see cref="AimPlateLengthY"/> (or shrink the margin).</summary>
+	/// <see cref="AimPlateLength"/> (or shrink the margin).
+	///
+	/// <para><b>The text's world HEIGHT is set by the plate's LENGTH</b>, because the panel
+	/// scales uniformly off the span it has to fill lengthwise: it is
+	/// <c>AimTextSpanLength × 0.84 / (chars × 0.9)</c> ≈ 1.03 for "USE CURSOR" in an 11-long
+	/// span — about 0.4 of a clock digit, and it must stay under
+	/// <see cref="AimTextSpanHeight"/> (1.2) or it overflows the plate top and bottom.
+	/// Lengthening the plate to make the words bigger eventually needs the height too.</para></summary>
 	const float AimFontPx = 130f;
 
 	static float AimPxWidth => AimMaxChars * ClockCharAdvanceEm * AimFontPx / ClockTextFitFraction;
 	static float AimPxHeight => AimPxWidth * AimTextSpanHeight / AimTextSpanLength;
 
-	/// <summary>One seat's cursor/aim plate, at ITS near-left corner: the near side is that
-	/// seat's own end of the table (White is −X), and "left" is +Y for White, −Y for Black —
-	/// s&amp;box is Y-left, so the two corners are diagonally opposite and no single plate
-	/// could serve both.
+	/// <summary>The table's one cursor/aim banner, floating over the clock.
 	///
-	/// <para><b>The rotation is the fiddly part.</b> The plate faces UP (pitch −90 puts its
-	/// local +X, a WorldPanel's normal, along world +Z), and the YAW then decides which way
-	/// the words read: a panel's text runs along its GameObject's local +Y, which is the
-	/// LEFT axis, and that has to point at the seated player's RIGHT. For Black (at +X,
-	/// facing −X) right is +Y, so yaw 0; White faces the other way, so yaw 180. Get this
-	/// backwards and the label renders mirrored — the same handedness trap that once gave
-	/// each player their opponent's clock, which is why it is spelled out rather than tuned.</para>
+	/// <para><b>One, not one per seat.</b> The corner version needed two because a corner is
+	/// a different world axis for each player; a plate over the clock's centre is in the same
+	/// place for both, in the same facing they already read the dials in. Nothing about it is
+	/// per-seat: it is client-local and only the LOCAL player can be sitting here, so the
+	/// label reads their state whichever chair they are in.</para>
 	///
-	/// <para>Everything the button needs to pick itself (surface height, centre, half extent)
-	/// is handed over in station-local world units from the numbers used to BUILD it, so the
-	/// hit rectangle cannot drift from the plate the player can see.</para></summary>
-	void BuildAimToggle( GameObject station, ChessStation component, ChessSeat seat )
+	/// <para>Everything the button needs to pick itself (centre, tilt, half extents) is handed
+	/// over in station-local world units from the numbers used to BUILD it, so the hit
+	/// rectangle cannot drift from the plate the player can see.</para></summary>
+	void BuildAimToggle( GameObject station, ChessStation component )
 	{
 		// The DRIVER on the station (networked with it, like StationChair's); the plate
 		// itself is built client-locally by the driver. Splitting them this way is not
 		// tidiness — see BuildAimToggleView.
 		var driver = station.AddComponent<AimToggleButton>();
 		driver.Station = component;
-		driver.Seat = seat;
 
 		if ( !_runtimeBuilt )
-			BuildAimToggleView( station, seat, null );  // editor preview only
+			BuildAimToggleView( station, null );  // editor preview only
 	}
 
-	/// <summary>Name of a seat's cursor/aim plate GameObject — one place, because the driver
-	/// has to find and replace whatever the ring's editor preview left behind.</summary>
-	public static string AimToggleName( ChessSeat seat ) =>
-		seat == ChessSeat.White ? "AimToggle White" : "AimToggle Black";
+	/// <summary>Name of the cursor/aim banner GameObject — one place, because the driver has
+	/// to find and replace whatever the ring's editor preview left behind.</summary>
+	public const string AimToggleName = "AimToggle";
 
 	/// <summary>Build one seat's plate, NotSaved | NotNetworked, and hand its parts to
 	/// <paramref name="driver"/> (null for the editor preview, which has no driver).
@@ -1339,24 +1366,23 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// exactly the shape that leaks, since a joiner rebuilds Snapshot objects from the
 	/// HOST's live state (the music board rendered open and unstyled for precisely this).
 	/// Built per client, the question never arises.</para></summary>
-	public GameObject BuildAimToggleView( GameObject station, ChessSeat seat, AimToggleButton driver )
+	public GameObject BuildAimToggleView( GameObject station, AimToggleButton driver )
 	{
 		float s = TableScale;
-		bool white = seat == ChessSeat.White;
-		float sx = white ? -1f : 1f;   // that seat's own end of the table
-		float sy = white ? 1f : -1f;   // and its LEFT from there
 
-		var go = new GameObject( true, AimToggleName( seat ) );
+		var go = new GameObject( true, AimToggleName );
 		go.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
 		go.Parent = station;
-		go.LocalPosition = new Vector3(
-			sx * AimCenterX, sy * AimCenterY, TableTopZ + AimPlateThickness * 0.5f ) * s;
-		go.LocalRotation = Rotation.From( -90f, white ? 180f : 0f, 0f );
+		go.LocalPosition = new Vector3( 0f, AimCenterY, AimCenterZ ) * s;
+		// The clock plates' rotation exactly — same plane, same facing, and copied rather
+		// than re-derived so the banner cannot end up at a slightly different angle to the
+		// dials it hangs over.
+		go.LocalRotation = Rotation.From( ClockFaceTilt, 90f, 0f );
 
-		// Plate-local: thickness along its normal (+X, now world +Z), length along +Y,
-		// width along +Z — the same box convention as the clock's plates.
+		// Plate-local: thickness along its normal, length along +Y (which the yaw carries
+		// round to world X), height along +Z — the clock plates' box convention.
 		var box = AddBoxGo( go, "Plate", Vector3.Zero,
-			new Vector3( AimPlateThickness, AimPlateLengthY, AimPlateWidthX ) * s,
+			new Vector3( AimPlateThickness, AimPlateLength, AimPlateHeight ) * s,
 			null, ClockPlateColor );
 
 		var face = new GameObject( true, "Text" );
@@ -1373,10 +1399,15 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			driver.Label = label;
 			driver.Plate = box?.GetComponent<ModelRenderer>();
 			// The hit rectangle comes from the numbers that BUILT the plate, in station-local
-			// world units — so what the player can click is exactly what they can see.
-			driver.SurfaceZ = ( TableTopZ + AimPlateThickness ) * s;
-			driver.Center = new Vector2( sx * AimCenterX, sy * AimCenterY ) * s;
-			driver.HalfExtent = new Vector2( AimPlateWidthX, AimPlateLengthY ) * 0.5f * s;
+			// world units — so what the player can click is exactly what they can see. The
+			// FACE is what gets picked, not the plate's mid-plane: half a plate's thickness
+			// is the difference between "pointing at it" and "pointing just past its edge".
+			driver.CenterY = AimCenterY * s;
+			driver.CenterZ = AimCenterZ * s;
+			driver.FaceOutset = ( AimPlateThickness * 0.5f ) * s;
+			driver.TiltDegrees = ClockFaceTilt;
+			driver.HalfLength = AimPlateLength * 0.5f * s;
+			driver.HalfHeight = AimPlateHeight * 0.5f * s;
 		}
 
 		return go;

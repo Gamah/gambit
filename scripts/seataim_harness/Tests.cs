@@ -49,7 +49,7 @@ static class T
 		Check( SeatAim.PickPixel().x == 960 && SeatAim.PickPixel().y == 540,
 			"aiming: the pick is centre-screen" );
 
-		// ── Escape (and the corner button) hand the cursor back, and it STICKS. ──
+		// ── Escape (and the plate) hand the cursor back, and it STICKS. ──
 		SeatAim.Suspend();
 		Check( !SeatAim.Aiming && Mouse.Visibility == MouseVisibility.Auto,
 			"Escape: cursor comes straight back" );
@@ -59,11 +59,11 @@ static class T
 
 		SeatAim.Toggle();
 		Frame( playing: true, modal: false );
-		Check( SeatAim.Aiming, "corner button: back into aim" );
+		Check( SeatAim.Aiming, "the plate: back into aim" );
 
 		SeatAim.Toggle();
 		Frame( playing: true, modal: false );
-		Check( !SeatAim.Aiming, "corner button toggles the other way too" );
+		Check( !SeatAim.Aiming, "the plate toggles the other way too" );
 
 		// ── A game ending forgets the suspend, so the NEXT game starts in aim. ──
 		Frame( playing: false, modal: false );
@@ -120,6 +120,78 @@ static class T
 		SeatAim.Update( true, false );
 		Check( SeatAim.LookOffset.pitch == after.pitch,
 			"releasing the cursor does not smear the view on the way out" );
+
+		// ── The aim banner's hit test (P99). ──
+		//
+		// The plate floats above the clock in the clock's TILTED plane, so the pick is no
+		// longer the tabletop-plane test the board squares use — which is exactly why the
+		// arithmetic is in SeatAim rather than in the Component, and why it is run here.
+		//
+		// Numbers mirror ChessRing at TableScale 1 (BoardSize 26): the clock strip's Y is
+		// −ClockCenterY + ClockForwardSlide = −15.5 + 1.1, the banner's Z is TableTopZ +
+		// ClockTopZ + AimFloatGap + its own rise ≈ 20 + 4.712 + 1.8 + 0.952, the tilt is
+		// ClockFaceTilt, and the halves are AimPlateLength/Height ÷ 2 with FaceOutset at
+		// half AimPlateThickness. If the room wants the plate somewhere else, these move —
+		// the point of the section is the BASIS, which doesn't.
+		const float cY = -14.4f, cZ = 27.464f, outset = 0.15f, tilt = -30f;
+		const float halfLen = 6f, halfHgt = 1.1f;
+
+		// The plane's basis, written out independently of the code under test.
+		double t = tilt * Math.PI / 180.0;
+		float nY = (float)Math.Cos( t ), nZ = -(float)Math.Sin( t );   // face normal
+		float uY = (float)Math.Sin( t ), uZ = (float)Math.Cos( t );    // up the plane
+
+		// Fire straight AT a point on the face: origin out along the normal, aimed back.
+		bool HitFace( float x, float up )
+		{
+			float fy = cY + nY * outset + uY * up, fz = cZ + nZ * outset + uZ * up;
+			return SeatAim.PlateHit(
+				x, fy + nY * 20f, fz + nZ * 20f, 0f, -nY, -nZ,
+				cY, cZ, outset, tilt, halfLen, halfHgt );
+		}
+
+		Check( HitFace( 0f, 0f ), "banner: dead centre is a hit" );
+		Check( HitFace( 5.9f, 0f ) && HitFace( -5.9f, 0f ),
+			"banner: just inside each END is a hit" );
+		Check( !HitFace( 6.1f, 0f ) && !HitFace( -6.1f, 0f ),
+			"banner: just past an end MISSES (the hit area is exactly the plate)" );
+		Check( HitFace( 0f, 1.05f ) && HitFace( 0f, -1.05f ),
+			"banner: just inside top and bottom is a hit" );
+		Check( !HitFace( 0f, 1.15f ) && !HitFace( 0f, -1.15f ),
+			"banner: just past top or bottom MISSES" );
+
+		// The tilt is load-bearing, not decoration: a face angled up catches a ray coming
+		// straight DOWN, and an upright one (tilt 0) is parallel to it and cannot.
+		Check( SeatAim.PlateHit( 0f, cY + nY * outset, cZ + nZ * outset + 30f, 0f, 0f, -1f,
+				cY, cZ, outset, tilt, halfLen, halfHgt ),
+			"banner: a ray from straight above hits the tilted face" );
+		Check( !SeatAim.PlateHit( 0f, cY, cZ + 30f, 0f, 0f, -1f,
+				cY, cZ, outset, 0f, halfLen, halfHgt ),
+			"banner: the same ray misses an UPRIGHT plate — the tilt is really applied" );
+
+		// Sanity on the degenerate case: tilt 0 is a plate facing +Y, hit by a level ray.
+		Check( SeatAim.PlateHit( 0f, cY - 30f, cZ, 0f, 1f, 0f,
+				cY, cZ, outset, 0f, halfLen, halfHgt ),
+			"banner: tilt 0 degenerates to an upright plate facing the board" );
+
+		// Behind the camera is not in front of it, and neither is a grazing ray.
+		Check( !SeatAim.PlateHit(
+				0f, cY + nY * 20f, cZ + nZ * 20f, 0f, nY, nZ,
+				cY, cZ, outset, tilt, halfLen, halfHgt ),
+			"banner: a ray pointing AWAY from the plate misses" );
+		Check( !SeatAim.PlateHit( 0f, cY + nY * 20f, cZ + nZ * 20f, 1f, 0f, 0f,
+				cY, cZ, outset, tilt, halfLen, halfHgt ),
+			"banner: a ray parallel to the face misses rather than dividing by zero" );
+
+		// The FACE is picked, not the mid-plane: it sits outset along +normal, so a ray
+		// starting at the centre and heading out the front still reaches it, and one
+		// heading out the back never does.
+		Check( SeatAim.PlateHit( 0f, cY, cZ, 0f, nY, nZ,
+				cY, cZ, outset, tilt, halfLen, halfHgt ),
+			"banner: the picked plane is the FRONT face, not the plate's middle" );
+		Check( !SeatAim.PlateHit( 0f, cY, cZ, 0f, -nY, -nZ,
+				cY, cZ, outset, tilt, halfLen, halfHgt ),
+			"banner: nothing is pickable through its back" );
 
 		Console.WriteLine( fails == 0 ? "\nALL PASS" : $"\n{fails} FAILED" );
 		return fails == 0 ? 0 : 1;

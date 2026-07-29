@@ -944,18 +944,24 @@ must read the lichess source, not `ctrl`.
 A world-settings picker (**AIM AT THE BOARD — CURSOR / LOOK**) chooses how a seated player
 picks a square. CURSOR is everything before P99 and stays the default. LOOK hides the pointer,
 turns the seated view with the mouse, and picks whatever is under the **centre of the screen**.
-`World/SeatAim.cs` is the whole state machine and the only thing that decides; exactly three
-places read it (`ChessBoardView` for the ray, `LobbyPlayer` for the camera offset and Escape,
-`AimToggleButton` for the label), and `PlayerData.LookAimAtBoard` only says whether the player
-wants it at all.
+`World/SeatAim.cs` is the whole state machine and the only thing that decides; three places act
+on it (`ChessBoardView` for the ray, `LobbyPlayer` for the camera offset and Escape,
+`AimToggleButton` for the label) and `GameHud` only DRAWS it (the crosshair and the "the buttons
+are asleep" hint). `PlayerData.LookAimAtBoard` says whether the player wants it at all.
 
 - **The cursor is still the default state, even with LOOK on.** Aim engages only while a game
   is **Playing** (off the `IBoardGame` seam, so a lichess game aims like a local one — reading
   `LocalGameController` here would be the M8-silence mistake again). An empty seat, the setup
   panel and a finished game all need a pointer, so they keep one. **This is the feature's
   shape, not a caveat**: the ask was "the cursor is active until a game is playing".
-- **Three ways back to the cursor, and they differ.** The player's own (Escape / the corner
-  plate) **sticks**; a **modal** (the promotion picker, an offer standing against you) releases
+- **The crosshair is part of the mechanism, not decoration.** With the pointer hidden the pick
+  point is invisible, so `GameHud` draws a dot-in-a-ring at dead centre (`.crosshair`, gated on
+  `SeatAim.Aiming` alone and deliberately OUTSIDE the HUD's own `Visible()` block and its
+  corner panel — it marks a point in the world, not a line of HUD). 50%/50% because that is
+  literally what `SeatAim.PickPixel` returns; centred with negative margins rather than a
+  `transform`. A ring around a dot so it survives both a white square and a dark one.
+- **Three ways back to the cursor, and they differ.** The player's own (Escape / the plate over
+  the clock) **sticks**; a **modal** (the promotion picker, an offer standing against you) releases
   and **restores by itself** without undoing a suspend the player asked for; and the game
   **ending** clears everything, so the next game starts in aim rather than remembering a key
   pressed twenty minutes ago.
@@ -969,27 +975,50 @@ wants it at all.
   global, so a forgotten reset would leave a roaming player with no pointer and no mouselook.
   `Disengage` clears it first thing and the roaming path re-asserts it, because not every way
   to stop being seated goes through `Disengage`.
-- **The corner plate** (`World/AimToggleButton.cs` + `ChessRing.BuildAimToggleView`) is a flat
-  mesh plate on the tabletop at each seat's **near-left** corner, carrying one string that flips
-  between "ENABLE CURSOR" and "ENABLE AIM". Both seats' plates are built and each is shown only
-  to its own seat — "left" is +Y for White and −Y for Black, so no single plate could serve
-  both. It picks itself with the same plane arithmetic as the board squares (via
-  `SeatAim.PickPixel`, so board and button can never disagree about where you are pointing),
-  and it is **client-local `NotSaved | NotNetworked`, built lazily by the driver on the station**
-  — not for the chair's runtime-model reason but because its VISIBILITY is a different answer on
-  every machine, which is precisely what leaks through a joiner's snapshot.
+- **The banner** (`World/AimToggleButton.cs` + `ChessRing.BuildAimToggleView`) is **ONE** mesh
+  plate **floating above the middle of the clock**, in the clock's own tilted plane and centred
+  over the material bar, carrying one string that flips between "USE CURSOR" and "USE AIM". It
+  is **client-local `NotSaved | NotNetworked`, built lazily by the driver on the station** — not
+  for the chair's runtime-model reason but because its VISIBILITY is a different answer on every
+  machine, which is precisely what leaks through a joiner's snapshot.
+  → **It started as two flat plates in each seat's near-left tabletop corner, and the move is
+  the interesting part.** A corner is a different world axis per seat (+Y for White, −Y for
+  Black), so it needed a plate each and a yaw-180 flip to keep the words unmirrored. Over the
+  clock it inherits the clock's whole argument — the seats are at ±X, a face at −Y is square to
+  neither and readable to both — so **one plate serves both seats and there is no handedness to
+  get wrong**, and it hangs where a player is already looking rather than out on bare table.
+  → **It FLOATS rather than standing in the gap between the two dials** because that gap is
+  spoken for: the lead badge is dead centre in it and its position is room-confirmed and
+  explicitly not to be re-derived (`ClockLeadDropZ`). Air above the assembly was unclaimed.
+  `AimFloatGap` (1.8) is the knob, and it is a gap between **edges derived through the tilt**
+  (`ClockPlaneRise`), never between flat halves — the rule that has now cost this table three
+  objects.
+  → **The label is short for a geometric reason.** A one-string panel scales off the span it
+  fills lengthwise, so the text's world HEIGHT is the plate's length ÷ the character count:
+  "ENABLE CURSOR" rendered ~0.25 of a clock digit, "USE CURSOR" renders ~0.4. Lengthening the
+  plate to make the words bigger eventually needs `AimPlateHeight` too, or the text overflows.
+  → **The pick is the one thing that got harder, and it is paid for in the harness.** A plate
+  in the tabletop surface could borrow `ChessBoardView.SquareUnderCursor`'s arithmetic; a tilted
+  one cannot. So the whole test is `SeatAim.PlateHit` — plain floats, no engine type, run by
+  `scripts/seataim_harness` (both extents, the basis, a ray from straight above, the parallel
+  and behind-the-camera cases, and that the FRONT face is what gets picked). The pick POINT is
+  still `SeatAim.PickPixel`, so the board and the banner can never disagree about where you are
+  pointing.
 - **The camera offset composes in EULER space**, not as a quaternion post-multiply: a seat
   anchor is already pitched steeply down (the 2D nadir one looks straight down), so turning
   about its own tilted up-axis would roll the horizon. The offset is clamped (±45° yaw, ±30°
   pitch) — the board is the point of the view — and **persists** when the cursor comes back, so
   releasing it hands you a pointer rather than snapping the view.
-- **The plate fits in the one part of the tabletop margin nothing else claimed**: the trays and
-  the clock all live within |x| ≤ 13 and the board frame stops at 14.5, so the corners are bare.
-  Re-read the Y-margin budget note before putting anything else out there.
-- Proven on this host: `SeatAim` runs its whole truth table in a shim harness (see the
-  Sandbox-free C# section). What it can't prove is that the plate is **in frame** from the seat
-  — arithmetic says it lands low and left in 3D and near the corner in 2D, so that is a **room**
-  check, with `AimCenterX`/`AimCenterY` as the knobs.
+- **The banner is the first thing this table puts in the AIR**, and that is the new budget to
+  mind: the Y-margin note governs the tabletop, and nothing governs what is above it except the
+  seat's own view. It sits ≈7.5 above the tabletop (≈1.8 clear of the clock's top edge), which
+  is between the seats and nothing — but it is the number to check first if a seat's view of
+  the far rank ever looks obstructed.
+- Proven on this host: `SeatAim` runs its whole truth table **plus the banner's hit test** in a
+  shim harness (see the Sandbox-free C# section). What it can't prove is that the banner is
+  **in frame** and at a comfortable height from the seat — arithmetic puts it low-centre in 3D,
+  in the clock's own facing — so that is a **room** check, with `AimFloatGap` for how high it
+  hangs and `AimPlateLength`/`AimPlateHeight` for how big it is.
 
 ### Dev console commands
 `gambit_gamchess_ping` — is gamchess up?
