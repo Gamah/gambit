@@ -11,7 +11,10 @@ namespace Gambit.World;
 /// </summary>
 public sealed class SettingsStation : Component
 {
-	public enum StationKind { World, Host, Music }
+	// Music used to be a third kind here, with its own south-wall board. It isn't a place
+	// you walk to any more — the soundtrack is N (board) / M (mute) from anywhere, driven
+	// by Gambit.UI.MusicScreen.
+	public enum StationKind { World, Host }
 
 	/// <summary>The board the local player is currently locked onto, if any.</summary>
 	public static new SettingsStation Active { get; private set; }
@@ -25,9 +28,6 @@ public sealed class SettingsStation : Component
 		get => Kind == StationKind.Host;
 		set => Kind = value ? StationKind.Host : StationKind.World;
 	}
-
-	/// <summary>True for the music board.</summary>
-	public bool Music => Kind == StationKind.Music;
 
 	/// <summary>Horizontal walk-up range for the "Press E" prompt.</summary>
 	[Property] public float InteractRange { get; set; } = 130f;

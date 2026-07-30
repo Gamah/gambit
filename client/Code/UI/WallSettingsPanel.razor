@@ -1,6 +1,5 @@
 @using System;
 @using System.Collections.Generic;
-@using System.Linq;
 @using Sandbox;
 @using Sandbox.UI;
 @using Gambit.Game;
@@ -110,32 +109,16 @@
 	string Title() => Kind switch
 	{
 		SettingsStation.StationKind.Host => "HOST SETTINGS",
-		SettingsStation.StationKind.Music => "♪ MUSIC",
 		_ => "WORLD SETTINGS",
 	};
 
+	// The music board was a third kind here. The soundtrack has no wall any more — N opens
+	// its board over the screen from anywhere and M mutes it (Gambit.UI.MusicScreen).
 	List<string> Lines() => Kind switch
 	{
 		SettingsStation.StationKind.Host => HostLines(),
-		SettingsStation.StationKind.Music => MusicLines(),
 		_ => LocalLines(),
 	};
-
-	List<string> MusicLines()
-	{
-		var player = Scene.GetAllComponents<Skafinity.SkafinityPlayer>().FirstOrDefault();
-		string tag = string.IsNullOrEmpty( player?.Tag ) ? "default" : player.Tag;
-		int n = player?.N ?? 0;
-		bool on = player?.Enabled ?? true;
-		// Short tag:n here — the full shareable vibe:tag:n lives on the engaged screen.
-		return new List<string>
-		{
-			$"NOW PLAYING — {tag}:{n}",
-			$"MUSIC — {OnOff( on )}",
-			"Press E for songs, vibe &",
-			"volume",
-		};
-	}
 
 	List<string> LocalLines()
 	{
@@ -189,6 +172,5 @@
 		HashCode.Combine( Kind, SettingsModel.SettingsVersion, LobbyNetworkManager.LocalIsAdmin,
 			ChessRing.Instance?.StationCount ?? 0, ChessRing.Instance?.PendingStationCount ?? 0,
 			ChessRing.Instance?.Rebuilding ?? false,
-			Host && SettingsModel.AnyStationOccupied( Scene ),
-			Scene.GetAllComponents<Skafinity.SkafinityPlayer>().FirstOrDefault()?.CurrentSeed );
+			Host && SettingsModel.AnyStationOccupied( Scene ) );
 }

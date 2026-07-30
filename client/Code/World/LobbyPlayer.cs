@@ -174,6 +174,10 @@ public sealed class LobbyPlayer : Component
 			screen.GameObject.AddComponent<VoiceScreen>();
 		if ( screen.Components.Get<Gambit.UI.Screens.VoicePanel>() == null )
 			screen.GameObject.AddComponent<Gambit.UI.Screens.VoicePanel>();
+		// The keycap stack (chat / music / voice) rides along here: it is the same kind of
+		// self-attaching client-local affordance, and it draws the G/B hints VoicePanel used to.
+		if ( screen.Components.Get<Gambit.UI.Screens.HudHints>() == null )
+			screen.GameObject.AddComponent<Gambit.UI.Screens.HudHints>();
 	}
 
 	/// <summary>Teleport back to spawn after falling off the map.

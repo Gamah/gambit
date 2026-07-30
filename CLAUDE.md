@@ -1221,8 +1221,8 @@ Deviating from them is how un-compilable mistakes get in.
   the trailing headers dictionary is undocumented in `../sbox-docs` but works
 - **Hotload**: C# changes hotload in milliseconds. Procedural builders rebuild via
   `[EditorEvent.Hotload]` in `Editor/HotloadRebuild.cs` — keep new builders registered there
-- **Self-attaching UI**: **GameHud, SpectatorScreen, and the M12 voice pair (VoiceScreen +
-  VoicePanel)** — those, and no others — attach themselves to the scene ScreenPanel at runtime
+- **Self-attaching UI**: **GameHud, SpectatorScreen, the M12 voice pair (VoiceScreen +
+  VoicePanel) and `HudHints`** — those, and no others — attach themselves to the scene ScreenPanel at runtime
   (`LobbyPlayer` walks `Scene.GetAllComponents<ScreenPanel>()` in `EnsureGameHud` /
   `EnsureSpectatorScreen` / `EnsureVoiceScreen`), so a new screen of that kind needs no scene
   rewire; copy that pattern. The voice pair MUST self-attach for a specific reason, not just
@@ -1479,8 +1479,19 @@ Three facts worth keeping:
 
 Music is the `gamah.skafinity` library — source-committed under
 `client/Libraries/gamah.skafinity/`. The player + panel are built client-local by
-`LocalMusicSystem` (never scene-authored — see the #12 rule above); the panel is enabled
-only while engaged at the music wall board.
+`LocalMusicSystem` (never scene-authored — see the #12 rule above).
+
+**The music board is KEYS, not a wall — `N` opens it, `M` mutes** (`UI/MusicScreen.cs`, the shape
+terryball has always had and rotaliate-client now shares). There is no music board on the south
+wall and no `StationKind.Music`: the wall row is World + Host, re-centred at ±0.13. The panel stays
+*disabled* while closed, because its own floating ♪ button is a pointer-events element that would
+hold the cursor released and kill roaming mouselook — that hazard is why the panel was gated on an
+engage flow in the first place, and the gate is now a key rather than a place you walk to. **`N`
+only opens while ROAMING** (engaged already owns the screen and owns Escape); `M` works anywhere
+because it draws nothing. While the board is up, `Mouse.Visibility` is `Visible` — deliberately not
+`SeatAim`'s `Auto`, because Visible also zeroes `Input.AnalogLook` so clicking around the board
+can't spin the camera — and every exit path (✕, Escape, N, engaging, `OnDisabled`/`OnDestroy`) puts
+`Auto` back.
 
 **A library's `.razor.scss` NEVER reaches a joining client — issue #12's second half.**
 A joiner of an editor-hosted lobby mounts no package: it gets code via the compiled
@@ -1527,16 +1538,20 @@ API**. So "align the chat box to the glyphs / grow it to the top" is not doable 
 our own box, which is the forbidden path above. The keycap HINT is ours and movable; the window is
 not.
 
-`ChatPanel.razor` used to draw the "which key opens chat" hint; **that hint moved to
-`VoicePanel` (M17)** so all three bottom-left UX-glyph hints (Chat / Voice / Mute) are one panel in
-one keycap style, each read live from its binding. `ChatPanel` now **draws nothing** and survives
+`ChatPanel.razor` used to draw the "which key opens chat" hint; **that hint moved to `VoicePanel`
+(M17) and then out again into `UI/Screens/HudHints.razor`**, which is now the ONE bottom-left
+keycap stack — Chat · M mute music · N music · G voice · B mute players — in one style, each
+keycap read live from its binding where one exists. **All three s&box repos draw it this way now**
+(gambit, terryball, rotaliate-client): a stack is a list a player reads top to bottom, and three
+panels in three corners was not. `VoicePanel` keeps only the mute ROSTER, which opens above the
+stack (`bottom: 100px` vs `44px` — keep the two in step). `ChatPanel` now **draws nothing** and survives
 only for its `IsOpen` stub (below) — a serialized `lobby.scene` component, so the class can't be
 deleted without orphaning that scene entry.
 
 - `ChatPanel.IsOpen` is a **stub `=> false`** kept so `LobbyPlayer`'s "don't walk while typing"
   gate compiles. That gate is now **dead code, and that's fine** — the engine's focused text box
   already stops WASD leaking into the world. Don't try to revive it.
-- The chat keycap (now in `VoicePanel` beside the Voice/Mute keycaps) is read live from
+- The chat keycap (now in `HudHints` beside the Music/Voice/Mute keycaps) is read live from
   `Input.GetButtonOrigin( "Chat" )`, **never hardcoded** — there is no glyph-ICON API in this
   build, so an input "glyph" is the binding string in a keycap box. The old ChatPanel's comment
   claimed the key was "rebindable in Settings" and resolved it through
@@ -1548,8 +1563,9 @@ deleted without orphaning that scene entry.
 
 `GambitVoice` (a `Voice` subclass) rides every avatar, added host-side in
 `LobbyNetworkManager.AddVoice` before `NetworkSpawn`. `VoiceScreen` (keyboard driver) + `VoicePanel`
-(chip/roster HUD) self-attach to the ScreenPanel — client-local, so the mute/enabled state (cookies
-in `Gambit.Game.VoicePrefs`) never rides a snapshot. **Master voice defaults OFF.**
+(the mute roster) + `HudHints` (the G/B keycaps, with chat's and music's) self-attach to the
+ScreenPanel — client-local, so the mute/enabled state (cookies in `Gambit.Game.VoicePrefs`) never
+rides a snapshot. **Master voice defaults OFF.**
 
 - **Playback gates on the RECEIVER**: `ShouldHearVoice(Connection c) => VoicePrefs.VoiceEnabled &&
   !VoicePrefs.IsMuted(c.SteamId)`, called with the *sender's* connection — so mute needs no sync,

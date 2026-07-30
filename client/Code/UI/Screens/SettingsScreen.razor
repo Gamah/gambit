@@ -16,7 +16,7 @@
 *@
 
 <root>
-	@if ( SettingsStation.Active != null && !SettingsStation.Active.Music )
+	@if ( SettingsStation.Active != null )
 	{
 	<div class="board-fit">
 		<div class="settings" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
@@ -207,7 +207,7 @@
 	}
 
 	protected override int BuildHash() =>
-		HashCode.Combine( SettingsStation.Active != null && !( SettingsStation.Active?.Music ?? false ),
+		HashCode.Combine( SettingsStation.Active != null,
 			SettingsStation.Active?.Host,
 			SettingsModel.SettingsVersion, LobbyNetworkManager.LocalIsAdmin,
 			HashCode.Combine( ChessRing.Instance?.StationCount ?? 0,
