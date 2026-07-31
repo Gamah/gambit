@@ -80,12 +80,19 @@
 	/* Every text div: nowrap AND flex-shrink 0. A shrunk text div in a flex row doesn't
 	   ellipsize, it wraps, and a wrapped line here renders as a few pixels of its middle —
 	   the most expensive lesson in this repo's CLAUDE.md. */
+	/* Each row carries its own dark pill, and that is the whole contrast story. A text-shadow was
+	   doing the job alone, which only works over a dark world: over a light floor it left near-white
+	   labels on near-white background and the stack was unreadable. A hint is only useful if it
+	   reads over ANY background, and these three lobbies do not share one. */
 	.hint {
 		flex-direction: row;
 		align-items: center;
 		gap: 8px;
+		padding: 3px 10px 3px 4px;
+		border-radius: 12px;
+		background-color: rgba(0, 0, 0, 0.7);
 		font-size: 14px;
-		text-shadow: 0px 1px 3px rgba(0, 0, 0, 0.8);
+		text-shadow: 0px 1px 3px rgba(0, 0, 0, 0.9);
 		pointer-events: none;
 		white-space: nowrap;
 		flex-shrink: 0;
@@ -94,8 +101,8 @@
 	.hint .key {
 		font-size: 13px;
 		font-weight: 700;
-		color: rgba(0, 0, 0, 0.8);
-		background-color: rgba(255, 255, 255, 0.85);
+		color: rgba(0, 0, 0, 0.95);
+		background-color: rgba(255, 255, 255, 1);
 		padding: 1px 8px;
 		border-radius: 5px;
 		white-space: nowrap;
@@ -104,22 +111,25 @@
 
 	.hint .label {
 		font-weight: 600;
-		color: rgba(255, 255, 255, 0.85);
+		color: rgba(255, 255, 255, 1);
 		white-space: nowrap;
 		flex-shrink: 0;
 	}
 
+	/* The state colours sit on the pill rather than on the world, so they can be full strength.
+	   "Off" is the one dimmed state, and it is dimmed enough to read as off without becoming the
+	   low-contrast problem again. */
 	.hint.off .label {
-		color: rgba(255, 255, 255, 0.55);
+		color: rgba(255, 255, 255, 0.75);
 	}
 
 	.hint.on .label {
-		color: rgba(110, 211, 255, 0.95);
+		color: rgba(150, 220, 255, 1);
 	}
 
 	.hint.muted .label,
 	.hint.has-muted .label {
-		color: rgba(255, 110, 110, 0.95);
+		color: rgba(255, 150, 150, 1);
 	}
 </style>
 
