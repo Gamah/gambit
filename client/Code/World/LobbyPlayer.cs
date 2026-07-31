@@ -2610,7 +2610,8 @@ public sealed class LobbyPlayer : Component
 
 		var src = Gambit.Game.BoardGame.Source(
 			Gambit.Game.LocalGameController.For( station ),
-			Gambit.Game.LichessGameController.For( station ) );
+			Gambit.Game.LichessGameController.For( station ),
+			Gambit.Game.RelayGameController.For( station ) );
 
 		// What counts as modal: the promotion picker (which appears mid-game with no warning
 		// and cannot be answered without a pointer), and an offer the OPPONENT has standing.
