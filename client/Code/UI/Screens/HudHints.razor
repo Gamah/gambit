@@ -1,0 +1,189 @@
+@using System
+@using System.Linq
+@using Sandbox
+@using Sandbox.UI
+@using Gambit.Game
+@using Gambit.UI
+@using Gambit.World
+@namespace Gambit.UI.Screens
+@inherits PanelComponent
+
+@*
+	THE keycap hint stack — every "which key does this" affordance in the game, in one
+	bottom-left column, in one style:
+
+	  [T] Chat   [M] Mute music   [N] Music   [G] Voice   [B] Mute players
+
+	One panel is the point. These hints used to be scattered — chat drew its own, music had no
+	hint at all because it was a wall you walked to, and voice drew two — and the same three
+	repos (gambit, terryball, rotaliate-client) each scattered them differently. A stack is a
+	list a player reads top to bottom; three panels in three corners is not.
+
+	Ordering is by how often a newcomer needs it, and every keycap that CAN be read from a
+	binding IS (Input.GetButtonOrigin), so a rebind can't make the hint lie. M/N/G/B are raw
+	Input.Keyboard checks in their drivers, so they are spelled out here — keep them in step
+	with MusicScreen / VoiceScreen if those ever move to bound actions.
+
+	Purely an affordance: pointer-events: none throughout, no state of its own. The keys live in
+	MusicScreen (M/N) and VoiceScreen (G/B); the engine's chat overlay owns chat outright.
+	Hidden while the music board is up — its own controls take over then.
+*@
+
+<root>
+	@if ( !MusicScreen.IsOpen )
+	{
+		<div class="hints">
+			<div class="hint">
+				<div class="key">@ChatKeyLabel()</div>
+				<div class="label">Chat</div>
+			</div>
+			<div class="hint @( MusicScreen.Muted ? "muted" : "" )">
+				<div class="key">M</div>
+				<div class="label">@( MusicScreen.Muted ? "Music muted" : "Mute music" )</div>
+			</div>
+			<div class="hint">
+				<div class="key">N</div>
+				<div class="label">Music</div>
+			</div>
+			<div class="hint @( VoicePrefs.VoiceEnabled ? "on" : "off" )">
+				<div class="key">G</div>
+				<div class="label">@ChipLabel</div>
+			</div>
+			<div class="hint @( VoicePrefs.MutedCount > 0 ? "has-muted" : "" )">
+				<div class="key">B</div>
+				<div class="label">@MuteLabel</div>
+			</div>
+		</div>
+	}
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		font-family: Poppins, sans-serif;
+	}
+
+	/* The stack, bottom-left. VoicePanel's roster opens above it (bottom: 100px+), so keep the
+	   two in step if this ever grows another row. */
+	.hints {
+		position: absolute;
+		left: 16px;
+		bottom: 44px;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+		pointer-events: none;
+	}
+
+	/* Every text div: nowrap AND flex-shrink 0. A shrunk text div in a flex row doesn't
+	   ellipsize, it wraps, and a wrapped line here renders as a few pixels of its middle —
+	   the most expensive lesson in this repo's CLAUDE.md. */
+	/* Each row carries its own dark pill, and that is the whole contrast story. A text-shadow was
+	   doing the job alone, which only works over a dark world: over a light floor it left near-white
+	   labels on near-white background and the stack was unreadable. A hint is only useful if it
+	   reads over ANY background, and these three lobbies do not share one. */
+	.hint {
+		flex-direction: row;
+		align-items: center;
+		gap: 8px;
+		padding: 3px 10px 3px 4px;
+		border-radius: 12px;
+		background-color: rgba(0, 0, 0, 0.7);
+		font-size: 14px;
+		text-shadow: 0px 1px 3px rgba(0, 0, 0, 0.9);
+		pointer-events: none;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	/* The keycap is LIGHT-ON-DARK, and that is a bug fix, not a look. It was dark text on a white
+	   cap — an idiom this repo copied around — and the dark text never rendered: the glyph draws
+	   white whatever `color` says here, so the cap was white on white and all you saw was the
+	   text-shadow's grey halo. Hence "light grey glyphs". Keep the cap dark and the glyph light,
+	   which reads correctly whether or not that declaration ever starts taking effect. */
+	.hint .key {
+		font-size: 13px;
+		font-weight: 700;
+		color: rgba(255, 255, 255, 1);
+		font-color: rgba(255, 255, 255, 1);
+		background-color: rgba(255, 255, 255, 0.16);
+		border: 1px solid rgba(255, 255, 255, 0.45);
+		padding: 1px 8px;
+		border-radius: 5px;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.hint .label {
+		font-weight: 600;
+		color: rgba(255, 255, 255, 1);
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	/* The state colours sit on the pill rather than on the world, so they can be full strength.
+	   "Off" is the one dimmed state, and it is dimmed enough to read as off without becoming the
+	   low-contrast problem again. */
+	.hint.off .label {
+		color: rgba(255, 255, 255, 0.75);
+	}
+
+	.hint.on .label {
+		color: rgba(150, 220, 255, 1);
+	}
+
+	.hint.muted .label,
+	.hint.has-muted .label {
+		color: rgba(255, 150, 150, 1);
+	}
+</style>
+
+@code
+{
+	// The mic hint's text: OFF prompt, or — when enabled — surface the player's real s&box voice
+	// mode, which game code cannot change (it lives in their sound settings).
+	private string ChipLabel
+	{
+		get
+		{
+			if ( !VoicePrefs.VoiceEnabled )
+				return "Voice off";
+
+			return Preferences.VoiceMode switch
+			{
+				VoiceMode.OpenMicrophone => "Voice live",
+				VoiceMode.PushToTalk => $"Voice on — hold {Input.GetButtonOrigin( "Voice" )} to talk",
+				_ => "Voice disabled in s&box settings",
+			};
+		}
+	}
+
+	// The B hint: prompts to open the roster, or shows how many players are currently muted.
+	private string MuteLabel
+	{
+		get
+		{
+			var n = VoicePrefs.MutedCount;
+			return n > 0 ? $"Muted: {n}" : "Mute players";
+		}
+	}
+
+	// The chat keycap, read live from the Chat binding so the hint can't drift from it — engine
+	// chat opens on this key. Falls back to the Input.config default "T" until the origin resolves.
+	private static string ChatKeyLabel()
+	{
+		var origin = Input.GetButtonOrigin( "Chat" );
+		return string.IsNullOrEmpty( origin ) ? "T" : origin.ToUpper();
+	}
+
+	protected override int BuildHash() =>
+		HashCode.Combine(
+			MusicScreen.IsOpen,
+			MusicScreen.Muted,
+			VoicePrefs.VoiceEnabled,
+			Preferences.VoiceMode,
+			VoicePrefs.MutedCount,
+			ChatKeyLabel() );
+}

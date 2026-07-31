@@ -8,47 +8,22 @@
 @inherits PanelComponent
 
 @*
-	Proximity-voice HUD (M12, copied from terryball's VoicePanel). Two parts, both pointer-events: none
-	(keyboard-only — the roster is navigated with ↑/↓, never the cursor, so mouselook is never
-	interrupted):
+	The proximity-voice MUTE ROSTER, shown only while VoiceScreen.IsOpen: one row per other player
+	with a speaking dot, MUTED state and the selected-row highlight. pointer-events: none — it is
+	navigated with ↑/↓, never the cursor, so mouselook is never interrupted.
 
-	  • An always-visible mic chip (bottom-left) reflecting the master switch + the player's real s&box
-	    voice mode / push-to-talk key.
-	  • The mute roster, shown only while VoiceScreen.IsOpen: one row per other player with a speaking
-	    dot, MUTED state and the selected-row highlight.
+	The G/B keycap hints this panel used to draw now live in HudHints, with chat's and music's —
+	one stack, one style, one place to read the controls off. Keys are still handled by VoiceScreen
+	(G toggles voice, B opens this roster).
 
-	Keys are handled by VoiceScreen (G toggles voice, B opens the roster). This panel is purely the
-	affordance. NOTE the s&box gotcha: NO inline <span>s inside a line of text — panels lay children out
-	as flex items, not inline flow, so mixed spans shatter a paragraph into columns. Block lines only.
+	NOTE the s&box gotcha: NO inline <span>s inside a line of text — panels lay children out as flex
+	items, not inline flow, so mixed spans shatter a paragraph into columns. Block lines only.
 *@
 
 <root>
 	@{
 		var screen = Driver;
-		var enabled = VoicePrefs.VoiceEnabled;
-		var mutedCount = VoicePrefs.MutedCount;
 	}
-
-	@* Always-visible key hints, bottom-left, white key-cap glyph style: Chat over G (voice)
-	   over B (mute). Chat lives here rather than in ChatPanel so all three UX-glyph hints
-	   are drawn by one panel — and its keycap is read live from the binding
-	   (Input.GetButtonOrigin), the same input-driven affordance as the rest, so a rebind
-	   can't make it lie. Engine chat owns the actual feed/input; this is only the "which key
-	   opens it" cue. *@
-	<div class="voice-hints">
-		<div class="hint">
-			<div class="key">@ChatKeyLabel()</div>
-			<div class="label">Chat</div>
-		</div>
-		<div class="hint @( enabled ? "on" : "off" )">
-			<div class="key">G</div>
-			<div class="label">@ChipLabel</div>
-		</div>
-		<div class="hint @( mutedCount > 0 ? "has-muted" : "" )">
-			<div class="key">B</div>
-			<div class="label">@MuteLabel</div>
-		</div>
-	</div>
 
 	@if ( screen is not null && screen.IsOpen )
 	{
@@ -84,52 +59,7 @@
 		font-family: Poppins, sans-serif;
 	}
 
-	/* Two-row key-hint stack, bottom-left. Matches the white key-cap glyph style used elsewhere. */
-	.voice-hints {
-		position: absolute;
-		left: 16px;
-		bottom: 44px;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 8px;
-		pointer-events: none;
-	}
-
-	.hint {
-		flex-direction: row;
-		align-items: center;
-		gap: 8px;
-		font-size: 14px;
-		text-shadow: 0px 1px 3px rgba(0, 0, 0, 0.8);
-		pointer-events: none;
-	}
-
-	.hint .key {
-		font-size: 13px;
-		font-weight: 700;
-		color: rgba(0, 0, 0, 0.8);
-		background-color: rgba(255, 255, 255, 0.85);
-		padding: 1px 8px;
-		border-radius: 5px;
-	}
-
-	.hint .label {
-		font-weight: 600;
-		color: rgba(255, 255, 255, 0.85);
-	}
-
-	.hint.off .label {
-		color: rgba(255, 255, 255, 0.55);
-	}
-
-	.hint.on .label {
-		color: rgba(110, 211, 255, 0.95);
-	}
-
-	.hint.has-muted .label {
-		color: rgba(255, 110, 110, 0.95);
-	}
-
+	/* Opens above the HudHints stack (which sits at bottom: 44px) — keep the two in step. */
 	.roster {
 		position: absolute;
 		left: 16px;
@@ -203,43 +133,6 @@
 	private VoiceScreen _driver;
 	private VoiceScreen Driver => _driver ??= Scene?.GetAllComponents<VoiceScreen>().FirstOrDefault();
 
-	// The mic chip's text: OFF prompt, or — when enabled — surface the player's real s&box voice mode,
-	// which game code cannot change (it lives in their sound settings).
-	private string ChipLabel
-	{
-		get
-		{
-			if ( !VoicePrefs.VoiceEnabled )
-				return "Voice off";
-
-			return Preferences.VoiceMode switch
-			{
-				VoiceMode.OpenMicrophone => "Voice live",
-				VoiceMode.PushToTalk => $"Voice on — hold {Input.GetButtonOrigin( "Voice" )} to talk",
-				_ => "Voice disabled in s&box settings",
-			};
-		}
-	}
-
-	// The B-hint label: prompts to open the roster, or shows how many players are currently muted.
-	private string MuteLabel
-	{
-		get
-		{
-			var n = VoicePrefs.MutedCount;
-			return n > 0 ? $"Muted: {n}" : "Mute players";
-		}
-	}
-
-	// The chat keycap, read live from the Chat binding so the hint can't drift from it —
-	// engine chat opens on this key. Falls back to the Input.config default "T" until the
-	// origin resolves. (Moved here from ChatPanel so all the UX-glyph hints live together.)
-	private static string ChatKeyLabel()
-	{
-		var origin = Input.GetButtonOrigin( "Chat" );
-		return string.IsNullOrEmpty( origin ) ? "T" : origin.ToUpper();
-	}
-
 	protected override int BuildHash()
 	{
 		var screen = Driver;
@@ -254,13 +147,10 @@
 		}
 
 		return HashCode.Combine(
-			VoicePrefs.VoiceEnabled,
-			Preferences.VoiceMode,
 			screen?.IsOpen ?? false,
 			screen?.SelectedIndex ?? -1,
 			screen?.Roster.Count ?? 0,
 			VoicePrefs.MutedCount,
-			speaking,
-			ChatKeyLabel() );
+			speaking );
 	}
 }

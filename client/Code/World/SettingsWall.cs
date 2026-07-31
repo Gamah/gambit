@@ -23,27 +23,26 @@ public sealed class SettingsWall : Component, Component.ExecuteInEditor
 	/// the panels' floor anchor — same as the info board, so they line up).</summary>
 	[Property] public float FloorClearance { get; set; } = 30f;
 
-	// The three boards are an EVEN row centred on the wall: +0.24 / 0 / -0.24.
+	// The two boards are an EVEN row centred on the wall: +0.13 / -0.13. (It was three
+	// at +0.24 / 0 / -0.24 until the music board went away — music is M/N keys now, see
+	// Gambit.UI.MusicScreen — and two boards left at those fractions would have sat with
+	// the whole row shoved toward the east wall.)
 	//
-	// All three are also written into lobby.scene, and the code defaults match the
-	// scene on purpose — that is the fix, not tidiness. This row had already been
-	// bitten by CLAUDE.md's "a new [Property] gets the code default while the ones
-	// already in the scene get the scene's" hazard: the scene stated Host/World as
-	// +0.12/-0.12 but never gained a MusicXFrac, so Music kept the code default
-	// -0.26 and the row rendered +96 / -96 / -208. Nobody chose that; it was the
-	// residue of two edits meeting. Keep the two in sync when retuning, or the next
-	// board added here inherits the same trap.
+	// Both are also written into lobby.scene, and the code defaults match the scene on
+	// purpose — that is the fix, not tidiness. This row had already been bitten by
+	// CLAUDE.md's "a new [Property] gets the code default while the ones already in the
+	// scene get the scene's" hazard: the scene stated Host/World as +0.12/-0.12 but never
+	// gained a MusicXFrac, so Music kept the code default -0.26 and the row rendered
+	// +96 / -96 / -208. Nobody chose that; it was the residue of two edits meeting. Keep
+	// the two in sync when retuning, or the next board added here inherits the same trap.
 
 	/// <summary>Host-settings board center along the wall, as a fraction of wall
 	/// width (+X is the player's left / toward the east wall when facing the south
 	/// wall from inside) — host sits closest to the east wall.</summary>
-	[Property] public float HostXFrac { get; set; } = 0.24f;
+	[Property] public float HostXFrac { get; set; } = 0.13f;
 
 	/// <summary>World-settings board center along the wall, as a fraction of wall width.</summary>
-	[Property] public float LocalXFrac { get; set; } = 0f;
-
-	/// <summary>Music board center along the wall, as a fraction of wall width.</summary>
-	[Property] public float MusicXFrac { get; set; } = -0.24f;
+	[Property] public float LocalXFrac { get; set; } = -0.13f;
 
 	/// <summary>Horizontal walk-up range for the "Press E" prompt.</summary>
 	[Property] public float InteractRange { get; set; } = 130f;
@@ -92,7 +91,6 @@ public sealed class SettingsWall : Component, Component.ExecuteInEditor
 		// Half a unit further off the wall so the (transparent-margined) quads never
 		// z-fight where they overlap
 		MakeBoard( "HostSettingsBoard", new Vector3( HostXFrac * WallWidth, wallY + 0.5f, z ), facing, SettingsStation.StationKind.Host );
-		MakeBoard( "MusicBoard", new Vector3( MusicXFrac * WallWidth, wallY + 1f, z ), facing, SettingsStation.StationKind.Music );
 	}
 
 	void MakeBoard( string name, Vector3 localPos, Rotation localRot, SettingsStation.StationKind kind )

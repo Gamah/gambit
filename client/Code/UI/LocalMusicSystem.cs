@@ -5,8 +5,8 @@ namespace Gambit.UI;
 
 /// <summary>
 /// Builds the one client-local music HUD — the Skafinity player, its drop-in board
-/// (<see cref="Skafinity.SkafinityMusicPanel"/>), and the south-wall engage driver
-/// (<see cref="MusicBoardScreen"/>) — on a runtime <see cref="NetworkMode"/>.Never
+/// (<see cref="Skafinity.SkafinityMusicPanel"/>), and the keyboard driver
+/// (<see cref="MusicScreen"/>: N opens the board, M mutes) — on a runtime <see cref="NetworkMode"/>.Never
 /// GameObject, exactly once per client. Its own <see cref="ScreenPanel"/> keeps it
 /// isolated from the scene UI ScreenPanel.
 ///
@@ -47,7 +47,7 @@ public sealed class LocalMusicSystem : GameObjectSystem
 		_built = true;
 
 		// Idempotent against a hotload / re-entry that already built one.
-		if ( Scene.GetAllComponents<MusicBoardScreen>().Any() ) return;
+		if ( Scene.GetAllComponents<MusicScreen>().Any() ) return;
 
 		var go = new GameObject( true, "LocalMusic" ) { Flags = GameObjectFlags.NotSaved };
 		go.NetworkMode = NetworkMode.Never; // strictly client-local — never replicated
@@ -63,8 +63,9 @@ public sealed class LocalMusicSystem : GameObjectSystem
 
 		// The drop-in board starts DISABLED — its floating ♪ button is a pointer-events element
 		// that, left on over the roaming lobby, holds the cursor released and kills mouselook.
-		// MusicBoardScreen enables + force-opens it only while engaged at the south-wall board.
+		// MusicScreen enables + force-opens it when the player presses N (and M mutes without
+		// opening anything); there is no music board on any wall any more.
 		go.Components.Create<Skafinity.SkafinityMusicPanel>( false );
-		go.Components.Create<MusicBoardScreen>();
+		go.Components.Create<MusicScreen>();
 	}
 }
