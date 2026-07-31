@@ -25,6 +25,13 @@ wall-clock panic + instant checkmate fanfare — **plus PR #17, the lichess draw
 fix (PLAN #2)** folded in before it published — so the next release is `0.0.3`). The changes
 field is written in **five sbox.game categories, in this order**:
 
+> **`0.0.3` is unpublished and already carries P99 and M19** (look-aim at the board; play the
+> computer, cross-lobby matchmaking, the four-tab setup panel, the move-history panel). **PR #18
+> merged with NO release-notes section**, breaking the roll-up rule below — so the cutter has to
+> write M19's notes from the commit log rather than concatenating them, and should not assume the
+> absence of notes means the absence of player-facing change. It is the largest chunk of the
+> release.
+
 > **Added · Improved · Fixed · Removed · Known issues**
 
 - Write **player-facing** notes — what changed in the *game*, not the code. "Play from multiple
@@ -850,6 +857,38 @@ have been run here at all.
   (`ChessGame.Perft` is still there; only the in-sandbox `gambit_perft` console command was
   dropped for ship).
 
+### The built-in engine (M19: play the computer)
+
+`Code/Chess/ChessEngine.cs` is a `partial ChessGame` — negamax + alpha-beta over the SAME
+vendored move generation, so it is **the one place allowed to touch `_board` and `UciOf`**.
+Being under `Code/Chess/` with no Sandbox dependency, it is provable on this host, and it
+should stay that way: a full game of it runs in a scratch csproj in seconds.
+
+> **The trap that cost a crash: the vendored board REFUSES to move in a drawn position, and
+> a draw rule can fire while legal moves remain.** `ChessBoard.Move` throws
+> `ChessGameEndedException` whenever `IsEndGame`, and `EndGameProvider.ResolveDrawRules` sets
+> that for **repetition, fifty-move and insufficient material** — none of which empty the move
+> list. So `moves.Length == 0` does NOT mean "no more moves are playable", and any code that
+> plays moves on `_board` in a loop must check `IsEndGame` too. The search hit it in
+> quiescence first (resolving captures reaches repetitions and bare kings fastest) and threw
+> at move 36 of an ordinary middlegame. Both recursion points now score such a node as **0**,
+> which is what a draw is worth — a search improvement, not a guard. **It survived review and
+> shipped in the merged branch** because the harness only ever ran short tactical positions,
+> never a game long enough to repeat: if you touch the search, play FULL games, not puzzles.
+
+- **The bot is a host-driven virtual seat** (SteamId 0, difficulty `[Sync]`ed on
+  `ChessStation`) — which is why the seat/ready/abandon logic counts a bot as filled and
+  ready, and why a bot clears when the human stands (a bot never sits alone).
+- **The search runs off the main thread** (`GameTask.RunInThreadAsync`) over a **THROWAWAY
+  position rebuilt from the FEN**, never the live `Game`, so it cannot race the main thread's
+  reads. Bounded two ways — fixed depth per level and a hard node cap — so it can't hang a
+  frame; Hard's worst measured ~700ms in a busy midgame.
+- **That think time is charged to the bot's own clock**, so a Bullet-vs-Hard game may
+  occasionally flag the bot. Fair and beatable-on-time, by design.
+- **A bot game is never a lichess game** and runs at any speed, Bullet included — it clears
+  none of lichess's speed floors because it never reaches lichess. The difficulty ladder lives
+  in `ChessEngine.Config`, the think-pose in `LocalGameController.BotPoseSeconds`.
+
 ### PGN clock annotations (`%clk`)
 
 `{[%clk H:MM:SS[.ff]]}` per move, plus a `[TimeControl "180+2"]` header (seconds+increment;
@@ -890,9 +929,18 @@ captured from the dotnet harness, so regenerate them there rather than hand-edit
 
 ### Game controllers (per-station, added by ChessRing beside `ChessStation`)
 `Game/IBoardGame.cs` is the render/drive abstraction; `ChessBoardView` renders the
-active source with **one** branch (`Source => Lichess is { Engaged: true } ? Lichess :
-Controller`). The seam paid for itself: M8 added a whole second kind of game with no renderer
-change at all. Anything that reads the position should go through it — `GameHud` and
+active source through **one** shared resolver, `BoardGame.Source( local, lichess, relay )`.
+The seam paid for itself twice: M8 added a whole second kind of game with no renderer
+change at all, and M19 added a third by growing that resolver one argument.
+
+> **`relay` is an OPTIONAL argument, and that is a live hazard.** A two-argument call still
+> compiles and silently answers `LocalGameController` during a relay game — a shell, exactly
+> as it is during a lichess game — so a feature reading it is wrong by construction with
+> nothing looking wrong in the diff. That is how P99's look-aim gate shipped dead for relay
+> games (fixed in `3d02a8b`). **Pass all three, always.** Still on two at the time of
+> writing, each a known cosmetic gap rather than a decision: `SeatedTerry` (the hands don't
+> animate in a relay game), `LobbyPlayer.PremoveAt`/`GamesInPlay` (the roaming premove
+> reminder misses one), and `GamchessCommands` (dev console). Anything that reads the position should go through it — `GameHud` and
 `Audio/TableSounds` do too, and all three resolve `Source` with that identical expression on
 purpose: **what you see, what the HUD says and what you hear must be the same game.**
 
@@ -907,6 +955,7 @@ construction** — the host freezes that controller's clocks and its `ChessGame`
 |---|---|---|
 | `LocalGameController` | host-folded `[Sync] BoardFen`/`Phase`/`ClientGameId` | the two-seat game at a table, and the archive upload (**D7**) |
 | `LichessGameController` | **participants poll; spectators MIRROR (M14)** — each participant polls gamchess for itself and `[Rpc.Host]`-reports its observed move list into `[Sync] MirrorMoves/MirrorLive`, from which every non-engaged client rebuilds a display game (`Mirroring`, same IBoardGame seam). Before this a lichess game was INVISIBLE to every non-participant — solo flows (seek/challenge/link) especially | a real lichess game on this table (**M8**). Adjudicates nothing — lichess is the only authority, and the position is rebuilt from the UCI list it sends — but it DOES run the ticking seat's clock down locally between moves (**M12**), because lichess only sends a clock on a move and a frozen clock reads as a stopped game. Same countdown machinery as `LichessTvSource`, house rule and all; a local clock hitting 0 clamps and waits for lichess to call the flag |
+| `RelayGameController` | polls gamchess's relay for a live cross-lobby game | a game against someone in ANOTHER lobby, paired through gamchess's directory (**M19**) — or yourself across two hosts. Not lichess: gamchess is the authority and the whole exchange is ours. Colour is **assigned at random by the server**, never chosen |
 | `SpectatorController` | reads the host-folded FEN; **polls gamchess for TV** | north wall: cycles live tables, then lichess TV (**M9**) |
 
 **While a lichess game runs, the local controller is a shell** holding the seats and the
