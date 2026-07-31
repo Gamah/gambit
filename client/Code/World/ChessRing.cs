@@ -742,10 +742,17 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			lichess.Station = component;
 			lichess.Local = controller;
 
+			// The gamchess RELAY client (matchmaking's "play in current sessions", M19),
+			// beside the others and resolving the same seam. Purely client-local — the
+			// player engages it when they join/host a relay match, and it polls gamchess.
+			var relay = station.AddComponent<Gambit.Game.RelayGameController>();
+			relay.Station = component;
+
 			var view = station.AddComponent<ChessBoardView>();
 			view.Station = component;
 			view.Controller = controller;
 			view.Lichess = lichess;
+			view.Relay = relay;
 
 			// Sound (M11). Beside the view and wired identically, because it resolves
 			// the same seam the same way: what you hear and what you see must be the
@@ -754,6 +761,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			sounds.Station = component;
 			sounds.Controller = controller;
 			sounds.Lichess = lichess;
+			sounds.Relay = relay;
 
 			// The seated players' hands (M13). Beside the sounds and wired identically, for
 			// the identical reason: it resolves the same seam the same way, so what you see,
@@ -781,7 +789,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 				// instead of a number floating overhead (needs the table to sit against).
 				BuildStationPlaque( station, i );
 				// The clock, standing on the +X margin this table was widened to hold (M11).
-				BuildStationClock( station, controller, lichess );
+				BuildStationClock( station, controller, lichess, relay );
 				// A chair at each seat (M13) — always both, occupied or not: a table with no
 				// chairs reads as a table you can't sit at.
 				BuildStationChair( station, component, ChessSeat.White );
@@ -1165,7 +1173,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// drives them.</para>
 	/// </summary>
 	void BuildStationClock( GameObject station, Gambit.Game.LocalGameController controller,
-		Gambit.Game.LichessGameController lichess )
+		Gambit.Game.LichessGameController lichess, Gambit.Game.RelayGameController relay )
 	{
 		float s = TableScale;
 
@@ -1182,6 +1190,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		var driver = clock.AddComponent<TableClock>();
 		driver.Controller = controller;
 		driver.Lichess = lichess;
+		driver.Relay = relay;
 
 		BuildClockPlate( clock, white: true, out var whiteText, out var whitePlate );
 		BuildClockPlate( clock, white: false, out var blackText, out var blackPlate );

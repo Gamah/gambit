@@ -11,16 +11,18 @@
 
 @*
 	Seated-game HUD: seat names, whose turn, the status/turn line, standing draw and
-	takeback offers, the SAN move list, the waiting-on-an-opponent controls (a seek, a
-	named challenge, a shareable link), and resign, plus the result after the game.
+	takeback offers, the waiting-on-an-opponent controls (a seek, a named challenge, a
+	shareable link), and resign, plus the result after the game.
 	Attached to the scene ScreenPanel at runtime by LobbyPlayer.EnsureGameHud.
 	Screen-space overlay: the board itself is the 3D world — this sits in a column on the
 	right edge, clear of the board (px values are uncalibrated, tune in-editor).
 
-	Two pieces split out of here in M17 (this file was 1089 lines): the pre-game SETUP
-	block (time control + the four lichess start flows + Ready) is now <SetupPanel />,
-	rendered in-column where the block was; the PROMOTION picker is now <PromotionPanel />,
-	a full-screen sibling of the column. Both are nested @inherits Panel widgets that
+	Pieces split out of here to keep this column short: the pre-game SETUP block (time
+	control + the four lichess start flows + Ready) is <SetupPanel /> (M17), rendered
+	in-column where the block was; the PROMOTION picker is <PromotionPanel /> (M17), a
+	full-screen sibling; and the SAN MOVE LIST is now <MoveHistoryPanel /> (M19), its own
+	column on the LEFT edge — a long game used to push this whole right-hand menu down and
+	shove the buttons off the bottom. All three are nested @inherits Panel widgets that
 	re-resolve the controllers off ChessStation.Active and carry their own style and
 	repaint hash — s&box panel stylesheets don't reliably cross a nested-panel boundary,
 	so a split panel that leaned on this file's <style> would render unstyled.
@@ -89,6 +91,22 @@
 					<div class="status turn">@TurnText( Source() )</div>
 				}
 
+			}
+			@* A gamchess relay game (matchmaking, M19): gamchess is the authority, so read
+			   the relay controller's state, not the idle local table's. *@
+			else if ( OnRelay() )
+			{
+				var rc = Relay();
+				@if ( rc.GameOver )
+				{
+					<div class="status over">@rc.ResultString</div>
+					<div class="reason">@rc.OverReason</div>
+					<div class="button" onclick="@( () => LeaveRelay() )">New game — clear the board</div>
+				}
+				else
+				{
+					<div class="status turn">@TurnText( Source() )</div>
+				}
 			}
 			else if ( ctrl == null || !ctrl.HasGame || ( !ctrl.Playing && !ctrl.GameOver ) )
 			{
@@ -184,15 +202,9 @@
 			   style, and keeps ticking through a seek to resolve the assigned seat. *@
 			<SetupPanel />
 
-			@if ( Source()?.Game != null )
-			{
-				<div class="moves">
-					@foreach ( var row in MoveRows( Source() ) )
-					{
-						<div class="move-row">@row</div>
-					}
-				</div>
-			}
+			@* The SAN move list moved to its own column on the LEFT (M19, MoveHistoryPanel):
+			   a long game used to push this whole right-hand menu down and shove the buttons
+			   off the bottom. It's a sibling below, not here. *@
 
 			@* Waiting on an opponent who isn't in this lobby — a lobby seek, or a
 			   named user who hasn't accepted our challenge yet. Cancelling is what
@@ -289,12 +301,15 @@
 			   resigns, so this button is the ONLY way to end a live game from the board. *@
 			@if ( ( Source()?.Playing ?? false ) )
 			{
-				<div class="button resign" onclick="@( () => LobbyPlayer.Local?.Resign() )">
-					@( ( LobbyPlayer.Local?.LeaveArmed ?? false ) ? "Sure? Resign the game" : "Resign" )
+				@* Relay resigns in one click (no LobbyPlayer arming — that's a
+				   local/lichess seat concept); everything else keeps the two-stage confirm. *@
+				<div class="button resign" onclick="@( () => ResignBoard() )">
+					@( ( !OnRelay() && ( LobbyPlayer.Local?.LeaveArmed ?? false ) ) ? "Sure? Resign the game" : "Resign" )
 				</div>
 			}
 		</div>
 
+		<MoveHistoryPanel />
 		<PromotionPanel />
 	}
 </root>
@@ -315,7 +330,7 @@
 		   uses the full height downward; the tight gaps/padding/font below keep it on
 		   screen at normal resolutions. */
 		top: 2%;
-		width: 250px;
+		width: 290px;
 		flex-direction: column;
 		gap: 5px;
 		padding: 12px;
@@ -427,16 +442,6 @@
 	   the line and the squares are one statement. */
 	.reason.premove { color: rgba(197, 120, 240, 0.95); }
 
-	.moves {
-		flex-direction: column;
-		max-height: 180px;
-		overflow: hidden;
-		background-color: rgba(255, 255, 255, 0.05);
-		border-radius: 6px;
-		padding: 6px 10px;
-	}
-	.move-row { font-size: 13px; font-family: monospace; color: rgba(255, 255, 255, 0.8); }
-
 	.button {
 		padding: 6px 12px;
 		background-color: rgba(90, 140, 255, 0.25);
@@ -483,10 +488,17 @@
 	/// <summary>The lichess controller beside the table we're seated at.</summary>
 	static LichessGameController Lichess() => LichessGameController.For( ChessStation.Active );
 
+	/// <summary>The gamchess relay controller beside the table (matchmaking, M19).</summary>
+	static RelayGameController Relay() => RelayGameController.For( ChessStation.Active );
+
+	/// <summary>A gamchess relay game (online opponent, or yourself across two hosts) owns
+	/// this board right now.</summary>
+	static bool OnRelay() => Relay() is { Engaged: true };
+
 	/// <summary>Whichever controller owns this board. Goes through BoardGame.Source, the
 	/// one copy of that resolution — the view, the sounds and the table clock all ask it
 	/// too, so none of them can end up describing a different game from this HUD.</summary>
-	static IBoardGame Source() => BoardGame.Source( Controller(), Lichess() );
+	static IBoardGame Source() => BoardGame.Source( Controller(), Lichess(), Relay() );
 
 	/// <summary>A real lichess game owns this board right now — the HUD reads
 	/// lichess's state instead of the local table's.</summary>
@@ -517,6 +529,23 @@
 	{
 		Lichess()?.DismissFinished();
 		Controller()?.RequestNewGame();
+		StateHasChanged();
+	}
+
+	/// <summary>Clear a finished relay game off the board (matchmaking, M19) and return the
+	/// table to setup — the relay equivalent of NewGame.</summary>
+	void LeaveRelay()
+	{
+		Relay()?.Disengage();
+		StateHasChanged();
+	}
+
+	/// <summary>Resign whichever game owns the board — the relay controller resigns through
+	/// gamchess, everything else through LobbyPlayer (the two-stage local/lichess resign).</summary>
+	void ResignBoard()
+	{
+		if ( OnRelay() ) Relay()?.Resign();
+		else LobbyPlayer.Local?.Resign();
 		StateHasChanged();
 	}
 
@@ -700,25 +729,6 @@
 		return src.Game.WhiteToMove ? "White is thinking…" : "Black is thinking…";
 	}
 
-	/// <summary>Last few full-move rows, "12. Nf3 Nc6" style. The list column is
-	/// fixed-height with overflow hidden (drag-scroll fights clicks — CLAUDE.md),
-	/// so we render only the tail.</summary>
-	static IEnumerable<string> MoveRows( IBoardGame src )
-	{
-		var san = src?.Game?.SanMoves;
-		if ( san == null || san.Count == 0 ) yield break;
-
-		const int maxRows = 12;
-		int totalRows = ( san.Count + 1 ) / 2;
-		for ( int row = Math.Max( 0, totalRows - maxRows ); row < totalRows; row++ )
-		{
-			int i = row * 2;
-			string line = $"{row + 1}. {san[i]}";
-			if ( i + 1 < san.Count ) line += $"  {san[i + 1]}";
-			yield return line;
-		}
-	}
-
 	/// <summary>Repaint triggers. The seat lines are still hashed as their rendered
 	/// strings — now cheap rather than load-bearing. With the clock moved onto the table
 	/// (M11) they change only when a name or a ready state does, so this HUD no longer
@@ -780,6 +790,9 @@
 				// PREFERENCES moved to SetupPanel with the setup block (M17), and hash there.
 				System.HashCode.Combine(
 					Lichess()?.Challenging, Lichess()?.ChallengeOpponent,
-					Lichess()?.Opening, Lichess()?.ShareUrl, _shareCopied < 2f ) ) );
+					Lichess()?.Opening, Lichess()?.ShareUrl, _shareCopied < 2f ),
+				// Relay (matchmaking, M19): which branch shows and its result. Moves and turn
+				// already ride src.Game.MoveCount / src.IsMyTurn above.
+				System.HashCode.Combine( OnRelay(), Relay()?.GameOver, Relay()?.OverReason ) ) );
 	}
 }

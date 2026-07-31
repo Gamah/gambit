@@ -24,8 +24,11 @@ public static class BoardGame
 	/// <c>lichess is { Engaged: true } ? lichess : controller</c> agreeing by inspection;
 	/// a fourth was the point to stop. Agreeing by construction costs nothing.</para>
 	/// </summary>
-	public static IBoardGame Source( LocalGameController local, LichessGameController lichess ) =>
-		lichess is { Engaged: true } or { Mirroring: true } ? lichess : local;
+	public static IBoardGame Source( LocalGameController local, LichessGameController lichess,
+		RelayGameController relay = null ) =>
+		lichess is { Engaged: true } or { Mirroring: true } ? lichess
+		: relay is { Engaged: true } ? relay
+		: local;
 }
 
 /// <summary>

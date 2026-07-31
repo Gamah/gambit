@@ -254,8 +254,8 @@ public static class GamchessCommands
 		if ( src?.SeatClock( ChessSeat.White ) == null )
 		{
 			Log.Warning( "[Gambit]   -> the seam says NO CLOCK, so the face shows the idle bank (or ∞ if untimed)."
-				+ " SeatClock is null unless the game is PLAYING and the control is not Unlimited —"
-				+ " the two lines above say which of those it is." );
+				+ " SeatClock is null unless the game is PLAYING or FINISHED (a finished game freezes"
+				+ " its final clocks) and the control is not Unlimited — the two lines above say which." );
 		}
 
 		Log.Info( $"[Gambit]   material    : {Gambit.Chess.CapturedMaterial.Advantage( Squares( src ) )} (+ = White ahead)" );

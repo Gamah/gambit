@@ -168,6 +168,42 @@ public sealed class LobbyNetworkManager : Component, Component.INetworkListener,
 	Connection _hostSpawnConnection;
 
 	/// <summary>Called on the host when a connection finishes joining (including the local player).</summary>
+	/// <summary>
+	/// Matchmaking (M19): drop two paired players onto <paramref name="station"/> on
+	/// gamchess's assigned colours and start the game. Called on the HOST by the opener's
+	/// own <see cref="Gambit.Game.Matchmaking"/> (the opener is the host of a join-up game),
+	/// so it runs host-authoritative with no RPC.
+	///
+	/// <para>Both seats are force-seated and readied at once, so the two-seat game starts
+	/// immediately — the joiner, who may still be mid-<c>Networking.Connect</c>, arrives
+	/// into it via the ordinary late-join FEN resync and auto-engages their seat. Their
+	/// seat name self-corrects when their own client re-claims the seat on engaging (a
+	/// no-op host-side except for the name), so this can seat an absent player by SteamId
+	/// alone. Returns false if the table isn't idle (nothing seated yet).</para>
+	/// </summary>
+	public bool HostSeatMatch( ulong white, ulong black, int tcIndex, ChessStation station )
+	{
+		if ( !Networking.IsHost || station == null ) return false;
+		var ctrl = LocalGameController.For( station );
+		if ( ctrl == null || ctrl.Playing || ctrl.GameOver ) return false;
+
+		ctrl.HostSetTimeControlIndex( tcIndex );
+		station.HostForceSeat( ChessSeat.White, white, NameFor( white ) );
+		station.HostForceSeat( ChessSeat.Black, black, NameFor( black ) );
+		ctrl.HostForceReady( ChessSeat.White );
+		ctrl.HostForceReady( ChessSeat.Black );
+		return true;
+	}
+
+	/// <summary>The Steam display name of a connected player, or "Player" if they haven't
+	/// connected yet (a joiner seated by SteamId before their client arrives).</summary>
+	string NameFor( ulong steamId )
+	{
+		foreach ( var c in _conns )
+			if ( (ulong)c.SteamId == steamId ) return c.DisplayName;
+		return "Player";
+	}
+
 	public void OnActive( Connection connection )
 	{
 		// Track join order, then rebuild the set of claim-holding admins.
