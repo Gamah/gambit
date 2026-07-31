@@ -166,6 +166,15 @@ public sealed partial class ChessGame
 			return inCheck ? -MateScore + ply : 0;
 		}
 
+		// A DRAW RULE can fire while legal moves remain — repetition, fifty-move and
+		// insufficient material all do. The vendored board then refuses every further
+		// Move() with ChessGameEndedException, so a node like this must be SCORED here
+		// and never searched: legal moves exist, so the mate/stalemate branch above
+		// didn't catch it, and the loop below would throw on its first move. A drawn
+		// position is worth exactly zero, which is also why this reads as a search
+		// improvement rather than a guard — the engine now knows a repetition is a draw.
+		if ( _board.IsEndGame ) return 0;
+
 		if ( depth <= 0 )
 			return cfg.Quiescence ? Quiesce( alpha, beta, ref rng ) : Evaluate();
 
@@ -197,6 +206,14 @@ public sealed partial class ChessGame
 		if ( stand > alpha ) alpha = stand;
 
 		var moves = _board.Moves( allowAmbiguousCastle: false, generateSan: false );
+
+		// Same draw-rule guard as Negamax, and this is where it actually bit: a quiescence
+		// line resolves captures, so it walks into repetitions and bare-king material
+		// faster than the main search does. With moves still on the board the loop below
+		// would throw; with none, keep the existing stand-pat answer rather than teaching
+		// quiescence about mate, which it has never claimed to know.
+		if ( _board.IsEndGame ) return moves.Length == 0 ? alpha : 0;
+
 		Order( moves );
 
 		foreach ( var move in moves )
