@@ -98,11 +98,18 @@
 		flex-shrink: 0;
 	}
 
+	/* The keycap is LIGHT-ON-DARK, and that is a bug fix, not a look. It was dark text on a white
+	   cap — an idiom this repo copied around — and the dark text never rendered: the glyph draws
+	   white whatever `color` says here, so the cap was white on white and all you saw was the
+	   text-shadow's grey halo. Hence "light grey glyphs". Keep the cap dark and the glyph light,
+	   which reads correctly whether or not that declaration ever starts taking effect. */
 	.hint .key {
 		font-size: 13px;
 		font-weight: 700;
-		color: rgba(0, 0, 0, 0.95);
-		background-color: rgba(255, 255, 255, 1);
+		color: rgba(255, 255, 255, 1);
+		font-color: rgba(255, 255, 255, 1);
+		background-color: rgba(255, 255, 255, 0.16);
+		border: 1px solid rgba(255, 255, 255, 0.45);
 		padding: 1px 8px;
 		border-radius: 5px;
 		white-space: nowrap;
