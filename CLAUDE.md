@@ -1339,7 +1339,18 @@ intrinsic pixels — are in `~/.claude/sbox.md`. Gambit-specific:
   centre.**
 - `FacePlayer` yaw-billboards a GO toward the camera; fronts face **+forward**.
 - There is **no documented API to open a URL / Steam overlay** — show links as copyable
-  text; any link-sharing has to be click-to-copy (`DiscordButton.Copy()`).
+  text; any link-sharing has to be click-to-copy (`DiscordButton.Copy()` /
+  `GamesButton.Copy()`). **Print the URL in full next to the button.** A link a player
+  cannot open is one they have to type, and they can only type what they can read — so a
+  shortened or ellipsised display string is a link nobody can follow. The board and the
+  clipboard must carry the same characters.
+- **Every outbound link lives on the MORE board**, on the south wall in the slot the music
+  board used to hold (`SettingsWall.MakeMoreBoard`, `MoreBoardPanel`, `InfoScreen`'s
+  `StationKind.More` page). It carries an `InfoStation`, not a `SettingsStation`: it sits on
+  that wall because of where it is, not because it is a setting, and reusing `InfoStation`
+  means E, the freed cursor and Escape all come for free. The welcome board used to end with
+  the Discord invite and no longer does — one place to reach us beats a link stapled to the
+  end of a how-to-play page.
 
 ## UI Gotchas (learned the hard way)
 
