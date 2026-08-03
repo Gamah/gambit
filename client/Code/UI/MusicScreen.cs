@@ -22,6 +22,10 @@ namespace Gambit.UI;
 /// Lives on the client-local LocalMusic GameObject built by <see cref="LocalMusicSystem"/>,
 /// beside the panel and the <see cref="Skafinity.SkafinityPlayer"/>. The bottom-left keycap
 /// hints for both keys are drawn by <see cref="Gambit.UI.Screens.HudHints"/>.
+///
+/// It is also where the board gets its COLOUR — see <see cref="PushTheme"/>. This component is
+/// enabled all session while the panel is enabled only while open, so it is the one of the two
+/// that can keep the room theme current.
 /// </summary>
 public sealed class MusicScreen : Component
 {
@@ -37,11 +41,48 @@ public sealed class MusicScreen : Component
 	Skafinity.SkafinityPlayer _player;
 	Skafinity.SkafinityMusicPanel _panel;
 
+	/// <summary>The ROOM THEME hex last handed to the library, so an unchanged setting costs a
+	/// string compare. Starts null, which never equals the "" of AUTO, so the first frame pushes.</summary>
+	string _themeHex;
+
 	protected override void OnDisabled() => Close();
 	protected override void OnDestroy() => Close();
 
+	/// <summary>
+	/// The music board wears the ROOM THEME: hand the library the hex the player picked
+	/// (Settings → ROOM THEME, stored local-only in <see cref="Gambit.Game.PlayerData.WorldLightColor"/>
+	/// as "#RRGGBB", empty = AUTO). <see cref="Skafinity.SkafinityTheme"/> derives its whole
+	/// palette from that one accent using <see cref="WallTheme"/>'s own factors, so the board
+	/// lands on the look the wall boards already have.
+	///
+	/// <para>A PUSH rather than the panel reading our setting: the library is vendored and must
+	/// not be patched, so its settable static is the seam it offers. It STORES the value while
+	/// the setting is live, so pushing once at startup would leave the board on whatever colour
+	/// the room had when the client booted. Compared against the hex string rather than keyed on
+	/// <see cref="SettingsModel.SettingsVersion"/> so any path that changes the setting reaches
+	/// the board; <c>PlayerData.Load()</c> is cached, so this is a field read per frame.</para>
+	///
+	/// <para>AUTO leaves the accent null, which is the library's own neutral gray-on-black — the
+	/// right look for "no theme picked", not a gap to fill with a Gambit colour. It also means a
+	/// coloured swatch is the only thing that demonstrates this working.</para>
+	///
+	/// <para>Safe while the board is closed, which is the usual case: the panel folds the accent
+	/// into its <c>BuildHash</c>, so it re-renders when it is next enabled.</para>
+	/// </summary>
+	void PushTheme()
+	{
+		var hex = Gambit.Game.PlayerData.Load()?.WorldLightColor ?? "";
+		if ( hex == _themeHex ) return;
+		_themeHex = hex;
+		// Color.Parse returns null on junk, which lands on the same neutral as AUTO.
+		Skafinity.SkafinityTheme.Accent = string.IsNullOrEmpty( hex ) ? (Color?)null : Color.Parse( hex );
+	}
+
 	protected override void OnUpdate()
 	{
+		PushTheme();
+
+
 		// The panel starts disabled, so the enabled-only Scene scan won't see it — find it on
 		// our own GO including disabled. The player plays on its own and is found scene-wide.
 		_panel ??= Components.Get<Skafinity.SkafinityMusicPanel>( FindMode.EverythingInSelf );
