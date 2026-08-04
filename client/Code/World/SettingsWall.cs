@@ -23,10 +23,11 @@ public sealed class SettingsWall : Component, Component.ExecuteInEditor
 	/// the panels' floor anchor — same as the info board, so they line up).</summary>
 	[Property] public float FloorClearance { get; set; } = 30f;
 
-	// The two boards are an EVEN row centred on the wall: +0.13 / -0.13. (It was three
-	// at +0.24 / 0 / -0.24 until the music board went away — music is M/N keys now, see
-	// Gambit.UI.MusicScreen — and two boards left at those fractions would have sat with
-	// the whole row shoved toward the east wall.)
+	// Three boards again, on the ODD row this wall was originally laid out for:
+	// +0.24 / 0 / -0.24. It went to an even +0.13 / -0.13 pair when the music board was
+	// deleted (music is M/N keys now, see Gambit.UI.MusicScreen); MORE takes that vacated
+	// outer slot rather than opening a fourth position, so the row is centred either way
+	// and no board moves relative to the wall's middle.
 	//
 	// Both are also written into lobby.scene, and the code defaults match the scene on
 	// purpose — that is the fix, not tidiness. This row had already been bitten by
@@ -39,10 +40,16 @@ public sealed class SettingsWall : Component, Component.ExecuteInEditor
 	/// <summary>Host-settings board center along the wall, as a fraction of wall
 	/// width (+X is the player's left / toward the east wall when facing the south
 	/// wall from inside) — host sits closest to the east wall.</summary>
-	[Property] public float HostXFrac { get; set; } = 0.13f;
+	[Property] public float HostXFrac { get; set; } = 0.24f;
 
 	/// <summary>World-settings board center along the wall, as a fraction of wall width.</summary>
-	[Property] public float LocalXFrac { get; set; } = -0.13f;
+	[Property] public float LocalXFrac { get; set; } = 0f;
+
+	/// <summary>MORE board center along the wall — the slot the music board used to hold,
+	/// furthest from the east wall. Written into lobby.scene alongside the other two: this is
+	/// a NEW property, and the hazard above is exactly that a scene which never gained a key
+	/// leaves it on the code default while its neighbours take the scene's.</summary>
+	[Property] public float MoreXFrac { get; set; } = -0.24f;
 
 	/// <summary>Horizontal walk-up range for the "Press E" prompt.</summary>
 	[Property] public float InteractRange { get; set; } = 130f;
@@ -91,6 +98,30 @@ public sealed class SettingsWall : Component, Component.ExecuteInEditor
 		// Half a unit further off the wall so the (transparent-margined) quads never
 		// z-fight where they overlap
 		MakeBoard( "HostSettingsBoard", new Vector3( HostXFrac * WallWidth, wallY + 0.5f, z ), facing, SettingsStation.StationKind.Host );
+		MakeMoreBoard( new Vector3( MoreXFrac * WallWidth, wallY, z ), facing );
+	}
+
+	/// <summary>
+	/// The MORE board — the Discord invite and the "our other games" link, both click-to-copy
+	/// (there is no API to open a URL from game code). It hangs on this wall because it is
+	/// where the music board used to be, not because it is a setting: it carries an
+	/// <see cref="InfoStation"/> rather than a <see cref="SettingsStation"/>, so E opens the
+	/// InfoScreen viewer that already knows how to render copyable links, and no engage
+	/// plumbing is duplicated for it.
+	/// </summary>
+	void MakeMoreBoard( Vector3 localPos, Rotation localRot )
+	{
+		var go = new GameObject( true, "MoreBoard" );
+		go.Parent = _root;
+		go.LocalPosition = localPos;
+		go.LocalRotation = localRot;
+		go.LocalScale = WallBoardGeometry.BoardScale;
+		go.AddComponent<WorldPanel>();
+		go.AddComponent<Gambit.UI.MoreBoardPanel>().FloorClearance = FloorClearance;
+
+		var station = go.AddComponent<InfoStation>();
+		station.Kind = InfoStation.StationKind.More;
+		station.InteractRange = InteractRange;
 	}
 
 	void MakeBoard( string name, Vector3 localPos, Rotation localRot, SettingsStation.StationKind kind )

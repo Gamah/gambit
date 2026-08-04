@@ -10,11 +10,20 @@
 @inherits PanelComponent
 
 @*
-	Interactive info / dev-notes viewer opened when the player engages an InfoStation
-	("Press E to view"). Shown (centered on screen) while InfoStation.Active != null; the
-	camera doesn't move for boards, LobbyPlayer just frees the cursor. Mirrors the
-	screen-engage pattern (.screen-fit centering wrapper). The Discord link is
-	click-to-copy (DiscordButton.Copy); dev notes are read from DevNotesPanel.Notes.
+	Interactive viewer opened when the player engages an InfoStation ("Press E to view").
+	Shown (centered on screen) while InfoStation.Active != null; the camera doesn't move for
+	boards, LobbyPlayer just frees the cursor. Mirrors the screen-engage pattern (.screen-fit
+	centering wrapper). One page per InfoStation.StationKind: the welcome board, dev notes
+	(read from DevNotesPanel.Notes), lichess, and MORE.
+
+	MORE is the only page not on the east wall — it hangs on the SOUTH wall in the slot the
+	music board used to hold (SettingsWall.MakeMoreBoard) — and it is where every outbound
+	link now lives. The welcome board USED to carry the Discord invite; it doesn't, because
+	one place for "how to reach us" beats a link tacked onto the end of a how-to-play page.
+
+	Every link here is click-to-copy (DiscordButton.Copy / GamesButton.Copy) and prints its
+	URL in full beside the button: there is no documented API to open a URL from game code,
+	so a link that isn't readable is one nobody can follow.
 *@
 
 <root>
@@ -83,6 +92,41 @@
 					<div class="body" style="color:@WallTheme.TextFaint;">(Can't reach the Gambit server right now, so we can't tell if you're linked. Chess still works.)</div>
 				}
 			}
+		}
+		else if ( station.Kind == InfoStation.StationKind.More )
+		{
+			@* The MORE page (south wall, the music board's old slot). Both links are
+			   click-to-copy because there is no API to open a URL from game code — and both
+			   print the URL IN FULL beside the button, because a player who cannot open a link
+			   has to be able to read it. The button label carries its own "copied"
+			   confirmation, the same way the lichess buttons above do; LobbyOverlay's toast is
+			   the second half of that and needs no change here. *@
+			<div class="title" style="color:@WallTheme.Text;">MORE</div>
+			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+			<div class="section-header" style="color:@WallTheme.AccentCss;">DISCORD</div>
+			<div class="body" style="color:@WallTheme.TextDim;">The community for @WallTheme.BrandTitle and the rest of our games — bug reports, ideas, and whoever is playing tonight.</div>
+			<div class="link-url" style="color:@WallTheme.TextFaint;">@DiscordButton.InviteUrl</div>
+			<div class="discord-btn" onclick="@CopyDiscord">@DiscordLabel()</div>
+
+			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+			<div class="section-header" style="color:@WallTheme.AccentCss;">OUR OTHER GAMES</div>
+			<div class="body" style="color:@WallTheme.TextDim;">Everything we have published on s&amp;box, on one page.</div>
+			<div class="link-url" style="color:@WallTheme.TextFaint;">@GamesButton.GamesUrl</div>
+			<div class="games-btn" style="background-color:@WallTheme.AccentBg; border-color:@WallTheme.Border; color:@WallTheme.Text;" onclick="@CopyGames">@GamesLabel()</div>
+
+			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+			@* Credit where the soundtrack comes from. Skafinity is its own open-source project
+			   that this game installs as a library — it writes the lobby's music live (N for its
+			   board, M to mute) — so it belongs here with the other outbound links. *@
+			<div class="section-header" style="color:@WallTheme.AccentCss;">MUSIC BY SKAFINITY</div>
+			<div class="body" style="color:@WallTheme.TextDim;">The lobby's soundtrack is written as you play by Skafinity, an open-source s&amp;box library. Press N for its board, M to mute.</div>
+			<div class="link-url" style="color:@WallTheme.TextFaint;">@SkafinityButton.SkafinityUrl</div>
+			<div class="games-btn" style="background-color:@WallTheme.AccentBg; border-color:@WallTheme.Border; color:@WallTheme.Text;" onclick="@CopySkafinity">@SkafinityLabel()</div>
+
+			<div class="body" style="color:@WallTheme.TextFaint;">Copying is all a game can do — s&amp;box gives no way to open a browser from in here, so paste it somewhere yourself.</div>
 		}
 		else if ( station.Kind == InfoStation.StationKind.DevNotes )
 		{
@@ -234,8 +278,6 @@
 			   already take a `rated` flag. This is the copy that rots; re-check it. *@
 			<div class="section-header" style="color:@WallTheme.AccentCss;">COMING SOON</div>
 			<div class="body" style="color:@WallTheme.TextDim;">Chat on lichess games · a proper 3D piece set</div>
-
-			<div class="discord-btn" onclick="@CopyDiscord">@DiscordLabel()</div>
 		}
 
 		<div class="close-hint" style="color:@WallTheme.TextFaint;">Press E or Esc to close</div>
@@ -405,6 +447,37 @@
 		background-color: rgba(88, 101, 242, 0.4);
 	}
 
+	/* Our own games, so this one wears the ROOM THEME rather than a brand colour — the
+	   Discord button beside it keeps blurple because that is Discord's, not ours. Fill and
+	   text come from WallTheme inline (see the markup); only the hover lives here, because a
+	   :hover rule in a stylesheet cannot beat an inline background-color. */
+	.games-btn {
+		justify-content: center;
+		margin-top: 8px;
+		padding: 14px 22px;
+		border-width: 2px;
+		border-style: solid;
+		border-radius: $wall-radius;
+		font-size: 22px;
+		font-weight: bold;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.games-btn:hover {
+		border-color: rgba(255, 255, 255, 0.85);
+	}
+
+	/* The literal URL, printed under each heading. It wraps rather than truncating: with no
+	   way to open a link from game code, an ellipsised URL is one a player can neither click
+	   nor retype. */
+	.link-url {
+		font-size: 15px;
+		white-space: normal;
+		word-break: break-all;
+		margin-top: 2px;
+	}
+
 	/* Lichess: the site's own black-on-white, so the button reads as "this goes to
 	   lichess" rather than as another Gambit control. */
 	.lichess-btn {
@@ -476,14 +549,41 @@
 
 	void SetPlayTab( string t ) { _playTab = t; StateHasChanged(); }
 
+	// ── MORE (the south-wall board, in the music board's old slot) ──
+	// Both links print their URL in full beside the button and copy on click; there is no API
+	// to open one from game code. Each has its own clock so pressing one cannot flash the
+	// other's confirmation.
+
 	string DiscordLabel() =>
 		DiscordButton.SinceCopied < 2f
 			? "✓  Discord invite copied to clipboard"
-			: $"Check out the Discord: {DiscordButton.InviteCode}  ·  click to copy";
+			: "Copy the Discord invite";
 
 	void CopyDiscord()
 	{
 		DiscordButton.Copy();
+		StateHasChanged();
+	}
+
+	string GamesLabel() =>
+		GamesButton.SinceCopied < 2f
+			? "✓  link copied to clipboard"
+			: "Copy the link to our games";
+
+	void CopyGames()
+	{
+		GamesButton.Copy();
+		StateHasChanged();
+	}
+
+	string SkafinityLabel() =>
+		SkafinityButton.SinceCopied < 2f
+			? "✓  link copied to clipboard"
+			: "Copy the link to Skafinity";
+
+	void CopySkafinity()
+	{
+		SkafinityButton.Copy();
 		StateHasChanged();
 	}
 
@@ -556,5 +656,10 @@
 			DevNotesPanel.Notes.Count, DiscordButton.SinceCopied < 2f, SettingsModel.SettingsVersion,
 			HashCode.Combine( LichessLinkState.Linked, LichessLinkState.Username,
 				LichessLinkState.Offline, LichessButton.SinceCopied < 2f,
-				LichessButton.SinceSecurityCopied < 2f, _unlinking, _playTab ) );
+				LichessButton.SinceSecurityCopied < 2f, _unlinking, _playTab,
+				// MORE's other buttons each need their own term, or their labels would only
+				// flip when something else in this hash happened to move. Nested again
+				// because HashCode.Combine takes at most eight arguments.
+				HashCode.Combine( GamesButton.SinceCopied < 2f,
+					SkafinityButton.SinceCopied < 2f ) ) );
 }

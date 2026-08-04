@@ -11,8 +11,12 @@ namespace Gambit.World;
 /// </summary>
 public sealed class InfoStation : Component
 {
-	/// <summary>Append only — InfoWall builds one board per kind.</summary>
-	public enum StationKind { Info, DevNotes, Lichess }
+	/// <summary>Append only. InfoWall builds one board per kind for the east wall; More is the
+	/// exception and is built by <see cref="SettingsWall"/>, because it hangs on the SOUTH wall
+	/// where the music board used to be. The kind lives here rather than in a station type of
+	/// its own so the engage flow — LobbyPlayer's nearby scan, E to open, the freed cursor,
+	/// Escape to close — is the one that already works for click-to-copy links.</summary>
+	public enum StationKind { Info, DevNotes, Lichess, More }
 
 	/// <summary>The station the local player is currently locked onto, if any.</summary>
 	public static new InfoStation Active { get; private set; }

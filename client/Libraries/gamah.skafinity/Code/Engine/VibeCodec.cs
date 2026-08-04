@@ -22,11 +22,16 @@ namespace Skafinity;
 /// <see cref="Apply"/> ignores trailing chars a shorter string lacks, so a vibe from a
 /// client with fewer slots still parses (the missing knobs keep their config defaults).
 ///
+/// RETIRING a knob does not remove its position: the entry becomes a reserved (null) slot that
+/// encodes as filler and decodes to nothing. That keeps every later knob at the wire position it
+/// has always had, so vibes shared before the retirement still decode correctly, and a future
+/// global knob can claim the slot.
+///
 /// Lossy by design (16 levels/knob) but stable: Encode(Decode(s)) == s.
 /// </summary>
 public static class VibeCodec
 {
-	const string Alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
+	internal const string Alphabet = "0123456789abcdefghijklmnopqrstuvwxyz";
 	public const int Levels = 16;   // one hex digit per knob
 	public const int Columns = 4;       // volume, tone, character, extra
 	public const int MaxInstruments = 8; // reserved instrument slots in the wire grid
@@ -72,7 +77,11 @@ public static class VibeCodec
 				return Choices[idx];
 			}
 			if ( Int ) return ((int)Math.Round( v )).ToString();
-			if ( Min == 0f && Max <= 1f ) return $"{(int)Math.Round( v * 100 )}%";
+			// A knob whose whole range fits in 0..2 is a proportion, not a count — rounding it to
+			// a whole number shows the same "1" across most of its travel. Read those as percents
+			// (a 0..1.5 volume, a 0.7..1.45 tempo scale); anything wider is a real quantity (Hz,
+			// cents, a drive amount) and stays a number.
+			if ( Max <= 2f ) return $"{(int)Math.Round( v * 100 )}%";
 			return ((int)Math.Round( v )).ToString();
 		}
 	}
@@ -100,13 +109,26 @@ public static class VibeCodec
 	// Shared GLOBAL knobs — the wire's global block, in order (append-only).
 	static readonly Field[] GlobalFields =
 	{
-		F( "TEMPO MIN", 60, 200, true, c => c.BpmMin, ( c, v ) => c.BpmMin = (int)v ),
-		F( "TEMPO MAX", 60, 200, true, c => c.BpmMax, ( c, v ) => c.BpmMax = (int)v ),
+		// RESERVED ×2 — were TEMPO MIN / TEMPO MAX, an absolute band every genre shared. The band
+		// is per-genre character now (GenreProfile) and the knob is the TEMPO scale appended at
+		// the end of this block.
+		null,
+		null,
 		F( "TEMPO BIAS", 0f, 1f, false, c => c.FastChance, ( c, v ) => c.FastChance = v ),
-		F( "SWING", 0f, 0.4f, false, c => c.Swing, ( c, v ) => c.Swing = v ),
-		F( "RESONANCE", 0.2f, 2f, false, c => c.Resonance, ( c, v ) => c.Resonance = v ),
+		// RESERVED — was SWING, now per-genre character (GenreProfile). Kept as an empty slot so
+		// every later global and the whole instrument grid stay at their existing wire positions
+		// and previously shared vibes still decode. A future global knob can claim it.
+		null,
+		// RESERVED — was RESONANCE. It set a Config field no voice ever read, so the slider was
+		// inert; every patch names its own SVF damping next to the voice it belongs to, which is
+		// where a timbre value belongs. Kept as an empty slot so every later global and the whole
+		// instrument grid stay at their existing wire positions.
+		null,
 		F( "STEREO WIDTH", 0f, 1f, false, c => c.PanAmount, ( c, v ) => c.PanAmount = v ),
 		F( "REVERB", 0f, 1f, false, c => c.MasterReverb, ( c, v ) => c.MasterReverb = v ),
+		// Appended, so every position above keeps the place it has always had. The range is 15
+		// steps of 0.05 so the neutral 1.0 lands exactly on a level rather than a rounding of one.
+		F( "TEMPO", 0.70f, 1.45f, false, c => c.TempoScale, ( c, v ) => c.TempoScale = v ),
 	};
 
 	// ── Advanced / tuning-only knobs ──
@@ -120,10 +142,15 @@ public static class VibeCodec
 	public static readonly Field[] AdvancedFields =
 	{
 		F( "KitPresence", 0f, 4f, false, c => c.KitPresence, ( c, v ) => c.KitPresence = v ),
+		// How far each genre's own mix profile (GenreProfile.Mix) is taken. 1 = as designed,
+		// 0 = every genre through one neutral mix. The SHAPE of a genre's mix is character and
+		// lives in the profile; what the house retunes at runtime is how far to push it.
+		F( "GenreMix", 0f, 2f, false, c => c.GenreMix, ( c, v ) => c.GenreMix = v ),
 		F( "KickBalance", 0f, 2f, false, c => c.KickBalance, ( c, v ) => c.KickBalance = v ),
 		F( "SnareBalance", 0f, 2f, false, c => c.SnareBalance, ( c, v ) => c.SnareBalance = v ),
 		F( "TomBalance", 0f, 2f, false, c => c.TomBalance, ( c, v ) => c.TomBalance = v ),
 		F( "HatBalance", 0f, 2f, false, c => c.HatBalance, ( c, v ) => c.HatBalance = v ),
+		F( "RideBalance", 0f, 2f, false, c => c.RideBalance, ( c, v ) => c.RideBalance = v ),
 		F( "CrashBalance", 0f, 2f, false, c => c.CrashBalance, ( c, v ) => c.CrashBalance = v ),
 		F( "BassBalance", 0f, 2f, false, c => c.BassBalance, ( c, v ) => c.BassBalance = v ),
 		F( "SkankBalance", 0f, 2f, false, c => c.SkankBalance, ( c, v ) => c.SkankBalance = v ),
@@ -137,7 +164,9 @@ public static class VibeCodec
 		F( "DoubleTrack", 0f, 1f, false, c => c.DoubleTrack, ( c, v ) => c.DoubleTrack = v ),
 		F( "WidthBacking", 0f, 1f, false, c => c.WidthBacking, ( c, v ) => c.WidthBacking = v ),
 		F( "WidthLead", 0f, 1f, false, c => c.WidthLead, ( c, v ) => c.WidthLead = v ),
-		F( "WidthDetune", 0f, 50f, false, c => c.WidthDetune, ( c, v ) => c.WidthDetune = v ),
+		// Bounded at 20 cents, not 50: half a quarter-tone between two takes is not a double, it is
+		// a tuning error, and this is a house-config field with no way for a listener to undo it.
+		F( "WidthDetune", 0f, 20f, false, c => c.WidthDetune, ( c, v ) => c.WidthDetune = v ),
 		F( "WidthDelayMs", 0f, 40f, false, c => c.WidthDelayMs, ( c, v ) => c.WidthDelayMs = v ),
 		F( "WidthJitterMs", 0f, 30f, false, c => c.WidthJitterMs, ( c, v ) => c.WidthJitterMs = v ),
 		F( "WidthAmpVar", 0f, 1f, false, c => c.WidthAmpVar, ( c, v ) => c.WidthAmpVar = v ),
@@ -165,7 +194,7 @@ public static class VibeCodec
 
 	// Per-genre instrument grids. Each row is volume / tone / character / extra. Order is the
 	// display order AND the wire instrument-slot order — append instruments, never reorder.
-	static GenreDef Ska()
+	static GenreDef SkaPunk()
 	{
 		Field vol( string v, Func<MusicGen.Config, float> g, Action<MusicGen.Config, float> s )
 			=> Vol( v, g, s );
@@ -173,7 +202,7 @@ public static class VibeCodec
 			=> F( "TONE", lo, hi, false, g, s, v, 1 );
 		return new GenreDef
 		{
-			Name = "Ska",
+			Name = "Ska-Punk",
 			Grid = new[]
 			{
 				Row( "BASS", vol( "BASS", c => c.BassVol, ( c, v ) => c.BassVol = v ),
@@ -197,6 +226,17 @@ public static class VibeCodec
 					F( "SECTION", 0f, 1f, false, c => c.HornSectionChance, ( c, v ) => c.HornSectionChance = v, "HORNS", 2 ),
 					F( "DENSITY", 0f, 1f, false, c => c.HornDensity, ( c, v ) => c.HornDensity = v, "HORNS", 3 ) ),
 				DrumsRow(),
+				// The chorus guitar. Third-wave ska drops the skank for driven power chords once the
+				// section is loud (GenreProfile.LoudComp), so the rhythm guitar is now a part a ska
+				// song actually plays and the listener needs the same handles the other genres get.
+				// It goes AFTER the drums, which is what append-only actually requires: a row's wire
+				// position is its INDEX in this grid, so slotting it next to the other instruments
+				// would have moved DRUMS from slot 5 to slot 6 and silently repointed every existing
+				// ska seed's drum knobs. New rows go on the end, however untidy that reads.
+				Row( "CHORUS GTR", vol( "CHORUS GTR", c => c.RhythmGtrVol, ( c, v ) => c.RhythmGtrVol = v ),
+					tone( "CHORUS GTR", 500f, 8000f, c => c.RhythmGtrCutoff, ( c, v ) => c.RhythmGtrCutoff = v ),
+					F( "DISTORTION", 1f, 5f, false, c => c.RhythmGtrDrive, ( c, v ) => c.RhythmGtrDrive = v, "CHORUS GTR", 2 ),
+					F( "CHUG", 0f, 1f, false, c => c.RhythmGtrChug, ( c, v ) => c.RhythmGtrChug = v, "CHORUS GTR", 3 ) ),
 			},
 		};
 	}
@@ -376,7 +416,7 @@ public static class VibeCodec
 		F( "BUSY", 0f, 1f, false, c => c.DrumBusy, ( c, v ) => c.DrumBusy = v, "DRUMS", 2 ),
 		F( "DRIVE", 0f, 1f, false, c => c.DrumDrive, ( c, v ) => c.DrumDrive = v, "DRUMS", 3 ) );
 
-	static readonly GenreDef[] GenreDefs = { Ska(), Rock(), Country(), Metal(), Punk(), Pop() };
+	static readonly GenreDef[] GenreDefs = { SkaPunk(), Rock(), Country(), Metal(), Punk(), Pop() };
 
 	public static int GenreCount => GenreDefs.Length;
 	public static IReadOnlyList<string> Genres
@@ -392,7 +432,8 @@ public static class VibeCodec
 	/// matrix without a second table.</summary>
 	public static IReadOnlyList<Field> Fields( int genre )
 	{
-		var list = new List<Field>( GlobalFields );
+		var list = new List<Field>();
+		foreach ( var f in GlobalFields ) if ( f != null ) list.Add( f );
 		foreach ( var row in Def( genre ).Grid )
 			foreach ( var f in row )
 				if ( f != null ) list.Add( f );
@@ -436,7 +477,7 @@ public static class VibeCodec
 		int genre = Math.Clamp( c.Genre, 0, GenreDefs.Length - 1 );
 		var sb = new StringBuilder();
 		sb.Append( Alphabet[genre] );
-		foreach ( var f in GlobalFields ) sb.Append( Quant( f, c ) );
+		foreach ( var f in GlobalFields ) sb.Append( f != null && f.InSeed ? Quant( f, c ) : Alphabet[0] );
 		foreach ( var row in Def( genre ).Grid )
 			for ( int col = 0; col < Columns; col++ )
 				sb.Append( row[col] != null && row[col].InSeed ? Quant( row[col], c ) : Alphabet[0] );
@@ -482,16 +523,80 @@ public static class VibeCodec
 		f.SetNorm( c, q / (float)(Levels - 1) );
 	}
 
-	/// <summary>Largest possible well-formed vibe length: genre + globals + the full reserved
-	/// instrument grid.</summary>
-	public static int MaxLength => 1 + GlobalFields.Length + MaxInstruments * Columns;
+	/// <summary>
+	/// Randomise the vibe knobs of <paramref name="c"/> in place.
+	///
+	/// This is the one definition of what "reroll" means, shared by every player, so the two
+	/// drivers cannot answer the question differently: a fresh genre and every knob of that
+	/// genre. Per-instrument volumes are excluded by default — they are a local mix preference
+	/// and never ride in the seed.
+	///
+	/// Randomness is the CALLER's: <paramref name="rnd"/> returns values in [0,1). A driver that
+	/// wants a throwaway roll passes a session RNG; one that wants a reproducible roll passes a
+	/// seeded stream (see <see cref="RollFrom"/>). The engine stays free of any ambient RNG.
+	/// </summary>
+	public static void Roll( MusicGen.Config c, Func<float> rnd,
+		bool includeGenre = true, bool includeVolumes = false )
+	{
+		if ( c == null || rnd == null ) return;
 
-	/// <summary>True if <paramref name="s"/> looks like a vibe token: all base-36 and within
-	/// the vibe length band. The floor stays well above an 8-char player tag (and the 9-char
-	/// default "rotaliate") so the two never collide in <c>vibe:tag:n</c>.</summary>
+		if ( includeGenre )
+		{
+			// Guard the top of the range: a generator returning exactly 1.0 must not index off
+			// the end of the genre table.
+			int g = (int)(rnd() * GenreCount);
+			c.Genre = Math.Clamp( g, 0, GenreCount - 1 );
+		}
+
+		foreach ( var f in Fields( c.Genre ) )
+		{
+			if ( !includeVolumes && IsVolume( f ) ) continue;
+			f.SetNorm( c, rnd() );
+		}
+	}
+
+	/// <summary>
+	/// <see cref="Roll"/> driven by a stream seeded on <paramref name="seed"/> — the same string
+	/// always produces the same vibe, on any machine and in any player.
+	///
+	/// This is what lets an endless shuffled sequence still BE its seed: a player derives song
+	/// n's vibe from <c>"{tag}:vibe:{n}"</c> rather than from session randomness, so the whole
+	/// line is reproducible, shareable and survives a reload — and stepping back to an earlier
+	/// song replays exactly what was heard without anything having to be remembered.
+	/// </summary>
+	public static void RollFrom( MusicGen.Config c, string seed,
+		bool includeGenre = true, bool includeVolumes = false )
+	{
+		var rng = new Rng( seed ?? "" );
+		Roll( c, rng.Next, includeGenre, includeVolumes );
+	}
+
+	/// <summary>The station a tag names: trimmed and lower-cased, so "Gamah" and " gamah " are one
+	/// station rather than three, with the default for an empty tag.</summary>
+	/// <remarks>Every stream name in the toy is built from this, on BOTH targets, because the
+	/// fallback word is load-bearing: it is part of what song a seed with no tag resolves to, and
+	/// a host that picks its own makes <c>vibe::23</c> a different song there than everywhere
+	/// else. It has been exactly that — the s&amp;box player spelled the fallback "skafinity"
+	/// while the engine and the web spelled it "rotaliate".</remarks>
+	static string Station( string tag ) =>
+		string.IsNullOrWhiteSpace( tag ) ? "rotaliate" : tag.Trim().ToLowerInvariant();
+
+	/// <summary>The PRNG stream song <paramref name="n"/> is COMPOSED from — what a host hands
+	/// <see cref="MusicGen.Generate"/>/<see cref="MusicGen.BeginPlan"/> as the tag.</summary>
+	public static string SongSeed( string tag, int n ) => $"{Station( tag )}:{n}";
+
+	/// <summary>The stream name song <paramref name="n"/>'s vibe is rolled from. One definition
+	/// so every player walks the same line for a given tag.</summary>
+	public static string VibeSeed( string tag, int n ) => $"{Station( tag )}:vibe:{n}";
+
+	/// <summary>True if <paramref name="s"/> looks like a vibe token: all base-36 and long enough
+	/// that it cannot be a tag. The floor is the whole test — it sits well above an 8-char player
+	/// tag (and the 9-char default "rotaliate") so the two never collide in <c>vibe:tag:n</c>.
+	/// There is deliberately no ceiling: the wire grows as genres and instruments are appended,
+	/// and a bound would silently start rejecting valid seeds.</summary>
 	public static bool LooksLikeVibe( string s )
 	{
-		if ( string.IsNullOrEmpty( s ) || s.Length < 16 || s.Length > MaxLength ) return false;
+		if ( string.IsNullOrEmpty( s ) || s.Length < 16 ) return false;
 		foreach ( var ch in s.ToLowerInvariant() )
 			if ( Alphabet.IndexOf( ch ) < 0 ) return false;
 		return true;

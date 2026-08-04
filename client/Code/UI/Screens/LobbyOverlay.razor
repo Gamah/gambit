@@ -62,11 +62,29 @@
 			<div>to spectate games</div>
 		</div>
 	}
+	@* Copy confirmations, from the MORE board. A clock per link so the toast names the one
+	   that was actually copied — one shared clock would confirm the wrong one. Discord
+	   is checked first only because these are mutually exclusive in practice; a player cannot
+	   press both inside two seconds without the second press restarting its own clock. *@
 	else if ( DiscordButton.SinceCopied < 2f )
 	{
 		<div class="prompt">
 			<div class="key">✓</div>
 			<div>Discord invite copied to clipboard</div>
+		</div>
+	}
+	else if ( GamesButton.SinceCopied < 2f )
+	{
+		<div class="prompt">
+			<div class="key">✓</div>
+			<div>Link to our games copied to clipboard</div>
+		</div>
+	}
+	else if ( SkafinityButton.SinceCopied < 2f )
+	{
+		<div class="prompt">
+			<div class="key">✓</div>
+			<div>Link to Skafinity copied to clipboard</div>
 		</div>
 	}
 </root>
@@ -192,8 +210,11 @@
 		System.HashCode.Combine( LobbyPlayer.Local?.Engaged, LobbyPlayer.Local?.NearbyStation != null,
 			LobbyPlayer.Local?.NearbySeat, ChessStation.Active != null,
 			LobbyPlayer.Local?.NearbyBoard?.Kind,
-			LobbyPlayer.Local?.NearbyInfo?.Kind, DiscordButton.SinceCopied < 2f,
-			System.HashCode.Combine( LobbyPlayer.Local?.NearbySpectator != null,
+			LobbyPlayer.Local?.NearbyInfo?.Kind,
+			System.HashCode.Combine( DiscordButton.SinceCopied < 2f,
+				GamesButton.SinceCopied < 2f,
+				SkafinityButton.SinceCopied < 2f,
+				LobbyPlayer.Local?.NearbySpectator != null,
 				LobbyPlayer.Local?.LeaveArmed,
 				// The roaming reminder: repaint when a table appears/clears or a premove
 				// arms/fires on any game you've walked away from (one row per game).

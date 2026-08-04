@@ -5,7 +5,8 @@ using Sandbox;
 namespace Skafinity;
 
 /// <summary>
-/// Streams an endless, deterministic procedural ska / reggae-rock track (see
+/// Streams an endless, deterministic procedural song sequence — ska, rock, country, metal,
+/// punk or pop, per the seed's genre (see
 /// <see cref="MusicGen"/>) through Web Audio-style scheduling over a <see cref="SoundStream"/>.
 ///
 /// Drop this <see cref="Component"/> on any GameObject. It generates a ~80s loop from the
@@ -57,16 +58,18 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	[Property, Group( "Seed" )] public string SaveSlot { get; set; } = "default";
 
 	// ── Output ──
+	/// <summary>Render rate. Deliberately below the engine's own 44100 default: a game renders
+	/// songs while it is also drawing frames, and the synthesis cost is linear in this. It is the
+	/// one place this player is meant to disagree with <see cref="MusicGen.Config"/>.</summary>
 	[Property, Group( "Output" ), Range( 8000, 48000 )] public int SampleRate { get; set; } = 32000;
-	/// <summary>Target track length; bar count adapts to tempo to hit this.</summary>
-	[Property, Group( "Output" ), Range( 30f, 180f )] public float TargetSeconds { get; set; } = 80f;
 	/// <summary>Worker threads the pitched-voice synthesis is split across (composition + drums
 	/// stay single-threaded). Keeps each worker burst under s&amp;box's ~1000ms no-yield advisory.</summary>
 	[Property, Group( "Output" ), Range( 1, 8 )] public int RenderThreads { get; set; } = 6;
 
 	// ── Crossfade / scheduling ──
-	/// <summary>Crossfade window (also the first song's fade-in from silence), seconds. The two
-	/// songs only both-audible for <see cref="CrossfadeOverlap"/> of this, centred.</summary>
+	/// <summary>Crossfade window between songs, seconds. The two songs are only both-audible for
+	/// <see cref="CrossfadeOverlap"/> of this, centred. The first song's fade up from silence is
+	/// separate and much shorter — see <c>StartFadeSeconds</c>.</summary>
 	[Property, Group( "Crossfade" ), Range( 0.5f, 8f )] public float Crossfade { get; set; } = 3.75f;
 	[Property, Group( "Crossfade" ), Range( 0f, 1f )] public float CrossfadeOverlap { get; set; } = 0.5f;
 	/// <summary>How many upcoming songs to keep pre-generated (built one-per-tick so the fill never stalls a frame).</summary>
@@ -78,30 +81,33 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 		/// constrained targets. The seed ledger (strings only) is never pruned.</summary>
 		[Property, Group( "Crossfade" ), Range( 1, 16 )] public int PcmCacheRadius { get; set; } = 5;
 
-	// ── Tempo (main = laid-back reggae-rock; Fast = uptempo ska) ──
-	[Property, Group( "Tempo" ), Range( 60, 200 )] public int BpmMin { get; set; } = 130;
-	[Property, Group( "Tempo" ), Range( 60, 200 )] public int BpmMax { get; set; } = 185;
+	// ── Tempo ──
+	// The tempo BAND belongs to the genre (Engine/GenreProfile.cs), not to a property here.
+	// TempoScale pushes or drags whatever the genre drew; FastChance is how often a song takes
+	// the genre's uptempo band instead of its main one.
+	[Property, Group( "Tempo" ), Range( 0.7f, 1.45f )] public float TempoScale { get; set; } = 1.0f;
 	[Property, Group( "Tempo" ), Range( 0f, 1f )] public float FastChance { get; set; } = 0.30f;
-	[Property, Group( "Tempo" ), Range( 100, 220 )] public int FastBpmMin { get; set; } = 150;
-	[Property, Group( "Tempo" ), Range( 100, 220 )] public int FastBpmMax { get; set; } = 168;
-	[Property, Group( "Tempo" ), Range( 0f, 0.4f )] public float Swing { get; set; } = 0.14f;
-	[Property, Group( "Tempo" ), Range( 0f, 0.4f )] public float FastSwing { get; set; } = 0.05f;
 
 	// ── Mix ──
+	// These are the PLAYER's overlay on the engine's own defaults, so a value here that isn't 1.0
+	// is this host disagreeing with the shipped mix. It shouldn't: the baseline balance between
+	// the kit voices is measured (the *Balance entries in skafinity.config.json, applied through
+	// ApplyAdvanced) and a per-voice trim here double-dips against it. Keep them at 1.0 and retune
+	// the shared config — that is the file both targets read.
 	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float BassVol { get; set; } = 1.00f;
 	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float SkankVol { get; set; } = 1.00f;
 	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float OrganVol { get; set; } = 1.00f;
 	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float MelodyVol { get; set; } = 1.00f;
 	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float HornVol { get; set; } = 1.00f;
 	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float KickVol { get; set; } = 1.00f;
-	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float SnareVol { get; set; } = 0.70f;
-	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float TomVol { get; set; } = 0.60f;
-	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float HatVol { get; set; } = 0.22f;
-	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float CrashVol { get; set; } = 0.35f;
+	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float SnareVol { get; set; } = 1.00f;
+	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float TomVol { get; set; } = 1.00f;
+	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float HatVol { get; set; } = 1.00f;
+	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float CrashVol { get; set; } = 1.00f;
 	[Property, Group( "Mix" ), Range( 0f, 1.5f )] public float DrumVol { get; set; } = 1.00f;
 
 	// ── Tone ──
-	[Property, Group( "Tone" ), Range( 0f, 40f )] public float Detune { get; set; } = 14f;
+	[Property, Group( "Tone" ), Range( 0f, 20f )] public float Detune { get; set; } = 7f;
 	[Property, Group( "Tone" ), Range( 80f, 1200f )] public float BassCutoff { get; set; } = 380f;
 	[Property, Group( "Tone" ), Range( 500f, 8000f )] public float SkankCutoff { get; set; } = 3000f;
 	[Property, Group( "Tone" ), Range( 0f, 2000f )] public float SkankHighpass { get; set; } = 500f;
@@ -110,7 +116,6 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	[Property, Group( "Tone" ), Range( 500f, 8000f )] public float OrganCutoff { get; set; } = 1400f;
 	[Property, Group( "Tone" ), Range( 0f, 12f )] public float OrganVibrato { get; set; } = 5.5f;
 	[Property, Group( "Tone" ), Range( 500f, 8000f )] public float HornCutoff { get; set; } = 3200f;
-	[Property, Group( "Tone" ), Range( 0.2f, 2f )] public float Resonance { get; set; } = 1.0f;
 	[Property, Group( "Tone" ), Range( 1f, 4f )] public float BassDrive { get; set; } = 1.5f;
 	[Property, Group( "Tone" ), Range( 1f, 4f )] public float SkankDrive { get; set; } = 1.3f;
 	[Property, Group( "Tone" ), Range( 1f, 4f )] public float MelodyDrive { get; set; } = 1.3f;
@@ -134,7 +139,9 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	[Property, Group( "Feel" ), Range( 0f, 12f )] public float MelodyVibrato { get; set; } = 5.0f;
 
 	// ── Stereo ──
-	[Property, Group( "Stereo" ), Range( 0f, 1f )] public float PanAmount { get; set; } = 0.4f;
+	[Property, Group( "Stereo" ), Range( 0f, 1f )] public float PanAmount { get; set; } = 1.0f;
+	/// <summary>Master reverb send — the GLOBAL "REVERB" vibe knob's resting value.</summary>
+	[Property, Group( "Stereo" ), Range( 0f, 1f )] public float MasterReverb { get; set; } = 0.5f;
 
 	// ── Lead instrument (RNG picks one per tag, weighted; Force overrides) ──
 	[Property, Group( "Instrument" ), Range( 0f, 4f )] public float TrumpetWeight { get; set; } = 1.0f;
@@ -148,23 +155,38 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	[Property, Group( "Horns" ), Range( 0f, 1f )] public float HornSectionChance { get; set; } = 0.5f;
 	[Property, Group( "Horns" ), Range( 0f, 1f )] public float HornDensity { get; set; } = 0.35f;
 
-	// ── Genre & rock instruments ──
-	// Genre selects the instrument set: 0 = Ska, 1 = Rock (drums/bass/rhythm-gtr/lead-gtr).
-	[Property, Group( "Genre" ), Range( 0, 1 )] public int Genre { get; set; } = 0;
-	// KEYS — the offbeat-chord comp (was the "rhythm guitar"; it reads as keys).
-	[Property, Group( "Rock" ), Range( 0f, 1.5f )] public float KeysVol { get; set; } = 1.00f;
-	[Property, Group( "Rock" ), Range( 500f, 8000f )] public float KeysCutoff { get; set; } = 1700f;
-	[Property, Group( "Rock" ), Range( 1f, 5f )] public float KeysDrive { get; set; } = 3.2f;
-	[Property, Group( "Rock" ), Range( 0f, 1f )] public float KeysChug { get; set; } = 0.5f;
-	// RHYTHM GTR — twangy distorted power chords (shares the lead voice, lower base distortion).
-	[Property, Group( "Rock" ), Range( 0f, 1.5f )] public float RhythmGtrVol { get; set; } = 1.00f;
-	[Property, Group( "Rock" ), Range( 500f, 8000f )] public float RhythmGtrCutoff { get; set; } = 2600f;
-	[Property, Group( "Rock" ), Range( 1f, 5f )] public float RhythmGtrDrive { get; set; } = 2.8f;
-	[Property, Group( "Rock" ), Range( 0f, 1f )] public float RhythmGtrChug { get; set; } = 0.5f;
-	[Property, Group( "Rock" ), Range( 0f, 1.5f )] public float LeadGtrVol { get; set; } = 1.00f;
-	[Property, Group( "Rock" ), Range( 500f, 8000f )] public float LeadGtrCutoff { get; set; } = 2600f;
-	[Property, Group( "Rock" ), Range( 1f, 5f )] public float LeadGtrDrive { get; set; } = 3.6f;
-	[Property, Group( "Rock" ), Range( 0f, 1f )] public float LeadGtrBend { get; set; } = 0.30f;
+	// ── Genre ──
+	/// <summary>Which genre the song is: 0 = Ska-Punk, 1 = Rock, 2 = Country, 3 = Metal, 4 = Punk,
+	/// 5 = Pop. Prefer <see cref="SetGenre"/> at runtime — an existing <see cref="Vibe"/> carries a
+	/// genre of its own in its first character and otherwise wins over this.</summary>
+	/// <remarks>The upper bound tracks <c>VibeCodec.GenreCount</c>. A <c>[Range]</c> takes a
+	/// constant, so adding a genre means bumping it here too; out-of-range values are clamped
+	/// rather than trusted, so a stale bound only ever costs the inspector its reach.</remarks>
+	[Property, Group( "Genre" ), Range( 0, 5 )] public int Genre { get; set; } = 0;
+
+	// ── Guitars / keys ──
+	// Not rock-only any more: every genre except ska draws its chordal voice from KEYS or
+	// RHYTHM GTR, ska's loud sections play RHYTHM GTR as the chorus guitar (GenreProfile.LoudComp),
+	// and LEAD GTR is the lead everywhere the genre isn't horn-led. Ranges here span every genre's
+	// grid in VibeCodec, which is why the DISTORTION bounds are wider than any single genre's.
+	// KEYS — the chordal comp (held/offbeat voicings; rock, metal and pop route to it).
+	[Property, Group( "Guitars / Keys" ), Range( 0f, 1.5f )] public float KeysVol { get; set; } = 1.00f;
+	[Property, Group( "Guitars / Keys" ), Range( 500f, 8000f )] public float KeysCutoff { get; set; } = 1700f;
+	[Property, Group( "Guitars / Keys" ), Range( 1f, 5f )] public float KeysDrive { get; set; } = 3.2f;
+	[Property, Group( "Guitars / Keys" ), Range( 0f, 1f )] public float KeysChug { get; set; } = 0.5f;
+	// RHYTHM GTR — strummed/chugged chords: country's clean strum, punk's downstroke, metal's
+	// tremolo, ska's chorus power chords.
+	[Property, Group( "Guitars / Keys" ), Range( 0f, 1.5f )] public float RhythmGtrVol { get; set; } = 1.00f;
+	[Property, Group( "Guitars / Keys" ), Range( 500f, 8000f )] public float RhythmGtrCutoff { get; set; } = 2600f;
+	[Property, Group( "Guitars / Keys" ), Range( 1f, 6f )] public float RhythmGtrDrive { get; set; } = 2.8f;
+	[Property, Group( "Guitars / Keys" ), Range( 0f, 1f )] public float RhythmGtrChug { get; set; } = 0.5f;
+	// LEAD GTR — the sung lead wherever the genre isn't horn-led (and pop's plucky synth, whose
+	// knob is a GLIDE rather than a bend).
+	[Property, Group( "Guitars / Keys" ), Range( 0f, 1.5f )] public float LeadGtrVol { get; set; } = 1.00f;
+	[Property, Group( "Guitars / Keys" ), Range( 500f, 8000f )] public float LeadGtrCutoff { get; set; } = 2600f;
+	// Rock and punk floor this knob at 5 — the old top of the range — so the default sits there.
+	[Property, Group( "Guitars / Keys" ), Range( 1f, 11f )] public float LeadGtrDrive { get; set; } = 5.0f;
+	[Property, Group( "Guitars / Keys" ), Range( 0f, 1f )] public float LeadGtrBend { get; set; } = 0.30f;
 
 	SoundStream _stream;
 	SoundHandle _handle;
@@ -222,6 +244,21 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	/// <summary>True while playback is stalled waiting on the song you asked to seek to (vs. silent
 	/// background fill). Pair with <see cref="GenerationProgress"/> for a "Generating…" indicator.</summary>
 	public bool IsBuffering => _bufferingN >= 0;
+	/// <summary>How many house-mix values were read out of <c>skafinity.config.json</c>. Zero means
+	/// the file wasn't mounted, and the baseline mix is the engine's compiled defaults rather than
+	/// the shared one both targets are supposed to read — a silent failure worth being able to see
+	/// (see <c>skafinity_status</c>).</summary>
+	public int HouseConfigCount => _houseConfig?.Count ?? 0;
+
+	/// <summary>What the composer decided for the song playing right now — tempo, key, changes,
+	/// voicing, groove, figure and tune lengths, ending, and the form with each section's
+	/// energy/feel. The same read-out the engine test harness's <c>--seed</c> prints, which is the
+	/// tool for "this seed sounds wrong": reading the decisions beats inferring them from the
+	/// audio.</summary>
+	/// <remarks>Plans the song again to get it, which is a composition pass plus the drum
+	/// synthesis — expect a hitch of up to a second or so. It is a diagnostic, not something to
+	/// call per frame.</remarks>
+	public string ExplainCurrent() => MusicGen.BeginPlan( Seed( _curN ), ConfigForN( _curN ) ).Explain();
 
 	/// <summary>One entry in the navigable timeline (see <see cref="Timeline"/>).</summary>
 	public readonly struct QueueEntry
@@ -274,8 +311,10 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	}
 
 	string SeedTag => string.IsNullOrEmpty( Tag ) ? "" : Tag;
-	// Build the PRNG seed string from a resolved tag, so worker code never re-reads state.
-	static string SeedFor( string tag, int n ) => $"{(string.IsNullOrEmpty( tag ) ? "skafinity" : tag.ToLowerInvariant())}:{n}";
+	// Build the PRNG seed string from a resolved tag, so worker code never re-reads state. The
+	// spelling is the ENGINE's (VibeCodec.SongSeed) rather than this host's: it decides what song
+	// an untagged seed is, and the web resolves the same one.
+	static string SeedFor( string tag, int n ) => VibeCodec.SongSeed( tag, n );
 	string Seed( int n ) => SeedFor( SeedTag, n );
 
 	protected override void OnStart()
@@ -413,7 +452,7 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	{
 		if ( _ledger.TryGetValue( n, out var v ) ) return v;
 		if ( !RandomEverySong ) return VibeCodec.Encode( BuildKnobOnlyVibe() );
-		var rolled = RollVibe();
+		var rolled = RollVibe( n );
 		_ledger[n] = rolled;
 		return rolled;
 	}
@@ -427,19 +466,13 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 		return cfg;
 	}
 
-	// Roll a fresh random vibe seed (genre + every non-volume knob), as a string. Volumes are a local
-	// mix preference and never ride in the seed. Mirrors RerollVibe's randomisation.
-	string RollVibe()
+	// Song n's vibe under shuffle, derived from the seed rather than session randomness, so the
+	// whole shuffled line IS the seed: it survives a reload, it is the same on every machine, and
+	// stepping back replays exactly what was heard without needing to have remembered it.
+	string RollVibe( int n )
 	{
 		var cfg = BuildKnobOnlyVibe();
-		var rng = System.Random.Shared;
-		cfg.Genre = rng.Next( VibeCodec.GenreCount );
-		foreach ( var f in VibeCodec.Fields( cfg.Genre ) )
-		{
-			if ( f.Voice != null && f.Column == 0 ) continue; // skip per-instrument volumes
-			f.SetNorm( cfg, rng.NextSingle() );
-		}
-		if ( cfg.BpmMin > cfg.BpmMax ) (cfg.BpmMin, cfg.BpmMax) = (cfg.BpmMax, cfg.BpmMin);
+		VibeCodec.RollFrom( cfg, VibeCodec.VibeSeed( Tag, n ) );
 		return VibeCodec.Encode( cfg );
 	}
 
@@ -469,14 +502,8 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	MusicGen.Config BuildKnobConfig() => new()
 	{
 		SampleRate = SampleRate,
-		TargetSeconds = TargetSeconds,
-		BpmMin = BpmMin,
-		BpmMax = BpmMax,
+		TempoScale = TempoScale,
 		FastChance = FastChance,
-		FastBpmMin = FastBpmMin,
-		FastBpmMax = FastBpmMax,
-		Swing = Swing,
-		FastSwing = FastSwing,
 		BassVol = BassVol,
 		SkankVol = SkankVol,
 		OrganVol = OrganVol,
@@ -497,7 +524,6 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 		OrganCutoff = OrganCutoff,
 		OrganVibrato = OrganVibrato,
 		HornCutoff = HornCutoff,
-		Resonance = Resonance,
 		BassDrive = BassDrive,
 		SkankDrive = SkankDrive,
 		MelodyDrive = MelodyDrive,
@@ -516,6 +542,7 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 		MelodyLeapChance = MelodyLeapChance,
 		MelodyVibrato = MelodyVibrato,
 		PanAmount = PanAmount,
+		MasterReverb = MasterReverb,
 		TrumpetWeight = TrumpetWeight,
 		SaxWeight = SaxWeight,
 		OrganWeight = OrganWeight,
@@ -543,13 +570,11 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	int ConfigHash()
 	{
 		var h = new HashCode();
-		h.Add( SampleRate ); h.Add( TargetSeconds );
-		h.Add( BpmMin ); h.Add( BpmMax ); h.Add( FastChance );
-		h.Add( FastBpmMin ); h.Add( FastBpmMax ); h.Add( Swing ); h.Add( FastSwing );
+		h.Add( SampleRate ); h.Add( TempoScale ); h.Add( FastChance );
 		h.Add( BassVol ); h.Add( SkankVol ); h.Add( OrganVol ); h.Add( MelodyVol ); h.Add( HornVol );
 		h.Add( KickVol ); h.Add( SnareVol ); h.Add( TomVol ); h.Add( HatVol ); h.Add( CrashVol ); h.Add( DrumVol );
 		h.Add( Detune ); h.Add( BassCutoff ); h.Add( SkankCutoff ); h.Add( SkankHighpass ); h.Add( SkankChop );
-		h.Add( LeadCutoff ); h.Add( OrganCutoff ); h.Add( OrganVibrato ); h.Add( HornCutoff ); h.Add( Resonance );
+		h.Add( LeadCutoff ); h.Add( OrganCutoff ); h.Add( OrganVibrato ); h.Add( HornCutoff );
 		h.Add( BassDrive ); h.Add( SkankDrive ); h.Add( MelodyDrive ); h.Add( HornDrive );
 		h.Add( MasterDrive ); h.Add( MasterPeak );
 		h.Add( OctavePopChance ); h.Add( OrganBubbleChance ); h.Add( KickSyncChance );
@@ -630,6 +655,13 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	}
 
 	int FadeFrames => Math.Max( 1, (int)(Math.Clamp( Crossfade, 0.25f, 8f ) * _sr) );
+
+	// Coming up from silence at the start of a session. Short on purpose and NOT the crossfade
+	// window: a crossfade is long because two songs have to trade places without either being
+	// heard to stop, and nothing is being traded here. See BeginAt for what the long version did
+	// to the opening bars.
+	const float StartFadeSeconds = 0.15f;
+	int StartFadeFrames => Math.Max( 1, (int)(StartFadeSeconds * _sr) );
 
 	// All look-ahead buffers are interleaved stereo PCM; lengths/offsets below are in frames.
 	static int Frames( short[] pcm ) => pcm.Length / MusicGen.Channels;
@@ -794,13 +826,18 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	void BeginAt( int n )
 	{
 		_curRaw = _pcm[n];
-		int fade = Math.Min( FadeFrames, Frames( _curRaw ) / 3 );
-		_curReserve = fade;
+		_curReserve = Math.Min( FadeFrames, Frames( _curRaw ) / 3 );
 
 		_stream = new SoundStream( _sr, MusicGen.Channels );
 
-		// One pass, fade-in over the first `fade`, last `fade` held back for the crossfade into n+1.
-		int written = WriteSongBody( _curRaw, 0, _curReserve, fade );
+		// The tail held back for the crossfade is the crossfade's length; the fade UP FROM SILENCE
+		// is not, and used to be. A ramp over the whole crossfade window put the first bars of the
+		// song under it — half a second in, a 3.75 s linear ramp is still at 0.13 (-17.5 dB) — and
+		// what that does to a drum kit is specific rather than merely quiet: it crushes the STRIKE
+		// and lets the RING arrive at full level a second later, so every cymbal in the opening
+		// sounds like it was hit before the song started. Coming out of silence only has to not
+		// click.
+		int written = WriteSongBody( _curRaw, 0, _curReserve, Math.Min( StartFadeFrames, _curReserve ) );
 		_pushedSeconds = written / (double)_sr;
 
 		_handle = _stream.Play();
@@ -961,18 +998,10 @@ public sealed class SkafinityPlayer : Component, Component.DontExecuteOnServer
 	/// full shuffle. Pass <paramref name="restart"/> = false to re-voice without yanking the
 	/// playhead — the caller is then responsible for letting the change take effect (e.g. by
 	/// clearing the look-ahead so upcoming songs regenerate with the new vibe).</summary>
-	public void RerollVibe( bool includeVolumes = false, bool includeGenre = false, bool restart = true )
+	public void RerollVibe( bool includeVolumes = false, bool includeGenre = true, bool restart = true )
 	{
 		var cfg = BuildConfig();
-		var rng = System.Random.Shared;
-		if ( includeGenre )
-			cfg.Genre = rng.Next( VibeCodec.GenreCount );
-		foreach ( var f in VibeCodec.Fields( cfg.Genre ) )
-		{
-			if ( !includeVolumes && f.Voice != null && f.Column == 0 ) continue; // skip per-instrument volumes
-			f.SetNorm( cfg, rng.NextSingle() );
-		}
-		if ( cfg.BpmMin > cfg.BpmMax ) (cfg.BpmMin, cfg.BpmMax) = (cfg.BpmMax, cfg.BpmMin);
+		VibeCodec.Roll( cfg, System.Random.Shared.NextSingle, includeGenre, includeVolumes );
 		Vibe = VibeCodec.Encode( cfg );
 		if ( includeVolumes )
 		{

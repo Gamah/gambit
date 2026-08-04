@@ -1,0 +1,120 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.World;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@* Display-only MORE board on the south wall, in the slot the music board used to hold
+   (see SettingsWall.MakeMoreBoard). A scaled-down mirror of the engaged InfoScreen's MORE
+   page: same title, the same three links, spelled out in full.
+
+   The URLs are printed here as well as on the engaged page ON PURPOSE. There is no API to
+   open a URL from game code, so a link a player cannot copy is a link they have to TYPE —
+   and they can only type what they can read. That is also why none of these is ever
+   shortened for display: the board and the clipboard must agree exactly, or the shorter one
+   is a lie the moment somebody reads it off the screen instead of clicking.
+
+   No pointer input on a wall board, so nothing here is clickable — the copying lives on the
+   engaged page. *@
+
+<root>
+	<div class="board" style="background-color:@WallTheme.Bg; border-color:@WallTheme.Border;">
+		<div class="title" style="color:@WallTheme.Text;">MORE</div>
+		<div class="subtitle" style="color:@WallTheme.TextFaint;">the Discord, our other games, and the music</div>
+		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+		<div class="label" style="color:@WallTheme.AccentCss;">DISCORD</div>
+		<div class="link" style="color:@WallTheme.TextDim;">@DiscordButton.InviteUrl</div>
+
+		<div class="label" style="color:@WallTheme.AccentCss;">OUR GAMES</div>
+		<div class="link" style="color:@WallTheme.TextDim;">@GamesButton.GamesUrl</div>
+
+		<div class="label" style="color:@WallTheme.AccentCss;">MUSIC BY SKAFINITY</div>
+		<div class="link" style="color:@WallTheme.TextDim;">@SkafinityButton.SkafinityUrl</div>
+
+		<div class="cta">Press E to copy any of them</div>
+	</div>
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	/* Colours are runtime (WallTheme.cs, bound inline above); only layout and the static
+	   tokens live here, on the shared wall-board scale so this reads as one of the trio. */
+	.board {
+		width: 100%;
+		height: auto;
+		flex-direction: column;
+		align-items: stretch;
+		justify-content: flex-start;
+		padding: $wall-pad;
+		border-radius: $wall-radius;
+		font-family: $wall-font;
+		gap: $wall-gap;
+		border-width: 1.5px;
+		border-style: solid;
+	}
+
+	.board > div {
+		flex-shrink: 0;
+	}
+
+	.title {
+		font-size: 17px;
+		letter-spacing: 2px;
+	}
+
+	.subtitle {
+		font-size: 9px;
+		letter-spacing: 1px;
+	}
+
+	.divider {
+		height: 2px;
+		margin: 0;
+	}
+
+	.label {
+		font-size: 9px;
+		letter-spacing: 2px;
+	}
+
+	/* The URL is the content, so it wraps rather than truncating — an ellipsised link is
+	   unreadable and therefore untypeable, which is the one thing this board must not do. */
+	.link {
+		font-size: 10px;
+		white-space: normal;
+		word-break: break-all;
+	}
+
+	.cta {
+		font-size: 9px;
+		letter-spacing: 1px;
+		color: rgba(255,255,255,0.35);
+	}
+</style>
+
+@code
+{
+	/// <summary>World units to keep between the content's bottom edge and the floor.</summary>
+	[Property] public float FloorClearance { get; set; } = 60f;
+
+	/// <summary>Nothing here changes except the theme, so the accent is the whole hash — but it
+	/// has to BE in it, since the palette rides in inline style= values that only re-render
+	/// when the panel rebuilds.</summary>
+	protected override int BuildHash() => HashCode.Combine( SettingsModel.SettingsVersion );
+
+	protected override void OnUpdate()
+	{
+		// Every wall board anchors the same way, from one place — see WallBoardGeometry.
+		// Do not re-derive this here.
+		Gambit.World.WallBoardGeometry.FloorAnchor( this, FloorClearance );
+	}
+}

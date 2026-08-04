@@ -28,7 +28,18 @@ Code/Properties/
 # its csproj on every regen, with machine-local absolute Steam paths), and s&box's
 # own project template gitignores *.csproj as auto-generated — so, like
 # Code/gambit.csproj above, none of these are tracked.
+#
+# .version IS TRACKED, and is the exception that has to stay one. It looks like more
+# editor-generated noise and is not: LibrarySystem.Install gates its ENTIRE
+# delete-and-replace pass on that file existing (sbox-public, engine/Sandbox.Tools/
+# Editor/LibrarySystem/LibrarySystem.cs — "does this already exist?"). With it, an
+# update deletes every local file whose CRC doesn't match the manifest or that the
+# manifest no longer lists, then re-downloads; without it, the pass is skipped and the
+# download loop `continue`s past every file already on disk, so the install can only
+# ADD. A clone with no .version therefore silently degrades an update into an append,
+# leaving stale files that still compile — which is exactly how this library ended up
+# carrying both the old flat MusicGen.cs and the new Code/Engine/ at once. It is a
+# receipt, not an output; regenerating it means reinstalling.
 Libraries/gamah.skafinity/.bin/
-Libraries/gamah.skafinity/.version
 Libraries/gamah.skafinity/ProjectSettings/
 Libraries/gamah.skafinity/Code/*.csproj

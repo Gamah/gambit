@@ -45,10 +45,10 @@
 	<ItemGroup>
 		<ProjectReference Include="../../../../Steam/steamapps/common/sbox/editor/ActionGraph/Code/actiongraph.csproj" />
 		<ProjectReference Include="../../../../Steam/steamapps/common/sbox/editor/DooEditor/Code/dooeditor.csproj" />
+		<ProjectReference Include="../Code/gambit.csproj" />
 		<ProjectReference Include="../../../../Steam/steamapps/common/sbox/editor/Hammer/Code/hammer.csproj" />
 		<ProjectReference Include="../../../../Steam/steamapps/common/sbox/addons/tools/Code/Base Editor Library.csproj" />
 		<ProjectReference Include="../../../../Steam/steamapps/common/sbox/editor/MovieMaker/Code/moviemaker.csproj" />
-		<ProjectReference Include="../Code/gambit.csproj" />
 		<ProjectReference Include="../../../../Steam/steamapps/common/sbox/editor/ShaderGraph/Code/shadergraph.csproj" />
 	</ItemGroup>
 
