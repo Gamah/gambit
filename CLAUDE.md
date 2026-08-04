@@ -1350,7 +1350,10 @@ intrinsic pixels — are in `~/.claude/sbox.md`. Gambit-specific:
   that wall because of where it is, not because it is a setting, and reusing `InfoStation`
   means E, the freed cursor and Escape all come for free. The welcome board used to end with
   the Discord invite and no longer does — one place to reach us beats a link stapled to the
-  end of a how-to-play page.
+  end of a how-to-play page. Three links now: the invite, our other games, and **music by
+  Skafinity** (`https://github.com/gamah/skafinity` — the library that writes the soundtrack;
+  N opens its board, M mutes). Each has its OWN `SinceCopied` clock (`DiscordButton`,
+  `GamesButton`, `SkafinityButton`), because a shared one flashes the wrong confirmation.
 
 ## UI Gotchas (learned the hard way)
 

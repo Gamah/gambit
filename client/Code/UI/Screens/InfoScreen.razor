@@ -116,6 +116,16 @@
 			<div class="link-url" style="color:@WallTheme.TextFaint;">@GamesButton.GamesUrl</div>
 			<div class="games-btn" style="background-color:@WallTheme.AccentBg; border-color:@WallTheme.Border; color:@WallTheme.Text;" onclick="@CopyGames">@GamesLabel()</div>
 
+			<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+			@* Credit where the soundtrack comes from. Skafinity is its own open-source project
+			   that this game installs as a library — it writes the lobby's music live (N for its
+			   board, M to mute) — so it belongs here with the other outbound links. *@
+			<div class="section-header" style="color:@WallTheme.AccentCss;">MUSIC BY SKAFINITY</div>
+			<div class="body" style="color:@WallTheme.TextDim;">The lobby's soundtrack is written as you play by Skafinity, an open-source s&amp;box library. Press N for its board, M to mute.</div>
+			<div class="link-url" style="color:@WallTheme.TextFaint;">@SkafinityButton.SkafinityUrl</div>
+			<div class="games-btn" style="background-color:@WallTheme.AccentBg; border-color:@WallTheme.Border; color:@WallTheme.Text;" onclick="@CopySkafinity">@SkafinityLabel()</div>
+
 			<div class="body" style="color:@WallTheme.TextFaint;">Copying is all a game can do — s&amp;box gives no way to open a browser from in here, so paste it somewhere yourself.</div>
 		}
 		else if ( station.Kind == InfoStation.StationKind.DevNotes )
@@ -566,6 +576,17 @@
 		StateHasChanged();
 	}
 
+	string SkafinityLabel() =>
+		SkafinityButton.SinceCopied < 2f
+			? "✓  link copied to clipboard"
+			: "Copy the link to Skafinity";
+
+	void CopySkafinity()
+	{
+		SkafinityButton.Copy();
+		StateHasChanged();
+	}
+
 	// ── Lichess (M8) ──
 
 	string LichessLabel() =>
@@ -636,7 +657,9 @@
 			HashCode.Combine( LichessLinkState.Linked, LichessLinkState.Username,
 				LichessLinkState.Offline, LichessButton.SinceCopied < 2f,
 				LichessButton.SinceSecurityCopied < 2f, _unlinking, _playTab,
-				// MORE's second button needs its own term, or its label would only flip
-				// when something else in this hash happened to move.
-				GamesButton.SinceCopied < 2f ) );
+				// MORE's other buttons each need their own term, or their labels would only
+				// flip when something else in this hash happened to move. Nested again
+				// because HashCode.Combine takes at most eight arguments.
+				HashCode.Combine( GamesButton.SinceCopied < 2f,
+					SkafinityButton.SinceCopied < 2f ) ) );
 }
