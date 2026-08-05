@@ -41,8 +41,16 @@ gate is manual, and it is the first thing the branch does:
    the dotnet harness against the RFC 7636 vector that `internal/lichess/oauth_test.go` already
    uses.
 
-**Neither check is a formality.** If the first fails, the whole branch is blocked; if the second
-fails, one extra file is needed before the link flow can exist at all.
+3. **`Sandbox.Http` lets us SET the `User-Agent` header rather than overriding it.** lichess
+   records a `userAgent` per access token; sending one is our standing obligation and the only
+   reason they can attribute or reach us. On the server a `RoundTripper` guarantees it
+   (`etiquette.go`'s `init()`); the client has no such mechanism, only a per-call dictionary.
+   **If the engine refuses the header, we cannot keep the obligation** — that is a day-one
+   blocker, not a polish item, so check it in the same sitting as the other two.
+
+**None of these is a formality.** If the first fails the branch is blocked; if the second fails
+one extra file is needed before the link flow can exist; if the third fails, stop and talk to
+lichess before building anything.
 
 ---
 
@@ -82,6 +90,33 @@ FP-authed.
 **The client holds the `code_verifier` and does `POST /api/token` itself.** A code without its
 verifier is worthless, so **gamchess never sees a secret** — not in transit, not at rest, not in
 a log.
+
+> **Keep `/lichess/link` as the constant the board copies — do NOT show the raw authorize URL.**
+> This is the call most likely to be got wrong, because showing the lichess URL directly looks
+> simpler. `LichessApi.LinkUrl` is safe *precisely because it is a constant with no secret in
+> it*: it is Steam-web-session gated, so whoever opens it links **their own** accounts, and
+> handing it to a friend just links the friend. A raw authorize URL is bound to **your** state
+> and **your** SteamID — a friend who opened it would consent on *their* lichess account and
+> **you** would end up holding a `board:play` grant on it. That is strictly worse than today.
+> Keeping the page in the middle is also what preserves the load-bearing disclosure copy and the
+> byte-exact `redirect_uri`.
+
+**The five steps.** ① `POST /api/v1/lichess/link/start` (FP/session authed, body
+`{code_challenge}`) mints the state, stores the slot, evicts any older slot for that SteamID
+(newest wins), and returns `{state, authorize_url, redirect_uri}` — the server builds the
+authorize URL so `redirect_uri` derivation stays server-side and byte-exact. ② The player opens
+the constant `/lichess/link`, which finds their slot **by their Steam session's SteamID** and
+shows the disclosure + Continue. ③ `/lichess/callback` parks `{code}` and — unlike today —
+**does not burn the state**, because burning here makes collection impossible; it refuses if a
+code is already parked, since a browser refresh replays a spent code. ④
+`POST /api/v1/lichess/link/collect`, keyed on the **caller's authenticated SteamID** and never
+on a state from the body, answers `none` / `waiting` / `ready` — and `ready` **burns the whole
+slot atomically**. Burn-on-use moves from callback to collect. ⑤ The client exchanges at
+lichess using **the `redirect_uri` gamchess returned** (a hardcoded one silently breaks the test
+instance), reads `/api/account`, and POSTs its claim.
+
+**The client must return `redirect_uri` from the server, not hardcode it** — this is the same
+reason `steamReturnURL()` is derived once, and it is what keeps `testchess` pointing at itself.
 
 This **inverts** the existing `pendingLinks` store in `internal/api/lichess.go` (a state → {
 verifier, steamID } map, 10-minute TTL, mint-on-redirect, burn-on-callback, modelled on
@@ -169,13 +204,71 @@ price, and the answer is not to buy it back.
 - `GET /api/user/{username}/current-game` is **also `security: []`** if a live cross-check is
   ever wanted.
 
-**Guards:** never mark one lichess id verified for two SteamIDs — `store.ErrLichessIDTaken`
-(`internal/store/lichess.go:23`) is exactly this guard and should survive, now applied to a
-claim; and **never render a claim as confirmed** in any UI.
+### The plumbing this needs and does not have
 
-**A false claim cannot impersonate.** The real account still has to accept on lichess, so a lie
-produces *no game* — which is also why "verified on first game" is sufficient rather than merely
-convenient.
+**The archive carries no lichess game id.** Verified 2026-08-05: `gamePost`
+(`internal/api/games.go:37`) has no such field, the `games` table (`migrations/00001_schema.sql`)
+has no such column, and `BuildArchivePgn` sets `Site = lichess.org` but never the id. **The whole
+verification story cannot run until this is added** — three small pieces, easy to miss because
+nothing fails without them:
+
+- a migration adding `games.lichess_game_id TEXT`,
+- `gamePost.LichessGameID`,
+- `LichessGameController.TryArchiveFinished` passing the game id it already holds.
+
+The fetch itself already exists and survives: `internal/lichess/tv.go:303` does exactly this
+anonymous `game/export` call through the governor for TV results. **Copy it; do not write a
+second one.** *(Unverified: whether `players[].user.id` comes back under the query params
+`tv.go` uses — it asks for `moves=false&opening=false&clocks=false&evals=false&literate=false`.
+Re-derive from the live spec before writing the parser.)*
+
+### The DB shape, and the index that must NOT be carried over
+
+```sql
+CREATE TABLE lichess_accounts (
+    steam_id    BIGINT PRIMARY KEY REFERENCES players(steam_id),
+    lichess_id  TEXT NOT NULL,
+    username    TEXT NOT NULL,
+    verified    BOOLEAN NOT NULL DEFAULT FALSE,
+    claimed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    verified_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX lichess_accounts_verified_id
+    ON lichess_accounts (lichess_id) WHERE verified;
+```
+
+**The partial index is the whole trick.** `00002`'s plain `UNIQUE(lichess_id)` must **not** be
+carried over. Under custody the id came from a token, so uniqueness was free and safe. A *claim*
+is unauthenticated — a hard `UNIQUE` would let anyone squat a real user's id and permanently
+lock them out of ever linking. The partial index enforces "never one lichess id **verified** for
+two SteamIDs" while letting N SteamIDs harmlessly *claim* the same id. On promotion, an index
+conflict means "already verified for another Steam account": leave the claim unverified and
+**never steal**. Re-claiming a different id resets `verified` to false.
+
+`store.ErrLichessIDTaken` (`internal/store/lichess.go:23`) is the right error to keep — it now
+fires on promotion, not on claim.
+
+### Verification is weaker than it looks — and one guard is mandatory
+
+"This lichess id appears in this game" does **not** prove "this SteamID is that lichess id": a
+liar can point at any public game the real account played. The defence that a lie produces *no
+game* is sound, **but it only holds for the paired flow**, where the challenge genuinely has to
+be accepted by that account. A seek or an open game has no such property.
+
+> **Owner decision needed:** promote to `verified` only from a **paired** game whose export
+> shows *both* seats' claimed ids. That makes verification mean something; solo flows would
+> leave a claim unverified forever, which is fine because nothing depends on it.
+
+**The guard that is not optional.** The paired flow **challenges by username**, so a false claim
+sends a real lichess challenge to a real, innocent third party. Today that is impossible. Three
+guards, and the second is the one that actually closes it:
+
+1. `SetupPanel` shows the opposite seat's claimed name with an explicit **unconfirmed** marker
+   before either seat commits.
+2. **Black accepts only a challenge whose challenger id matches the claim gamchess published for
+   the other seat.** Cheap, strong, and it is a rule, not a suggestion.
+3. **Never render a claim as confirmed** — `LichessBoardPanel.razor`'s "✓ linked as {Username}"
+   becomes "linked as X (unconfirmed)" until `verified`.
 
 ---
 
@@ -195,6 +288,24 @@ credential".
   already has a place for, since a link's username is known client-side — and one client issues
   a **direct challenge to a named user** while the other accepts. The named opponent consenting
   on lichess *is* the authorisation. `client_game_id` stays as the rendezvous key.
+
+  **The two-intent rule survives, but its justification changes and must be restated.** It
+  existed because gamchess held everyone's tokens; it can no longer stop anyone being dragged
+  anywhere, because a one-sided start now just leaves a challenge sitting in someone's
+  notifications. What it still does is a **directory-disclosure rule**: gamchess must not hand
+  out a player's lichess username to whoever asks, so it reveals seat B's claimed username to
+  seat A only once **both** seats have posted an intent for the same `client_game_id`, and only
+  to those two. `LichessApi.Play`'s current doc-comment ("two independently-authenticated
+  intents are what make it consent") becomes false and must not be carried over.
+
+  **How Black learns the challenge id — the thing a next session will get wrong.** The reflex is
+  "Black opens the event stream and waits for a `challenge` event". **Don't.** White's challenge
+  response carries the id, both seats are in the *same s&box lobby*, and the station already
+  `[Sync]`s `client_game_id` — so `[Sync]` the challenge id and let Black accept by id. That
+  preserves exactly the property `relay.go:1233` documents today: the paired flow **never
+  watches `/api/stream/event`, and so is not bound by the one-event-stream-per-token rule**.
+  That was worth having when a server held the stream; it is worth much more now the client
+  does. Event stream as fallback only.
 - **Seek.** One caller, unchanged in shape: nobody else is being committed to anything. It needs
   the **event stream** (a real-time seek's response carries no game id — it is a stream of empty
   lines whose only job is to stay open).
@@ -205,10 +316,27 @@ credential".
   the bug that shipped in M8** — the creator's seat stayed empty and the game never started.
 
 **The one-relayed-game-per-player gate now lives entirely client-side**, and its reason changes.
-It was enforced server-side (`relay.Join`'s `hasOtherLivePlay`) plus a UI hint. The remaining
-hard constraint is that **lichess's event stream is one-per-token** — so a client must never
-open two. `SetupPanel`'s existing "playing at Table N, this table plays a local game" treatment
-is the right UI and should stay.
+It was enforced server-side (`relay.Join`'s `hasOtherLivePlay`) plus a UI hint; gamchess can no
+longer know. `SetupPanel`'s existing "playing at Table N, this table plays a local game"
+treatment is the right UI and should stay, and `LobbyPlayer.LichessGameElsewhere` still covers
+the in-lobby case — but **the gate becomes advisory**, since it cannot see a second s&box
+instance.
+
+> ### ONE EVENT STREAM PER TOKEN — make it a process-wide singleton
+>
+> `board.go:277` already records the symptom: a clean EOF means lichess closed it — game over,
+> **or the token opened a second event stream elsewhere.** With client custody, a second table,
+> a second s&box instance, or a hotload orphan will silently kill the first stream, and the flow
+> depending on it hangs with **no error**.
+>
+> So the event stream must be **one process-wide owner with refcounting**, never one per
+> `LichessGameController`. This is not optional, and it is also the backstop that makes the
+> advisory gate above tolerable: lichess's own rule enforces a partial version for free, and a
+> singleton is what lets us *notice* rather than break silently.
+>
+> **And a stream failure must never degrade into a poll** — lichess answers a poller with a
+> "please don't poll" 429. Exponential backoff (3s → 6s → 12s, cap 60s), and **never reconnect
+> the game stream once lichess has reported the game finished**.
 
 **Traps that do not change and must be carried into the C# port** (all from CLAUDE.md, all
 `[SOURCE]`-marked or spec-read — re-derive before trusting):
@@ -249,14 +377,32 @@ row closes as a side effect. Note `opponentGone` is **currently ignored** on bot
 (`relay.go:1282`, `board.go:196`); inbound handling is new work, and it finally has something
 truthful to report.
 
+> **But it does NOT close PLAN No. 3 for free, and row 0 currently overclaims.** No. 3's actual
+> wish is that a player who **roams away** has their light go out. A roaming player is still
+> running the client and still holding the stream, so lichess still sees them present. It closes
+> only if the client **drops the game stream on stand-up** — a product decision, not a
+> consequence of the architecture.
+>
+> **Owner decision needed:** drop the stream ~10s after stand-up (a grace, so a trip to the
+> fridge doesn't flap it) and re-open on sit-down. A reconnect's `gameFull` carries the whole
+> move list, so nothing is lost. With it, No. 3 genuinely closes; without it, No. 3 stays open.
+>
+> Also flagged: **that `opponentGone` fires for a Board API opponent who closes their game
+> stream is inferred, not read.** It is the single most load-bearing lichess fact in this
+> design, and PLAN No. 3 already says to re-derive from lila master before building anything.
+> Do that, and **do not state a claim-window duration** without reading it.
+
 **What the client must do:**
 
 | event | action |
 |---|---|
 | stand up / disengage | keep the game live (M17 behaviour) but cancel cleanly if the player is leaving the game, not just the seat |
-| quit / scene teardown | dispose the stream — which closes the connection, because **the returned stream owns the response** |
-| hotload | the stream must not survive a hotload half-alive; re-establish deliberately |
+| quit / scene teardown | dispose the stream — which closes the connection, because **the returned stream owns the response**. **Do not auto-resign**: a quit is not a stated forfeit. Offer an explicit "resign and leave" in the HUD instead |
+| hotload | the stream must not survive a hotload half-alive; generation-counter guard, re-establish deliberately |
 | hard crash | **nothing.** Nobody else holds the token. |
+
+Cancel **before** dispose and null the reference **before** the task can observe it — the same
+discipline as `LichessTvSource.DisposeSocket`'s "unhook BEFORE Dispose".
 
 **The honest cost:** a hard crash can no longer be resigned within ~30s. The game flags — as it
 does for every other Board API client. That is a real regression against today's behaviour and
@@ -279,15 +425,26 @@ one stream. Clients do **not** start reading lichess TV directly just because th
 
 > ### The teardown's sharpest trap
 >
-> `internal/lichess/tv.go` **depends on helpers that live in the files being deleted** —
-> `apiBase`, `client`, `streamClient`, `stream`, `streamReq`, `maxStreamLine`, `guard`, and the
-> `governor` / `agentTransport` from `etiquette.go`. Delete `oauth.go` and `board.go` naively
-> and **TV stops compiling**.
+> `internal/lichess/tv.go` **depends on helpers that live in the files being deleted**, and they
+> span **both** of them — `apiBase`, `client`, `maxBody` are in `oauth.go` (`:49`, `:85`, `:89`);
+> `streamClient`, `maxStreamLine`, `stream`, `streamReq`, `APIError`, `truncate` are in
+> `board.go` (`:33`, `:37`). Delete either naively and **TV stops compiling**.
+>
+> Worse, **`etiquette.go` is not self-contained either**: its `init()` (`:157-162`) assigns
+> `client.Transport` and `streamClient.Transport`, so it references symbols in both deleted
+> files.
 >
 > Those ~120 lines must be **relocated** — a new `internal/lichess/http.go` — as the **first**
-> commit of the branch, before anything is deleted. `etiquette.go` survives in full: gamchess is
-> still a lichess API client for TV, still one IP, still obliged to send a User-Agent and to
-> back off for a full minute on any 429.
+> commit of the branch, a pure move with zero behaviour change, before anything is deleted.
+> Keep `apiBase` a **`var`**, not a `const`: `tv_test.go` repoints it at an `httptest` server.
+>
+> **Compile failure is the good outcome here.** The bad outcome is the tempting fix — dropping a
+> fresh `&http.Client{}` into `tv.go`. That compiles, TV appears to work, and it silently strips
+> the User-Agent off every TV request (breaking the attribution obligation) and stops TV's 429s
+> from arming the governor. **Put a comment in `http.go` saying exactly that.**
+>
+> `etiquette.go` otherwise survives in full: gamchess is still a lichess API client for TV, still
+> one IP, still obliged to send a User-Agent and to back off for a full minute on any 429.
 
 ---
 
@@ -325,6 +482,19 @@ client revokes and gamchess just forgets the row.
 **Untouched:** `/health`, `/auth/steam/*`, `/api/v1/me`, `/api/v1/session`, `/api/v1/games*`,
 both `/api/v1/tv/*`, and all of matchmaking + relaygame.
 
+**Two things the teardown must not disturb:**
+
+- **`internal/api/tv_test.go` reads `../../../client/Code/Game/LichessTv.cs`** (`:183`) to hold
+  the server's channel allowlist and the client's list to each other so they cannot drift
+  silently. It must keep passing across the client reshuffle — it is a cross-repo-half test and
+  the kind that gets "fixed" by deletion.
+- **gamchess deploys before the s&box package updates**, so for a window a shipped OLD client
+  will 404 on `/api/v1/lichess/play`. `LichessGameController.Poll` already handles a 404 by
+  clearing and reporting, which is acceptable degradation — but **keep the JSON field names
+  `linked` and `username` on `GET /api/v1/lichess`** so an old `LichessLinkState.Fetch`
+  deserializes rather than nulling out. The branch is otherwise all-or-nothing on deploy: state
+  that in the PR body.
+
 **Config — gamchess ends with none of these:** `LICHESS_TOKEN_KEY`, `LICHESS_TOKEN_KEY_OLD`,
 `LICHESS_KEY_ROTATION_DAYS`, `LICHESS_AUDIT_KEY`. Read in `cmd/server/main.go`; minted by
 `server/Makefile`'s `keys` / `keys-note` targets, which `up`, `rebuild` and `testinst` all
@@ -345,6 +515,14 @@ byte-for-byte `redirect_uri`, and it is still what keeps the test instance point
    throwaway command early in the branch, run it against prod, then delete it with the rest.
    `Revoke` already treats a 401 as success, which is the right behaviour for a token the player
    revoked themselves.
+   > **The ordering trap, and it is a sharp one: migrations run in-process at boot via goose.**
+   > If the drop ships in the same binary as the teardown, **goose drops `lichess_links` before
+   > anyone can revoke anything.** The sweep is therefore an **operator step run against the
+   > OLD binary's database, with the KEK still present** — not a boot hook, and not something
+   > the deploy does for you. Say so in the PR body, in the tool's own `--help`, and here.
+   > It should also be **serial and resumable**: a single 429 arms the governor's 60s
+   > process-wide backoff, so it will pause, and it must be safe to re-run.
+
 2. **Then the migration.** A new migration drops `lichess_key_versions`, and drops or reshapes
    `lichess_links` — `token_enc`, `token_nonce`, `scopes` and `key_version` all go; what remains
    is the claimed-vs-verified lichess id. `00002` and `00003` **stay in the tree**: goose keeps a
@@ -395,11 +573,41 @@ becomes a real lichess client: the C# port of the useful half of `board.go`.
   call site can forget.
 - **Port the 429 rule.** "Wait a full minute before resuming API usage" — a 429 anywhere stops
   everything for 60s. Also port "only make one request at a time".
-- **The seek self-limit changes premise.** It was 5/min because that is lila's per-IP limit
-  (`Limiters.setupPost`) and **our whole playerbase shared one IP**. Now each player spends
-  their own. A per-client limiter is still worth keeping — refusing locally with a legible
-  reason beats earning a 429 — but it is no longer a shared budget, and PLAN No. 8's premise
-  ("5/min for the entire playerbase") dies with it.
+- **The seek self-limit keeps its number and loses its reason.** It was 5/min because that is
+  lila's per-IP limit (`Limiters.setupPost`, **[SOURCE]** — re-derive) and **our whole
+  playerbase shared one IP**. Now each player spends their own. Keep 5/min anyway: a player
+  mashing the button now earns a 429 that arms *their own* 60s stop-everything, so refusing
+  locally with a legible reason is still strictly better — and a household, LAN party or NAT
+  still shares an IP, where 5/min per client is not conservative. **Delete every string saying
+  the budget is shared by the whole playerbase** (`LichessApi.Seek`'s doc-comment, PLAN No. 8,
+  CLAUDE.md's etiquette section).
+- **Do NOT port "only make one request at a time" as a global mutex** — it would serialise a
+  move behind a held stream. It is advice about request rate, not a lock.
+- **The structural loss worth naming:** `agentTransport` is a `RoundTripper`, which is *why* no
+  call site can forget the User-Agent. s&box has no equivalent — headers are a per-call
+  dictionary. Replace the guarantee with a **single seam**, exactly as `GamchessApi.Send` is the
+  only `Http.RequestAsync` call site in the client today. Everything else builds a request
+  *description* and hands it over; that is also what makes the builders harness-provable.
+
+> ### The one thing `LichessTvSource` does NOT model: thread affinity
+>
+> `Sandbox.WebSocket`'s `OnMessageReceived` hands you the message on the game thread. A raw
+> `Stream` read completes on a **thread-pool** thread. So the read loop may only touch a plain
+> latest-wins slot; **every `Scene` / `[Sync]` / `GameObject` touch must happen in `Pump()` from
+> `OnUpdate`.** `LichessTvSource` gets this for free and therefore teaches nothing about it.
+>
+> **Hotload is the matching hazard.** An orphaned read task can leave a *live HTTP connection to
+> lichess*, which on the Board API means both "still present" and "your event stream slot is
+> taken" — a leak that fails silently. Guard the loop with a **generation counter** checked
+> every line and bumped on every start, so an orphan exits on its next read.
+
+**Delete the staleness apparatus wholesale — do not port it.** `LichessGameController` carries
+`_version` (labelled, in the code, "long-poll cursor"), `_bankLag`, `_lastRoundTrip`, plus the
+`clock_age_ms` / `hold_ms` reconciliation. **A stream has no hold to measure and no cursor to
+reconcile**, exactly as M18 found when TV moved off its long poll — that migration deleted the
+same machinery for the same reason, and it is the precedent to cite. Leaving it in against a
+stream **reintroduces the M11 sawtooth**, where the clock ticked down and then jumped back *up* —
+the one direction the house rule forbids.
 
 **Other client work:**
 
@@ -409,9 +617,23 @@ becomes a real lichess client: the C# port of the useful half of `board.go`.
 - **The spectator mirror survives untouched** — `MirrorMoves` / `MirrorLive` are
   `[Sync(FromHost)]` fields fed by the **participant's own observations**, not by gamchess, so
   non-participants keep seeing lichess games and the path gets *more* direct.
-- The token at rest goes beside `Code/Game/PlayerData.cs`. Note `GamchessApi`'s `_session` and
-  `GamchessAuth`'s `_token` stay **memory-only** — that rule is about gamchess credentials and
-  is unaffected.
+- **The token gets its OWN file — not `player.json`.** `PlayerData._cache` is a static shared
+  object serialized whole on every settings write, so a token riding inside it will eventually
+  land in a log or a dump. A separate `lichess.json` also makes "forget my token" a single file
+  delete. `GamchessApi`'s `_session` and `GamchessAuth`'s `_token` stay **memory-only** — that
+  rule is about gamchess credentials and is unaffected.
+- **`LichessLinkState` should stop polling gamchess for "am I linked".** With the token on disk
+  that is answerable locally, instantly, and offline. The 3s poll should only fetch the
+  claim/verified state, which is advisory.
+- **Don't port `ChallengeKeepAlive`** (`board.go:537`, ~60 lines). Its only benefit is lichess's
+  15s ping, its trap has already bitten once (closing the stream does **not** withdraw the
+  challenge), and an explicit `/cancel` on a plain buffered challenge is strictly simpler.
+  Dropping it removes an entire third stream shape from the client.
+- **The anonymous-create trap.** A single-seam client attaches `Authorization` by default, and
+  `board:play` **403s** `POST /api/challenge/open`. The seam needs an explicit anonymous mode,
+  and the harness must assert no `Authorization` on that builder — re-creating the invariant
+  `board_test.go`'s `TestOpenChallengeIsAnonymous` holds today and which is otherwise **simply
+  deleted** with the Go.
 - **The lichess calls must not inherit the gamchess circuit breaker.** `GamchessApi`'s static
   `_breaker` exists so a dead gamchess costs one timeout rather than one per call; lichess being
   slow must not open the breaker on our own backend, or vice versa.
@@ -479,7 +701,16 @@ these **ships a lie**, and the only person who finds out is a player reading the
 - `client/Code/UI/SetupPanel.razor` — the one-lichess-game-at-a-time explanation.
 - `server/internal/api/lichess_pages.go` — the browser consent/disclosure page. Whether a
   rendered page survives at all depends on the new handoff; if one does, its **disclosure copy
-  is load-bearing and must not be trimmed** (PLAN No. 7 says so already).
+  is load-bearing and must not be trimmed** (PLAN No. 7 says so already). Three lines are
+  **new**: the token is stored on this PC and gamchess never sees it; playing from another PC
+  means linking again there; and **deleting the game's data removes the token from this PC but
+  does not revoke it at lichess** — use `/account/security`. That last one is a genuinely new
+  hole (gamchess used to hold the only copy, so unlink was always available) and it belongs in
+  the copy *and* in the honest-costs section above.
+  **One correction while you're there:** the callback page can no longer name the account it
+  just linked, because gamchess has no token — which makes PLAN No. 7's parenthetical ("the
+  callback has to name the account it just linked") false. The pages stay server-rendered
+  anyway, for the disclosure and the byte-exact `redirect_uri`.
 
 **Docs:**
 
