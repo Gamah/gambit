@@ -199,10 +199,34 @@ price, and the answer is not to buy it back.
 
 **This supersedes the claimed-on-link / verified-on-first-game design below.** Two mechanisms
 were re-derived from lila master 2026-08-05 and **both** verify a lichess identity at link time.
-Which one the branch builds is **still an open decision** (owner, 2026-08-05) — the facts are
-recorded here so it can be settled without re-deriving them.
 
-| | Option A — `token/test` | Option B — challenge the Gambit account |
+> **DECIDED (owner, 2026-08-05): the token transits gamchess ONCE, and gamchess calls
+> `GET /api/account` with it to establish who linked.** That is Option A's shape — the token
+> lives on the player's disk, gamchess holds no lichess secret of its own — with `/api/account`
+> in place of `token/test` as the call it makes. **Option B (challenging a Gambit lichess
+> account) is NOT being built**; its facts stay below because they were expensive to derive and
+> because it is the fallback if `/api/account` ever grows a scope requirement.
+>
+> **Why `/api/account` rather than `token/test`**, given both cost exactly one transit of the
+> token: `testTokens` returns **`userId` only**, and the link row wants the display **username**
+> too (lichess ids are lowercased — `thibault` is the id, `Thibault` the name). `/api/account`
+> returns both in the same call, so `token/test` would need a second request to `/api/user/{id}`
+> to render a name. `GET /api/account` is **`security: [OAuth2: []]`** — a token, but **no
+> specific scope** — so the `board:play` token the player just minted reads it, and no scope
+> widens. Its answer is authoritative for the same reason `token/test`'s is: lichess resolved it
+> from the bearer, not from anything we asserted.
+>
+> **What does NOT change from Option A as written below:** the token is used once and discarded,
+> never persisted, never logged, never put in an error string (`GamchessApi.Redact` is the
+> precedent); "gamchess cannot hold your token" is a **promise**, not a structure, and the copy
+> must not overclaim it; and everything in "What either option collapses" still collapses.
+>
+> **The claim this kills:** the paragraph above warning *"Do NOT fix this with a second scopeless
+> token"* still stands — the point was never that `/api/account` is off limits, it is that
+> minting a **second long-lived credential** to read it would rebuild the pile. Reading it once
+> with the token the player already has mints nothing.
+
+| | **Option A — CHOSEN** (one token transit; `/api/account`, or `token/test`) | Option B — challenge the Gambit account |
 |---|---|---|
 | Player plays a game | no | no |
 | Extra player scope | none | none (`board:play` already challenges) |
@@ -218,7 +242,11 @@ question. That part is settled regardless of which is chosen.
 
 ---
 
-#### Option A — `POST /api/token/test`
+#### Option A — one token transit (CHOSEN; the call is `GET /api/account`)
+
+*The derivation below is `token/test`'s, because that is how the mechanism was found. The chosen
+call is `GET /api/account` for the username — see the DECIDED box; the flow, the tradeoff and the
+never-log rule are identical, and `token/test` stays a drop-in if a userId alone ever suffices.*
 
 Re-derived from lila master 2026-08-05 — `app/controllers/OAuth.scala`:
 
@@ -295,10 +323,9 @@ depth against a bug rather than against a liar.
 **Rate limit note (A):** `testTokens` is IP-limited with `cost = bearers.size`, and gamchess is
 one IP — trivial at one token per link, but do not batch-verify in a loop.
 
-> **The decision to make, in one line:** Option A is fewer moving parts; Option B keeps the
-> player's token on their own machine and gives us a lichess presence we may want anyway. Pick
-> when the branch reaches the link flow — nothing before that depends on it, and the wire
-> contract for `GET /api/v1/lichess` is identical either way.
+> **Decided: Option A, with `GET /api/account` as the call** (see the DECIDED box above). Fewer
+> moving parts won, and gamchess keeps no lichess account or secret of its own. The wire contract
+> for `GET /api/v1/lichess` was identical either way, so nothing already built has to move.
 
 ---
 
