@@ -195,7 +195,60 @@ price, and the answer is not to buy it back.
 > zero-scope token really does read `/api/account` — but that rebuilds the pile of long-lived
 > credentials this whole change exists to delete, in exchange for a username.
 
-**Do this instead: claimed on link, verified on first game.**
+### RESOLVED (owner, 2026-08-05): verify at link with `POST /api/token/test`
+
+**This supersedes the claimed-on-link / verified-on-first-game design below.** Re-derived from
+lila master 2026-08-05 — `app/controllers/OAuth.scala`:
+
+```scala
+def testTokens = AnonBodyOf(parse.tolerantText): body =>
+  val bearers = Bearer.from(body.trim.split(',').view.take(1000).toList)
+  ... Json.obj("userId" -> t.userId, "scopes" -> ..., "expires" -> t.expires)
+```
+
+**`AnonBodyOf` = no authentication**, and it returns **`userId`** per token. So gamchess can
+learn a token's authoritative owner **holding no credential of its own**. The catch is inherent:
+you must POST the token, so the token transits gamchess once.
+
+**The flow:** at link, the client exchanges the code itself (it still holds the verifier), then
+POSTs its fresh token to gamchess over the FP-authed channel. gamchess calls `token/test`,
+records the returned `userId` as **verified**, and discards the token. The token still lives
+only on the player's disk.
+
+**The tradeoff, stated honestly:** "gamchess cannot hold your token" drops from a *structural*
+guarantee to a *promise* — it sees the token for the length of one call. The owner's call
+(2026-08-05) is that this is acceptable: token compromise is not a risk we are optimising
+against. **But note what still bites us and not the player:** lichess records `clientOrigin` per
+token, so abuse of stolen Gambit tokens is attributable to Gambit, and their lever is killing
+the whole app on that origin. That is an argument for not logging the token, not for refusing
+the design — so: never log it, never persist it, never put it in an error string.
+`GamchessApi.Redact` is the existing precedent.
+
+**What this collapses** — all of it becomes unnecessary:
+
+- the claimed-vs-verified split (every row is verified at link),
+- the partial unique index (a plain `UNIQUE(lichess_id)` is safe again, because the id is now
+  authenticated rather than asserted),
+- the `games.lichess_game_id` plumbing, which existed *only* to drive promotion,
+- the promotion path and its `game/export` parsing,
+- the open question about promoting only from paired games.
+
+**Keep anyway:** the paired-flow guard (Black accepts only a challenge whose challenger id
+matches the id gamchess published for the other seat). It costs nothing and it is defence in
+depth against a bug rather than against a liar.
+
+**Rate limit note:** `testTokens` is IP-limited with `cost = bearers.size`, and gamchess is one
+IP — trivial at one token per link, but do not batch-verify in a loop.
+
+---
+
+### Superseded: the claimed-on-link design (kept for the reasoning, not the plan)
+
+The following was the design before `token/test` was re-derived. It is retained because the
+*constraints* it documents are still true and still worth knowing — in particular why the
+callback cannot identify anyone.
+
+**Claimed on link, verified on first game.**
 
 - The client POSTs `{id, username}` from its own `/api/account` as an **unverified claim**.
 - gamchess **promotes it to verified** when an archived lichess game's
@@ -271,6 +324,82 @@ guards, and the second is the one that actually closes it:
    becomes "linked as X (unconfirmed)" until `verified`.
 
 ---
+
+## Scopes: `board:play` is no longer necessarily the only one
+
+**The standing rule changes here.** CLAUDE.md says `board:play` is the only scope we ever
+request, and one of its two reasons was that *a scope change forces a full re-link for everyone*
+(tokens are long-lived, there are no refresh tokens). **This branch already forces that re-link**
+— so that cost is paid, and adding scopes is free on that axis. This is the one moment in the
+project's life when widening scope costs nothing extra, which is exactly why it is being decided
+now rather than later.
+
+The other reason — blast radius — is an **explicit owner decision as of 2026-08-05**: token
+compromise is not what we are optimising against, and more permissions mean more features.
+
+**The authoritative scope list**, re-derived from lila master 2026-08-05
+(`modules/oauth/src/main/OAuthScope.scala`): `preference:read|write`, `email:read`,
+`challenge:read|write|bulk`, `study:read|write`, `tournament:write`, `racer:write`,
+`puzzle:read|write`, `team:read|write|lead`, `follow:read|write`, `msg:write`, `board:play`,
+`bot:play`, `engine:read|write`, `web:mobile`, `web:polygon`, `web:mod`.
+
+**Two things do not change:**
+
+- **`web:mobile` and `web:polygon` stay out**, and for a different reason than the rest — not
+  risk, but honesty. Their own descriptions are "Official Lichess mobile app" and "Take Take
+  Take"; taking one means claiming to be a first-party client to bypass a gate lichess put on
+  third-party board clients deliberately. PLAN No. 12 records this as decided. `web:mod` is
+  moderator tooling and is not ours to ask for.
+- **The disclosure copy enumerates what we CANNOT do, so every added scope invalidates a
+  clause.** `InfoScreen.razor`'s Lichess branch currently promises the token "cannot read your
+  email, read or send messages, see who you follow, or change your account". Add `email:read`,
+  `msg:write` or `follow:read` and that sentence becomes a lie. **The scope set and the
+  disclosure copy must be decided together**, in this branch, and the copy must list what we
+  now *can* do rather than reciting a shorter list of what we can't.
+
+### The scope set (owner, 2026-08-05)
+
+**`board:play` + `puzzle:read` + `puzzle:write` + `follow:read` + `msg:write`.**
+
+- **`puzzle:read|write`** — puzzles in the lobby (a wall board, or a puzzle at a table between
+  games), solved against the player's real lichess record. Self-contained; touches no social
+  surface.
+- **`follow:read`** — which lichess friends are online.
+- **`msg:write`** — message an opponent you just played. **A feature, not the identity
+  mechanism** (see below).
+
+**The disclosure copy must be rewritten in the same breath**, because it currently promises the
+opposite: *"It cannot read your email, read or send messages, see who you follow, or change your
+account."* With this set, two of those four clauses become false. The new copy states what the
+grant **can** do, in plain terms, rather than reciting a shorter list of what it can't. This is
+the highest-risk copy in the change — it is the sentence a cautious player reads before
+consenting.
+
+### Recorded, not to fix: two verification schemes that were considered and rejected
+
+Both look like solutions. Neither beats `token/test`, and both will be re-invented by someone
+who hasn't read this.
+
+1. **Persistent-state proofs — "join our team", "follow us"** (`team:write` / `follow:write`,
+   checked via the anonymous `GET /api/team/{teamId}/users`). **Replayable, therefore not a
+   proof.** Once the real account is a member, any liar claiming that id passes the identical
+   check, because gamchess only ever observes a persistent boolean. A proof must bind a fresh
+   nonce or demonstrate possession of a fresh secret.
+2. **Nonce-by-message to a Gambit account** — the client `msg:write`s a secret to an account we
+   own; the same secret goes to gamchess over the FP-authed channel; gamchess matches them.
+   **This one genuinely verifies** — the nonce is fresh and only the token holder could have
+   sent it as that account, so it is not replayable. It is rejected on cost, not correctness:
+   - **Reading the inbox means authenticating as the receiving account**, so gamchess must hold
+     a long-lived lichess credential again — decision ⑤ inverted. Worse than per-player custody
+     in one specific way: it is a **single shared credential**, so its compromise is an app-wide
+     event rather than one player's problem, and no player can revoke it.
+   - **There is no `msg:read` scope** — the scope list has only `msg:write`. The read routes
+     (`GET /inbox/:username`, `controllers.Msg.convo`, lila `conf/routes` 2026-08-05) are **web
+     endpoints with no documented `security:` contract**, so they are plausibly session-only and
+     can change without notice. **[SOURCE]**
+   - It needs an account we own and maintain, and it puts a nonce in a real inbox.
+
+   `token/test` buys the same proof anonymously, with no account, no secret, and no extra scope.
 
 ## The flows, redesigned
 
