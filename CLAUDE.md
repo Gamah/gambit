@@ -724,6 +724,11 @@ have been run here at all.
   frame gives every margin a job: **−Y is the clock strip then White's tray**, **+Y is
   Black's tray** (with the number plaque hanging below its edge), and **±X are kept clear
   — they are the seat cameras' sightlines.**
+  → **One thing lives in an X margin now** (issue #28): the seated player's own BOARD SETTINGS
+  plate, in their **near-left corner**. The sightline rule is about anything standing MID-EDGE in
+  a player's foreground — the clock tower that read as a wall in Black's face. This is 0.3 thick,
+  flat on the tabletop, in the corner behind the near rank, and it is client-local so there is
+  only ever one. The trays and the clock strip run 26 in X (±13), so nothing else is out there.
   It was 34 square (a 2.5 margin) while a comment promised "a healthy margin for
   clocks/captures later" — it wasn't one, and the plaque was standing in what is now
   Black's tray. **Don't put anything new on the tabletop without checking which margin
@@ -1012,22 +1017,52 @@ skips it changes a stored value and nothing in the world.
   tried and rejected on #26/#27, so don't reach for them again: folding the two sound toggles into
   one `MultiToggleRow` (landed, didn't fix it) and a local ~0.8× type/spacing rule (**rolled back**
   — a font size local to one board makes that board quietly different from every other one).
-- **Two doors, one editor.** Seated: a ⚙ pill bottom-left. At the wall: a BOARD SETTINGS row on
-  the world panel, so someone who isn't sitting down can still reach these. Both call
-  `BoardSettingsScreen.Open()`. **Nothing in the panel may read `ChessStation.Active`** — every row
-  is client-local and the wall door has no seat.
+- **Two doors, one editor.** Seated: a **plate on the tabletop**, near-left corner of your own
+  seat (`World/SeatSettingsPlate.cs`). At the wall: a BOARD SETTINGS row on the world panel, so
+  someone who isn't sitting down can still reach these. Both call `BoardSettingsScreen.Open()`.
+  **Nothing in the panel may read `ChessStation.Active`** — every row is client-local and the wall
+  door has no seat.
+- **The tabletop plate is the repo's FIRST world-space control, and it is the `WorldInput` path.**
+  It was a screen-space pill first; the owner wanted it on the board. P99 built two world-space
+  buttons and deleted both — but read *why*: they were an extra thing to find, aim at and click
+  **in the mode whose whole point is that you are not pointing at anything**, and they needed a
+  plate per seat plus a yaw-180 flip to keep the words unmirrored. Neither objection survives here:
+  this opens a settings panel you use *with* a cursor, and the plate is **client-local, so there is
+  exactly ONE of it** — moved to whichever seat the local player is in. Clicking works because
+  `LobbyPlayer` hangs `Sandbox.WorldInput` on the camera, which is what CLAUDE.md already named as
+  the thing to reach for; **do not rebuild the hand-rolled tilted-plane hit test.** Neither can be
+  proven on this host — only one of them is the engine's own.
+  → **It is unparented on purpose.** A `ChessStation` is NetworkSpawned, so a child of one rides
+  the host's snapshot, transform and enabled state included (issue #12's lesson). The plate is a
+  `NotSaved | NotNetworked` GO at the scene root, placed in world space off the station's transform
+  every frame — which also keeps it with the table when the ring SLIDES on a board-count change.
+  → **It fits in an X margin, which the budget calls a sightline** — and that is checked, not
+  ignored: the warning is about anything standing MID-EDGE in a player's foreground (the clock
+  tower that read as a wall in Black's face). This is 0.3 thick, flat on the table, pushed into the
+  near-left corner behind the near rank. The trays and the clock strip are 26 long in X (±13), so
+  the corner is genuinely empty.
+  → **One string, one plate, one font size.** Both states are 14 characters ("BOARD SETTINGS" /
+  "ESC FOR CURSOR") so the inert state is **colour only** — the same rule `TableClockTextPanel`
+  keeps, and the reason a second string would mean a second plate. Its pixel space derives from
+  the text SPAN exactly as the clock's does (`SettingsPxWidth`, reusing the clock's measured
+  `ClockCharAdvanceEm` and `ClockTextFitFraction` rather than re-typing them).
+  → **In LOOK aim it stops offering a click and says `ESC FOR CURSOR`.** The pointer is hidden;
+  a live-looking control there is the "reads as broken" failure the aim hint exists for.
 - **It is MODAL for `SeatAim`, exactly like the promotion picker**, and the wiring is
   deliberate: `LobbyPlayer.UpdateSeatAim` folds `IsOpen` into the modal flag rather than the panel
   touching `SeatAim` — that is what makes it release the cursor and take aim back **by itself** on
   close, without clearing a suspend the player asked for with Escape. Escape is routed at it in
   `LobbyPlayer` (the one place that reads `EscapePressed` while engaged), ahead of both the aim
   toggle and the stand-up.
-- **The bottom-left column now holds three panels**: the ⚙ pill at `bottom: 44px`, `HudHints`'
-  keycap stack at 44 (78 when the pill is up, `.hints.raised`), and `VoicePanel`'s roster above
-  both (100 / 134). **Keep all three in step.**
-- **In LOOK aim the pill is drawn dimmed and unclickable**, saying "Esc for the cursor" — the
-  pointer is hidden, so a live-looking button would be exactly the "reads as a broken HUD" failure
-  the aim hint exists for. It keeps its slot either way so the stack doesn't hop on every Escape.
+- **The wall's own panel HIDES itself while the board panel is open** rather than stacking under
+  it. Not a z-order bug and not translucency (`WallTheme.Bg` is opaque, and the board panel's root
+  carries `z-index: 60` against the wall panel's none): both cards are 620px and centred, and the
+  wall's is much taller, so its top and bottom rows poke out past the board card and the pair reads
+  as one garbled panel. The station stays engaged underneath, so closing the board panel brings the
+  wall's straight back — which is what "opened it from here" should mean.
+- **The bottom-left column is unchanged** — `HudHints` at 44, `VoicePanel`'s roster at 100. The
+  first version of the seated door was a pill in that corner and pushed both up; it is on the
+  tabletop now, so those numbers are back to what they were. Don't reintroduce a third tenant there.
 - **The wall board summarises only what it edits.** PLAY MODE / BOARD SOUNDS / SPEAK MOVES status
   lines went with their rows; a status line for a setting that lives elsewhere is a line nobody
   re-reads when that setting changes shape.
@@ -1077,6 +1112,11 @@ only DRAWS it (the crosshair, and which way Escape goes next).
   is ever wanted again, the thing to reach for is `WorldInput` (see the UI Gotchas section), not
   a rebuild of that plane arithmetic — and the reason to want one has to be better than "there
   should be a button".
+  → **Issue #28 then wanted one, and took that advice**: the BOARD SETTINGS plate is in the
+  near-left tabletop corner these attempts used, clicked through `WorldInput`. It survives both
+  objections rather than ignoring them — it is used *with* a cursor (it opens a settings panel,
+  and in LOOK aim it stops offering a click), and being client-local there is only ever ONE of it
+  to place. **The aim toggle is still Escape and still has no button.**
 - **The mechanism is one engine switch, and that is why it can't get out of step.**
   `Mouse.Visibility = Hidden` locks the pointer AND is exactly what makes `Input.AnalogLook`
   report movement (the engine zeroes AnalogLook whenever a cursor is visible). **Never set
@@ -1118,7 +1158,7 @@ only DRAWS it (the crosshair, and which way Escape goes next).
   also what keeps a non-zero `SeatAim.LookOffset` from snapping, since the offset is already baked
   into where the camera is. `BeginEngage` and the seat-switch schwoop clear it so those adopt the
   new anchor silently rather than re-blending a blend they are already running.
-- **Nothing was added to the world in the end** — no tabletop geometry, no margin spent, and the
+- **P99 added nothing to the world in the end** — no tabletop geometry, no margin spent, and the
   Y-margin budget note is untouched. The whole feature is one state machine, one key, one
   crosshair and a HUD line.
 - Proven on this host: `SeatAim` runs its whole truth table in a shim harness (see the
@@ -1498,12 +1538,15 @@ renderer — are in `~/.claude/sbox.md`. What follows is what this repo paid for
   `PanelSize` is off by 2×. And **`WorldInput` exists**: a `Component` you hang on the camera
   that feeds a RAY into the UI system, so world panels with `pointer-events: auto` become
   clickable by looking at them (it uses the cursor ray when `Mouse.Active`, the GameObject's
-  forward otherwise, and honours `WorldPanel.InteractionRange`, default 1000). Nothing in this
-  repo or any sibling has ever used it — P99 built two world-space buttons with hand-rolled
-  plane arithmetic instead (an unproven input path cannot be tested on this host) and then
-  **deleted them both**, keeping the key. So the repo still has no world-space control, and
-  `WorldInput` remains the thing to reach for if they ever become a category — rather than a
-  third hand-rolled ray test.
+  forward otherwise, and honours `WorldPanel.InteractionRange`, default 1000). P99 built two
+  world-space buttons with hand-rolled plane arithmetic instead (an unproven input path cannot be
+  tested on this host) and then **deleted them both**, keeping the key. **Issue #28 is the first
+  thing here to actually use `WorldInput`**: `LobbyPlayer` adds one to the local camera, and the
+  tabletop BOARD SETTINGS plate is the one panel in the lobby with `pointer-events: auto` — every
+  other WorldPanel is `none` by the one-string root rule, so nothing else changed behaviour by its
+  existing. It is still unproven on this host, and it is still the right call: a third hand-rolled
+  ray test would be equally unproven and not the engine's. **Any future world-space control goes
+  through it.**
 - **`⬜`/`⬛` are emoji too.** The "panel glyphs paint as colour emoji" rule is not only
   about chess pieces — the geometric-shape block characters are the same trap. `GameHud`
   uses them safely at 13px in a HUD; at 76px on a world panel they render as two big

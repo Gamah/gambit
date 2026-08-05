@@ -16,11 +16,13 @@
 	unrelated jobs in one list. The wall keeps the ROOM (theme, lights, floor, voice range)
 	and these come here, where you are when you care about them.
 
-	TWO DOORS, ONE EDITOR:
-	  · seated — the BOARD SETTINGS pill, bottom-left, out of the board's way in BOTH the 3D
-	    seated framing and the 2D top-down one;
+	TWO DOORS, ONE EDITOR — and neither of them is in here:
+	  · seated — a plate in the WORLD, on the tabletop's near-left corner
+	    (World/SeatSettingsPlate.cs). It was a screen-space pill in this file's bottom-left
+	    corner first; the owner wanted it on the board;
 	  · at the wall — SettingsScreen's own BOARD SETTINGS button, for someone who isn't
-	    sitting down.
+	    sitting down. That panel HIDES itself while this one is open rather than stacking
+	    under it: both cards are 620px and centred, and the taller one pokes out at both ends.
 	So it must work with no seat: every row is client-local and nothing here may read
 	ChessStation.Active.
 
@@ -39,28 +41,6 @@
 *@
 
 <root>
-	@* The opener. Seated only: at the wall the door is SettingsScreen's own button, and a
-	   roaming player has neither a board in front of them nor a reason. Hidden while the
-	   panel is up — the panel has its own ✕ and would otherwise sit on top of its own
-	   button. *@
-	@if ( ButtonShowing )
-	{
-		@* Look aim hides the pointer, so this pill is real and unclickable while it is on —
-		   which is exactly the "reads as a broken HUD" case the aim hint exists for. Say so
-		   ON the button rather than leaving it looking live: the HUD's own "Esc for the
-		   cursor" line is a few hundred pixels away in the other corner. It keeps its slot
-		   either way, so the keycap stack above doesn't hop 34px every time Escape is
-		   pressed. *@
-		@if ( SeatAim.Aiming )
-		{
-			<div class="open-btn dimmed">⚙  BOARD SETTINGS — Esc for the cursor</div>
-		}
-		else
-		{
-			<div class="open-btn" onclick="@( () => Open() )">⚙  BOARD SETTINGS</div>
-		}
-	}
-
 	@if ( IsOpen )
 	{
 		<div class="screen-fit">
@@ -107,49 +87,6 @@
 		   underneath the panel whose button opened it. */
 		z-index: 60;
 		font-family: $wall-font;
-	}
-
-	/* The opener, bottom-left. That corner is the one place free of the board in BOTH
-	   framings: the 3D seat looks down the board at screen centre, and the 2D nadir camera
-	   fills the middle with the 64 squares. The right-hand HUD (right: 24px) and the
-	   move history (left: 24px, top) both live at the TOP, so nothing there is displaced.
-
-	   It sits at the FOOT of the bottom-left column and pushes the HudHints keycap stack up
-	   (see HudHints.raised / VoicePanel.raised — keep the three in step). Bottom-anchored
-	   rather than dropped in above the stack, because the stack changes height with the
-	   music board and a fixed offset above it would drift. */
-	.open-btn {
-		position: absolute;
-		left: 16px;
-		bottom: 44px;
-		padding: 6px 14px;
-		border-radius: 12px;
-		background-color: rgba(10, 10, 14, 0.85);
-		border: 1px solid rgba(255, 255, 255, 0.35);
-		color: rgba(255, 255, 255, 0.95);
-		font-size: 14px;
-		font-weight: 600;
-		letter-spacing: 1px;
-		white-space: nowrap;
-		flex-shrink: 0;
-		cursor: pointer;
-		pointer-events: all;
-	}
-
-	.open-btn:hover {
-		border: 1px solid rgba(255, 255, 255, 0.85);
-	}
-
-	/* Unclickable while look aim owns the mouse — no pointer-events, no hover, no cursor. */
-	.dimmed {
-		color: rgba(255, 255, 255, 0.55);
-		border: 1px solid rgba(255, 255, 255, 0.18);
-		cursor: default;
-		pointer-events: none;
-	}
-
-	.dimmed:hover {
-		border: 1px solid rgba(255, 255, 255, 0.18);
 	}
 
 	/* Centering lives on an absolutely-positioned full-screen child, never on root —
@@ -280,16 +217,11 @@
 	/// <summary>The panel is up. Client-local and global (you can only be at one board), so a
 	/// static — the same shape as <see cref="MusicScreen.IsOpen"/> and <see cref="SeatAim"/>.
 	/// <see cref="LobbyPlayer"/> reads it to make the panel modal for SeatAim and to route
-	/// Escape at it; <see cref="HudHints"/> and <see cref="VoicePanel"/> read
-	/// <see cref="ButtonShowing"/> to make room for the opener.</summary>
+	/// Escape at it; <see cref="SeatSettingsPlate"/> hides the tabletop plate under it, and
+	/// <see cref="SettingsScreen"/> hides the wall's own panel under it.</summary>
 	public static bool IsOpen { get; private set; }
 
-	/// <summary>The seated opener is on screen, so the bottom-left keycap stack has to sit
-	/// above it. Seated at a chess board and the panel closed — a wall board opens this from
-	/// its own editor, and a roaming player has no board to configure.</summary>
-	public static bool ButtonShowing => ChessStation.Active != null && !IsOpen;
-
-	/// <summary>Open it — from the seated pill here, or from the wall's SettingsScreen.</summary>
+	/// <summary>Open it — from the tabletop plate, or from the wall's SettingsScreen.</summary>
 	public static void Open()
 	{
 		IsOpen = true;
@@ -324,5 +256,5 @@
 	}
 
 	protected override int BuildHash() =>
-		HashCode.Combine( IsOpen, ButtonShowing, SeatAim.Aiming, SettingsModel.SettingsVersion );
+		HashCode.Combine( IsOpen, SettingsModel.SettingsVersion );
 }

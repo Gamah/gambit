@@ -27,7 +27,7 @@
 
 	@if ( screen is not null && screen.IsOpen )
 	{
-		<div class="roster @( BoardSettingsScreen.ButtonShowing ? "raised" : "" )">
+		<div class="roster">
 			<div class="roster-title">MUTE PLAYERS</div>
 			@{
 				var rows = screen.Roster;
@@ -59,8 +59,7 @@
 		font-family: Poppins, sans-serif;
 	}
 
-	/* Opens above the HudHints stack (which sits at bottom: 44px, or 78 when the seated BOARD
-	   SETTINGS pill takes the corner) — keep all three in step. */
+	/* Opens above the HudHints stack (which sits at bottom: 44px) — keep the two in step. */
 	.roster {
 		position: absolute;
 		left: 16px;
@@ -73,11 +72,6 @@
 		border-width: 1px;
 		border-color: rgba(110, 211, 255, 0.4);
 		pointer-events: none;
-	}
-
-	/* Follows the hints stack up by the same 34px when the seated pill is on screen. */
-	.roster.raised {
-		bottom: 134px;
 	}
 
 	.roster-title {
@@ -157,7 +151,6 @@
 			screen?.SelectedIndex ?? -1,
 			screen?.Roster.Count ?? 0,
 			VoicePrefs.MutedCount,
-			speaking,
-			BoardSettingsScreen.ButtonShowing );
+			speaking );
 	}
 }

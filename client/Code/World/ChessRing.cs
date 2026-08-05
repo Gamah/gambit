@@ -1982,6 +1982,112 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		AddBox( table, "Tray Black", new Vector3( 0, TrayCenterY, z ) * s, size, null, TrayColor );
 	}
 
+	// ── The seat's BOARD SETTINGS plate (issue #28) ──
+	//
+	// A flat plate lying in the seated player's own NEAR-LEFT tabletop corner, carrying one
+	// string and taking a click. It is the door to the board-settings panel, and it is here
+	// rather than in the corner of the screen because that is where the owner wanted it: on the
+	// board, in the world, at the lower left of the seated view.
+	//
+	// WHERE IT FITS, against the Y-margin budget above — this is the check that comment exists
+	// for. It is NOT in a Y margin at all: it lies in an X margin, which the budget describes as
+	// "kept clear — the seat cameras' sightlines". That warning is about anything standing MID-
+	// EDGE in a player's foreground (the clock tower that read as a wall in Black's face). This
+	// is flat on the tabletop, only 0.3 thick, and pushed into the corner behind the near rank —
+	// the bottom-left of the frame, not the middle of it. The trays are 26 long in X (x ∈ ±13)
+	// and the clock strip likewise, so nothing else is out here.
+	//
+	// ONE plate, not one per seat, and it is CLIENT-LOCAL (SeatSettingsPlate builds and moves
+	// it) — which is what retires the objection that killed P99's tabletop button: it needed a
+	// plate in each seat's corner plus a yaw-180 flip to keep the words unmirrored. A plate that
+	// only ever exists for the local player can simply be moved to whichever seat they are in.
+	const float SettingsTextSpanLength = 12f;    // along the near edge (table Y)
+	const float SettingsTextSpanHeight = 1.6f;   // across the margin (table X)
+	const float SettingsPlateMarginY = 0.8f;
+	const float SettingsPlateMarginX = 0.7f;
+	internal static float SettingsPlateLength => SettingsTextSpanLength + 2f * SettingsPlateMarginY; // 13.6
+	internal static float SettingsPlateDepth => SettingsTextSpanHeight + 2f * SettingsPlateMarginX;  // 3.0
+	const float SettingsPlateThickness = 0.3f;
+	const float SettingsTextOutset = 0.05f;
+
+	/// <summary>Plate centre along the near edge, base units, measured toward the seat's LEFT.
+	/// 12.5 with a 13.6 plate spans 5.7 → 19.3, against a tabletop edge at 22: comfortably in
+	/// the left half and clear of the corner itself.</summary>
+	const float SettingsPlateCenterY = 12.5f;
+
+	/// <summary>Plate centre across the X margin — dead centre of it, derived rather than typed
+	/// so it follows if the tabletop or the frame ever changes. 14.5 → 20, so 17.25, leaving
+	/// ~1.25 of bare table on each side of a 3.0-deep plate.</summary>
+	float SettingsPlateCenterX => ( MarginInnerY + TopSizeX * 0.5f ) * 0.5f;
+
+	/// <summary>Resolution knob only, exactly as <see cref="ClockFontPx"/> is — it cancels out of
+	/// the world size. <b>MUST match SeatSettingsPanel's `font-size`.</b></summary>
+	const float SettingsFontPx = 64f;
+
+	/// <summary>The longest string the plate can show. Both of them are 14 ("BOARD SETTINGS",
+	/// "ESC FOR CURSOR"), which is why one font size serves both states and the inert state is
+	/// colour only — the same rule TableClockTextPanel keeps.</summary>
+	const int SettingsMaxChars = 14;
+
+	// Same measured advance and fit fraction the clock derives its pixel space from — same font
+	// stack, same "round the advance UP rather than overflow the plate" reasoning. Reused rather
+	// than re-typed: a second copy of a measured number is a second thing to re-measure.
+	static float SettingsPxWidth => SettingsMaxChars * ClockCharAdvanceEm * SettingsFontPx / ClockTextFitFraction;
+	static float SettingsPxHeight => SettingsPxWidth * SettingsTextSpanHeight / SettingsTextSpanLength;
+
+	/// <summary>Build the plate + its one-string panel on a caller-owned GameObject. The caller
+	/// owns the LIFETIME on purpose: this thing must be strictly client-local, and a station is
+	/// NetworkSpawned — hanging it under one would put its transform and its enabled state on the
+	/// host's snapshot, which is the trap CLAUDE.md records for the music board. See
+	/// <see cref="SeatSettingsPlate"/>, which parents it to nothing and drives it in world space.</summary>
+	public Gambit.UI.SeatSettingsPanel BuildSeatSettingsPlate( GameObject plate )
+	{
+		float s = TableScale;
+
+		var box = AddBoxGo( plate, "Face", Vector3.Zero,
+			new Vector3( SettingsPlateThickness, SettingsPlateLength, SettingsPlateDepth ) * s,
+			null, ClockPlateColor );
+		if ( box is null ) return null;   // no box model: AddBox has always drawn nothing
+
+		var face = new GameObject( true, "Text" );
+		face.Parent = plate;
+		// Plate-local +X is the plate's own normal — world +Z once it is laid flat — so this
+		// lifts the panel off the face rather than z-fighting it. Same offset the clock plates
+		// and the number plaque use, for the same reason.
+		face.LocalPosition = new Vector3( SettingsPlateThickness * 0.5f + SettingsTextOutset, 0f, 0f ) * s;
+		// Scale DERIVED from the text SPAN, never from the plate and never eyeballed: a
+		// WorldPanel's world size is PanelSize × PxToWorld × scale, and guessing it is what once
+		// rendered the clock as an invisible speck.
+		face.LocalScale = ( SettingsTextSpanLength * s ) / ( SettingsPxWidth * PxToWorld );
+
+		var worldPanel = face.AddComponent<WorldPanel>();
+		worldPanel.PanelSize = new Vector2( SettingsPxWidth, SettingsPxHeight );
+
+		return face.AddComponent<Gambit.UI.SeatSettingsPanel>();
+	}
+
+	/// <summary>Where the plate sits for one seat, in STATION-local space: the near-left corner
+	/// of that seat's own tabletop.
+	///
+	/// <para>White is at −X, so White's NEAR is −X and — s&amp;box being Y-left, with the seat
+	/// camera looking along +X — White's LEFT is +Y. Black is the mirror of both, which is the
+	/// whole of the <c>side</c> arithmetic: one sign flips both axes together.</para>
+	///
+	/// <para>The rotation lays the plate FLAT (its face normal is world up) with its text-up
+	/// pointing down the board AWAY from the player — the same <c>farDir</c> hint
+	/// <see cref="BuildTopAnchor"/> gives the nadir camera, so a seated player reads it the right
+	/// way up from either seat with no yaw flip and no mirrored words.</para></summary>
+	public (Vector3 Pos, Rotation Rot) SeatSettingsPlateLocal( ChessSeat seat )
+	{
+		float s = TableScale;
+		float side = seat == ChessSeat.White ? -1f : 1f;
+		var pos = new Vector3(
+			SettingsPlateCenterX * side,
+			-SettingsPlateCenterY * side,
+			TableTopZ + SettingsPlateThickness * 0.5f ) * s;
+		return ( pos, Rotation.LookAt( Vector3.Up, new Vector3( -side, 0f, 0f ) ) );
+	}
+
 	/// <summary>Base-unit center of a square: ranks along local X (rank 1 nearest
 	/// White at −X), files along −Y so a1 sits at White's left — which puts a light
 	/// square on each player's right, per convention.</summary>

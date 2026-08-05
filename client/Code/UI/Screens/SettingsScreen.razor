@@ -16,7 +16,13 @@
 *@
 
 <root>
-	@if ( SettingsStation.Active != null )
+	@* Hidden while BOARD SETTINGS is up, rather than stacked under it. Both cards are 620px
+	   and centred and this one is much taller, so its top and bottom rows poke out past the
+	   board card and read as one garbled panel — and WallTheme.Bg is fully opaque, so this is
+	   geometry, not translucency and not a z-order bug (root here has no z-index; the board
+	   panel's is 60). The station stays engaged underneath: closing the board panel with Esc
+	   or ✕ brings this straight back, which is what "opened it from here" should mean. *@
+	@if ( SettingsStation.Active != null && !BoardSettingsScreen.IsOpen )
 	{
 	<div class="board-fit">
 		<div class="settings" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
@@ -243,7 +249,7 @@
 	}
 
 	protected override int BuildHash() =>
-		HashCode.Combine( SettingsStation.Active != null,
+		HashCode.Combine( SettingsStation.Active != null && !BoardSettingsScreen.IsOpen,
 			SettingsStation.Active?.Host,
 			SettingsModel.SettingsVersion, LobbyNetworkManager.LocalIsAdmin,
 			HashCode.Combine( ChessRing.Instance?.StationCount ?? 0,

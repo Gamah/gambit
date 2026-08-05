@@ -125,7 +125,19 @@ public sealed class LobbyPlayer : Component
 		EnsureSpectatorScreen();
 		EnsureVoiceScreen();
 		EnsureBoardSettings();
+		EnsureSeatSettingsPlate();
 
+		// Makes world panels with `pointer-events: auto` clickable, by feeding a ray into the UI
+		// system from this camera (the cursor's ray while Mouse.Active, the GameObject's forward
+		// otherwise). The ONE thing in the lobby that wants it is the tabletop BOARD SETTINGS
+		// plate (issue #28) — every other WorldPanel here is `pointer-events: none` by the
+		// one-string root rule, so nothing else changes behaviour by this existing.
+		//
+		// It is the engine's own mechanism and CLAUDE.md's stated thing-to-reach-for; the
+		// alternative is a hand-rolled tilted-plane hit test, which P99 wrote twice and deleted
+		// twice. Local player only — it hangs on our camera, and proxies have none.
+		if ( _cameraObject.IsValid() && _cameraObject.Components.Get<WorldInput>() == null )
+			_cameraObject.AddComponent<WorldInput>();
 	}
 
 	/// <summary>The scene-authored UI ScreenPanel (the "UI" GameObject) — the self-attach target
@@ -198,6 +210,22 @@ public sealed class LobbyPlayer : Component
 		if ( screen == null ) return;
 		if ( screen.Components.Get<Gambit.UI.Screens.BoardSettingsScreen>() == null )
 			screen.GameObject.AddComponent<Gambit.UI.Screens.BoardSettingsScreen>();
+	}
+
+	/// <summary>The tabletop BOARD SETTINGS plate (issue #28). Its driver lives on a runtime,
+	/// unparented, NotNetworked GameObject rather than on this avatar or on a station — both of
+	/// those are networked, and the plate is strictly client-local (it exists only for the player
+	/// who is sitting down, and only they can see or click it). Same reasoning as the self-attached
+	/// screens above, in the world rather than on the screen.</summary>
+	void EnsureSeatSettingsPlate()
+	{
+		// One per client — a respawn or a second local player must not stack a second.
+		foreach ( var _ in Scene.GetAllComponents<SeatSettingsPlate>() )
+			return;
+
+		var go = new GameObject( true, "SeatSettings" );
+		go.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
+		go.AddComponent<SeatSettingsPlate>();
 	}
 
 	/// <summary>Teleport back to spawn after falling off the map.

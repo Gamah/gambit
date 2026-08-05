@@ -1,0 +1,102 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	ONE STRING ON ONE PLATE — the ⚙ BOARD SETTINGS control on the tabletop's near-left corner
+	(issue #28). Byte-for-byte TableClockTextPanel's structure, and for the same reason: this
+	repo has exactly one WorldPanel shape that renders, `root` at 100% plus ONE absolutely
+	positioned 100% child, and it CANNOT BE COMPOSED. A second string here is a second plate.
+
+	So the two states share the ONE div and only swap its text and its class:
+	  · cursor mode  — "⚙  BOARD SETTINGS", clickable (pointer-events: all).
+	  · look aim     — "ESC FOR CURSOR", inert. The pointer is hidden, so a live-looking
+	    control would be the "reads as a broken board" failure the aim hint exists for; and
+	    Escape is the whole answer, so the plate says it rather than sitting there dead.
+
+	Clickability is the one thing here that is NOT screen-space precedent: it needs
+	`Sandbox.WorldInput` on the camera (LobbyPlayer adds it) to feed a ray into the UI system.
+	That is the engine's own mechanism and CLAUDE.md's stated thing-to-reach-for — the
+	alternative, a hand-rolled tilted-plane hit test, was built twice for P99 and deleted twice.
+	Nothing on the dev host can prove either, but only one of them is the engine's.
+
+	Driven by World/SeatSettingsPlate.cs, which owns where this sits and when it exists.
+*@
+
+<root>
+	<div class="t @State" onclick="@( () => OnClick?.Invoke() )">@Text</div>
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	/*
+		nowrap AND flex-shrink: 0 — one rule, two halves, and the most expensive line in
+		CLAUDE.md. A shrunk text div does not ellipsize, it WRAPS, and a wrapped line renders
+		as a sliver of its own middle. Belt-and-braces on a div with no siblings, kept because
+		they cost nothing and are exactly what was missing the last five times.
+	*/
+	.t {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+		height: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		white-space: nowrap;
+		flex-shrink: 0;
+		font-family: $wall-font;
+		/* MUST match ChessRing.SettingsFontPx — the one number that lives in two files, and the
+		   stylesheet is the one that actually renders. It is a RESOLUTION knob, not a text-size
+		   one: it cancels out of the world size, which comes from the text SPAN. ONE size for
+		   both states, because both strings are 14 characters — that is what lets the inert
+		   state be colour only, and colour only is what keeps this panel uncomposed. */
+		font-size: 64px;
+		font-weight: bold;
+		letter-spacing: 4px;
+		color: rgba(255, 255, 255, 0.92);
+		pointer-events: all;
+		cursor: pointer;
+	}
+
+	.t:hover {
+		color: rgba(255, 255, 255, 1);
+	}
+
+	/* Look aim: the plate is telling you how to get the pointer back, not offering a click.
+	   Colour and pointer-events only — no size, no box, no sibling. */
+	.t.inert {
+		color: rgba(255, 255, 255, 0.5);
+		pointer-events: none;
+		cursor: default;
+	}
+
+	.t.inert:hover {
+		color: rgba(255, 255, 255, 0.5);
+	}
+</style>
+
+@code
+{
+	/// <summary>The one string. Set per-frame by <see cref="Gambit.World.SeatSettingsPlate"/>.</summary>
+	public string Text { get; set; } = "";
+
+	/// <summary>"" when clickable, "inert" while look aim owns the mouse.</summary>
+	public string State { get; set; } = "";
+
+	/// <summary>What a click does — supplied by the plate rather than reached for here, so this
+	/// panel stays a renderer.</summary>
+	public Action OnClick { get; set; }
+
+	protected override int BuildHash() => HashCode.Combine( Text, State );
+}
