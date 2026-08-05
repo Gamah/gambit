@@ -195,10 +195,32 @@ price, and the answer is not to buy it back.
 > zero-scope token really does read `/api/account` — but that rebuilds the pile of long-lived
 > credentials this whole change exists to delete, in exchange for a username.
 
-### RESOLVED (owner, 2026-08-05): verify at link with `POST /api/token/test`
+### SETTLED: verification does NOT require playing a game
 
-**This supersedes the claimed-on-link / verified-on-first-game design below.** Re-derived from
-lila master 2026-08-05 — `app/controllers/OAuth.scala`:
+**This supersedes the claimed-on-link / verified-on-first-game design below.** Two mechanisms
+were re-derived from lila master 2026-08-05 and **both** verify a lichess identity at link time.
+Which one the branch builds is **still an open decision** (owner, 2026-08-05) — the facts are
+recorded here so it can be settled without re-deriving them.
+
+| | Option A — `token/test` | Option B — challenge the Gambit account |
+|---|---|---|
+| Player plays a game | no | no |
+| Extra player scope | none | none (`board:play` already challenges) |
+| Player's token reaches gamchess | **once**, then discarded | **never** |
+| gamchess needs a lichess account | no | **yes**, + its token in `.env` |
+| gamchess holds a permanent stream | no | **yes**, one event stream |
+| "gamchess ends with no lichess secrets" | holds | **broken** (by our own secret, not a player's) |
+| Player friction | none | one click |
+
+**Both delete the same machinery** — the claimed-vs-verified split, the partial unique index, the
+`games.lichess_game_id` plumbing, the `game/export` promotion path, and the paired-only
+question. That part is settled regardless of which is chosen.
+
+---
+
+#### Option A — `POST /api/token/test`
+
+Re-derived from lila master 2026-08-05 — `app/controllers/OAuth.scala`:
 
 ```scala
 def testTokens = AnonBodyOf(parse.tolerantText): body =>
@@ -224,7 +246,40 @@ the whole app on that origin. That is an argument for not logging the token, not
 the design — so: never log it, never persist it, never put it in an error string.
 `GamchessApi.Redact` is the existing precedent.
 
-**What this collapses** — all of it becomes unnecessary:
+#### Option B — the player challenges a Gambit lichess account
+
+**The asymmetry that makes this work where the DM scheme fails: challenges are readable on the
+Board API; messages are not.** `Event.Challenge` rides the `challenge` event on
+`/api/stream/event`, and `Challenge.Challenger.ID` is the challenger's lichess id
+(`internal/lichess/board.go:44-73`, read against the spec 2026-07-15).
+
+**The flow:** player clicks *verify* → their client `POST /api/challenge/{ourAccount}` → gamchess,
+holding that account's event stream, sees `challenge` with `challenger.id` → matches it against
+the pending claim for that SteamID → marks verified → declines the challenge.
+
+- **No extra player scope.** `POST /api/challenge/{username}` takes
+  `["challenge:write","bot:play","board:play"]`, so `board:play` already permits it.
+- **Our account must NOT be a BOT.** A normal account with `board:play` reads its own event
+  stream and declines. The `bot:play` upgrade is **irreversible** and confines an account to bot
+  play — keep that option free for a *separate* account if the M19 engine is ever put on lichess.
+- **Its token is a personal access token** created on lichess's own site, not through our OAuth
+  app: no `clientOrigin` exposure, no consent screen, no re-link. One secret in `.env`.
+- **The secret is categorically unlike player custody.** Worst case someone plays games as a
+  decline-bot, and **we** can revoke it instantly. It still means `.env` regains a lichess
+  secret, so decision ⑤ becomes "no *player* secrets".
+
+**The guard it needs:** if two SteamIDs claim the same lichess id and the real owner verifies,
+gamchess cannot tell whose event it is. **Allow one pending claim per lichess id and fail closed
+on collision.** Optional belt-and-braces: the challenge's time control is client-chosen and
+visible in the event, so it can carry a weak nonce.
+
+**Not yet re-derived:** `POST /api/challenge/{id}/decline`'s scope list. Almost certainly the
+same family, and it would sit on our own personal token either way — but check before relying
+on it.
+
+---
+
+**What either option collapses** — all of it becomes unnecessary:
 
 - the claimed-vs-verified split (every row is verified at link),
 - the partial unique index (a plain `UNIQUE(lichess_id)` is safe again, because the id is now
@@ -237,8 +292,13 @@ the design — so: never log it, never persist it, never put it in an error stri
 matches the id gamchess published for the other seat). It costs nothing and it is defence in
 depth against a bug rather than against a liar.
 
-**Rate limit note:** `testTokens` is IP-limited with `cost = bearers.size`, and gamchess is one
-IP — trivial at one token per link, but do not batch-verify in a loop.
+**Rate limit note (A):** `testTokens` is IP-limited with `cost = bearers.size`, and gamchess is
+one IP — trivial at one token per link, but do not batch-verify in a loop.
+
+> **The decision to make, in one line:** Option A is fewer moving parts; Option B keeps the
+> player's token on their own machine and gives us a lichess presence we may want anyway. Pick
+> when the branch reaches the link flow — nothing before that depends on it, and the wire
+> contract for `GET /api/v1/lichess` is identical either way.
 
 ---
 
