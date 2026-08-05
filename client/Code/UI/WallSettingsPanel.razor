@@ -131,13 +131,12 @@
 			$"ROOM THEME — {SettingsModel.ColorName( data.WorldLightColor )} · {SettingsModel.Pct( data.WorldLightBrightness )}%",
 			$"TABLE LIGHT — {SettingsModel.Pct( data.MarqueeLightBrightness )}%",
 			$"CHECKERBOARD — {floor}",
-			// One line, matching the engaged panel's single BOARD SOUNDS row — two names for
-			// one control on two surfaces is how the wall board starts drifting from the thing
-			// it summarises.
-			$"BOARD SOUNDS — MINE {OnOff( data.MyCabinetSounds )} · OTHERS {OnOff( data.RemoteCabinetSounds )}",
-			$"PLAY MODE — {PlayModeLabel( data.PlayMode )}",
 			$"VOICE RANGE — {PlayerData.ClampVoiceRange( data.VoiceRangeAtTable ):0}u / {PlayerData.ClampVoiceRange( data.VoiceRangeRoaming ):0}u",
-			$"SPEAK MOVES — {OnOff( data.MoveTtsEnabled )}",
+			// BOARD SOUNDS, PLAY MODE and SPEAK MOVES were summarised here until issue #28 moved
+			// those rows to the BOARD SETTINGS panel. This board summarises what it edits and
+			// nothing else — a status line for a setting that lives elsewhere is a line nobody
+			// re-reads when that setting changes shape.
+			"BOARD SETTINGS",
 		};
 	}
 
@@ -161,14 +160,8 @@
 		return lines;
 	}
 
-	static string OnOff( bool v ) => v ? "ON" : "OFF";
-
-	static string PlayModeLabel( string mode ) => PlayerData.ClampPlayMode( mode ) switch
-	{
-		"2d" => "2D",
-		"3d-clean" => "3D",
-		_ => "3D + ARMS",
-	};
+	// PlayModeLabel/OnOff went with the rows they summarised (issue #28) — the board-settings
+	// values are shown by the panel that edits them now.
 
 	protected override int BuildHash() =>
 		HashCode.Combine( Kind, SettingsModel.SettingsVersion, LobbyNetworkManager.LocalIsAdmin,

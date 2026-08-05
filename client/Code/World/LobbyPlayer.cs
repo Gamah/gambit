@@ -75,6 +75,12 @@ public sealed class LobbyPlayer : Component
 	TimeSince _engageTime;
 	const float CamBlendTime = 0.35f;
 
+	/// <summary>The seat anchor the locked camera was last driven by, so
+	/// <see cref="UpdateLockedCamera"/> can spot a swap (2D ↔ 3D, or the aim setting flipping
+	/// which anchor 2D uses — issue #28) and re-blend instead of hard-cutting. Cleared on
+	/// disengage so sitting back down doesn't re-blend from a stale one.</summary>
+	GameObject _lastSeatAnchor;
+
 	// Blend-out state: camera eases from the seat anchor back to the pose
 	// captured at Engage; the controller stays disabled until it lands
 	bool _leaving;
@@ -118,7 +124,20 @@ public sealed class LobbyPlayer : Component
 		EnsureGameHud();
 		EnsureSpectatorScreen();
 		EnsureVoiceScreen();
+		EnsureBoardSettings();
+		EnsureSeatSettingsPlate();
 
+		// Makes world panels with `pointer-events: auto` clickable, by feeding a ray into the UI
+		// system from this camera (the cursor's ray while Mouse.Active, the GameObject's forward
+		// otherwise). The ONE thing in the lobby that wants it is the tabletop BOARD SETTINGS
+		// plate (issue #28) — every other WorldPanel here is `pointer-events: none` by the
+		// one-string root rule, so nothing else changes behaviour by this existing.
+		//
+		// It is the engine's own mechanism and CLAUDE.md's stated thing-to-reach-for; the
+		// alternative is a hand-rolled tilted-plane hit test, which P99 wrote twice and deleted
+		// twice. Local player only — it hangs on our camera, and proxies have none.
+		if ( _cameraObject.IsValid() && _cameraObject.Components.Get<WorldInput>() == null )
+			_cameraObject.AddComponent<WorldInput>();
 	}
 
 	/// <summary>The scene-authored UI ScreenPanel (the "UI" GameObject) — the self-attach target
@@ -178,6 +197,35 @@ public sealed class LobbyPlayer : Component
 		// self-attaching client-local affordance, and it draws the G/B hints VoicePanel used to.
 		if ( screen.Components.Get<Gambit.UI.Screens.HudHints>() == null )
 			screen.GameObject.AddComponent<Gambit.UI.Screens.HudHints>();
+	}
+
+	/// <summary>Attach the BOARD SETTINGS panel (issue #28) to the scene ScreenPanel at runtime —
+	/// same self-heal as EnsureGameHud, so no scene rewire is needed. It draws its own seated
+	/// opener and nothing else until it is opened, and it is strictly client-local (every row is
+	/// a PlayerData value), which is why it must be built here rather than authored in
+	/// lobby.scene — see the NetworkMode fork in CLAUDE.md.</summary>
+	void EnsureBoardSettings()
+	{
+		var screen = SceneUiScreen();
+		if ( screen == null ) return;
+		if ( screen.Components.Get<Gambit.UI.Screens.BoardSettingsScreen>() == null )
+			screen.GameObject.AddComponent<Gambit.UI.Screens.BoardSettingsScreen>();
+	}
+
+	/// <summary>The tabletop BOARD SETTINGS plate (issue #28). Its driver lives on a runtime,
+	/// unparented, NotNetworked GameObject rather than on this avatar or on a station — both of
+	/// those are networked, and the plate is strictly client-local (it exists only for the player
+	/// who is sitting down, and only they can see or click it). Same reasoning as the self-attached
+	/// screens above, in the world rather than on the screen.</summary>
+	void EnsureSeatSettingsPlate()
+	{
+		// One per client — a respawn or a second local player must not stack a second.
+		foreach ( var _ in Scene.GetAllComponents<SeatSettingsPlate>() )
+			return;
+
+		var go = new GameObject( true, "SeatSettings" );
+		go.Flags |= GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked;
+		go.AddComponent<SeatSettingsPlate>();
 	}
 
 	/// <summary>Teleport back to spawn after falling off the map.
@@ -260,6 +308,19 @@ public sealed class LobbyPlayer : Component
 			// on the screen, and the HUD's Leave button — which needs one anyway — is how
 			// you get up. Everywhere else (roaming, an idle seat, a finished game, the
 			// setting off, a picker open) Escape is the plain stand-up it has always been.
+			// The BOARD SETTINGS panel (issue #28) claims Escape before either of the two
+			// below: it is a modal, and Escape at a modal closes the modal — standing up (or
+			// toggling the cursor) out from under an open panel would leave it on screen with
+			// its own opener gone. Handled HERE rather than in the panel because this is the
+			// one place that reads EscapePressed while engaged, so the two can never both take
+			// the same frame.
+			if ( Input.EscapePressed && Gambit.UI.Screens.BoardSettingsScreen.IsOpen )
+			{
+				Input.EscapePressed = false;
+				Gambit.UI.Screens.BoardSettingsScreen.Close();
+				return;
+			}
+
 			if ( Input.EscapePressed && SeatAim.Toggleable )
 			{
 				Input.EscapePressed = false;
@@ -879,6 +940,9 @@ public sealed class LobbyPlayer : Component
 	void BeginEngage()
 	{
 		_switching = false; // a fresh engage cancels any in-flight seat-switch schwoop
+		// This blend IS the anchor change, so the swap detector must adopt the new anchor
+		// silently rather than restart the blend it is already running (issue #28).
+		_lastSeatAnchor = null;
 		if ( _cameraObject != null )
 		{
 			_camFromPos = _cameraObject.WorldPosition;
@@ -2479,12 +2543,16 @@ public sealed class LobbyPlayer : Component
 			var station = ChessStation.Active;
 			if ( station != null )
 				PlantOnSeat( station, _switchTargetSeat );
-			// The camera rode to the new anchor; let UpdateLockedCamera hold it there.
+			// The camera rode to the new anchor; let UpdateLockedCamera hold it there. Clearing
+			// the swap detector too (issue #28): the schwoop already took the camera to the other
+			// seat's anchor, so the change must be adopted silently — re-blending would leave the
+			// camera un-settled for another 0.35s and delay look aim for no visible gain.
 			if ( _cameraObject != null )
 			{
 				_camFromPos = _cameraObject.WorldPosition;
 				_camFromRot = _cameraObject.WorldRotation;
 			}
+			_lastSeatAnchor = null;
 			_engageTime = CamBlendTime;
 		}
 	}
@@ -2498,12 +2566,19 @@ public sealed class LobbyPlayer : Component
 	public void Disengage( bool keepSeat = false )
 	{
 		_switching = false; // standing up cancels any in-flight seat-switch schwoop
+		_lastSeatAnchor = null; // the next sit-down runs the engage blend, not an anchor-swap one
 
 		// Hand the mouse back before anything else can return early. Look aim hides the
 		// cursor through a GLOBAL (Mouse.Visibility), so a path that stands up without
 		// clearing it leaves a roaming player with no pointer and every wall board dead —
 		// which is why this is the first line and not part of the chess-seat branch below.
 		SeatAim.Clear();
+
+		// The BOARD SETTINGS panel goes with whatever you were standing at, both doors: its
+		// seated opener is gone the moment you are up, and the wall's editor closes below.
+		// Leaving it open would strand a modal over a roaming player with no Escape route to
+		// it (LobbyPlayer only reads Escape while engaged).
+		Gambit.UI.Screens.BoardSettingsScreen.ForceClose();
 
 		// Wall boards never moved the camera — just re-enable look and close the panel.
 		if ( ChessStation.Active == null && BoardEngaged )
@@ -2619,8 +2694,15 @@ public sealed class LobbyPlayer : Component
 		// also means Escape is the plain stand-up for as long as it stands (SeatAim.Toggleable
 		// excludes a modal) — you have a pointer and the whole HUD in that window, so Escape
 		// meaning what it means everywhere else is the least surprising thing it can do.
+		// The BOARD SETTINGS panel (issue #28) is modal for exactly the same reason as the
+		// promotion picker: it is a screen panel full of things to click, and it appears on the
+		// player's own say-so mid-game. Folding it in HERE — rather than having the panel touch
+		// SeatAim — is what makes it release the cursor and take aim back BY ITSELF on close,
+		// without clearing a suspend the player asked for with Escape. SeatAim already keeps
+		// those two apart; don't collapse them.
 		var view = station.Components.Get<ChessBoardView>();
 		bool modal = view?.PendingPromotion != null
+			|| Gambit.UI.Screens.BoardSettingsScreen.IsOpen
 			|| src is { DrawOffered: true } or { TakebackOffered: true };
 
 		SeatAim.Update( src?.Playing ?? false, modal );
@@ -2629,17 +2711,58 @@ public sealed class LobbyPlayer : Component
 	/// <summary>Ease the camera to the local player's seat anchor. The anchor is
 	/// pre-aimed down at the board center by ChessRing, so no target math here.
 	///
-	/// <para>2D play mode (M16) picks the top-down (nadir) anchor instead of the orbit anchor;
-	/// the existing lerp/slerp then eases between them for free, so switching mode while seated
-	/// glides to the other view with no extra code. Read live off PlayMode, so the switch takes
-	/// effect the next frame.</para></summary>
+	/// <para>2D play mode (M16) picks the top-down (nadir) anchor instead of the orbit anchor. The
+	/// choice is a LIVE per-frame decision, never latched at sit-down: since issue #28 the mode can
+	/// change from the seat (BOARD SETTINGS), and the aim setting can too — and a swap re-runs the
+	/// blend explicitly (below), which is NOT what the old comment here claimed happened for free.</para>
+	///
+	/// <para><b>LOOK aim keeps the seat anchor even in 2D</b> (issue #28) — see
+	/// <see cref="ChessStation.LocalNadir"/>, which is the one place that decides and which the
+	/// name tags and station panel read too. The nadir anchor looks STRAIGHT DOWN, and the offset
+	/// composition below has no meaning there: yaw about world up is a roll when world up IS the
+	/// view direction, and pitch in camera space runs backwards for one colour because the nadir
+	/// anchor's local axes are built from a per-seat <c>farDir</c> that flips sign. Not a tuning
+	/// problem — there is no correct offset at a straight-down camera. The seat anchor is never
+	/// degenerate and the composition is already proven there, so "2D + LOOK" is flat pieces seen
+	/// from the seat. The flat glyphs stay flat under it, deliberately: they are the same
+	/// lie-in-the-plane sprites the north-wall spectator board reads fine from the floor at a
+	/// steeper angle, and billboarding them would put a "which camera is live" rule in the render
+	/// path for a problem we have evidence we don't have.</para></summary>
 	void UpdateLockedCamera()
 	{
 		var station = ChessStation.Active;
 		var seat = ChessStation.ActiveSeat;
-		bool nadir = Gambit.Game.PlayerData.ClampPlayMode( Gambit.Game.PlayerData.Load()?.PlayMode ) == "2d";
+		bool nadir = ChessStation.LocalNadir;
 		var anchor = nadir ? station?.TopAnchor( seat ) : station?.SeatAnchor( seat );
 		if ( anchor == null || _cameraObject == null ) return;
+
+		// A CHANGE of anchor mid-seat restarts the blend from wherever the camera actually is.
+		// The old comment here promised the lerp eased between the two "for free" — it did not,
+		// and could not: _engageTime has long passed CamBlendTime by then, so t is pinned at 1
+		// and the assignment below is a hard cut between two completely different views. It never
+		// showed because PLAY MODE could only be changed at the wall, and you sit down after —
+		// which runs the engage blend. Since issue #28 you can change it (and the aim setting,
+		// which also picks the anchor) from your seat mid-game, so the swap has to blend itself.
+		// Blending from the LIVE transform, not from the old anchor, is what keeps a non-zero
+		// SeatAim.LookOffset from snapping: the offset is already baked into where the camera is.
+		bool swapped = _lastSeatAnchor != anchor && _lastSeatAnchor != null;
+		if ( _lastSeatAnchor != anchor ) _lastSeatAnchor = anchor;
+
+		// SeatAim zeroing its offset is the same event as an anchor swap, as far as this blend is
+		// concerned: the composed target has moved somewhere else in one frame. It happens when
+		// look aim stops being AVAILABLE — the player picks CURSOR, or the game ends — and it must
+		// ease, because the offset can be a full 45° of yaw and cutting that is a camera jump.
+		// TakeRecentred is one-shot, so it must be called even when the anchor swapped too
+		// (2D + LOOK → 2D + CURSOR does both at once) or the request would sit there and fire on
+		// some unrelated later frame.
+		bool recentred = SeatAim.TakeRecentred();
+
+		if ( swapped || recentred )
+		{
+			_camFromPos = _cameraObject.WorldPosition;
+			_camFromRot = _cameraObject.WorldRotation;
+			_engageTime = 0;
+		}
 
 		float t = Math.Clamp( _engageTime / CamBlendTime, 0f, 1f );
 		t = 1f - MathF.Pow( 1f - t, 3f ); // ease-out cubic, same curve as the leave blend

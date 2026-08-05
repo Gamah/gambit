@@ -96,34 +96,6 @@ public static class SettingsModel
 		rows.Add( SliderRow( $"POP FREQUENCY — {PlayerData.ClampPopRate( data.FloorPopRate ):0.##}×",
 			0.25f, 3f, PlayerData.ClampPopRate( data.FloorPopRate ),
 			v => Mutate( d => d.FloorPopRate = v ) ) );
-		// One row, two halves: it is a single question — whose boards do you hear — and two
-		// full-width rows of it cost two lines of a panel that no longer has them to spare.
-		// Each half stays a real ON/OFF cell, so the vocabulary matches every other toggle here.
-		rows.Add( MultiToggleRow( "BOARD SOUNDS",
-			( "MINE", data.MyCabinetSounds, v => Mutate( d => d.MyCabinetSounds = v ) ),
-			( "OTHERS", data.RemoteCabinetSounds, v => Mutate( d => d.RemoteCabinetSounds = v ) ) ) );
-		// How chess boards render for this client (M16): flat 2D glyphs, clean 3D, or 3D with the
-		// seated hands animating moves. Client-local and cosmetic; 3D+ARMS is the pre-M16 default.
-		rows.Add( PickerRow( "PLAY MODE",
-			new[] { ("2d", "2D"), ("3d-clean", "3D"), ("3d-arms", "3D + ARMS") },
-			PlayerData.ClampPlayMode( data.PlayMode ),
-			v => Mutate( d => d.PlayMode = v ) ) );
-
-		// How a seated player aims at their own board (P99). CURSOR is the pre-P99 behaviour
-		// (locked camera, pointer picks the square); LOOK hides the cursor, turns the seated
-		// view with the mouse and picks whatever the centre of the screen is on. Client-local,
-		// and it only ever applies to a game that is actually PLAYING — see SeatAim.
-		rows.Add( PickerRow( "AIM AT THE BOARD",
-			new[] { ("cursor", "CURSOR"), ("look", "LOOK") },
-			data.LookAimAtBoard ? "look" : "cursor",
-			v => Mutate( d => d.LookAimAtBoard = v == "look" ) ) );
-
-		// Whether a selected piece lights up its legal destinations (issue #26). Default ON,
-		// so this changes nothing for anyone who never opens this board. It is a TINT setting:
-		// off hides the green squares and nothing else — the same moves still land, and the
-		// gold/blue/red/olive/purple tiers are untouched. See PlayerData.ShowLegalMoves.
-		rows.Add( ToggleRow( "SHOW LEGAL MOVES", data.ShowLegalMoves,
-			v => Mutate( d => d.ShowLegalMoves = v ) ) );
 
 		// Proximity-voice hearing range (M12): how far THIS client hears others, split by whether
 		// you're seated or roaming. Range is a receive-side, per-client value (the falloff is applied
@@ -135,10 +107,77 @@ public static class SettingsModel
 			VoiceRangeMin, VoiceRangeMax, PlayerData.ClampVoiceRange( data.VoiceRangeRoaming ),
 			v => Mutate( d => d.VoiceRangeRoaming = v ) ) );
 
+		// NOTE: lichess TV (M9) is deliberately NOT here — not the on/off, not the
+		// channel, not the lobby's suggestion. It all lives on the spectator board,
+		// which is the thing it controls and the thing you are looking at when you
+		// care. Splitting it across two walls was the first attempt and it was wrong:
+		// you picked a channel on the south wall for a board on the north one.
+		//
+		// NOTE: the seven BOARD settings are not here either — see BuildBoardRows.
+		return rows;
+	}
+
+	/// <summary>The settings that are about a CHESS BOARD rather than the room (issue #28):
+	/// how it renders, how you aim at it, what it sounds like and what it says out loud.
+	///
+	/// <para><b>Why they are their own list.</b> They used to be seven more rows on the
+	/// world-settings board, which had grown past the height of the screen and clipped at BOTH
+	/// ends — the top row as unreachable as the bottom. But the size was the symptom: the panel
+	/// was two unrelated jobs in one list, with different audiences and different places you
+	/// would look for them. Splitting it leaves the wall a coherent ROOM panel and puts these
+	/// where you are when you care about them — at a board.</para>
+	///
+	/// <para><b>Two doors, one editor.</b> <see cref="Screens.BoardSettingsScreen"/> renders
+	/// this list from a HUD button while you are seated, and from a BOARD SETTINGS button on
+	/// the wall's own editor while you are not. Every row here is client-local and none of them
+	/// needs a seat, so the panel works in both places — nothing may assume
+	/// <c>ChessStation.Active</c>.</para></summary>
+	public static List<SettingRow> BuildBoardRows()
+	{
+		var rows = new List<SettingRow>();
+		var data = PlayerData.Load() ?? new PlayerData();
+
+		// One row, two halves: it is a single question — whose boards do you hear — and two
+		// full-width rows of it cost two lines of a panel that no longer has them to spare.
+		// Each half stays a real ON/OFF cell, so the vocabulary matches every other toggle here.
+		rows.Add( MultiToggleRow( "BOARD SOUNDS",
+			( "MINE", data.MyCabinetSounds, v => Mutate( d => d.MyCabinetSounds = v ) ),
+			( "OTHERS", data.RemoteCabinetSounds, v => Mutate( d => d.RemoteCabinetSounds = v ) ) ) );
+
+		// How chess boards render for this client (M16): flat 2D glyphs, clean 3D, or 3D with the
+		// seated hands animating moves. Client-local and cosmetic; 3D+ARMS is the pre-M16 default.
+		// Switchable mid-game from a seat now (issue #28) — ChessRing.ApplyPlayModeSetting already
+		// pushes the render half per-frame off SettingsVersion, and LobbyPlayer eases between the
+		// seat and nadir camera anchors, so the change is live rather than next-sit.
+		rows.Add( PickerRow( "PLAY MODE",
+			new[] { ("2d", "2D"), ("3d-clean", "3D"), ("3d-arms", "3D + ARMS") },
+			PlayerData.ClampPlayMode( data.PlayMode ),
+			v => Mutate( d => d.PlayMode = v ) ) );
+
+		// How a seated player picks the square they're moving to (P99). CURSOR is the pre-P99
+		// behaviour (locked camera, pointer picks the square); LOOK hides the cursor, turns the
+		// seated view with the mouse and picks whatever the centre of the screen is on.
+		// Client-local, and it only ever applies to a game that is actually PLAYING — see SeatAim.
+		//
+		// Labelled MOVE MODE, not "AIM AT THE BOARD": it sits next to PLAY MODE, it is the same
+		// kind of question, and what it really selects is how you make a MOVE.
+		rows.Add( PickerRow( "MOVE MODE",
+			new[] { ("cursor", "CURSOR"), ("look", "LOOK") },
+			data.LookAimAtBoard ? "look" : "cursor",
+			v => Mutate( d => d.LookAimAtBoard = v == "look" ) ) );
+
+		// Whether a selected piece lights up its legal destinations (issue #26). Default ON,
+		// so this changes nothing for anyone who never opens this panel. It is a TINT setting:
+		// off hides the green squares and nothing else — the same moves still land, and the
+		// gold/blue/red/olive/purple tiers are untouched. See PlayerData.ShowLegalMoves.
+		rows.Add( ToggleRow( "SHOW LEGAL MOVES", data.ShowLegalMoves,
+			v => Mutate( d => d.ShowLegalMoves = v ) ) );
+
 		// Spoken moves / TTS (M12): read out the notation of EVERY move (both sides) played on
-		// the board you're seated at — not just your own moves. Client-local, your own table
-		// only (not the TV wall, not other boards).
-		rows.Add( ToggleRow( "SPEAK MOVES AT MY TABLE", data.MoveTtsEnabled,
+		// the board you're seated at — not just your own moves. Client-local, your own board
+		// only (not the TV wall, not other boards). "MY BOARD", not "MY TABLE": everything on
+		// this panel is about the board, and the two words were being used for one thing.
+		rows.Add( ToggleRow( "SPEAK MOVES AT MY BOARD", data.MoveTtsEnabled,
 			v => Mutate( d => d.MoveTtsEnabled = v ) ) );
 		rows.Add( VoiceRow( data.MoveTtsVoice, Gambit.Audio.MoveTts.Voices,
 			v => Mutate( d => d.MoveTtsVoice = v ) ) );
@@ -146,11 +185,6 @@ public static class SettingsModel
 			0f, 1f, PlayerData.ClampUnit( data.MoveTtsVolume ),
 			v => Mutate( d => d.MoveTtsVolume = v ) ) );
 
-		// NOTE: lichess TV (M9) is deliberately NOT here — not the on/off, not the
-		// channel, not the lobby's suggestion. It all lives on the spectator board,
-		// which is the thing it controls and the thing you are looking at when you
-		// care. Splitting it across two walls was the first attempt and it was wrong:
-		// you picked a channel on the south wall for a board on the north one.
 		return rows;
 	}
 

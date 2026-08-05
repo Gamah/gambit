@@ -724,6 +724,11 @@ have been run here at all.
   frame gives every margin a job: **−Y is the clock strip then White's tray**, **+Y is
   Black's tray** (with the number plaque hanging below its edge), and **±X are kept clear
   — they are the seat cameras' sightlines.**
+  → **One thing lives in an X margin now** (issue #28): the seated player's own BOARD SETTINGS
+  plate, in their **near-left corner**. The sightline rule is about anything standing MID-EDGE in
+  a player's foreground — the clock tower that read as a wall in Black's face. This is 0.3 thick,
+  flat on the tabletop, in the corner behind the near rank, and it is client-local so there is
+  only ever one. The trays and the clock strip run 26 in X (±13), so nothing else is out there.
   It was 34 square (a 2.5 margin) while a comment promised "a healthy margin for
   clocks/captures later" — it wasn't one, and the plaque was standing in what is now
   Black's tray. **Don't put anything new on the tabletop without checking which margin
@@ -988,9 +993,93 @@ must read the lichess source, not `ctrl`.
 - Small race window (~RTT) if two players press E on the same seat — host picks the
   winner; known limitation.
 
+### Where a setting lives: the ROOM on the wall, the BOARD in your hand (issue #28)
+
+There are two settings panels, and which one a row belongs on is a question about **audience**,
+not about space:
+
+- **WORLD SETTINGS**, the south-wall board (`SettingsStation` → `SettingsScreen`, summarised by
+  `WallSettingsPanel`) — the ROOM: theme, room and table light brightness, the checkerboard floor
+  and its pop rate, both voice-range sliders.
+- **BOARD SETTINGS** (`UI/Screens/BoardSettingsScreen.razor`) — a **chess board**: BOARD SOUNDS,
+  PLAY MODE, MOVE MODE, SHOW LEGAL MOVES, SPEAK MOVES AT MY BOARD, the TTS voice pill and
+  its volume.
+
+**Both render `SettingsModel` rows** — `BuildLocalRows()` and `BuildBoardRows()`, one model, two
+lists. A third consumer is a third `Build*Rows`, never a second copy of the row types, and
+**anything that mutates must go through `Mutate`**: it bumps `SettingsVersion`, which is the
+repaint key for both panels *and* the trigger for `ChessRing.ApplyPlayModeSetting` — a setter that
+skips it changes a stored value and nothing in the world.
+
+- **Why it split.** The wall panel had outgrown the screen and clipped at **both** ends, so the
+  top row was as unreachable as the bottom. Size was the symptom. Scroll fights the sliders' drag
+  (the repo rule) and `FitToHeight` only shrinks a list that was two unrelated jobs deep. Already
+  tried and rejected on #26/#27, so don't reach for them again: folding the two sound toggles into
+  one `MultiToggleRow` (landed, didn't fix it) and a local ~0.8× type/spacing rule (**rolled back**
+  — a font size local to one board makes that board quietly different from every other one).
+- **Two doors, one editor.** Seated: a **plate on the tabletop**, near-left corner of your own
+  seat (`World/SeatSettingsPlate.cs`). At the wall: a BOARD SETTINGS row on the world panel, so
+  someone who isn't sitting down can still reach these. Both call `BoardSettingsScreen.Open()`.
+  **Nothing in the panel may read `ChessStation.Active`** — every row is client-local and the wall
+  door has no seat.
+- **The tabletop plate is the repo's FIRST world-space control, and it is the `WorldInput` path.**
+  It was a screen-space pill first; the owner wanted it on the board. P99 built two world-space
+  buttons and deleted both — but read *why*: they were an extra thing to find, aim at and click
+  **in the mode whose whole point is that you are not pointing at anything**, and they needed a
+  plate per seat plus a yaw-180 flip to keep the words unmirrored. Neither objection survives here:
+  this opens a settings panel you use *with* a cursor, and the plate is **client-local, so there is
+  exactly ONE of it** — moved to whichever seat the local player is in. Clicking works because
+  `LobbyPlayer` hangs `Sandbox.WorldInput` on the camera, which is what CLAUDE.md already named as
+  the thing to reach for; **do not rebuild the hand-rolled tilted-plane hit test.** Neither can be
+  proven on this host — only one of them is the engine's own.
+  → **It is unparented on purpose.** A `ChessStation` is NetworkSpawned, so a child of one rides
+  the host's snapshot, transform and enabled state included (issue #12's lesson). The plate is a
+  `NotSaved | NotNetworked` GO at the scene root, placed in world space off the station's transform
+  every frame — which also keeps it with the table when the ring SLIDES on a board-count change.
+  → **It fits in an X margin, which the budget calls a sightline** — and that is checked, not
+  ignored: the warning is about anything standing MID-EDGE in a player's foreground (the clock
+  tower that read as a wall in Black's face). This is 0.3 thick, flat on the table, pushed into the
+  near-left corner behind the near rank. The trays and the clock strip are 26 long in X (±13), so
+  the corner is genuinely empty.
+  → **One string, one plate, one font size.** Both states are 14 characters ("BOARD SETTINGS" /
+  "ESC FOR CURSOR") so the inert state is **colour only** — the same rule `TableClockTextPanel`
+  keeps, and the reason a second string would mean a second plate.
+  → **"The world-panel text is too big" is fixed in PIXEL space, never in the span.** This cost a
+  round in the room. The world size of a plate and of its text span are fixed by the span
+  constants, so shrinking `SettingsTextSpanLength` scales the panel AND the glyphs together and
+  the text hangs off the plate by exactly the same proportion, only further away. The knob is
+  `SettingsCharAdvanceEm` / `SettingsTextFitFraction`: a WIDER pixel space means SMALLER glyphs on
+  the same plate. (Turn the span height with it, or a shorter string leaves a thin line of words
+  centred on a fat slab — the span's aspect IS the panel's pixel aspect.)
+  → **Its advance estimate is its OWN, not the clock's.** Reusing `ClockCharAdvanceEm` looked
+  right — one measured number beats two — and overflowed the plate at both ends: the clock
+  measured DIGITS, this draws bold CAPS in a proportional fallback face, and the formula has **no
+  term at all for `letter-spacing`**, which at 14 characters is real width that was simply not
+  being counted. Round the advance UP; under-stating it is the failure that shows.
+  → **In LOOK aim it stops offering a click and says `ESC FOR CURSOR`.** The pointer is hidden;
+  a live-looking control there is the "reads as broken" failure the aim hint exists for.
+- **It is MODAL for `SeatAim`, exactly like the promotion picker**, and the wiring is
+  deliberate: `LobbyPlayer.UpdateSeatAim` folds `IsOpen` into the modal flag rather than the panel
+  touching `SeatAim` — that is what makes it release the cursor and take aim back **by itself** on
+  close, without clearing a suspend the player asked for with Escape. Escape is routed at it in
+  `LobbyPlayer` (the one place that reads `EscapePressed` while engaged), ahead of both the aim
+  toggle and the stand-up.
+- **The wall's own panel HIDES itself while the board panel is open** rather than stacking under
+  it. Not a z-order bug and not translucency (`WallTheme.Bg` is opaque, and the board panel's root
+  carries `z-index: 60` against the wall panel's none): both cards are 620px and centred, and the
+  wall's is much taller, so its top and bottom rows poke out past the board card and the pair reads
+  as one garbled panel. The station stays engaged underneath, so closing the board panel brings the
+  wall's straight back — which is what "opened it from here" should mean.
+- **The bottom-left column is unchanged** — `HudHints` at 44, `VoicePanel`'s roster at 100. The
+  first version of the seated door was a pill in that corner and pushed both up; it is on the
+  tabletop now, so those numbers are back to what they were. Don't reintroduce a third tenant there.
+- **The wall board summarises only what it edits.** PLAY MODE / BOARD SOUNDS / SPEAK MOVES status
+  lines went with their rows; a status line for a setting that lives elsewhere is a line nobody
+  re-reads when that setting changes shape.
+
 ### Cursor vs LOOK aim at the board (P99)
 
-A world-settings picker (**AIM AT THE BOARD — CURSOR / LOOK**) chooses how a seated player
+A BOARD SETTINGS picker (**MOVE MODE — CURSOR / LOOK**) chooses how a seated player
 picks a square. CURSOR is everything before P99 and stays the default. LOOK hides the pointer,
 turns the seated view with the mouse, and picks whatever is under the **centre of the screen**.
 `World/SeatAim.cs` is the whole state machine and the only thing that decides; two places act on
@@ -1033,6 +1122,11 @@ only DRAWS it (the crosshair, and which way Escape goes next).
   is ever wanted again, the thing to reach for is `WorldInput` (see the UI Gotchas section), not
   a rebuild of that plane arithmetic — and the reason to want one has to be better than "there
   should be a button".
+  → **Issue #28 then wanted one, and took that advice**: the BOARD SETTINGS plate is in the
+  near-left tabletop corner these attempts used, clicked through `WorldInput`. It survives both
+  objections rather than ignoring them — it is used *with* a cursor (it opens a settings panel,
+  and in LOOK aim it stops offering a click), and being client-local there is only ever ONE of it
+  to place. **The aim toggle is still Escape and still has no button.**
 - **The mechanism is one engine switch, and that is why it can't get out of step.**
   `Mouse.Visibility = Hidden` locks the pointer AND is exactly what makes `Input.AnalogLook`
   report movement (the engine zeroes AnalogLook whenever a cursor is visible). **Never set
@@ -1043,9 +1137,51 @@ only DRAWS it (the crosshair, and which way Escape goes next).
 - **The camera offset composes in EULER space**, not as a quaternion post-multiply: a seat
   anchor is already pitched steeply down (the 2D nadir one looks straight down), so turning
   about its own tilted up-axis would roll the horizon. The offset is clamped (±45° yaw, ±30°
-  pitch) — the board is the point of the view — and **persists** when the cursor comes back, so
-  releasing it hands you a pointer rather than snapping the view.
-- **Nothing was added to the world in the end** — no tabletop geometry, no margin spent, and the
+  pitch) — the board is the point of the view — and **persists** when the cursor comes back by
+  ESCAPE, so releasing it hands you a pointer rather than snapping the view.
+- **…but it is CLEARED when look aim stops being AVAILABLE, and that distinction is a bug fix.**
+  The offset used to survive everything short of standing up. That is right for Escape — a
+  suspend leaves aim one keypress away, so the offset is still yours to move — and wrong for the
+  two ways aim actually ends: **the player switches MOVE MODE to CURSOR**, and **the game
+  finishes**. Both leave the view turned as much as 45° off the board with *nothing left that can
+  turn it back*: Escape is a plain stand-up again and the mouse only moves a pointer, so part of
+  the board is off screen until you stand up. `SeatAim` watches the falling edge of
+  `Enabled && playing` (deliberately NOT `Toggleable`, which a modal also clears — a modal hands
+  aim back by itself), zeroes the offset and raises a one-shot `Recentred`;
+  `LobbyPlayer.UpdateLockedCamera` consumes it through the same re-blend as an anchor swap so the
+  view EASES back rather than cutting. **`TakeRecentred` must be called even when the anchor also
+  swapped** (2D + LOOK → 2D + CURSOR does both at once) or the one-shot survives to fire on an
+  unrelated later frame.
+- **LOOK aim keeps the SEAT camera, even in 2D — and `LocalNadir` means the CAMERA now, not the
+  render mode** (issue #28). The composition above is degenerate at the 2D nadir anchor and there
+  is no tuning that fixes it: yaw is applied about world up, and at a straight-down camera world
+  up IS the view direction, so mouse-left/right ROLLS the board image; pitch is applied in camera
+  space, and the nadir anchor's local axes come from a per-seat `farDir` that flips sign between
+  White and Black, so mouse-forward tips the view the opposite way for the two colours. The fix
+  is to never be there: `ChessStation.LocalNadir` is now `Active && FlatMode && !SeatAim.Enabled`,
+  and `LobbyPlayer.UpdateLockedCamera` picks its anchor off **that same property**, so the two
+  cannot disagree. **2D + LOOK is flat pieces, seated view** — a real thing, because `FlatMode` is
+  a *render* gate independent of which anchor is live. The **flat glyphs stay flat** under it (no
+  billboarding): they are the same lie-in-the-plane sprites the north-wall spectator board is read
+  from the floor at a steeper angle, so there is evidence the foreshortening is a non-issue, and a
+  "which camera is live" rule in the render path would be a real cost for a speculative one.
+  → Gate on `SeatAim.Enabled` (the SETTING), never on `SeatAim.Aiming`: aiming goes false on every
+  modal, every Escape and every finished game, and an anchor that followed it would swing the
+  camera between two entirely different views mid-game.
+  → `LocalNadir` is also what `NameTagPanel` and `StationScreenPanel` hide themselves on. That is
+  why the redefinition is load-bearing rather than cosmetic: on the old "FlatMode = top-down"
+  inference they would have stayed hidden for a 2D+LOOK player who can now see the world they
+  belong in.
+- **A mid-seat anchor change blends, and it did NOT before.** `UpdateLockedCamera`'s comment
+  claimed the existing lerp eased between anchors "for free"; it could not — `_engageTime` is long
+  past `CamBlendTime` by then, so `t` is pinned at 1 and the write is a hard cut. It never showed
+  because PLAY MODE could only be changed at the wall, and you sit down *after*, which runs the
+  engage blend. Now that both PLAY MODE and the aim setting are changeable **from the seat**,
+  `_lastSeatAnchor` spots the swap and re-blends **from the camera's live transform** — which is
+  also what keeps a non-zero `SeatAim.LookOffset` from snapping, since the offset is already baked
+  into where the camera is. `BeginEngage` and the seat-switch schwoop clear it so those adopt the
+  new anchor silently rather than re-blending a blend they are already running.
+- **P99 added nothing to the world in the end** — no tabletop geometry, no margin spent, and the
   Y-margin budget note is untouched. The whole feature is one state machine, one key, one
   crosshair and a HUD line.
 - Proven on this host: `SeatAim` runs its whole truth table in a shim harness (see the
@@ -1271,9 +1407,9 @@ Deviating from them is how un-compilable mistakes get in.
 - **Hotload**: C# changes hotload in milliseconds. Procedural builders rebuild via
   `[EditorEvent.Hotload]` in `Editor/HotloadRebuild.cs` — keep new builders registered there
 - **Self-attaching UI**: **GameHud, SpectatorScreen, the M12 voice pair (VoiceScreen +
-  VoicePanel) and `HudHints`** — those, and no others — attach themselves to the scene ScreenPanel at runtime
+  VoicePanel), `HudHints` and `BoardSettingsScreen`** — those, and no others — attach themselves to the scene ScreenPanel at runtime
   (`LobbyPlayer` walks `Scene.GetAllComponents<ScreenPanel>()` in `EnsureGameHud` /
-  `EnsureSpectatorScreen` / `EnsureVoiceScreen`), so a new screen of that kind needs no scene
+  `EnsureSpectatorScreen` / `EnsureVoiceScreen` / `EnsureBoardSettings`), so a new screen of that kind needs no scene
   rewire; copy that pattern. The voice pair MUST self-attach for a specific reason, not just
   tidiness: it is strictly client-local (mute/enabled live in `VoicePrefs` cookies), so hanging it
   off the ScreenPanel keeps it off every networked snapshot — the HUD-parenting trap. **InfoScreen,
@@ -1425,12 +1561,15 @@ renderer — are in `~/.claude/sbox.md`. What follows is what this repo paid for
   `PanelSize` is off by 2×. And **`WorldInput` exists**: a `Component` you hang on the camera
   that feeds a RAY into the UI system, so world panels with `pointer-events: auto` become
   clickable by looking at them (it uses the cursor ray when `Mouse.Active`, the GameObject's
-  forward otherwise, and honours `WorldPanel.InteractionRange`, default 1000). Nothing in this
-  repo or any sibling has ever used it — P99 built two world-space buttons with hand-rolled
-  plane arithmetic instead (an unproven input path cannot be tested on this host) and then
-  **deleted them both**, keeping the key. So the repo still has no world-space control, and
-  `WorldInput` remains the thing to reach for if they ever become a category — rather than a
-  third hand-rolled ray test.
+  forward otherwise, and honours `WorldPanel.InteractionRange`, default 1000). P99 built two
+  world-space buttons with hand-rolled plane arithmetic instead (an unproven input path cannot be
+  tested on this host) and then **deleted them both**, keeping the key. **Issue #28 is the first
+  thing here to actually use `WorldInput`**: `LobbyPlayer` adds one to the local camera, and the
+  tabletop BOARD SETTINGS plate is the one panel in the lobby with `pointer-events: auto` — every
+  other WorldPanel is `none` by the one-string root rule, so nothing else changed behaviour by its
+  existing. It is still unproven on this host, and it is still the right call: a third hand-rolled
+  ray test would be equally unproven and not the engine's. **Any future world-space control goes
+  through it.**
 - **`⬜`/`⬛` are emoji too.** The "panel glyphs paint as colour emoji" rule is not only
   about chess pieces — the geometric-shape block characters are the same trap. `GameHud`
   uses them safely at 13px in a HUD; at 76px on a world panel they render as two big
@@ -1643,8 +1782,10 @@ rides a snapshot. **Master voice defaults OFF.**
   state (tighter seated, wider roaming — both tunable). Enabled/muted stay cookie-light in
   `VoicePrefs`; only range is on the board, because range is a room-tuning knob.
 - **The world-settings board uses real `SliderControl`s now (M12), not the rotaliate tick bars.**
-  Every continuous setting — brightness, pop rate, voice range — is a `SettingsModel.SliderSpec`
-  that `SettingsScreen` renders as a `<SliderControl>` (swatches and toggles stay clickable cells).
+  Every continuous setting — brightness, pop rate, voice range, move-voice volume — is a
+  `SettingsModel.SliderSpec` that `SettingsScreen` renders as a `<SliderControl>` (swatches and
+  toggles stay clickable cells), and `BoardSettingsScreen` renders the identical spec the identical
+  way — one model, one look, whichever panel a row lands on.
   Sliders are **continuous, no `Step`** by request; `OnChange` persists on every change (the file is
   tiny). The label carries the formatted value and recomputes because `Mutate` bumps
   `SettingsVersion` and the screen rebuilds — the same reason a `SliderControl` survives the

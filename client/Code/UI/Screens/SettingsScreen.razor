@@ -16,7 +16,13 @@
 *@
 
 <root>
-	@if ( SettingsStation.Active != null )
+	@* Hidden while BOARD SETTINGS is up, rather than stacked under it. Both cards are 620px
+	   and centred and this one is much taller, so its top and bottom rows poke out past the
+	   board card and read as one garbled panel — and WallTheme.Bg is fully opaque, so this is
+	   geometry, not translucency and not a z-order bug (root here has no z-index; the board
+	   panel's is 60). The station stays engaged underneath: closing the board panel with Esc
+	   or ✕ brings this straight back, which is what "opened it from here" should mean. *@
+	@if ( SettingsStation.Active != null && !BoardSettingsScreen.IsOpen )
 	{
 	<div class="board-fit">
 		<div class="settings" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
@@ -41,6 +47,16 @@
 						</div>
 					}
 				</div>
+			}
+			@* The second door to BOARD SETTINGS (issue #28). Those seven rows left this panel —
+			   it is the ROOM now — but someone standing at the wall who isn't sitting down still
+			   has to be able to reach them, and every row there is client-local so none of them
+			   needs a seat. One editor, two doors: nothing duplicated, nothing to keep in step.
+			   Host settings are the admin's board-count panel and have nothing to do with these. *@
+			@if ( !( SettingsStation.Active?.Host ?? false ) )
+			{
+				<div class="board-door" style="background-color:@WallTheme.Cell; color:@WallTheme.Text;"
+					onclick="@( () => OpenBoardSettings() )">BOARD SETTINGS</div>
 			}
 		</div>
 	</div>
@@ -179,6 +195,26 @@
 	.cell.disabled:hover {
 		border: 2px solid transparent;
 	}
+
+	/* The BOARD SETTINGS door. A full-width row rather than a cell in the list: it is not a
+	   setting, it opens another panel, and it should not read as one more thing to toggle. */
+	.board-door {
+		justify-content: center;
+		align-items: center;
+		height: 40px;
+		margin-top: 6px;
+		font-size: 16px;
+		letter-spacing: 2px;
+		white-space: nowrap;
+		border: 2px solid rgba(255, 255, 255, 0.35);
+		border-radius: $wall-radius;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.board-door:hover {
+		border: 2px solid rgba(255, 255, 255, 0.85);
+	}
 </style>
 
 @code
@@ -198,6 +234,12 @@
 			? SettingsModel.BuildHostRows( Scene )
 			: SettingsModel.BuildLocalRows();
 
+	// Open the board panel over this one. It draws itself (self-attached to the same ScreenPanel,
+	// z-index above this) and closes back to here; this screen stays up underneath, so the wall
+	// board is still where you came from. Escape while at a wall board closes whichever is on top —
+	// LobbyPlayer routes it at the board panel first.
+	void OpenBoardSettings() => BoardSettingsScreen.Open();
+
 	void Click( SettingsModel.SettingCell cell )
 	{
 		if ( cell?.Activate == null ) return;
@@ -207,7 +249,7 @@
 	}
 
 	protected override int BuildHash() =>
-		HashCode.Combine( SettingsStation.Active != null,
+		HashCode.Combine( SettingsStation.Active != null && !BoardSettingsScreen.IsOpen,
 			SettingsStation.Active?.Host,
 			SettingsModel.SettingsVersion, LobbyNetworkManager.LocalIsAdmin,
 			HashCode.Combine( ChessRing.Instance?.StationCount ?? 0,

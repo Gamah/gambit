@@ -1,0 +1,252 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.UI;
+@using Gambit.World;
+@namespace Gambit.UI.Screens
+@inherits PanelComponent
+
+@*
+	BOARD SETTINGS (issue #28) — the settings that are about a chess board rather than the
+	room: how it renders (PLAY MODE), how you aim at it, whether it lights up legal moves,
+	what it sounds like and what it reads out loud.
+
+	These were seven more rows on the south-wall WORLD SETTINGS board, which had grown taller
+	than the screen and clipped at BOTH ends. Height was the symptom; the panel was two
+	unrelated jobs in one list. The wall keeps the ROOM (theme, lights, floor, voice range)
+	and these come here, where you are when you care about them.
+
+	TWO DOORS, ONE EDITOR — and neither of them is in here:
+	  · seated — a plate in the WORLD, on the tabletop's near-left corner
+	    (World/SeatSettingsPlate.cs). It was a screen-space pill in this file's bottom-left
+	    corner first; the owner wanted it on the board;
+	  · at the wall — SettingsScreen's own BOARD SETTINGS button, for someone who isn't
+	    sitting down. That panel HIDES itself while this one is open rather than stacking
+	    under it: both cards are 620px and centred, and the taller one pokes out at both ends.
+	So it must work with no seat: every row is client-local and nothing here may read
+	ChessStation.Active.
+
+	Rows come from the shared SettingsModel (BuildBoardRows) and are rendered exactly as
+	SettingsScreen renders the wall's — same cells, same SliderControl, same WallTheme. Not a
+	second copy of the model, and not a second look.
+
+	MODAL FOR SeatAim, like the promotion picker: LobbyPlayer folds IsOpen into the modal flag,
+	so opening this releases the cursor and closing it takes aim back BY ITSELF — without
+	clearing a suspend the player asked for with Escape. Escape closes it (handled in
+	LobbyPlayer, which owns that key while engaged, so the two can never both claim a frame).
+
+	Self-attached to the scene ScreenPanel by LobbyPlayer (EnsureBoardSettings) — strictly
+	client-local, so it must never be a serialized lobby.scene component (see the NetworkMode
+	fork in CLAUDE.md).
+*@
+
+<root>
+	@if ( IsOpen )
+	{
+		<div class="screen-fit">
+			<div class="settings" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
+				<div class="head">
+					<div class="title" style="color:@WallTheme.Text;">BOARD SETTINGS</div>
+					<div class="close" style="color:@WallTheme.TextDim;" onclick="@( () => Close() )">✕</div>
+				</div>
+				<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+				@foreach ( var row in SettingsModel.BuildBoardRows() )
+				{
+					<div class="row">
+						<div class="label" style="color:@WallTheme.TextFaint;">@row.Label</div>
+						@if ( row.Slider is { } sl )
+						{
+							<SliderControl class="wslider" Min="@sl.Min" Max="@sl.Max" Value="@sl.Value" OnValueChanged="@sl.OnChange"></SliderControl>
+						}
+						else if ( row.Cells.Count > 0 )
+						{
+							<div class="cells">
+								@foreach ( var cell in row.Cells )
+								{
+									var c = cell;
+									<div class="cell @c.Css @( c.Selected ? "selected" : "" )" style="@CellStyle( c )" onclick="@( () => Click( c ) )">@c.Label</div>
+								}
+							</div>
+						}
+					</div>
+				}
+			</div>
+		</div>
+	}
+</root>
+
+<style>
+	@@import "../WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		/* Above the seated HUD (z-index 50) — this is a modal, and it must not come up
+		   underneath the panel whose button opened it. */
+		z-index: 60;
+		font-family: $wall-font;
+	}
+
+	/* Centering lives on an absolutely-positioned full-screen child, never on root —
+	   otherwise the content pins top-left (CLAUDE.md). */
+	.screen-fit {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		align-items: center;
+		justify-content: center;
+		pointer-events: none;
+	}
+
+	/* Same width and tokens as SettingsScreen's card: one editor, one look, whichever door
+	   you came through. Seven rows, so it fits without the scroll/scale that the overgrown
+	   wall panel was reaching for. */
+	.settings {
+		width: 620px;
+		flex-direction: column;
+		align-items: stretch;
+		justify-content: flex-start;
+		padding: 28px 34px;
+		border-radius: $wall-radius;
+		gap: 14px;
+		pointer-events: all;
+	}
+
+	.settings > div {
+		flex-shrink: 0;
+	}
+
+	.head {
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.title {
+		white-space: nowrap;
+		flex-shrink: 0;
+		font-size: 26px;
+		font-weight: bold;
+		letter-spacing: 4px;
+	}
+
+	.close {
+		white-space: nowrap;
+		flex-shrink: 0;
+		font-size: 22px;
+		padding: 0 8px;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.close:hover {
+		color: rgba(255, 255, 255, 1);
+	}
+
+	.divider {
+		height: 2px;
+		margin: 6px 0;
+	}
+
+	.row {
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.label {
+		font-size: 16px;
+		letter-spacing: 2px;
+		white-space: nowrap;
+	}
+
+	.cells {
+		flex-direction: row;
+		gap: 8px;
+	}
+
+	/* Slider + cell styling mirrors SettingsScreen's, including hiding SliderControl's
+	   built-in value bubble (it renders as a bare black box, and the row label already
+	   carries the value). */
+	.wslider {
+		width: 100%;
+		height: 24px;
+		pointer-events: all;
+	}
+
+	.wslider .value-tooltip {
+		display: none;
+	}
+
+	.cell {
+		justify-content: center;
+		align-items: center;
+		font-size: 16px;
+		border: 2px solid transparent;
+		border-radius: $wall-radius;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.cell:hover {
+		border: 2px solid rgba(255, 255, 255, 0.6);
+	}
+
+	.cell.toggle {
+		padding: 4px 16px;
+		height: 34px;
+	}
+
+	.cell.selected {
+		border: 2px solid rgba(255, 255, 255, 0.85);
+	}
+</style>
+
+@code
+{
+	/// <summary>The panel is up. Client-local and global (you can only be at one board), so a
+	/// static — the same shape as <see cref="MusicScreen.IsOpen"/> and <see cref="SeatAim"/>.
+	/// <see cref="LobbyPlayer"/> reads it to make the panel modal for SeatAim and to route
+	/// Escape at it; <see cref="SeatSettingsPlate"/> hides the tabletop plate under it, and
+	/// <see cref="SettingsScreen"/> hides the wall's own panel under it.</summary>
+	public static bool IsOpen { get; private set; }
+
+	/// <summary>Open it — from the tabletop plate, or from the wall's SettingsScreen.</summary>
+	public static void Open()
+	{
+		IsOpen = true;
+		Gambit.Audio.SoundPlayer.PlayTick();
+	}
+
+	/// <summary>Close it. Deliberately does NOT touch SeatAim: the modal flag LobbyPlayer
+	/// derives from IsOpen clears on its own next frame, which is what restores aim without
+	/// undoing a suspend the player asked for themselves.</summary>
+	public static void Close()
+	{
+		if ( !IsOpen ) return;
+		IsOpen = false;
+		Gambit.Audio.SoundPlayer.PlayTick();
+	}
+
+	/// <summary>Standing up, leaving a wall board, or anything else that ends the flow this
+	/// was opened from. Silent — no click sound for something the player didn't click.</summary>
+	public static void ForceClose() => IsOpen = false;
+
+	// Runtime theme colours for a cell, merged with the cell's own Style last — same rule as
+	// SettingsScreen. No disabled state here: every board setting is always editable.
+	string CellStyle( SettingsModel.SettingCell c ) =>
+		$"background-color:{WallTheme.Cell}; color:{WallTheme.TextDim};" + c.Style;
+
+	void Click( SettingsModel.SettingCell cell )
+	{
+		if ( cell?.Activate == null ) return;
+		cell.Activate();
+		Gambit.Audio.SoundPlayer.PlayTick();
+		StateHasChanged();
+	}
+
+	protected override int BuildHash() =>
+		HashCode.Combine( IsOpen, SettingsModel.SettingsVersion );
+}

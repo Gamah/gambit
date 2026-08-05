@@ -129,6 +129,56 @@ static class T
 		SeatAim.Clear();
 		Check( SeatAim.LookOffset.pitch == 0 && SeatAim.LookOffset.yaw == 0,
 			"standing up re-centres the seat view" );
+
+		// ── Losing AVAILABILITY re-centres; being suspended or modal does not. ──
+		//
+		// The bug this covers: the offset used to survive everything but standing up, so
+		// switching MOVE MODE to CURSOR — or simply finishing the game — left the view turned up
+		// to 45° off the board with NOTHING left that could turn it back (Escape is a plain
+		// stand-up again, the mouse only moves a pointer). Part of your own board sat off screen
+		// until you stood up. Each way out is asserted separately because the difference between
+		// them IS the rule.
+		Reset( true );
+		Frame( playing: true, modal: false );
+		Frame( playing: true, modal: false, pitch: 9, yaw: 12 );
+		Check( SeatAim.TakeRecentred() == false, "aiming normally never asks for a re-centre" );
+
+		// A MODAL is a loan of the cursor, not the end of aiming: the view must be exactly where
+		// the player left it when the picker closes.
+		Frame( playing: true, modal: true );
+		Check( !SeatAim.TakeRecentred() && SeatAim.LookOffset.yaw == 12,
+			"a modal does NOT re-centre the view — it hands aim back untouched" );
+		Frame( playing: true, modal: false );
+
+		// Escape, likewise: aim is one keypress away, so the offset is still the player's to move.
+		SeatAim.Suspend();
+		Frame( playing: true, modal: false );
+		Check( !SeatAim.TakeRecentred() && SeatAim.LookOffset.yaw == 12,
+			"Escape does NOT re-centre the view — the suspend keeps it" );
+		SeatAim.Resume();
+		Frame( playing: true, modal: false );
+
+		// The game ending: aim is gone, so the view comes back to the board.
+		Frame( playing: false, modal: false );
+		Check( SeatAim.LookOffset.pitch == 0 && SeatAim.LookOffset.yaw == 0,
+			"the game ending re-centres the seat view" );
+		Check( SeatAim.TakeRecentred(), "the game ending asks the camera to EASE back" );
+		Check( !SeatAim.TakeRecentred(), "the re-centre request is one-shot" );
+
+		// Switching MOVE MODE to CURSOR mid-game: the same, and the one the owner hit.
+		Reset( true );
+		Frame( playing: true, modal: false );
+		Frame( playing: true, modal: false, pitch: 9, yaw: 12 );
+		PlayerData.Current.LookAimAtBoard = false;      // the picker, mid-game
+		Frame( playing: true, modal: false );
+		Check( SeatAim.LookOffset.pitch == 0 && SeatAim.LookOffset.yaw == 0,
+			"switching MOVE MODE to CURSOR re-centres the seat view" );
+		Check( SeatAim.TakeRecentred(), "switching to CURSOR asks the camera to EASE back" );
+
+		// And it must not fire again every frame afterwards — that would pin the camera in a
+		// permanent re-blend and CameraSettled would never come back true.
+		Frame( playing: true, modal: false );
+		Check( !SeatAim.TakeRecentred(), "CURSOR mode does not keep re-requesting a re-centre" );
 		Check( Mouse.Visibility == MouseVisibility.Auto,
 			"standing up ALWAYS hands the mouse back (a stuck cursor is unrecoverable)" );
 
