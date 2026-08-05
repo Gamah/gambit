@@ -1,4 +1,5 @@
 using System;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Gambit.Api.Lichess;
@@ -17,6 +18,16 @@ namespace Gambit.Api.Lichess;
 /// RFC 7636's own worked example, which is the same vector the deleted Go
 /// <c>oauth_test.go</c> used. That continuity matters — the test moved with the
 /// code rather than being lost with it.</para>
+///
+/// <para><b>The engine's own SHA-256 is used, and that was CHECKED rather than
+/// assumed.</b> HTTPFIX.md flagged "is <c>SHA256.HashData</c> callable?" as a
+/// day-one unknown and suggested hand-rolling if not — one was written and then
+/// deleted, because <c>sbox-public</c>'s
+/// <c>engine/Sandbox.Access/Rules/BaseAccess.cs:362</c> whitelists
+/// <c>System.Security.Cryptography.SHA256*</c> outright (read 2026-08-05). A
+/// whole hash implementation to review is a real cost, and "the assembly is
+/// whitelisted but the member ACL might not be" was answerable by reading one
+/// file.</para>
 ///
 /// <para><b>It is fine that the player can read their own verifier.</b> The spec
 /// says so outright: <i>"it is fine if the user themselves can extract
@@ -49,10 +60,13 @@ public readonly struct Pkce
 	/// threshold; 64 buys margin at zero cost and removes the "if linking fails at
 	/// the exchange, suspect this first" footgun. Keep it at 64.</para>
 	///
-	/// <para><b>Randomness source.</b> <c>System.Random.Shared</c>, for the same
-	/// reason <c>GamchessApi.NewClientGameId</c> uses it: <c>RandomNumberGenerator</c>
-	/// reaches into platform crypto interop, which is exactly the shape the s&amp;box
-	/// whitelist rejects, and Random.Shared is already proven in this codebase. That
+	/// <para><b>Randomness source.</b> <c>System.Random.Shared</c>, and unlike the
+	/// hash above this one really is forced: the whitelist takes
+	/// <c>SHA256*</c>/<c>SHA1*</c>/<c>MD5*</c>/<c>HashAlgorithm*</c> and <b>nothing
+	/// else</b> from <c>System.Security.Cryptography</c> — no
+	/// <c>RandomNumberGenerator</c> (checked in <c>BaseAccess.cs:359-363</c>,
+	/// 2026-08-05). <c>Random.Shared</c> is what <c>GamchessApi.NewClientGameId</c>
+	/// already uses. That
 	/// is a real weakening and worth stating: a predictable verifier would let
 	/// someone who could also steal the authorization code complete the exchange. But
 	/// the code never leaves lichess → our HTTPS callback → this client's own
@@ -66,7 +80,7 @@ public readonly struct Pkce
 		System.Random.Shared.NextBytes( raw );
 
 		string verifier = Base64Url( raw );
-		string challenge = Base64Url( Sha256.HashData( Encoding.ASCII.GetBytes( verifier ) ) );
+		string challenge = Base64Url( SHA256.HashData( Encoding.ASCII.GetBytes( verifier ) ) );
 		return new Pkce( verifier, challenge );
 	}
 

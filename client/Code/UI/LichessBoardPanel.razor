@@ -15,8 +15,9 @@
    board), and the security fine-print (scope, key storage) stays on the engaged page rather
    than rotting in two places.
 
-   Link state is read from LichessLinkState, which does the polling; this panel
-   never calls gamchess itself. *@
+   Link state is read from LichessLinkState, which since HTTPFIX answers "am I linked"
+   from THIS PC's own stored key — instantly, offline, and with no first-frame "unknown"
+   state. This panel never calls anything itself. *@
 
 <root>
 	<div class="board" style="background-color:@WallTheme.Bg; border-color:@WallTheme.Border;">
@@ -40,11 +41,16 @@
 			<div class="body" style="color:@WallTheme.TextDim;">Or play a stranger on your own: challenge a lichess player by name, or take a random opponent from lichess's lobby.</div>
 			<div class="body" style="color:@WallTheme.TextDim;">Or hand out a shareable link — anyone opens it in a browser and plays you here on the board, no account needed their side.</div>
 			<div class="body" style="color:@WallTheme.TextFaint;">None of this happens on its own — two linked players sitting down together just play a local game.</div>
+			<div class="body" style="color:@WallTheme.TextFaint;">Your key lives on this PC. Press E for how to turn it off properly.</div>
 			<div class="cta">Press E to manage or unlink</div>
 		}
 		else if ( LichessLinkState.Offline )
 		{
-			<div class="intro" style="color:@WallTheme.TextDim;">Offline — can't reach the Gambit server to check your link right now. Chess still works.</div>
+			@* Reachable only when NOT linked: the linked branch above is answered from
+			   this PC's own key and needs no server at all. So "offline" no longer means
+			   "we can't tell" — it means the one thing that DOES need the server (making
+			   a new link) can't happen right now. *@
+			<div class="intro" style="color:@WallTheme.TextDim;">No lichess account linked on this PC — and the Gambit server is unreachable, so linking one will have to wait. Chess still works.</div>
 			<div class="cta">Press E</div>
 		}
 		else

@@ -21,7 +21,6 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <!-- The REAL files, verbatim. Nothing is copied or reimplemented here. -->
-    <Compile Include="../../client/Code/Api/Lichess/Sha256.cs" />
     <Compile Include="../../client/Code/Api/Lichess/Pkce.cs" />
     <Compile Include="../../client/Code/Api/Lichess/LichessEtiquette.cs" />
     <Compile Include="../../client/Code/Api/Lichess/NdjsonReader.cs" />

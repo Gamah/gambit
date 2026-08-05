@@ -55,15 +55,36 @@
 				<div class="body" style="color:@WallTheme.TextDim;">Or get a shareable link and send it to anyone — they open it in a browser and play you here on the board, no lichess account needed on their side.</div>
 				<div class="body" style="color:@WallTheme.TextFaint;">None of this happens on its own. Two linked players sitting down together just play a local game — nothing reaches lichess and no account is touched unless you pick one of these.</div>
 				<div class="body" style="color:@WallTheme.TextDim;">Bullet tables can't play a real lichess game — lichess won't play one faster than blitz.</div>
+				<div class="body" style="color:@WallTheme.TextFaint;">If the game crashes mid-lichess-game, that game runs its clock down and you lose on time — the same as closing any other lichess client. Standing up doesn't; only quitting does.</div>
+
+				<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+				<div class="section-header" style="color:@WallTheme.AccentCss;">WHERE THE KEY LIVES</div>
+				<div class="body" style="color:@WallTheme.TextDim;">On this PC, in the game's own data folder. Your key never leaves this machine — the game plays your lichess games directly.</div>
+				<div class="body" style="color:@WallTheme.TextFaint;">Play on another PC and you'll link again there. It doesn't travel with your Steam account.</div>
 
 				<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
 				<div class="section-header warn">TURNING THIS OFF</div>
-				<div class="body warn-body">Changing your lichess password will NOT unlink Gambit — it only ends browser sessions and leaves this token working.</div>
-				<div class="body warn-body">Unlink below, or revoke it on lichess's own Security page. (Their /account/oauth/token page won't show this grant — it lists personal tokens only.)</div>
+				<div class="body warn-body">Changing your lichess password will NOT unlink Gambit — it only ends browser sessions and leaves this key working.</div>
+				<div class="body warn-body">Deleting the game's data removes the key from this PC but does NOT revoke it at lichess.</div>
+				<div class="body warn-body">Unlink below — that revokes it properly — or revoke it on lichess's own Security page. (Their /account/oauth/token page won't show this grant: it lists personal tokens only, so you'd see an empty list and conclude nothing was linked.)</div>
 
 				<div class="lichess-btn" onclick="@Unlink">@UnlinkLabel()</div>
 				<div class="lichess-btn subtle" onclick="@CopySecurity">@SecurityLabel()</div>
+
+				@* Two states worth NAMING rather than letting a player discover at the
+				   moment two people sit down to play. A stale grant is a re-link, and a
+				   server that doesn't know about the link breaks the two-seat flow only
+				   (playing a stranger still works, which is why this isn't fatal). *@
+				@if ( LichessLinkState.ScopesAreStale )
+				{
+					<div class="body warn-body">This link was made by an older version of the game and doesn't cover everything it now asks for. Unlink and link again when you get a chance.</div>
+				}
+				else if ( LichessLinkState.ServerDisagrees )
+				{
+					<div class="body warn-body">The Gambit server doesn't have a record of this link, so playing the person opposite you won't find them. Unlink and link again to fix it. (Playing a stranger still works.)</div>
+				}
 			}
 			else
 			{
@@ -76,16 +97,34 @@
 				<div class="body" style="color:@WallTheme.TextDim;">Terry's Gambit never sees either one.</div>
 
 				<div class="section-header" style="color:@WallTheme.AccentCss;">WHAT WE ASK FOR</div>
-				<div class="body" style="color:@WallTheme.TextDim;">One permission: board:play. It lets us start your game, play your moves, resign and offer draws.</div>
-				<div class="body" style="color:@WallTheme.TextDim;">It cannot read your email, read or send messages, see who you follow, or change your account. Lichess has nothing smaller — it's all-or-nothing.</div>
+				<div class="body" style="color:@WallTheme.TextDim;">Play games as you: start a game, play your moves, resign, offer and accept draws and takebacks. Only ever for games you start from a table here.</div>
+				<div class="body" style="color:@WallTheme.TextDim;">Solve lichess puzzles on your real puzzle record · see which of your lichess friends are online · send a lichess message.</div>
+				<div class="body" style="color:@WallTheme.TextFaint;">Sending only: we can never READ your lichess messages, not even a reply to one we sent. Lichess has no permission for that.</div>
+				<div class="body" style="color:@WallTheme.TextDim;">It cannot read your email, change your account, change who you follow, or touch your teams, studies or tournaments.</div>
 
 				<div class="section-header" style="color:@WallTheme.AccentCss;">WHERE THE KEY LIVES</div>
-				<div class="body" style="color:@WallTheme.TextDim;">On our server, encrypted. It has to: playing a lichess game means holding a live connection open for the whole game, which this client can't do — so our server plays on your behalf while you sit here.</div>
+				<div class="body" style="color:@WallTheme.TextDim;">On this PC, in the game's own data folder. The game plays your lichess games directly, so the key stays on the machine you play on.</div>
+				<div class="body" style="color:@WallTheme.TextFaint;">Our server sees it once, at the moment you link, to ask lichess whose account it is. It keeps no copy.</div>
 
 				<div class="divider" style="background-color:@WallTheme.Divider;"></div>
 
-				<div class="body" style="color:@WallTheme.TextFaint;">Copy this link and open it in a browser. It's the same link for everyone and holds no secret — it signs you in with Steam first, so it only ever links your own accounts.</div>
-				<div class="lichess-btn" onclick="@CopyLichess">@LichessLabel()</div>
+				@if ( Gambit.Api.Lichess.LichessLink.InProgress )
+				{
+					<div class="body" style="color:@WallTheme.TextDim;">@Gambit.Api.Lichess.LichessLink.Status</div>
+					<div class="body" style="color:@WallTheme.TextFaint;">Copy this link and open it in a browser. It's the same link for everyone and holds no secret — it signs you in with Steam first, so it only ever links your own accounts.</div>
+					<div class="lichess-btn" onclick="@CopyLichess">@LichessLabel()</div>
+					<div class="lichess-btn subtle" onclick="@CancelLink">Cancel</div>
+				}
+				else
+				{
+					<div class="body" style="color:@WallTheme.TextFaint;">Press below, then open the link in a browser. Come back here when lichess has approved it.</div>
+					<div class="lichess-btn" onclick="@BeginLink">Link a lichess account</div>
+				}
+
+				@if ( Gambit.Api.Lichess.LichessLink.Error is string linkErr )
+				{
+					<div class="body warn-body">@linkErr</div>
+				}
 
 				@if ( LichessLinkState.Offline )
 				{
@@ -601,7 +640,7 @@
 	string LichessLabel() =>
 		LichessButton.SinceCopied < 2f
 			? "✓  link copied — paste it in a browser"
-			: $"{Gambit.Api.LichessApi.LinkUrl}  ·  click to copy";
+			: $"{Gambit.Api.Lichess.LichessLink.LinkUrl}  ·  click to copy";
 
 	string SecurityLabel() =>
 		LichessButton.SinceSecurityCopied < 2f
@@ -611,6 +650,18 @@
 	string UnlinkLabel() => _unlinking ? "unlinking…" : "[ unlink ]";
 
 	bool _unlinking;
+
+	void BeginLink()
+	{
+		Gambit.Api.Lichess.LichessLink.Begin();
+		StateHasChanged();
+	}
+
+	void CancelLink()
+	{
+		Gambit.Api.Lichess.LichessLink.Cancel();
+		StateHasChanged();
+	}
 
 	void CopyLichess()
 	{
@@ -632,7 +683,7 @@
 		_unlinking = true;
 		StateHasChanged();
 
-		await LichessLinkState.Unlink();
+		await Gambit.Api.Lichess.LichessLink.Unlink();
 
 		_unlinking = false;
 		StateHasChanged();
@@ -649,7 +700,13 @@
 	protected override void OnUpdate()
 	{
 		if ( InfoStation.Active?.Kind == InfoStation.StationKind.Lichess )
+		{
 			LichessLinkState.Poll();
+			// The link flow's own poll: it asks gamchess whether the browser has come
+			// back yet, and finishes the exchange when it has. Rate-limited and
+			// single-flighted internally, so per-frame here is the intended use.
+			Gambit.Api.Lichess.LichessLink.Poll();
+		}
 
 		// Fit the engaged card to the viewport height so the tall Welcome page never clips
 		// off-screen on a short/wide viewport. Scale, not scroll: the card has click-to-copy
@@ -666,6 +723,9 @@
 			HashCode.Combine( LichessLinkState.Linked, LichessLinkState.Username,
 				LichessLinkState.Offline, LichessButton.SinceCopied < 2f,
 				LichessButton.SinceSecurityCopied < 2f, _unlinking, _playTab,
+				HashCode.Combine( Gambit.Api.Lichess.LichessLink.InProgress,
+					Gambit.Api.Lichess.LichessLink.Status, Gambit.Api.Lichess.LichessLink.Error,
+					LichessLinkState.ScopesAreStale, LichessLinkState.ServerDisagrees ),
 				// MORE's other buttons each need their own term, or their labels would only
 				// flip when something else in this hash happened to move. Nested again
 				// because HashCode.Combine takes at most eight arguments.

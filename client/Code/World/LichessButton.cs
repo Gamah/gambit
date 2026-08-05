@@ -1,4 +1,5 @@
 using Gambit.Api;
+using Gambit.Api.Lichess;
 using Sandbox;
 using Sandbox.UI;
 
@@ -27,7 +28,10 @@ public static class LichessButton
 
 	public static void Copy()
 	{
-		Clipboard.SetText( LichessApi.LinkUrl );
+		// LichessLink.LinkUrl, not LichessApi.LinkUrl: the server returns its OWN copy
+		// when a flow starts, which is what keeps the test instance pointing at
+		// itself rather than at prod. The constant is only the fallback.
+		Clipboard.SetText( LichessLink.LinkUrl );
 		SinceCopied = 0f;
 	}
 

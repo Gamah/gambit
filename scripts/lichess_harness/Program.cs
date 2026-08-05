@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using Gambit.Api.Lichess;
 
@@ -18,33 +19,6 @@ void Check( string what, bool ok, string detail = null )
 	if ( !ok ) failures++;
 }
 
-static string Hex( byte[] b ) => Convert.ToHexString( b ).ToLowerInvariant();
-
-// ── SHA-256 ─────────────────────────────────────────────────────────────────
-// FIPS 180-4 / RFC 6234 vectors. The empty and one-block cases catch padding
-// mistakes; the 1,000,000-'a' case is the only one that exercises the multi-block
-// loop and the 64-bit length field, which is where a hand-rolled hash goes wrong.
-Console.WriteLine( "SHA-256 (RFC 6234 vectors)" );
-Check( "empty string",
-	Hex( Sha256.HashData( Array.Empty<byte>() ) ) ==
-	"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" );
-Check( "\"abc\"",
-	Hex( Sha256.HashData( Encoding.ASCII.GetBytes( "abc" ) ) ) ==
-	"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" );
-Check( "56-byte two-block message",
-	Hex( Sha256.HashData( Encoding.ASCII.GetBytes(
-		"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq" ) ) ) ==
-	"248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1" );
-Check( "exactly 64 bytes (the padding-block edge)",
-	Hex( Sha256.HashData( Encoding.ASCII.GetBytes( new string( 'a', 64 ) ) ) ) ==
-	"ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb" );
-Check( "exactly 55 bytes (last size that fits one block)",
-	Hex( Sha256.HashData( Encoding.ASCII.GetBytes( new string( 'a', 55 ) ) ) ) ==
-	"9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318" );
-Check( "one million 'a' (multi-block + 64-bit length)",
-	Hex( Sha256.HashData( Encoding.ASCII.GetBytes( new string( 'a', 1_000_000 ) ) ) ) ==
-	"cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0" );
-
 // ── PKCE ────────────────────────────────────────────────────────────────────
 // RFC 7636 Appendix B's worked example, which is the SAME vector the deleted
 // Go oauth_test.go used. It proves the whole chain: ASCII verifier → SHA-256 →
@@ -55,7 +29,7 @@ Console.WriteLine( "PKCE (RFC 7636)" );
 	const string rfcVerifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 	const string rfcChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 
-	string got = Pkce.Base64Url( Sha256.HashData( Encoding.ASCII.GetBytes( rfcVerifier ) ) );
+	string got = Pkce.Base64Url( SHA256.HashData( Encoding.ASCII.GetBytes( rfcVerifier ) ) );
 	Check( "Appendix B challenge", got == rfcChallenge, got );
 
 	var p = Pkce.New();
@@ -73,7 +47,7 @@ Console.WriteLine( "PKCE (RFC 7636)" );
 	Check( "both are base64url with no padding", urlSafe );
 
 	Check( "the challenge really is the verifier's hash",
-		p.Challenge == Pkce.Base64Url( Sha256.HashData( Encoding.ASCII.GetBytes( p.Verifier ) ) ) );
+		p.Challenge == Pkce.Base64Url( SHA256.HashData( Encoding.ASCII.GetBytes( p.Verifier ) ) ) );
 
 	var q = Pkce.New();
 	Check( "two mints differ", p.Verifier != q.Verifier );

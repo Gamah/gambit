@@ -91,9 +91,12 @@
 			}
 			else
 			{
-				@* Play the person opposite you. Both seats must opt in — and gamchess
-				   independently requires both to ask, so this is the agreement, not the
-				   authorisation. Ready (below) completes it, the same button as a local game. *@
+				@* Play the person opposite you. Both seats must opt in, and both then post
+				   an intent to gamchess — but since HTTPFIX that second step is a DIRECTORY
+				   rule, not a consent one: each client plays with its own lichess key and can
+				   only ever commit itself, and what both intents buy is that gamchess will
+				   reveal the opposite seat's lichess username (so one can challenge the other
+				   by name). Ready (below) completes it, the same button as a local game. *@
 				@if ( LichessTable.CanMirror( ctrl.Tc ) )
 				{
 					<div class="button lichess @( LocalLichess( ctrl ) ? "on" : "" )" onclick="@( () => ctrl.ToggleLichess() )">@LichessText( ctrl )</div>
@@ -165,10 +168,12 @@
 				}
 
 				@* Or hand out a link an ANONYMOUS browser player opens to play YOU on this
-				   board — no lichess account needed their side. gamchess seats your account in
-				   an open challenge and relays your side here (server runOpen). Blitz+ only
-				   (your side plays via the Board API), and the colour chip is which side YOU
-				   take — picking it moves your seat to match. *@
+				   board — no lichess account needed their side. The game creates the open
+				   challenge ANONYMOUSLY (a board:play key is refused on that endpoint) and then
+				   seats your account in it with your own key; skipping that second step is the
+				   bug that shipped in M8, leaving the creator's seat empty so nothing started.
+				   Blitz+ only (your side plays via the Board API), and the colour chip is which
+				   side YOU take — picking it moves your seat to match. *@
 				@if ( LichessSeatColor( ctrl ) is not null )
 				{
 					<div class="setup-label">OR GET A SHAREABLE LINK</div>
@@ -619,10 +624,16 @@
 		StateHasChanged();
 	}
 
+	/// <summary>The 20-second line is not decoration. lichess sweeps an unanswered
+	/// real-time challenge about 20s after it last saw it, and Gambit deliberately does
+	/// NOT use lichess's keepAliveStream to keep bumping that — its own trap (closing
+	/// the stream does not withdraw the challenge, which then stays acceptable for
+	/// HOURS) has already bitten this project once. So the invitation really is brief,
+	/// and a player who isn't told that reads a silent expiry as a broken button.</summary>
 	string ChallengeHint()
 	{
 		if ( _challengeRated ) return "Rated: this will move your real lichess rating.";
-		return "They'll get a challenge on lichess to accept or decline.";
+		return "They'll get a challenge on lichess — they have about 20 seconds to accept.";
 	}
 
 	// ── Shareable link (an anonymous browser opponent plays this player on the board) ──

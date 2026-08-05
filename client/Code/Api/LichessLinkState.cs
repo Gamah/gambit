@@ -1,65 +1,81 @@
 using System.Threading.Tasks;
+using Gambit.Api.Lichess;
 using Sandbox;
 
 namespace Gambit.Api;
 
 /// <summary>
-/// This player's lichess link, cached, and the one thing that polls for it (M8).
+/// This player's lichess link, as the UI sees it.
+///
+/// <para><b>"Am I linked?" is now answered LOCALLY</b> (HTTPFIX). The token lives
+/// on this machine, so the answer is instant, offline, and cannot be wrong —
+/// where it used to be a 3-second poll of gamchess whose first answer was
+/// "unknown". <see cref="LichessTokenStore"/> is the authority.</para>
+///
+/// <para>What is still worth asking gamchess is whether IT agrees, and that is a
+/// genuinely different question with a real consequence: the two-seat flow needs
+/// gamchess to know your lichess username so it can tell the opposite seat. A
+/// disagreement means the directory won't work, so it is surfaced
+/// (<see cref="ServerDisagrees"/>) rather than hidden.</para>
 ///
 /// <para>Static rather than a component because there is exactly one local player
 /// and their link is a property of them, not of any board: the wall panel, the
-/// engaged screen and every table's play button all read the same answer, and
-/// none of them should be issuing their own request for it.</para>
-///
-/// <para><b>Polls only while the lichess station is engaged</b> — never in the
-/// background, and never per-frame. Two guards do that: <see cref="Poll"/> is
-/// only called from the engaged screen's update, and <see cref="_inFlight"/> is
-/// claimed BEFORE the await, which is the <c>LocalGameController.TryArchive</c>
-/// lesson — without it, <c>OnUpdate</c> fires a request every frame until the
-/// first one returns.</para>
-///
-/// <para>Once linked, it stops polling: a link doesn't change on its own. Unlink
-/// updates the cache directly, and <see cref="Invalidate"/> forces a re-check.</para>
+/// engaged screen and every table's play button read the same answer, and none of
+/// them should be issuing their own request for it.</para>
 ///
 /// <para>gamchess unreachable degrades to <see cref="Offline"/> and changes
-/// nothing else. Lichess is never required for anything.</para>
+/// nothing else — a lichess game runs between this client and lichess, and
+/// nothing in that path goes through our backend.</para>
 /// </summary>
 public static class LichessLinkState
 {
-	/// <summary>How often to ask, while the board is being looked at. The player is
-	/// alt-tabbed in a browser completing an OAuth flow, so this decides how long
-	/// "linked!" takes to appear — a few seconds is the whole budget.</summary>
-	const float PollSeconds = 3f;
+	/// <summary>How often to re-check gamchess's opinion, while the board is being
+	/// looked at. Nothing waits on this any more, so it is a background
+	/// reconciliation rather than the thing that makes "linked!" appear.</summary>
+	const float PollSeconds = 10f;
 
-	/// <summary>Is this player linked? False until we've been told otherwise.</summary>
-	public static bool Linked { get; private set; }
+	/// <summary>Is this player linked? Answered from disk — instant, offline, and
+	/// true the moment the link finishes.</summary>
+	public static bool Linked => LichessTokenStore.Linked;
 
 	/// <summary>Their lichess display name, when linked.</summary>
-	public static string Username { get; private set; }
+	public static string Username => LichessTokenStore.Username;
 
-	/// <summary>We asked and couldn't reach gamchess. Not an error worth a popup —
-	/// the board says so and the game carries on.</summary>
+	/// <summary>We asked and couldn't reach gamchess. Not an error worth a popup,
+	/// and not a reason to stop playing on lichess.</summary>
 	public static bool Offline { get; private set; }
 
-	/// <summary>Have we ever had an answer? Distinguishes "not linked" from
-	/// "haven't asked yet", which the UI shows differently.</summary>
+	/// <summary>We hold a token but gamchess has no link for us — so the two-seat
+	/// flow can't look up an opponent's username.
+	///
+	/// <para>Reachable for real: a claim that failed after a successful exchange, a
+	/// database restored from before the link, or an unlink done on the web while
+	/// the game still holds the key. The board says to link again, which is a
+	/// cheap fix for a state that would otherwise fail confusingly at the moment
+	/// two people sit down to play.</para></summary>
+	public static bool ServerDisagrees { get; private set; }
+
+	/// <summary>The grant on this machine predates the scope set this build asks
+	/// for. Re-linking is the only way to widen a lichess token — there are no
+	/// refresh tokens.</summary>
+	public static bool ScopesAreStale => LichessTokenStore.ScopesAreStale;
+
+	/// <summary>Have we ever had an answer from gamchess? Distinguishes "gamchess
+	/// says no" from "haven't asked yet".</summary>
 	public static bool Known { get; private set; }
 
 	static bool _inFlight;
 	static RealTimeUntil _nextPoll;
 
-	/// <summary>
-	/// Ask gamchess whether we're linked, at most every <see cref="PollSeconds"/>.
-	/// Safe to call every frame — that is how the engaged screen uses it.
-	/// </summary>
+	/// <summary>Reconcile with gamchess, at most every <see cref="PollSeconds"/>.
+	/// Safe to call every frame — that is how the engaged screen uses it.</summary>
 	public static void Poll()
 	{
-		if ( !GamchessAuth.Available ) return;   // no Steam ⇒ no gamchess ⇒ no lichess
-		if ( Linked ) return;                    // a link doesn't lapse on its own
+		if ( !GamchessAuth.Available ) return;   // no Steam ⇒ no gamchess
 		if ( _inFlight || (float)_nextPoll > 0f ) return;
 
 		// Claim before awaiting, or this fires once per frame until the first
-		// request lands.
+		// request lands — the TryArchive lesson.
 		_inFlight = true;
 		_nextPoll = PollSeconds;
 		_ = Fetch();
@@ -85,29 +101,18 @@ public static class LichessLinkState
 
 		Offline = false;
 		Known = true;
-		Linked = link.linked;
-		Username = link.username;
+		ServerDisagrees = LichessTokenStore.Linked && !link.linked;
 	}
 
-	/// <summary>Unlink, and update the cache. The server revokes at lichess and
-	/// then forgets the token; we only have to stop claiming to be linked.</summary>
-	public static async Task Unlink()
+	/// <summary>A link just completed. Called by <see cref="LichessLink"/> once the
+	/// token is on disk and gamchess has recorded it, so nothing has to wait for a
+	/// poll to catch up.</summary>
+	public static void AdoptLink( string username )
 	{
-		var res = await LichessApi.Unlink();
-		if ( !res.Ok )
-		{
-			Offline = true;
-			return;
-		}
-		Linked = false;
-		Username = null;
-		Offline = false;
-		// Known stays TRUE: gamchess just told us the link is gone, which is a real
-		// answer, not an absence of one. (Polling does resume from here — the gate
-		// is Linked, which is now false — so an unlink made in a browser is picked
-		// up within a poll. Calling Invalidate() as well would just re-ask
-		// immediately for something we were only this moment told.)
 		Known = true;
+		Offline = false;
+		ServerDisagrees = false;
+		_nextPoll = PollSeconds;
 	}
 
 	/// <summary>Force the next <see cref="Poll"/> to really ask.</summary>
@@ -117,13 +122,13 @@ public static class LichessLinkState
 		Known = false;
 	}
 
-	/// <summary>Drop everything (sign-out).</summary>
+	/// <summary>Drop everything (unlink, sign-out). Does NOT delete the token —
+	/// <see cref="LichessLink.Unlink"/> owns that, and owns revoking it first.</summary>
 	public static void Forget()
 	{
-		Linked = false;
-		Username = null;
 		Offline = false;
 		Known = false;
+		ServerDisagrees = false;
 		_nextPoll = 0f;
 	}
 }
