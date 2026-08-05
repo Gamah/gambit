@@ -32,7 +32,7 @@
 <root>
 	@if ( !MusicScreen.IsOpen )
 	{
-		<div class="hints">
+		<div class="hints @( BoardSettingsScreen.ButtonShowing ? "raised" : "" )">
 			<div class="hint">
 				<div class="key">@ChatKeyLabel()</div>
 				<div class="label">Chat</div>
@@ -71,10 +71,20 @@
 		position: absolute;
 		left: 16px;
 		bottom: 44px;
+		/* see .hints.raised below — the seated BOARD SETTINGS pill takes the bottom slot */
 		flex-direction: column;
 		align-items: flex-start;
 		gap: 8px;
 		pointer-events: none;
+	}
+
+	/* Seated, the BOARD SETTINGS pill (issue #28) takes the bottom of this column — it is a
+	   real control and the stack is a legend, so the control gets the corner and the legend
+	   steps up. 44 + the pill's own height (~26) + the stack's own 8px gap. Three panels share
+	   this column now: BoardSettingsScreen.open-btn at 44, this at 78, VoicePanel's roster
+	   above both — keep all three in step. */
+	.hints.raised {
+		bottom: 78px;
 	}
 
 	/* Every text div: nowrap AND flex-shrink 0. A shrunk text div in a flex row doesn't
@@ -185,5 +195,6 @@
 			VoicePrefs.VoiceEnabled,
 			Preferences.VoiceMode,
 			VoicePrefs.MutedCount,
-			ChatKeyLabel() );
+			ChatKeyLabel(),
+			BoardSettingsScreen.ButtonShowing );
 }

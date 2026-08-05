@@ -88,8 +88,14 @@ public static class SeatAim
 	public const float MaxYaw = 45f;
 	public const float MaxPitch = 30f;
 
-	/// <summary>Whether the local player has ASKED for look aim at all (the world-settings
-	/// board). Read live so the picker takes effect the next frame, exactly as PLAY MODE does.</summary>
+	/// <summary>Whether the local player has ASKED for look aim at all (BOARD SETTINGS). Read live
+	/// so the picker takes effect the next frame, exactly as PLAY MODE does.
+	///
+	/// <para>It also decides the seated CAMERA ANCHOR, which is why it is public and why the
+	/// distinction from <see cref="Aiming"/> matters: <see cref="ChessStation.LocalNadir"/> keeps
+	/// the seat camera whenever this is on, so 2D play mode never puts a look-aiming player on the
+	/// straight-down anchor where the offset composition is degenerate (issue #28). Aiming flickers
+	/// with modals and Escape; this doesn't, and an anchor may only follow the stable one.</para></summary>
 	public static bool Enabled =>
 		Gambit.Game.PlayerData.Load()?.LookAimAtBoard ?? false;
 

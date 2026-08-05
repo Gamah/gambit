@@ -586,7 +586,14 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// board build flat glyph quads. The two board views watch this and respawn their pieces.</item>
 	/// <item><see cref="SeatedTerry.ForceHidden"/> — <c>2d</c> suppresses the seated bodies, which are
 	/// noise under the top-down camera.</item>
-	/// </list></summary>
+	/// </list>
+	///
+	/// <para><b>The bodies gate is keyed on the play MODE, and issue #28 made that worth revisiting.</b>
+	/// "2D means no bodies" was written when 2D always meant the nadir camera. It no longer does: with
+	/// AIM AT THE BOARD = LOOK, a 2D player sits at the SEAT camera (<see cref="ChessStation.LocalNadir"/>
+	/// is the live answer now, not the play mode), which is the framing the seated Citizens were built
+	/// for — and the chair opposite reads as empty. Left alone here deliberately rather than changed
+	/// blind: it is a look call nothing on this host can see. See PLAN.md.</para></summary>
 	void ApplyPlayModeSetting()
 	{
 		if ( _handsSettingVersion == Gambit.UI.SettingsModel.SettingsVersion ) return;
@@ -1768,8 +1775,13 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// White (outward), +1 = Black (inward). Directly above the board centre looking straight down,
 	/// with the seat's FAR rank at the top of the screen so each player reads the board from their
 	/// own side. A separate anchor from <see cref="BuildSeatAnchor"/> — it never touches SeatPitch
-	/// (which also drives chair/walk-up placement), and LobbyPlayer eases between the two for free
-	/// when the mode changes while seated.</summary>
+	/// (which also drives chair/walk-up placement), and LobbyPlayer blends between the two when the
+	/// mode changes while seated — see its <c>_lastSeatAnchor</c> swap detector, which is what makes
+	/// that true; the blend is not free, it just used to be unreachable.
+	///
+	/// <para><b>Not used while LOOK aim is on</b>, even in 2D (issue #28): looking straight down is
+	/// the singularity that makes the seated aim offset meaningless. <see cref="ChessStation.LocalNadir"/>
+	/// is the live answer to "is this anchor in play".</para></summary>
 	GameObject BuildTopAnchor( GameObject station, string name, float side )
 	{
 		var center = new Vector3( 0, 0, BoardSurfaceZ + 2f );

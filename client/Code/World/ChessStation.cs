@@ -107,12 +107,27 @@ public sealed class ChessStation : Component
 	public string SeatName( ChessSeat seat ) =>
 		seat == ChessSeat.White ? WhiteName : BlackName;
 
-	/// <summary>The local player is seated AND in 2D play mode, so the top-down (nadir) camera is
-	/// active (M16). Any floating world panel at table/head height — the occupancy sign, name tags,
-	/// the board number — then projects straight down onto the board and clutters it, so those panels
-	/// hide themselves on this condition. Client-global (Active + FlatMode are both client-local
-	/// facts); panels read it live so sitting/standing takes effect immediately.</summary>
-	public static bool LocalNadir => Active != null && ChessSetBuilder.FlatMode;
+	/// <summary>The top-down (nadir) camera is LIVE for the local player (M16). Any floating world
+	/// panel at table/head height — the occupancy sign, name tags, the board number — then projects
+	/// straight down onto the board and clutters it, so those panels hide themselves on this
+	/// condition. Client-global (all three facts below are client-local); panels read it live so
+	/// sitting/standing/switching takes effect immediately.
+	///
+	/// <para><b>It means the CAMERA, not the render mode</b> (issue #28), and the difference is the
+	/// whole trap. It used to be <c>Active != null &amp;&amp; FlatMode</c> — it INFERRED the camera
+	/// from flat pieces. Since LOOK aim keeps the seat camera even in 2D (the nadir anchor looks
+	/// straight down, where the aim offset is degenerate — see LobbyPlayer.UpdateLockedCamera),
+	/// that inference would hide the name tags and the station panel from a player who can now see
+	/// the world they belong in. <see cref="LobbyPlayer.UpdateLockedCamera"/> picks its anchor off
+	/// THIS property, so the two cannot disagree.</para>
+	///
+	/// <para>Gated on the aim SETTING rather than on <see cref="SeatAim.Aiming"/>: aiming goes false
+	/// on every modal, every Escape and every finished game, and an anchor that followed it would
+	/// swing the camera between two completely different views mid-game. The setting is the stable
+	/// fact — "this player aims by looking" — and it is what makes 2D + LOOK a coherent thing:
+	/// flat pieces, seated view.</para></summary>
+	public static bool LocalNadir =>
+		Active != null && ChessSetBuilder.FlatMode && !SeatAim.Enabled;
 
 	public GameObject SeatAnchor( ChessSeat seat ) =>
 		seat == ChessSeat.White ? WhiteAnchor : BlackAnchor;

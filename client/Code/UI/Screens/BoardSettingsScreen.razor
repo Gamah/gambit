@@ -1,0 +1,328 @@
+@using System;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.UI;
+@using Gambit.World;
+@namespace Gambit.UI.Screens
+@inherits PanelComponent
+
+@*
+	BOARD SETTINGS (issue #28) — the settings that are about a chess board rather than the
+	room: how it renders (PLAY MODE), how you aim at it, whether it lights up legal moves,
+	what it sounds like and what it reads out loud.
+
+	These were seven more rows on the south-wall WORLD SETTINGS board, which had grown taller
+	than the screen and clipped at BOTH ends. Height was the symptom; the panel was two
+	unrelated jobs in one list. The wall keeps the ROOM (theme, lights, floor, voice range)
+	and these come here, where you are when you care about them.
+
+	TWO DOORS, ONE EDITOR:
+	  · seated — the BOARD SETTINGS pill, bottom-left, out of the board's way in BOTH the 3D
+	    seated framing and the 2D top-down one;
+	  · at the wall — SettingsScreen's own BOARD SETTINGS button, for someone who isn't
+	    sitting down.
+	So it must work with no seat: every row is client-local and nothing here may read
+	ChessStation.Active.
+
+	Rows come from the shared SettingsModel (BuildBoardRows) and are rendered exactly as
+	SettingsScreen renders the wall's — same cells, same SliderControl, same WallTheme. Not a
+	second copy of the model, and not a second look.
+
+	MODAL FOR SeatAim, like the promotion picker: LobbyPlayer folds IsOpen into the modal flag,
+	so opening this releases the cursor and closing it takes aim back BY ITSELF — without
+	clearing a suspend the player asked for with Escape. Escape closes it (handled in
+	LobbyPlayer, which owns that key while engaged, so the two can never both claim a frame).
+
+	Self-attached to the scene ScreenPanel by LobbyPlayer (EnsureBoardSettings) — strictly
+	client-local, so it must never be a serialized lobby.scene component (see the NetworkMode
+	fork in CLAUDE.md).
+*@
+
+<root>
+	@* The opener. Seated only: at the wall the door is SettingsScreen's own button, and a
+	   roaming player has neither a board in front of them nor a reason. Hidden while the
+	   panel is up — the panel has its own ✕ and would otherwise sit on top of its own
+	   button. *@
+	@if ( ButtonShowing )
+	{
+		@* Look aim hides the pointer, so this pill is real and unclickable while it is on —
+		   which is exactly the "reads as a broken HUD" case the aim hint exists for. Say so
+		   ON the button rather than leaving it looking live: the HUD's own "Esc for the
+		   cursor" line is a few hundred pixels away in the other corner. It keeps its slot
+		   either way, so the keycap stack above doesn't hop 34px every time Escape is
+		   pressed. *@
+		@if ( SeatAim.Aiming )
+		{
+			<div class="open-btn dimmed">⚙  BOARD SETTINGS — Esc for the cursor</div>
+		}
+		else
+		{
+			<div class="open-btn" onclick="@( () => Open() )">⚙  BOARD SETTINGS</div>
+		}
+	}
+
+	@if ( IsOpen )
+	{
+		<div class="screen-fit">
+			<div class="settings" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
+				<div class="head">
+					<div class="title" style="color:@WallTheme.Text;">BOARD SETTINGS</div>
+					<div class="close" style="color:@WallTheme.TextDim;" onclick="@( () => Close() )">✕</div>
+				</div>
+				<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+				@foreach ( var row in SettingsModel.BuildBoardRows() )
+				{
+					<div class="row">
+						<div class="label" style="color:@WallTheme.TextFaint;">@row.Label</div>
+						@if ( row.Slider is { } sl )
+						{
+							<SliderControl class="wslider" Min="@sl.Min" Max="@sl.Max" Value="@sl.Value" OnValueChanged="@sl.OnChange"></SliderControl>
+						}
+						else if ( row.Cells.Count > 0 )
+						{
+							<div class="cells">
+								@foreach ( var cell in row.Cells )
+								{
+									var c = cell;
+									<div class="cell @c.Css @( c.Selected ? "selected" : "" )" style="@CellStyle( c )" onclick="@( () => Click( c ) )">@c.Label</div>
+								}
+							</div>
+						}
+					</div>
+				}
+				<div class="foot" style="color:@WallTheme.TextFaint;">These are yours alone — nobody else's board changes. Esc or ✕ closes.</div>
+			</div>
+		</div>
+	}
+</root>
+
+<style>
+	@@import "../WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		/* Above the seated HUD (z-index 50) — this is a modal, and it must not come up
+		   underneath the panel whose button opened it. */
+		z-index: 60;
+		font-family: $wall-font;
+	}
+
+	/* The opener, bottom-left. That corner is the one place free of the board in BOTH
+	   framings: the 3D seat looks down the board at screen centre, and the 2D nadir camera
+	   fills the middle with the 64 squares. The right-hand HUD (right: 24px) and the
+	   move history (left: 24px, top) both live at the TOP, so nothing there is displaced.
+
+	   It sits at the FOOT of the bottom-left column and pushes the HudHints keycap stack up
+	   (see HudHints.raised / VoicePanel.raised — keep the three in step). Bottom-anchored
+	   rather than dropped in above the stack, because the stack changes height with the
+	   music board and a fixed offset above it would drift. */
+	.open-btn {
+		position: absolute;
+		left: 16px;
+		bottom: 44px;
+		padding: 6px 14px;
+		border-radius: 12px;
+		background-color: rgba(10, 10, 14, 0.85);
+		border: 1px solid rgba(255, 255, 255, 0.35);
+		color: rgba(255, 255, 255, 0.95);
+		font-size: 14px;
+		font-weight: 600;
+		letter-spacing: 1px;
+		white-space: nowrap;
+		flex-shrink: 0;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.open-btn:hover {
+		border: 1px solid rgba(255, 255, 255, 0.85);
+	}
+
+	/* Unclickable while look aim owns the mouse — no pointer-events, no hover, no cursor. */
+	.dimmed {
+		color: rgba(255, 255, 255, 0.55);
+		border: 1px solid rgba(255, 255, 255, 0.18);
+		cursor: default;
+		pointer-events: none;
+	}
+
+	.dimmed:hover {
+		border: 1px solid rgba(255, 255, 255, 0.18);
+	}
+
+	/* Centering lives on an absolutely-positioned full-screen child, never on root —
+	   otherwise the content pins top-left (CLAUDE.md). */
+	.screen-fit {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		align-items: center;
+		justify-content: center;
+		pointer-events: none;
+	}
+
+	/* Same width and tokens as SettingsScreen's card: one editor, one look, whichever door
+	   you came through. Seven rows, so it fits without the scroll/scale that the overgrown
+	   wall panel was reaching for. */
+	.settings {
+		width: 620px;
+		flex-direction: column;
+		align-items: stretch;
+		justify-content: flex-start;
+		padding: 28px 34px;
+		border-radius: $wall-radius;
+		gap: 14px;
+		pointer-events: all;
+	}
+
+	.settings > div {
+		flex-shrink: 0;
+	}
+
+	.head {
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.title {
+		white-space: nowrap;
+		flex-shrink: 0;
+		font-size: 26px;
+		font-weight: bold;
+		letter-spacing: 4px;
+	}
+
+	.close {
+		white-space: nowrap;
+		flex-shrink: 0;
+		font-size: 22px;
+		padding: 0 8px;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.close:hover {
+		color: rgba(255, 255, 255, 1);
+	}
+
+	.divider {
+		height: 2px;
+		margin: 6px 0;
+	}
+
+	.row {
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.label {
+		font-size: 16px;
+		letter-spacing: 2px;
+		white-space: nowrap;
+	}
+
+	.cells {
+		flex-direction: row;
+		gap: 8px;
+	}
+
+	.foot {
+		font-size: 13px;
+		letter-spacing: 1px;
+		white-space: nowrap;
+		margin-top: 4px;
+	}
+
+	/* Slider + cell styling mirrors SettingsScreen's, including hiding SliderControl's
+	   built-in value bubble (it renders as a bare black box, and the row label already
+	   carries the value). */
+	.wslider {
+		width: 100%;
+		height: 24px;
+		pointer-events: all;
+	}
+
+	.wslider .value-tooltip {
+		display: none;
+	}
+
+	.cell {
+		justify-content: center;
+		align-items: center;
+		font-size: 16px;
+		border: 2px solid transparent;
+		border-radius: $wall-radius;
+		cursor: pointer;
+		pointer-events: all;
+	}
+
+	.cell:hover {
+		border: 2px solid rgba(255, 255, 255, 0.6);
+	}
+
+	.cell.toggle {
+		padding: 4px 16px;
+		height: 34px;
+	}
+
+	.cell.selected {
+		border: 2px solid rgba(255, 255, 255, 0.85);
+	}
+</style>
+
+@code
+{
+	/// <summary>The panel is up. Client-local and global (you can only be at one board), so a
+	/// static — the same shape as <see cref="MusicScreen.IsOpen"/> and <see cref="SeatAim"/>.
+	/// <see cref="LobbyPlayer"/> reads it to make the panel modal for SeatAim and to route
+	/// Escape at it; <see cref="HudHints"/> and <see cref="VoicePanel"/> read
+	/// <see cref="ButtonShowing"/> to make room for the opener.</summary>
+	public static bool IsOpen { get; private set; }
+
+	/// <summary>The seated opener is on screen, so the bottom-left keycap stack has to sit
+	/// above it. Seated at a chess board and the panel closed — a wall board opens this from
+	/// its own editor, and a roaming player has no board to configure.</summary>
+	public static bool ButtonShowing => ChessStation.Active != null && !IsOpen;
+
+	/// <summary>Open it — from the seated pill here, or from the wall's SettingsScreen.</summary>
+	public static void Open()
+	{
+		IsOpen = true;
+		Gambit.Audio.SoundPlayer.PlayTick();
+	}
+
+	/// <summary>Close it. Deliberately does NOT touch SeatAim: the modal flag LobbyPlayer
+	/// derives from IsOpen clears on its own next frame, which is what restores aim without
+	/// undoing a suspend the player asked for themselves.</summary>
+	public static void Close()
+	{
+		if ( !IsOpen ) return;
+		IsOpen = false;
+		Gambit.Audio.SoundPlayer.PlayTick();
+	}
+
+	/// <summary>Standing up, leaving a wall board, or anything else that ends the flow this
+	/// was opened from. Silent — no click sound for something the player didn't click.</summary>
+	public static void ForceClose() => IsOpen = false;
+
+	// Runtime theme colours for a cell, merged with the cell's own Style last — same rule as
+	// SettingsScreen. No disabled state here: every board setting is always editable.
+	string CellStyle( SettingsModel.SettingCell c ) =>
+		$"background-color:{WallTheme.Cell}; color:{WallTheme.TextDim};" + c.Style;
+
+	void Click( SettingsModel.SettingCell cell )
+	{
+		if ( cell?.Activate == null ) return;
+		cell.Activate();
+		Gambit.Audio.SoundPlayer.PlayTick();
+		StateHasChanged();
+	}
+
+	protected override int BuildHash() =>
+		HashCode.Combine( IsOpen, ButtonShowing, SeatAim.Aiming, SettingsModel.SettingsVersion );
+}
