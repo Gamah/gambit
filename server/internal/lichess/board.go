@@ -1,7 +1,6 @@
 package lichess
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,15 +25,6 @@ import (
 // resp.Body + bufio.Scanner, no client timeout, cancelled via context.
 //
 // Everything that is not a GET .../stream... is an ordinary buffered call.
-
-// streamClient has NO Timeout, unlike client. A client-level timeout applies to
-// the whole request including the body read, so it would kill a healthy stream
-// mid-game. Cancellation is the caller's context (unseat, game over, shutdown).
-var streamClient = &http.Client{}
-
-// maxStreamLine bounds one ndjson line. A gameFull with a long move list is a
-// few KB; a megabyte is slack.
-const maxStreamLine = 1 << 20
 
 // ── Event shapes (re-derived from the OpenAPI spec, 2026-07-15) ──
 
@@ -198,85 +188,6 @@ func StreamGame(ctx context.Context, token, gameID string, fn func(GameEvent)) e
 		}
 		return nil
 	})
-}
-
-// stream is the shared ndjson reader. Deliberately tiny and shared: the callers
-// differ only in URL and line shape, and a streaming bug is the kind that only
-// shows up mid-game.
-//
-// A BLANK token means an anonymous stream and sends no Authorization header at
-// all. That is not a convenience: /api/tv/{channel}/feed is `security: []`
-// upstream, and attaching a player's board:play token to a request that does not
-// need it would hand their credential to an endpoint that never asked for it, on
-// a stream we hold open for hours. TV must stay anonymous.
-func stream(ctx context.Context, token, u string, onLine func([]byte) error) error {
-	return streamReq(ctx, token, http.MethodGet, u, nil, onLine)
-}
-
-// streamReq is stream() with a method and an optional form body, for the one
-// ndjson stream lichess opens in answer to a POST (a keep-alive challenge).
-//
-// A non-2xx here returns an *APIError carrying lichess's own body, not a bare
-// status: the challenge endpoint says useful things ("No such user: bob", "You
-// cannot challenge yourself") that a player needs to read, and a status alone
-// would throw them away.
-func streamReq(ctx context.Context, token, method, u string, form url.Values, onLine func([]byte) error) error {
-	if err := guard(ctx); err != nil {
-		return err
-	}
-
-	var body io.Reader
-	if form != nil {
-		body = strings.NewReader(form.Encode())
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, u, body)
-	if err != nil {
-		return fmt.Errorf("lichess: build stream request: %w", err)
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	req.Header.Set("Accept", "application/x-ndjson")
-	if form != nil {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	}
-
-	resp, err := streamClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("lichess: stream request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
-		return &APIError{Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
-	}
-
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 0, 8<<10), maxStreamLine)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(strings.TrimSpace(string(line))) == 0 {
-			continue // ~7s keepalive
-		}
-		if err := onLine(line); err != nil {
-			return err
-		}
-	}
-	if err := sc.Err(); err != nil {
-		// Context cancellation surfaces here as a read error; report the cause so
-		// callers can tell "we stopped it" from "lichess dropped us".
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		return fmt.Errorf("lichess: stream read: %w", err)
-	}
-	// A clean EOF means lichess closed it — game over, or the token opened a
-	// second event stream elsewhere.
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
-	}
-	return nil
 }
 
 // ── Buffered writers ──
@@ -888,31 +799,3 @@ func postBody(ctx context.Context, token, path string, form url.Values) ([]byte,
 	return raw, nil
 }
 
-// APIError carries a non-2xx from lichess, status included so callers can tell a
-// dead token (401) from a refused move (400) from a rate limit (429).
-type APIError struct {
-	Status int
-	Body   string
-}
-
-func (e *APIError) Error() string {
-	if e.Body == "" {
-		return fmt.Sprintf("lichess: status %d", e.Status)
-	}
-	return fmt.Sprintf("lichess: status %d: %s", e.Status, truncate(e.Body, 200))
-}
-
-// Unauthorized reports a dead/revoked token — the player revoked our grant on
-// lichess's Security page, or it expired. The link row is now useless.
-func (e *APIError) Unauthorized() bool { return e.Status == http.StatusUnauthorized }
-
-// RateLimited reports a 429. lichess's guidance is one request at a time and a
-// full 60s wait — never a tight retry.
-func (e *APIError) RateLimited() bool { return e.Status == http.StatusTooManyRequests }
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}

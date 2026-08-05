@@ -36,7 +36,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 // Endpoints are package vars, not consts, so handler and unit tests can point
@@ -46,7 +45,6 @@ var (
 	authorizeEndpoint = "https://lichess.org/oauth"
 	tokenEndpoint     = "https://lichess.org/api/token"
 	accountEndpoint   = "https://lichess.org/api/account"
-	apiBase           = "https://lichess.org"
 )
 
 // Scope is the one and only scope gamchess ever requests. See the package docs
@@ -79,14 +77,6 @@ const Scope = "board:play"
 // pointing at their own callback. It authenticates nothing. PKCE is what secures
 // our exchange; the redirect URI is what decides who receives a code.
 const ClientID = "net.gamah.gambit"
-
-// client bounds every non-streaming call. The streams in board.go deliberately
-// do NOT use it — a client timeout would kill a long-lived stream mid-game.
-var client = &http.Client{Timeout: 10 * time.Second}
-
-// maxBody caps what we'll read from lichess on a buffered call. Their JSON
-// bodies are a few KB; this is slack, not a budget.
-const maxBody = 1 << 20
 
 // NewVerifier mints a PKCE verifier and its S256 challenge.
 //
