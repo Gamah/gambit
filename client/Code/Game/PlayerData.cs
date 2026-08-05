@@ -79,6 +79,26 @@ public sealed class PlayerData
 	/// and a missing key deserializes to <c>false</c>, which is the pre-P99 behaviour.</para></summary>
 	public bool LookAimAtBoard { get; set; } = false;
 
+	/// <summary>Does selecting a piece light up the squares it can legally move to
+	/// (the green target tier)? <c>true</c> is every version of the game before this
+	/// setting existed, so a missing key deserializes to the old behaviour.
+	///
+	/// <para><b>A TINT setting, not a rules setting.</b> Turning it off hides the
+	/// paint and nothing else: the selection still happens, the target list is still
+	/// built, and the same moves are still the only ones that land. Nothing may
+	/// implement this by leaving <c>_targets</c> empty. Premove targets share the
+	/// tier and the list, so they hide with it — a premove hint is the same giveaway
+	/// on the other side of the clock.</para>
+	///
+	/// <para>Scoped to the green squares alone. The gold selected square, the blue
+	/// hover, the red check, the olive last move and the purple premove squares are
+	/// all untouched: you still see which piece you picked up, just not where it
+	/// can go.</para>
+	///
+	/// <para>Client-local and cosmetic, like <see cref="PlayMode"/> — nothing
+	/// networked, and it applies to your own board only.</para></summary>
+	public bool ShowLegalMoves { get; set; } = true;
+
 	// ── Lichess TV on the north wall (M9) ──
 	/// <summary>Is lichess TV one of the sources the north wall cycles through?
 	/// <para><b>Default on.</b> TV needs no lichess account and no linking — the feed

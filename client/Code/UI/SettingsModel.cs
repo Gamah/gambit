@@ -116,6 +116,13 @@ public static class SettingsModel
 			data.LookAimAtBoard ? "look" : "cursor",
 			v => Mutate( d => d.LookAimAtBoard = v == "look" ) ) );
 
+		// Whether a selected piece lights up its legal destinations (issue #26). Default ON,
+		// so this changes nothing for anyone who never opens this board. It is a TINT setting:
+		// off hides the green squares and nothing else — the same moves still land, and the
+		// gold/blue/red/olive/purple tiers are untouched. See PlayerData.ShowLegalMoves.
+		rows.Add( ToggleRow( "SHOW LEGAL MOVES", data.ShowLegalMoves,
+			v => Mutate( d => d.ShowLegalMoves = v ) ) );
+
 		// Proximity-voice hearing range (M12): how far THIS client hears others, split by whether
 		// you're seated or roaming. Range is a receive-side, per-client value (the falloff is applied
 		// on the receiver), which is why it belongs here on the world board rather than being networked.
