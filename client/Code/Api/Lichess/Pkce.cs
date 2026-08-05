@@ -20,9 +20,9 @@ namespace Gambit.Api.Lichess;
 /// code rather than being lost with it.</para>
 ///
 /// <para><b>The engine's own SHA-256 is used, and that was CHECKED rather than
-/// assumed.</b> HTTPFIX.md flagged "is <c>SHA256.HashData</c> callable?" as a
-/// day-one unknown and suggested hand-rolling if not — one was written and then
-/// deleted, because <c>sbox-public</c>'s
+/// assumed.</b> The HTTPFIX brief flagged "is <c>SHA256.HashData</c> callable?"
+/// as a day-one unknown and suggested hand-rolling if not — one was written and
+/// then deleted, because <c>sbox-public</c>'s
 /// <c>engine/Sandbox.Access/Rules/BaseAccess.cs:362</c> whitelists
 /// <c>System.Security.Cryptography.SHA256*</c> outright (read 2026-08-05). A
 /// whole hash implementation to review is a real cost, and "the assembly is

@@ -73,10 +73,15 @@ lichess. Matchmaking is the missing directory.
   (`LobbyNetworkManager`), so Mode A's join is one call and needs no privacy change.
 - **gamchess session auth already names a verified SteamID** (`session.go`, the `gcs_` bearer /
   FP path) — a match POST is attributable and unspoofable. Reuse `requireSteam` as `games.go` does.
-- The **lichess relay** (`internal/api/relay.go` + `lichess.go` play endpoints, and client
-  `LichessGameController`) is the structural template for Mode B: POST a move, poll state since
-  a cursor, server-authoritative clock. Mode B is "that, but gamchess is the authority instead
-  of lichess" — and simpler, because there is no upstream token/stream to hold.
+- The lichess relay **was** the structural template for Mode B, and **it no longer exists**.
+  HTTPFIX deleted `internal/api/relay.go` and the `/lichess/play` endpoints outright: the client
+  holds its own lichess token and streams the Board API itself, so there is no server-side
+  relayed game left to copy. `LichessGameController` also no longer polls anything.
+  → The template that survives is **`internal/api/relaygame.go` itself** (M19 shipped it), plus
+  `RelayGameController` client-side. Read those. What the old relay contributed that is worth
+  keeping is the *shape* — POST a move, poll state since a cursor, server-authoritative clock —
+  and Mode B was always simpler than it anyway, because there is no upstream token or stream to
+  hold. Do not go looking in git for `relay.go` as a model; its complexity was all custody.
 
 ## Server: the directory (shared by both modes)
 
@@ -135,10 +140,11 @@ the PGN; idempotent on the game id). It IS a real game between two real accounts
   for the two SteamIDs and seats each on the gamchess-assigned colour when present — overriding
   walk-up colour (the whole point). Reserved-seat handshake keyed on the match is the
   untestable crux; guard against a third player grabbing the table in the gap.
-- **Mode B: `GamchessRelayController : IBoardGame`** — a sibling of `LichessGameController`.
+- **Mode B: `GamchessRelayController : IBoardGame`** — shipped as `RelayGameController` (M19).
   POSTs the local player's moves, polls the opponent's, runs the ticking clock down locally
   between polls (the M12/M18 house rule — never read HIGH), renders through the same `Source =>`
-  seam (which already absorbed lichess with no renderer change). Clocks are gamchess's.
+  seam (which absorbed lichess with no renderer change, and then absorbed the whole HTTPFIX
+  transport change the same way). Clocks are gamchess's.
 - **UI:** `SetupPanel` gets an "OR FIND AN OPPONENT ONLINE" block: a mode toggle (Join up /
   Play here), a "list yourself" button, and the open-games list to join. Random-sides copy on it.
 
@@ -152,7 +158,9 @@ the PGN; idempotent on the game id). It IS a real game between two real accounts
   White by sitting first; the host seats by gamchess's assignment regardless of where they walked.
 - **Mode B clock never reads HIGH** — inherit the LichessTvSource / LichessGameController
   countdown discipline verbatim (CLAUDE.md's TV clock section). gamchess is the sole authority;
-  local drift can't outlive one move.
+  local drift can't outlive one move. **Mind which version you copy**: `LichessGameController`
+  is on a STREAM now, so it carries no staleness correction at all beyond a fixed lead — a poll
+  is a different case and needs the `age`/`hold` reasoning that M18 kept for TV's connect path.
 - **Mode B is gamchess-required** — every path must fail closed to a legible "matchmaking's
   down" rather than a frozen board, exactly as `GamchessApi`'s timeout/breaker already does.
 - **`lobby_id` is withheld from the list** — it becomes a live connect target, so only a
