@@ -590,7 +590,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	///
 	/// <para><b>The bodies gate is keyed on the play MODE, and issue #28 made that worth revisiting.</b>
 	/// "2D means no bodies" was written when 2D always meant the nadir camera. It no longer does: with
-	/// AIM AT THE BOARD = LOOK, a 2D player sits at the SEAT camera (<see cref="ChessStation.LocalNadir"/>
+	/// MOVE MODE = LOOK, a 2D player sits at the SEAT camera (<see cref="ChessStation.LocalNadir"/>
 	/// is the live answer now, not the play mode), which is the framing the seated Citizens were built
 	/// for — and the chair opposite reads as empty. Left alone here deliberately rather than changed
 	/// blind: it is a look call nothing on this host can see. See PLAN.md.</para></summary>

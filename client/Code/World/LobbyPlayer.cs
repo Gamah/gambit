@@ -2745,15 +2745,23 @@ public sealed class LobbyPlayer : Component
 		// which also picks the anchor) from your seat mid-game, so the swap has to blend itself.
 		// Blending from the LIVE transform, not from the old anchor, is what keeps a non-zero
 		// SeatAim.LookOffset from snapping: the offset is already baked into where the camera is.
-		if ( _lastSeatAnchor != anchor )
+		bool swapped = _lastSeatAnchor != anchor && _lastSeatAnchor != null;
+		if ( _lastSeatAnchor != anchor ) _lastSeatAnchor = anchor;
+
+		// SeatAim zeroing its offset is the same event as an anchor swap, as far as this blend is
+		// concerned: the composed target has moved somewhere else in one frame. It happens when
+		// look aim stops being AVAILABLE — the player picks CURSOR, or the game ends — and it must
+		// ease, because the offset can be a full 45° of yaw and cutting that is a camera jump.
+		// TakeRecentred is one-shot, so it must be called even when the anchor swapped too
+		// (2D + LOOK → 2D + CURSOR does both at once) or the request would sit there and fire on
+		// some unrelated later frame.
+		bool recentred = SeatAim.TakeRecentred();
+
+		if ( swapped || recentred )
 		{
-			if ( _lastSeatAnchor != null )
-			{
-				_camFromPos = _cameraObject.WorldPosition;
-				_camFromRot = _cameraObject.WorldRotation;
-				_engageTime = 0;
-			}
-			_lastSeatAnchor = anchor;
+			_camFromPos = _cameraObject.WorldPosition;
+			_camFromRot = _cameraObject.WorldRotation;
+			_engageTime = 0;
 		}
 
 		float t = Math.Clamp( _engageTime / CamBlendTime, 0f, 1f );

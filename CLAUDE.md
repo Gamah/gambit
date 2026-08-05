@@ -1002,7 +1002,7 @@ not about space:
   `WallSettingsPanel`) — the ROOM: theme, room and table light brightness, the checkerboard floor
   and its pop rate, both voice-range sliders.
 - **BOARD SETTINGS** (`UI/Screens/BoardSettingsScreen.razor`) — a **chess board**: BOARD SOUNDS,
-  PLAY MODE, AIM AT THE BOARD, SHOW LEGAL MOVES, SPEAK MOVES AT MY BOARD, the TTS voice pill and
+  PLAY MODE, MOVE MODE, SHOW LEGAL MOVES, SPEAK MOVES AT MY BOARD, the TTS voice pill and
   its volume.
 
 **Both render `SettingsModel` rows** — `BuildLocalRows()` and `BuildBoardRows()`, one model, two
@@ -1079,7 +1079,7 @@ skips it changes a stored value and nothing in the world.
 
 ### Cursor vs LOOK aim at the board (P99)
 
-A BOARD SETTINGS picker (**AIM AT THE BOARD — CURSOR / LOOK**) chooses how a seated player
+A BOARD SETTINGS picker (**MOVE MODE — CURSOR / LOOK**) chooses how a seated player
 picks a square. CURSOR is everything before P99 and stays the default. LOOK hides the pointer,
 turns the seated view with the mouse, and picks whatever is under the **centre of the screen**.
 `World/SeatAim.cs` is the whole state machine and the only thing that decides; two places act on
@@ -1137,8 +1137,21 @@ only DRAWS it (the crosshair, and which way Escape goes next).
 - **The camera offset composes in EULER space**, not as a quaternion post-multiply: a seat
   anchor is already pitched steeply down (the 2D nadir one looks straight down), so turning
   about its own tilted up-axis would roll the horizon. The offset is clamped (±45° yaw, ±30°
-  pitch) — the board is the point of the view — and **persists** when the cursor comes back, so
-  releasing it hands you a pointer rather than snapping the view.
+  pitch) — the board is the point of the view — and **persists** when the cursor comes back by
+  ESCAPE, so releasing it hands you a pointer rather than snapping the view.
+- **…but it is CLEARED when look aim stops being AVAILABLE, and that distinction is a bug fix.**
+  The offset used to survive everything short of standing up. That is right for Escape — a
+  suspend leaves aim one keypress away, so the offset is still yours to move — and wrong for the
+  two ways aim actually ends: **the player switches MOVE MODE to CURSOR**, and **the game
+  finishes**. Both leave the view turned as much as 45° off the board with *nothing left that can
+  turn it back*: Escape is a plain stand-up again and the mouse only moves a pointer, so part of
+  the board is off screen until you stand up. `SeatAim` watches the falling edge of
+  `Enabled && playing` (deliberately NOT `Toggleable`, which a modal also clears — a modal hands
+  aim back by itself), zeroes the offset and raises a one-shot `Recentred`;
+  `LobbyPlayer.UpdateLockedCamera` consumes it through the same re-blend as an anchor swap so the
+  view EASES back rather than cutting. **`TakeRecentred` must be called even when the anchor also
+  swapped** (2D + LOOK → 2D + CURSOR does both at once) or the one-shot survives to fire on an
+  unrelated later frame.
 - **LOOK aim keeps the SEAT camera, even in 2D — and `LocalNadir` means the CAMERA now, not the
   render mode** (issue #28). The composition above is degenerate at the 2D nadir anchor and there
   is no tuning that fixes it: yaw is applied about world up, and at a straight-down camera world

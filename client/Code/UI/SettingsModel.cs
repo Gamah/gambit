@@ -154,11 +154,14 @@ public static class SettingsModel
 			PlayerData.ClampPlayMode( data.PlayMode ),
 			v => Mutate( d => d.PlayMode = v ) ) );
 
-		// How a seated player aims at their own board (P99). CURSOR is the pre-P99 behaviour
-		// (locked camera, pointer picks the square); LOOK hides the cursor, turns the seated
-		// view with the mouse and picks whatever the centre of the screen is on. Client-local,
-		// and it only ever applies to a game that is actually PLAYING — see SeatAim.
-		rows.Add( PickerRow( "AIM AT THE BOARD",
+		// How a seated player picks the square they're moving to (P99). CURSOR is the pre-P99
+		// behaviour (locked camera, pointer picks the square); LOOK hides the cursor, turns the
+		// seated view with the mouse and picks whatever the centre of the screen is on.
+		// Client-local, and it only ever applies to a game that is actually PLAYING — see SeatAim.
+		//
+		// Labelled MOVE MODE, not "AIM AT THE BOARD": it sits next to PLAY MODE, it is the same
+		// kind of question, and what it really selects is how you make a MOVE.
+		rows.Add( PickerRow( "MOVE MODE",
 			new[] { ("cursor", "CURSOR"), ("look", "LOOK") },
 			data.LookAimAtBoard ? "look" : "cursor",
 			v => Mutate( d => d.LookAimAtBoard = v == "look" ) ) );

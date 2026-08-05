@@ -76,10 +76,40 @@ public static class SeatAim
 	/// Applied by <see cref="LobbyPlayer.UpdateLockedCamera"/> on top of the anchor
 	/// rotation, so the anchor stays the single source of where a seat looks.
 	///
-	/// <para>It PERSISTS when the cursor comes back, on purpose: releasing the cursor while
-	/// looking at the corner of your own board should hand you a pointer, not snap the view
-	/// back to centre. It is cleared only by <see cref="Clear"/> — standing up.</para></summary>
+	/// <para>It PERSISTS when the cursor comes back BY ESCAPE, on purpose: releasing the cursor
+	/// while looking at the corner of your own board should hand you a pointer, not snap the view
+	/// back to centre. Escape is a suspend — aim is one keypress away, so the offset is still
+	/// yours to move.</para>
+	///
+	/// <para><b>It does NOT persist when look aim stops being AVAILABLE</b> — see
+	/// <see cref="Recentred"/>. That distinction is the whole of it: while aim is merely suspended
+	/// there is still a control that turns the view, and when it is gone there is not.</para></summary>
 	public static Angles LookOffset { get; private set; }
+
+	/// <summary>Look aim was available last frame — the setting on AND a game live. Its falling
+	/// edge is what recentres the view; a modal does not move it, because a modal gives aim back
+	/// by itself.</summary>
+	static bool _wasAvailable;
+
+	/// <summary>Set for the one frame the offset was zeroed because look aim stopped being
+	/// available, so <see cref="LobbyPlayer.UpdateLockedCamera"/> can EASE back to the anchor
+	/// instead of cutting to it. Consumed by the reader.
+	///
+	/// <para><b>Why this exists at all.</b> The offset used to survive everything except standing
+	/// up, which was fine for Escape and wrong for the two ways aim really ends: switching the
+	/// setting to CURSOR, and the game finishing. Both leave a player looking at a corner of their
+	/// own board with part of it off screen and NO control that turns the view back — Escape is a
+	/// plain stand-up again, and the mouse only moves a pointer. The view was stuck until you
+	/// stood up. So: suspended keeps the offset, unavailable clears it.</para></summary>
+	public static bool Recentred { get; private set; }
+
+	/// <summary>Take the one-shot recentre request. Returns true once per recentre.</summary>
+	public static bool TakeRecentred()
+	{
+		if ( !Recentred ) return false;
+		Recentred = false;
+		return true;
+	}
 
 	/// <summary>How far look aim may turn off the seat's own aim, in degrees. The board is
 	/// the whole point of the view, so this is a nudge rather than free look: enough to put
@@ -88,7 +118,8 @@ public static class SeatAim
 	public const float MaxYaw = 45f;
 	public const float MaxPitch = 30f;
 
-	/// <summary>Whether the local player has ASKED for look aim at all (BOARD SETTINGS). Read live
+	/// <summary>Whether the local player has ASKED for look aim at all (BOARD SETTINGS → MOVE
+	/// MODE, whose two cells are CURSOR and LOOK). Read live
 	/// so the picker takes effect the next frame, exactly as PLAY MODE does.
 	///
 	/// <para>It also decides the seated CAMERA ANCHOR, which is why it is public and why the
@@ -111,11 +142,24 @@ public static class SeatAim
 		if ( !playing )
 			_suspended = false;
 
+		// Aim is AVAILABLE when the setting is on and a game is live — deliberately without the
+		// modal term below, because a modal is a loan of the cursor, not the end of aiming.
+		// Losing availability is what recentres the view: the two ways it happens (the player
+		// picks CURSOR, or the game ends) both leave the view turned with nothing left that can
+		// turn it back, which reads as a broken camera on a board you can no longer fully see.
+		bool available = Enabled && playing;
+		if ( _wasAvailable && !available )
+		{
+			LookOffset = default;
+			Recentred = true;
+		}
+		_wasAvailable = available;
+
 		// Whether Escape is the cursor toggle this frame. A modal is excluded on purpose: it
 		// has already taken the mouse and gives it back by itself, so there is nothing for a
 		// toggle to do — and pressing Escape at a picker must not leave a suspend behind that
 		// the player never asked for.
-		Toggleable = Enabled && playing && !modalOpen;
+		Toggleable = available && !modalOpen;
 
 		bool aiming = Toggleable && !_suspended;
 
@@ -167,6 +211,11 @@ public static class SeatAim
 		Toggleable = false;    // Escape is plain old Escape again the moment you are up
 		Aiming = false;
 		LookOffset = default;
+		_wasAvailable = false;
+		// No Recentred here on purpose: standing up runs its own camera blend back to the
+		// roaming pose, and asking the seat camera to ease somewhere at the same time would be
+		// two blends fighting over one transform.
+		Recentred = false;
 		ApplyCursor( false );
 	}
 
