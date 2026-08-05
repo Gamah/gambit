@@ -393,13 +393,24 @@ who hasn't read this.
      a long-lived lichess credential again — decision ⑤ inverted. Worse than per-player custody
      in one specific way: it is a **single shared credential**, so its compromise is an app-wide
      event rather than one player's problem, and no player can revoke it.
-   - **There is no `msg:read` scope** — the scope list has only `msg:write`. The read routes
-     (`GET /inbox/:username`, `controllers.Msg.convo`, lila `conf/routes` 2026-08-05) are **web
-     endpoints with no documented `security:` contract**, so they are plausibly session-only and
-     can change without notice. **[SOURCE]**
-   - It needs an account we own and maintain, and it puts a nonce in a real inbox.
+   - **DECISIVE: reading an inbox requires `web:mobile`.** Read from lila master
+     `app/controllers/Msg.scala` 2026-08-05 — `home`, `convo`, `search` and `unreadCount` are
+     **all** `AuthOrScoped(_.Web.Mobile)`; only `apiPost` (sending) takes `_.Msg.Write`. There
+     is no `msg:read` scope at all. So the bot could receive the nonce and **never read it**.
+   - That blocker sits on a **different axis from every other cost here**, which is why it
+     ends the discussion. `web:mobile` is "Official Lichess mobile app" — PLAN No. 12's
+     standing "recorded, not to fix", the same gate that blocks quick pairing and blitz seeks.
+     Taking it is a claim of first-party status, on an account transparently ours, against an
+     app lichess can kill wholesale on `clientOrigin`. **The owner's 2026-08-05 "token
+     compromise is not what we optimise against" decision does not reach this** — that call is
+     about blast radius; this is about honesty toward lichess.
+   - It also needs an account we own and maintain, and it puts a nonce in a real inbox.
 
    `token/test` buys the same proof anonymously, with no account, no secret, and no extra scope.
+
+   > **Consequence for the scope set:** `msg:write` therefore buys **sending only**. Any feature
+   > built on it is fire-and-forget — Gambit can message an opponent, and can never read a
+   > reply. Design the feature that way or drop the scope.
 
 ## The flows, redesigned
 
