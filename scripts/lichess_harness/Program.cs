@@ -13,6 +13,17 @@ using Gambit.Api.Lichess;
 
 int failures = 0;
 
+// Reaching this line at all is the biggest check in the file: the whole of
+// client/Code/Api/Lichess compiled against the shipped engine's real signatures.
+// Naming the types keeps that from being an invisible property of the csproj —
+// a glob that silently stopped matching would still "pass" otherwise.
+Console.WriteLine( "compiled: " + string.Join( ", ", new[]
+{
+	typeof( LichessClient ).Name, typeof( LichessStream ).Name, typeof( LichessBoard ).Name,
+	typeof( LichessEventStream ).Name, typeof( LichessTokenStore ).Name, typeof( LichessLink ).Name,
+	typeof( Pkce ).Name, typeof( NdjsonReader ).Name, typeof( LichessEtiquette ).Name,
+} ) );
+
 void Check( string what, bool ok, string detail = null )
 {
 	Console.WriteLine( ( ok ? "  ok   " : "  FAIL " ) + what + ( detail is null ? "" : "  — " + detail ) );

@@ -44,8 +44,12 @@ public sealed class GamchessError
 ///
 /// <para><c>linked</c> and <c>username</c> keep their names across that change on
 /// purpose: gamchess deploys before the s&amp;box package updates, so for a window
-/// an old client polls this route and must degrade rather than null out.</para></summary>
-public sealed class LichessLink
+/// an old client polls this route and must degrade rather than null out.</para>
+///
+/// <para><b>The TYPE was renamed</b> (it was <c>LichessLink</c>) because HTTPFIX
+/// added <see cref="Lichess.LichessLink"/> — the link FLOW — and a DTO and a flow
+/// sharing a name is a CS0104 waiting for the first file that uses both.</para></summary>
+public sealed class LichessLinkStatus
 {
 	public bool linked { get; set; }
 	public string lichess_id { get; set; }   // canonical lowercase — the identity

@@ -222,7 +222,7 @@ public static class LichessLink
 			return;
 		}
 
-		var link = GamchessApi.Deserialize<Api.LichessLink>( claim.Body );
+		var link = GamchessApi.Deserialize<LichessLinkStatus>( claim.Body );
 		if ( link == null || string.IsNullOrEmpty( link.username ) )
 		{
 			Cancel();
@@ -235,7 +235,7 @@ public static class LichessLink
 		InProgress = false;
 		Status = null;
 		Error = null;
-		LichessLinkState.AdoptLink( link.username );
+		LichessLinkState.AdoptLink();
 		Log.Info( $"[Gambit] linked lichess account {link.username}" );
 	}
 

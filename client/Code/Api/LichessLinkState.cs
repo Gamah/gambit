@@ -92,7 +92,7 @@ public static class LichessLinkState
 			return;
 		}
 
-		var link = GamchessApi.Deserialize<LichessLink>( res.Body );
+		var link = GamchessApi.Deserialize<LichessLinkStatus>( res.Body );
 		if ( link == null )
 		{
 			Offline = true;
@@ -106,8 +106,9 @@ public static class LichessLinkState
 
 	/// <summary>A link just completed. Called by <see cref="LichessLink"/> once the
 	/// token is on disk and gamchess has recorded it, so nothing has to wait for a
-	/// poll to catch up.</summary>
-	public static void AdoptLink( string username )
+	/// poll to catch up. Takes no name: the name comes off the token store, which is
+	/// the authority, and passing one in would be a second source to disagree.</summary>
+	public static void AdoptLink()
 	{
 		Known = true;
 		Offline = false;

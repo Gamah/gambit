@@ -473,71 +473,40 @@ public sealed class LichessGameController : Component, IBoardGame
 	}
 
 	/// <summary>The paired flow: rendezvous, then White challenges and Black
-	/// accepts by the synced id.</summary>
+	/// accepts by the synced id.
+	///
+	/// <para><b>The two seats do different work, and deliberately so.</b> Only WHITE
+	/// needs the rendezvous to come back ready, because only White needs a name to
+	/// challenge. Black posts its intent once — which is what lets White's next poll
+	/// succeed — and then waits on the synced challenge id. Having both seats poll
+	/// would double the requests to learn something one of them never uses.</para></summary>
 	async Task RunPaired( string id, ulong white, ulong black, TimeControl tc )
 	{
 		bool iAmWhite = LocalStationSeat == ChessSeat.White;
 
-		// ① Both seats post; the second one to arrive learns the other's username.
-		//    Poll until ready — the other player may not have pressed yet.
-		string opponent = null;
-		var deadline = 60f;
-		RealTimeSince waiting = 0f;
-		while ( (float)waiting < deadline )
+		// ① Post this seat's intent. The FIRST answer is the one that can tell us
+		//    something is wrong (not linked, not seated, a bad game id), so it is
+		//    checked whichever seat we are.
+		var res = await LichessApi.Rendezvous( id, white, black );
+		if ( !res.Ok )
 		{
-			if ( !Engaged || _clientGameId != id ) return;   // stood up, or table moved on
-
-			var res = await LichessApi.Rendezvous( id, white, black );
-			if ( !res.Ok )
-			{
-				Fail( id, ReadError( res ) );
-				return;
-			}
-			var rv = GamchessApi.Deserialize<LichessRendezvous>( res.Body );
-			if ( rv == null )
-			{
-				Fail( id, "gamchess didn't answer the rendezvous." );
-				return;
-			}
-			if ( rv.ready )
-			{
-				opponent = rv.opponent;
-				break;
-			}
-			await GameTask.DelaySeconds( 1f );
+			Fail( id, ReadError( res ) );
+			return;
 		}
-
-		if ( opponent == null )
+		var rv = GamchessApi.Deserialize<LichessRendezvous>( res.Body );
+		if ( rv == null )
 		{
-			Fail( id, "The other seat didn't join the lichess game." );
+			Fail( id, "gamchess didn't answer the rendezvous." );
 			return;
 		}
 
-		if ( iAmWhite )
+		if ( !iAmWhite )
 		{
-			// ② White issues the challenge and publishes the id.
-			var (ch, res) = await LichessBoard.ChallengeUser( opponent, tc, rated: false, color: "white" );
-			if ( ch == null )
-			{
-				Fail( id, res.Reason );
-				return;
-			}
-			if ( !Engaged || _clientGameId != id )
-			{
-				// Stood up while the challenge was in flight. Withdraw it: hanging up
-				// does NOT withdraw a challenge, and an un-cancelled one stays
-				// acceptable for hours.
-				_ = LichessBoard.CancelChallenge( ch.id );
-				return;
-			}
-			ReportChallenge( ch.id );
-			StartGameStream( ch.id );
-		}
-		else
-		{
-			// ③ Black waits for the synced id, then accepts it.
+			// ③ Black: wait for White's challenge id and accept it. Both clients
+			//    engage on the same synced flag at game start, so this is a wait of
+			//    a second or two in practice, not a race.
 			RealTimeSince forId = 0f;
-			while ( string.IsNullOrEmpty( ChallengeId ) && (float)forId < 30f )
+			while ( string.IsNullOrEmpty( ChallengeId ) && (float)forId < PairingTimeoutSeconds )
 			{
 				if ( !Engaged || _clientGameId != id ) return;
 				await GameTask.DelaySeconds( 0.25f );
@@ -548,15 +517,63 @@ public sealed class LichessGameController : Component, IBoardGame
 				return;
 			}
 
-			var res = await LichessBoard.AcceptChallenge( ChallengeId );
-			if ( !res.Ok )
+			var accept = await LichessBoard.AcceptChallenge( ChallengeId );
+			if ( !accept.Ok )
 			{
-				Fail( id, res.Reason );
+				Fail( id, accept.Reason );
 				return;
 			}
 			StartGameStream( ChallengeId );
+			return;
 		}
+
+		// ② White: keep posting until Black has too, then challenge them by name.
+		//    Re-posting IS the re-check — there is no separate read.
+		RealTimeSince waiting = 0f;
+		while ( !rv.ready && (float)waiting < PairingTimeoutSeconds )
+		{
+			await GameTask.DelaySeconds( 1f );
+			if ( !Engaged || _clientGameId != id ) return;
+
+			res = await LichessApi.Rendezvous( id, white, black );
+			if ( !res.Ok )
+			{
+				Fail( id, ReadError( res ) );
+				return;
+			}
+			rv = GamchessApi.Deserialize<LichessRendezvous>( res.Body ) ?? rv;
+		}
+
+		if ( !rv.ready || string.IsNullOrEmpty( rv.opponent ) )
+		{
+			Fail( id, "The other seat didn't join the lichess game." );
+			return;
+		}
+
+		var (ch, cres) = await LichessBoard.ChallengeUser( rv.opponent, tc, rated: false, color: "white" );
+		if ( ch == null )
+		{
+			Fail( id, cres.Reason );
+			return;
+		}
+		if ( !Engaged || _clientGameId != id )
+		{
+			// Stood up while the challenge was in flight. WITHDRAW IT: hanging up does
+			// not withdraw a challenge, and an un-cancelled one stays acceptable for
+			// hours — a stranger accepting later would start a real game on this
+			// player's account at a board nobody is sitting at.
+			_ = LichessBoard.CancelChallenge( ch.id );
+			return;
+		}
+		ReportChallenge( ch.id );
+		StartGameStream( ch.id );
 	}
+
+	/// <summary>How long each seat waits on the other before giving up. Generous:
+	/// both clients engage on the same synced flag at game start, so in practice this
+	/// resolves in a second or two, and the only thing a long timeout costs is how
+	/// long a genuinely broken pairing sits there saying "waiting".</summary>
+	const float PairingTimeoutSeconds = 60f;
 
 	/// <summary>
 	/// Find a RANDOM lichess opponent from this table.

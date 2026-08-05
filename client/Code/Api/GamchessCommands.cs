@@ -132,7 +132,7 @@ public static class GamchessCommands
 			return;
 		}
 
-		var link = GamchessApi.Deserialize<LichessLink>( res.Body );
+		var link = GamchessApi.Deserialize<LichessLinkStatus>( res.Body );
 		if ( link == null )
 		{
 			Log.Warning( $"[Gambit] unreadable reply: {GamchessApi.Truncate( res.Body, 200 )}" );
