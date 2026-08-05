@@ -131,8 +131,10 @@
 			$"ROOM THEME — {SettingsModel.ColorName( data.WorldLightColor )} · {SettingsModel.Pct( data.WorldLightBrightness )}%",
 			$"TABLE LIGHT — {SettingsModel.Pct( data.MarqueeLightBrightness )}%",
 			$"CHECKERBOARD — {floor}",
-			$"MY BOARD SOUNDS — {OnOff( data.MyCabinetSounds )}",
-			$"OTHER BOARD SOUNDS — {OnOff( data.RemoteCabinetSounds )}",
+			// One line, matching the engaged panel's single BOARD SOUNDS row — two names for
+			// one control on two surfaces is how the wall board starts drifting from the thing
+			// it summarises.
+			$"BOARD SOUNDS — MINE {OnOff( data.MyCabinetSounds )} · OTHERS {OnOff( data.RemoteCabinetSounds )}",
 			$"PLAY MODE — {PlayModeLabel( data.PlayMode )}",
 			$"VOICE RANGE — {PlayerData.ClampVoiceRange( data.VoiceRangeAtTable ):0}u / {PlayerData.ClampVoiceRange( data.VoiceRangeRoaming ):0}u",
 			$"SPEAK MOVES — {OnOff( data.MoveTtsEnabled )}",

@@ -96,10 +96,12 @@ public static class SettingsModel
 		rows.Add( SliderRow( $"POP FREQUENCY — {PlayerData.ClampPopRate( data.FloorPopRate ):0.##}×",
 			0.25f, 3f, PlayerData.ClampPopRate( data.FloorPopRate ),
 			v => Mutate( d => d.FloorPopRate = v ) ) );
-		rows.Add( ToggleRow( "MY BOARD SOUNDS", data.MyCabinetSounds,
-			v => Mutate( d => d.MyCabinetSounds = v ) ) );
-		rows.Add( ToggleRow( "OTHER BOARD SOUNDS", data.RemoteCabinetSounds,
-			v => Mutate( d => d.RemoteCabinetSounds = v ) ) );
+		// One row, two halves: it is a single question — whose boards do you hear — and two
+		// full-width rows of it cost two lines of a panel that no longer has them to spare.
+		// Each half stays a real ON/OFF cell, so the vocabulary matches every other toggle here.
+		rows.Add( MultiToggleRow( "BOARD SOUNDS",
+			( "MINE", data.MyCabinetSounds, v => Mutate( d => d.MyCabinetSounds = v ) ),
+			( "OTHERS", data.RemoteCabinetSounds, v => Mutate( d => d.RemoteCabinetSounds = v ) ) ) );
 		// How chess boards render for this client (M16): flat 2D glyphs, clean 3D, or 3D with the
 		// seated hands animating moves. Client-local and cosmetic; 3D+ARMS is the pre-M16 default.
 		rows.Add( PickerRow( "PLAY MODE",
@@ -293,6 +295,30 @@ public static class SettingsModel
 			Selected = true,
 			Activate = () => set( !current ),
 		} );
+		return row;
+	}
+
+	/// <summary>Several independent ON/OFF toggles sharing one row — for settings that are
+	/// really one question with two halves (BOARD SOUNDS: mine / others). Each cell carries
+	/// its own name AND its own state word, so it reads exactly like the single
+	/// <see cref="ToggleRow"/> cells around it; nothing here is a picker, and clicking one
+	/// cell never changes another.</summary>
+	static SettingRow MultiToggleRow( string label,
+		params (string Name, bool Current, Action<bool> Set)[] toggles )
+	{
+		var row = new SettingRow { Label = label };
+		foreach ( var (name, current, set) in toggles )
+		{
+			bool c = current; // capture per iteration — the lambda outlives the loop
+			var s = set;
+			row.Cells.Add( new SettingCell
+			{
+				Label = $"{name} {( c ? "ON" : "OFF" )}",
+				Css = "toggle",
+				Selected = true,
+				Activate = () => s( !c ),
+			} );
+		}
 		return row;
 	}
 
