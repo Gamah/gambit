@@ -276,6 +276,14 @@ public sealed class ChessBoardView : Component
 	List<string> _targets = new();
 	int _hoverSquare = -1;
 
+	/// <summary>Does this client want the green target squares painted (issue #26)?
+	/// Read live rather than cached so the south-wall toggle takes effect on the next
+	/// frame; <see cref="Gambit.Game.PlayerData.Load"/> is memoised, so it is a field
+	/// read. Missing data = true, which is the pre-setting behaviour.
+	/// <para>This gates the TINT only — never <see cref="_targets"/> itself, which
+	/// <see cref="UpdateInput"/> uses to decide whether a click is a legal move.</para></summary>
+	static bool ShowLegalMoves => Gambit.Game.PlayerData.Load()?.ShowLegalMoves ?? true;
+
 	/// <summary>A move waiting on the GameHud promotion picker: (from, to), or null.</summary>
 	public (string From, string To)? PendingPromotion { get; private set; }
 
@@ -885,6 +893,11 @@ public sealed class ChessBoardView : Component
 		// mode they're PremoveTargets, so the green means "you can aim here", not
 		// "this is legal".
 		bool interactive = ( source?.IsMyTurn == true || CanPremove ) && PendingPromotion == null;
+		// ...and only if this player wants to be told (issue #26). PURELY the paint:
+		// _targets is still built by Select() and UpdateInput still gates the click on it,
+		// so the same moves land whichever way this reads. PlayerData.Load() is cached, so
+		// reading it per-frame costs nothing.
+		bool showTargets = interactive && ShowLegalMoves;
 		// From/To derived here rather than on the seam: the controllers hold ONE value
 		// (the whole premove), and two halves of it would be two things to keep in step.
 		string premove = source?.PremoveUci;
@@ -898,7 +911,11 @@ public sealed class ChessBoardView : Component
 		// hash: leave them out and an armed premove paints only if something else
 		// happened to change in the same frame — which, while the opponent thinks,
 		// nothing does.
-		int hash = HashCode.Combine( lastMove, checkedKing, interactive,
+		// showTargets, not `interactive`: it is the only thing `interactive` feeds, and it
+		// carries the SHOW LEGAL MOVES setting with it — leave the setting out of the hash
+		// and toggling it mid-game paints nothing until the next move. (If `interactive`
+		// ever gains a second consumer, it has to come back into the hash on its own.)
+		int hash = HashCode.Combine( lastMove, checkedKing, showTargets,
 			Selected, _hoverSquare, _targets, premoveFrom,
 			// FlatMode belongs in the hash so a play-mode change (M16) forces one repaint —
 			// that is what swaps the base squares to the 2D cream/brown palette and back.
@@ -933,7 +950,7 @@ public sealed class ChessBoardView : Component
 				// important thing on the board, because it's the thing about to
 				// happen without you.
 				tint = PremoveTint;
-			else if ( interactive && _targets.Contains( name ) )
+			else if ( showTargets && _targets.Contains( name ) )
 				// Legal move target — deeper green under the cursor ("move here");
 				// light/dark variant keeps the square's checker color reading through
 				tint = hovered
