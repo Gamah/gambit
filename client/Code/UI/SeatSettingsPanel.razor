@@ -5,13 +5,13 @@
 @inherits PanelComponent
 
 @*
-	ONE STRING ON ONE PLATE — the ⚙ BOARD SETTINGS control on the tabletop's near-left corner
+	ONE STRING ON ONE PLATE — the BOARD SETTINGS control on the tabletop's near-left corner
 	(issue #28). Byte-for-byte TableClockTextPanel's structure, and for the same reason: this
 	repo has exactly one WorldPanel shape that renders, `root` at 100% plus ONE absolutely
 	positioned 100% child, and it CANNOT BE COMPOSED. A second string here is a second plate.
 
 	So the two states share the ONE div and only swap its text and its class:
-	  · cursor mode  — "⚙  BOARD SETTINGS", clickable (pointer-events: all).
+	  · cursor mode  — "BOARD SETTINGS", clickable (pointer-events: all).
 	  · look aim     — "ESC FOR CURSOR", inert. The pointer is hidden, so a live-looking
 	    control would be the "reads as a broken board" failure the aim hint exists for; and
 	    Escape is the whole answer, so the plate says it rather than sitting there dead.
@@ -63,7 +63,10 @@
 		   state be colour only, and colour only is what keeps this panel uncomposed. */
 		font-size: 64px;
 		font-weight: bold;
-		letter-spacing: 4px;
+		/* Counted for in ChessRing.SettingsCharAdvanceEm — the width formula has no term of its
+		   own for letter-spacing, and 14 characters of it is real width. Halved from 4 when the
+		   text was found hanging off both ends of the plate. */
+		letter-spacing: 2px;
 		color: rgba(255, 255, 255, 0.92);
 		pointer-events: all;
 		cursor: pointer;

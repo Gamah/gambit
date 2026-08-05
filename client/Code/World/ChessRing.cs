@@ -2002,7 +2002,10 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	// plate in each seat's corner plus a yaw-180 flip to keep the words unmirrored. A plate that
 	// only ever exists for the local player can simply be moved to whichever seat they are in.
 	const float SettingsTextSpanLength = 12f;    // along the near edge (table Y)
-	const float SettingsTextSpanHeight = 1.6f;   // across the margin (table X)
+	// Tightened with the text (1.6 → 1.1) so the plate keeps hugging it. The span's aspect IS the
+	// panel's pixel aspect, so a shorter text on an unchanged span height would have left a thin
+	// line of words centred on a fat slab.
+	const float SettingsTextSpanHeight = 1.1f;   // across the margin (table X)
 	const float SettingsPlateMarginY = 0.8f;
 	const float SettingsPlateMarginX = 0.7f;
 	internal static float SettingsPlateLength => SettingsTextSpanLength + 2f * SettingsPlateMarginY; // 13.6
@@ -2029,10 +2032,29 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// colour only — the same rule TableClockTextPanel keeps.</summary>
 	const int SettingsMaxChars = 14;
 
-	// Same measured advance and fit fraction the clock derives its pixel space from — same font
-	// stack, same "round the advance UP rather than overflow the plate" reasoning. Reused rather
-	// than re-typed: a second copy of a measured number is a second thing to re-measure.
-	static float SettingsPxWidth => SettingsMaxChars * ClockCharAdvanceEm * SettingsFontPx / ClockTextFitFraction;
+	/// <summary>Per-character advance, in em, for THIS plate — deliberately NOT the clock's
+	/// <see cref="ClockCharAdvanceEm"/>, which the first version reused on the reasoning that one
+	/// measured number beats two. It overflowed the plate at both ends in the room.
+	///
+	/// <para>Two things make letters cost more than the clock's digits: the fallback face is
+	/// proportional and its bold CAPS ("BOARD SETTINGS") are wider than a digit, and this panel
+	/// carries <c>letter-spacing</c>, which the formula has no term for at all — 14 characters of
+	/// it is real width that was simply not being counted. Rounding this UP only ever makes the
+	/// text smaller than it strictly needs to be; under-stating it hangs the text off the
+	/// plate.</para></summary>
+	const float SettingsCharAdvanceEm = 1.25f;
+
+	/// <summary>How much of the text span the longest string may fill; the rest is slack inside
+	/// the span, on top of the bare plate the margins leave outside it. Tighter than the clock's
+	/// 0.84 for the same reason the advance is bigger.</summary>
+	const float SettingsTextFitFraction = 0.8f;
+
+	// The pixel space, DERIVED. Note what turning the two constants above actually does: the
+	// world size of the plate and of the text SPAN are fixed (they come from the span lengths),
+	// so a wider pixel space means SMALLER glyphs on the same plate. That is the knob for "the
+	// text is too big" — NOT SettingsTextSpanLength, which scales the panel and the glyphs
+	// together and leaves the overflow looking exactly the same, only further away.
+	static float SettingsPxWidth => SettingsMaxChars * SettingsCharAdvanceEm * SettingsFontPx / SettingsTextFitFraction;
 	static float SettingsPxHeight => SettingsPxWidth * SettingsTextSpanHeight / SettingsTextSpanLength;
 
 	/// <summary>Build the plate + its one-string panel on a caller-owned GameObject. The caller

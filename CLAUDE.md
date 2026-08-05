@@ -1043,9 +1043,19 @@ skips it changes a stored value and nothing in the world.
   the corner is genuinely empty.
   → **One string, one plate, one font size.** Both states are 14 characters ("BOARD SETTINGS" /
   "ESC FOR CURSOR") so the inert state is **colour only** — the same rule `TableClockTextPanel`
-  keeps, and the reason a second string would mean a second plate. Its pixel space derives from
-  the text SPAN exactly as the clock's does (`SettingsPxWidth`, reusing the clock's measured
-  `ClockCharAdvanceEm` and `ClockTextFitFraction` rather than re-typing them).
+  keeps, and the reason a second string would mean a second plate.
+  → **"The world-panel text is too big" is fixed in PIXEL space, never in the span.** This cost a
+  round in the room. The world size of a plate and of its text span are fixed by the span
+  constants, so shrinking `SettingsTextSpanLength` scales the panel AND the glyphs together and
+  the text hangs off the plate by exactly the same proportion, only further away. The knob is
+  `SettingsCharAdvanceEm` / `SettingsTextFitFraction`: a WIDER pixel space means SMALLER glyphs on
+  the same plate. (Turn the span height with it, or a shorter string leaves a thin line of words
+  centred on a fat slab — the span's aspect IS the panel's pixel aspect.)
+  → **Its advance estimate is its OWN, not the clock's.** Reusing `ClockCharAdvanceEm` looked
+  right — one measured number beats two — and overflowed the plate at both ends: the clock
+  measured DIGITS, this draws bold CAPS in a proportional fallback face, and the formula has **no
+  term at all for `letter-spacing`**, which at 14 characters is real width that was simply not
+  being counted. Round the advance UP; under-stating it is the failure that shows.
   → **In LOOK aim it stops offering a click and says `ESC FOR CURSOR`.** The pointer is hidden;
   a live-looking control there is the "reads as broken" failure the aim hint exists for.
 - **It is MODAL for `SeatAim`, exactly like the promotion picker**, and the wiring is
