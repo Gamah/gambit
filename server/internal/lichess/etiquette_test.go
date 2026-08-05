@@ -5,16 +5,37 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
 
-// These tests exist because Gambit's entire relay runs from ONE IP, so every
-// player shares one set of lichess's per-IP limits. Misbehaving here doesn't
-// throttle one user — it breaks the feature for everyone and burns the goodwill
-// needed to ever ask for more headroom. This is the file to point at if lichess
-// ever asks how we behave.
+// These tests exist because gamchess's lichess traffic all leaves one IP under
+// one User-Agent, so misbehaving here doesn't throttle one caller — it stops the
+// TV wall for every lobby and burns the goodwill needed to ever ask for more
+// headroom. This is the file to point at if lichess ever asks how we behave.
+//
+// Since HTTPFIX the surface is small: an anonymous TV stream, an anonymous
+// game/export, and ONE authed call per link (Account). The etiquette rules that
+// used to be exercised through the Board API are exercised through those. The
+// seek self-limit moved to the client along with the seeks themselves — its
+// tests live in the dotnet harness now, not here.
+
+// stubAPI points apiBase at a test server for the duration of the test.
+func stubAPI(t *testing.T, h http.HandlerFunc) {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	prev := apiBase
+	prevAccount := accountEndpoint
+	apiBase = srv.URL
+	accountEndpoint = srv.URL + "/api/account"
+	t.Cleanup(func() {
+		apiBase = prev
+		accountEndpoint = prevAccount
+		srv.Close()
+	})
+}
 
 // lichess records a userAgent per access token (AccessToken.scala), so this
 // string is how they can attribute, throttle or contact us. A generic or absent
@@ -27,17 +48,18 @@ func TestUserAgentIsSentOnEveryRequest(t *testing.T) {
 	var seen []string
 	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.Header.Get("User-Agent"))
-		io.WriteString(w, `{"id":"terry","username":"Terry","ok":true}`)
+		io.WriteString(w, `{"id":"terry","username":"Terry"}`)
 	})
 
-	// A buffered call, and a stream. Both must identify us.
+	// A buffered authed call, a buffered anonymous one, and a stream. All three
+	// must identify us.
 	if _, _, err := Account(context.Background(), "tok"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Resign(context.Background(), "tok", "g4me"); err != nil {
+	if _, err := GameResult(context.Background(), "g4me"); err != nil {
 		t.Fatal(err)
 	}
-	if err := StreamEvents(context.Background(), "tok", func(Event) {}); err != nil {
+	if err := StreamTv(context.Background(), ChannelBest, func(TvEvent) {}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -62,8 +84,8 @@ func TestUserAgentIdentifiesUs(t *testing.T) {
 }
 
 // lichess: "If you receive an HTTP response with a 429 status, please wait a
-// full minute before resuming API usage." A 429 is per-IP, and we are one IP —
-// so it must stop EVERYTHING, not just the call that earned it.
+// full minute before resuming API usage." A 429 is per-IP, so it must stop
+// EVERYTHING, not just the call that earned it.
 func TestA429StopsAllOutboundCalls(t *testing.T) {
 	ResetGovernor()
 	t.Cleanup(ResetGovernor)
@@ -75,7 +97,7 @@ func TestA429StopsAllOutboundCalls(t *testing.T) {
 	})
 
 	// One 429 on any endpoint...
-	if err := Resign(context.Background(), "tok", "g4me"); err == nil {
+	if _, _, err := Account(context.Background(), "tok"); err == nil {
 		t.Fatal("expected an error on 429")
 	}
 	if calls != 1 {
@@ -86,10 +108,10 @@ func TestA429StopsAllOutboundCalls(t *testing.T) {
 	if _, _, err := Account(context.Background(), "tok"); !errors.Is(err, ErrBackingOff) {
 		t.Fatalf("Account should back off after a 429, got %v", err)
 	}
-	if err := Move(context.Background(), "tok", "g4me", "e2e4", false); !errors.Is(err, ErrBackingOff) {
-		t.Fatalf("Move should back off after a 429, got %v", err)
+	if _, err := GameResult(context.Background(), "g4me"); !errors.Is(err, ErrBackingOff) {
+		t.Fatalf("GameResult should back off after a 429, got %v", err)
 	}
-	if err := StreamEvents(context.Background(), "tok", func(Event) {}); !errors.Is(err, ErrBackingOff) {
+	if err := StreamTv(context.Background(), ChannelBest, func(TvEvent) {}); !errors.Is(err, ErrBackingOff) {
 		t.Fatalf("streams should back off after a 429, got %v", err)
 	}
 	if calls != 1 {
@@ -114,84 +136,26 @@ func TestBackoffClears(t *testing.T) {
 	}
 }
 
-// The lobby's 5-per-minute cap is per IP, i.e. per PLAYERBASE. We self-limit so
-// a player clicking "find a game" repeatedly can't spend everyone's budget and
-// earn a 429 for the whole server.
-func TestSeekBudgetIsSelfLimited(t *testing.T) {
+// The token transits gamchess exactly once, for Account, and must never leave a
+// trace. This is the promise the custody note in link.go makes; a failure path
+// that formats the request into an error is the realistic way it would break.
+func TestAccountErrorsNeverCarryTheToken(t *testing.T) {
 	ResetGovernor()
 	t.Cleanup(ResetGovernor)
 
-	for i := 0; i < SeeksPerMinute; i++ {
-		if err := TakeSeekSlot(); err != nil {
-			t.Fatalf("seek %d of %d should be allowed, got %v", i+1, SeeksPerMinute, err)
-		}
-	}
+	const token = "lio_supersecrettokenvalue"
+	stubAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		// lichess's own body, echoed back — a plausible place for a leak if it
+		// were ever included in the error.
+		io.WriteString(w, `{"error":"No such token: `+token+`"}`)
+	})
 
-	err := TakeSeekSlot()
-	if !errors.Is(err, ErrSeekBudget) {
-		t.Fatalf("seek %d must be refused locally, got %v", SeeksPerMinute+1, err)
+	_, _, err := Account(context.Background(), token)
+	if err == nil {
+		t.Fatal("expected an error")
 	}
-	// The refusal has to be legible — a player deserves to know it's a shared
-	// limit and roughly how long to wait, not just "failed".
-	if !strings.Contains(err.Error(), "a minute") && !strings.Contains(err.Error(), "to wait") {
-		t.Fatalf("the refusal should say how long to wait: %q", err)
-	}
-}
-
-func TestSeekBudgetRefusesBeforeSending(t *testing.T) {
-	ResetGovernor()
-	t.Cleanup(ResetGovernor)
-
-	var sent int
-	stubAPI(t, func(w http.ResponseWriter, r *http.Request) { sent++ })
-
-	// Spend the budget without touching the network.
-	for i := 0; i < SeeksPerMinute; i++ {
-		if err := TakeSeekSlot(); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// The next real seek must not reach lichess at all.
-	err := SeekRealtime(context.Background(), "tok", SeekParams{TimeMinutes: 10}, nil)
-	if !errors.Is(err, ErrSeekBudget) {
-		t.Fatalf("want ErrSeekBudget, got %v", err)
-	}
-	if sent != 0 {
-		t.Fatalf("an over-budget seek must not be sent; lichess saw %d", sent)
-	}
-}
-
-// The window slides: spending the budget must not lock seeking out forever.
-func TestSeekBudgetWindowSlides(t *testing.T) {
-	ResetGovernor()
-	t.Cleanup(ResetGovernor)
-
-	for i := 0; i < SeeksPerMinute; i++ {
-		if err := TakeSeekSlot(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := TakeSeekSlot(); err == nil {
-		t.Fatal("expected the budget to be spent")
-	}
-
-	// Age every recorded seek out of the window.
-	gov.mu.Lock()
-	for i := range gov.seeks {
-		gov.seeks[i] = gov.seeks[i].Add(-2 * time.Minute)
-	}
-	gov.mu.Unlock()
-
-	if err := TakeSeekSlot(); err != nil {
-		t.Fatalf("the window should have slid open, got %v", err)
-	}
-}
-
-// Our self-limit must mirror lila's, or it is either useless or needlessly
-// stingy. [SOURCE] Limiters.setupPost = RateLimit[IpAddress](5, 1.minute).
-func TestSeekBudgetMatchesLila(t *testing.T) {
-	if SeeksPerMinute != 5 {
-		t.Fatalf("SeeksPerMinute is %d; lila's setupPost allows 5/min/IP", SeeksPerMinute)
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("the error carries the token: %q", err)
 	}
 }

@@ -58,70 +58,34 @@ migrate-status:
 	goose -dir migrations postgres "$(DATABASE_URL)" status
 
 # ── Secrets gamchess generates for itself ───────────────────────────────────
-# LICHESS_TOKEN_KEY and LICHESS_AUDIT_KEY are OURS — nothing is requested from
-# lichess, which issues no client id, no secret and no API key (it has no client
-# registration at all). So there is no reason to make a human invent them: `up`
-# and `testinst` mint any that .env doesn't already have, and say so.
+# There are none any more, and `keys` is a deliberate no-op rather than a deleted
+# target: `up`, `rebuild` and `testinst` all depend on it, and a branch switch
+# that removes a prerequisite mid-flight is a confusing failure.
 #
-# THE RULE HERE IS NEVER OVERWRITE. LICHESS_TOKEN_KEY is the KEK that wraps every
-# rotating data key (M15) — regenerating it would leave those data keys (and so
-# every token) undecryptable. Re-keying the KEK is a deliberate act via
-# LICHESS_TOKEN_KEY_OLD (see .env.example), never an accident of `make up`. So a key
-# with ANY value is left strictly alone; only a missing or blank one is filled in.
-#
-# /dev/urandom rather than `openssl rand`: openssl is not guaranteed on a host
-# whose only stated dependency is Docker, and this must not become a hidden
-# prerequisite of `make up`.
-LICHESS_KEYS := LICHESS_TOKEN_KEY LICHESS_AUDIT_KEY
+# HTTPFIX moved the lichess token to the player's own machine, so the KEK
+# (LICHESS_TOKEN_KEY), its rotation partner (LICHESS_TOKEN_KEY_OLD), the cadence
+# (LICHESS_KEY_ROTATION_DAYS) and the audit key (LICHESS_AUDIT_KEY) are all gone:
+# no token to seal, no data key to roll, no store to sweep.
 
 keys:
-	@set -e; \
-	if [ ! -f .env ]; then \
+	@if [ ! -f .env ]; then \
 		echo "ERROR: no .env here. Copy it first:  cp .env.example .env" >&2; \
 		exit 1; \
-	fi; \
-	made=""; \
-	for key in $(LICHESS_KEYS); do \
-		cur=$$(sed -n "s/^$$key=//p" .env | head -1); \
-		if [ -n "$$cur" ]; then continue; fi; \
-		val=$$(head -c 32 /dev/urandom | base64 | tr -d '\n'); \
-		if grep -q "^$$key=" .env; then \
-			tmp=$$(mktemp); \
-			awk -v k="$$key" -v v="$$val" \
-				'$$0 ~ "^" k "=" && !seen { print k "=" v; seen=1; next } { print }' \
-				.env > "$$tmp"; \
-			cat "$$tmp" > .env; rm -f "$$tmp"; \
-		else \
-			printf '%s=%s\n' "$$key" "$$val" >> .env; \
-		fi; \
-		made="$$made $$key"; \
-	done; \
-	if [ -n "$$made" ]; then \
-		echo "Generated into .env:$$made"; \
 	fi
 
-# Printed after every up/testinst, deliberately unconditionally: anyone running a
-# gamchess needs to know these exist, that they are self-generated rather than
-# requested, and above all that TOKEN_KEY must be backed up.
+# Printed after every up/testinst. It used to exist to shout about backing up the
+# KEK; there is no longer a durable lichess secret to back up, and saying so once
+# is worth more than saying nothing (an operator who remembers the old warning
+# should learn it has been retired, not wonder where it went).
 keys-note:
 	@echo ""
-	@echo "── lichess keys ────────────────────────────────────────────────────"
-	@echo "Both live in .env and are generated here — nothing is requested from"
-	@echo "lichess (it has no client registration: no client id, no secret, no"
-	@echo "API key)."
+	@echo "── lichess ─────────────────────────────────────────────────────────"
+	@echo "gamchess holds NO lichess secrets. The token lives on each player's"
+	@echo "own machine; this server only records which lichess account a Steam"
+	@echo "account plays as, and proxies lichess TV."
 	@echo ""
-	@echo "  LICHESS_TOKEN_KEY   the KEK: wraps the rotating data keys that seal"
-	@echo "                      every linked player's token at rest (M15). BACK IT"
-	@echo "                      UP — it is the one durable secret. Lose it and every"
-	@echo "                      player must re-link; to CHANGE it, rotate via"
-	@echo "                      LICHESS_TOKEN_KEY_OLD (see .env.example), don't just"
-	@echo "                      regenerate. Blank switches lichess off entirely —"
-	@echo "                      it never falls back to storing plaintext."
-	@echo "  LICHESS_AUDIT_KEY   gates POST /api/v1/lichess/audit, which asks"
-	@echo "                      lichess which of our stored tokens are still"
-	@echo "                      live. That sweep is the ONLY fast incident lever"
-	@echo "                      we have — lichess has no bulk revoke. Blank"
-	@echo "                      hides the route."
+	@echo "LICHESS_TOKEN_KEY / _OLD / _ROTATION_DAYS / LICHESS_AUDIT_KEY are"
+	@echo "retired and ignored. Nothing here needs backing up any more."
 	@echo ""
 	@echo ".env is gitignored and must stay that way: it is the only copy."
 	@echo "───────────────────────────────────────────────────────────────────"

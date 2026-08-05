@@ -11,11 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Lichess account links (M8). Same rule as the rest of this package: every SQL
-// statement lives here, and nothing here knows about HTTP — or about
-// encryption. The token arrives already sealed and leaves still sealed; this
-// layer never sees a plaintext token, which is what keeps "encrypted before any
-// INSERT" a property you can check by reading one file.
+// Lichess account links. Same rule as the rest of this package: every SQL
+// statement lives here, and nothing here knows about HTTP.
+//
+// SINCE HTTPFIX THIS TABLE HOLDS NO TOKEN. It is an identity row and nothing
+// else: this Steam account plays lichess as this lichess account. The token
+// lives on the player's own machine, and gamchess ends with no lichess secrets —
+// no ciphertext column, no nonce, no key version, no scope string, and no key
+// ring behind them. If a future change wants to put a credential back in here,
+// that is a reversal of the custody decision and not a schema tweak.
 
 // ErrLichessIDTaken means the lichess account is already linked to a DIFFERENT
 // Steam account. Callers answer 409 — never a silent steal, and never a silent
@@ -23,26 +27,24 @@ import (
 var ErrLichessIDTaken = errors.New("that lichess account is linked to another Steam account")
 
 // LichessLink is one row of lichess_links.
+//
+// LichessID is AUTHORITATIVE, not a claim: it is what lichess itself returned
+// from GET /api/account for the token the player minted, resolved from the
+// bearer rather than asserted by anyone. That is what keeps the plain
+// UNIQUE(lichess_id) safe — an asserted id would let a liar squat a real
+// account's row and lock its owner out of ever linking.
 type LichessLink struct {
-	SteamID    int64
-	LichessID  string // canonical lowercase id from /api/account — the identity
-	Username   string // display casing — cosmetic
-	TokenEnc   []byte // AES-256-GCM ciphertext, never plaintext
-	TokenNonce []byte
-	// KeyVersion is which key sealed TokenEnc (M15): 0 = the legacy pre-M15 rows
-	// sealed directly under the KEK, >= 1 = the data key of that version. The
-	// caller (keyring) needs it to pick the right key to Open with.
-	KeyVersion int32
-	Scopes     string
-	LinkedAt   time.Time
+	SteamID   int64
+	LichessID string // canonical lowercase id from /api/account — the identity
+	Username  string // display casing — cosmetic
+	LinkedAt  time.Time
 }
 
-const lichessCols = `steam_id, lichess_id, username, token_enc, token_nonce, key_version, scopes, linked_at`
+const lichessCols = `steam_id, lichess_id, username, linked_at`
 
 func scanLink(row pgx.Row) (LichessLink, error) {
 	var l LichessLink
-	err := row.Scan(&l.SteamID, &l.LichessID, &l.Username, &l.TokenEnc, &l.TokenNonce,
-		&l.KeyVersion, &l.Scopes, &l.LinkedAt)
+	err := row.Scan(&l.SteamID, &l.LichessID, &l.Username, &l.LinkedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LichessLink{}, ErrNotFound
 	}
@@ -54,28 +56,20 @@ func scanLink(row pgx.Row) (LichessLink, error) {
 
 // UpsertLichessLink links (or re-links) a Steam account to a lichess account.
 //
-// Re-linking the SAME player replaces their row — that is the only renewal path
-// lichess offers, since its tokens have no refresh and just expire after ~a
-// year.
-//
-// Linking a lichess account that ANOTHER Steam account already holds is
-// ErrLichessIDTaken (→ 409). The UNIQUE(lichess_id) constraint is what makes
-// that a race-proof check rather than a check-then-write with a window in it:
-// two simultaneous links of the same lichess account can't both win.
+// Re-linking the SAME player replaces their row. The UNIQUE(lichess_id)
+// constraint is what makes the "already taken" check race-proof rather than a
+// check-then-write with a window in it: two simultaneous links of the same
+// lichess account can't both win.
 func UpsertLichessLink(ctx context.Context, db *pgxpool.Pool, l LichessLink) (LichessLink, error) {
 	out, err := scanLink(db.QueryRow(ctx, `
-		INSERT INTO lichess_links (steam_id, lichess_id, username, token_enc, token_nonce, key_version, scopes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO lichess_links (steam_id, lichess_id, username)
+		VALUES ($1, $2, $3)
 		ON CONFLICT (steam_id) DO UPDATE SET
-			lichess_id  = EXCLUDED.lichess_id,
-			username    = EXCLUDED.username,
-			token_enc   = EXCLUDED.token_enc,
-			token_nonce = EXCLUDED.token_nonce,
-			key_version = EXCLUDED.key_version,
-			scopes      = EXCLUDED.scopes,
-			linked_at   = NOW()
+			lichess_id = EXCLUDED.lichess_id,
+			username   = EXCLUDED.username,
+			linked_at  = NOW()
 		RETURNING `+lichessCols,
-		l.SteamID, l.LichessID, l.Username, l.TokenEnc, l.TokenNonce, l.KeyVersion, l.Scopes))
+		l.SteamID, l.LichessID, l.Username))
 
 	if err == nil {
 		return out, nil
@@ -97,84 +91,48 @@ func LichessLinkBySteamID(ctx context.Context, db *pgxpool.Pool, steamID int64) 
 		`SELECT `+lichessCols+` FROM lichess_links WHERE steam_id = $1`, steamID))
 }
 
-// DeleteLichessLink removes a link. Reports whether a row actually went — the
-// unlink handler uses that to answer honestly rather than claim success for a
-// link that was never there.
-func DeleteLichessLink(ctx context.Context, db *pgxpool.Pool, steamID int64) (bool, error) {
-	tag, err := db.Exec(ctx, `DELETE FROM lichess_links WHERE steam_id = $1`, steamID)
-	if err != nil {
-		return false, fmt.Errorf("delete lichess link: %w", err)
+// LichessLinksBySteamIDs returns the links for a set of players, keyed by
+// SteamID, skipping any that aren't linked.
+//
+// This is the DIRECTORY read, and it exists for exactly one caller: the paired
+// rendezvous, where two seats that have BOTH posted an intent for the same
+// client_game_id learn each other's lichess username so one can challenge the
+// other by name. It is deliberately not reachable any other way — a player's
+// lichess username is not something gamchess hands out to whoever asks.
+func LichessLinksBySteamIDs(ctx context.Context, db *pgxpool.Pool, steamIDs []int64) (map[int64]LichessLink, error) {
+	out := make(map[int64]LichessLink, len(steamIDs))
+	if len(steamIDs) == 0 {
+		return out, nil
 	}
-	return tag.RowsAffected() > 0, nil
-}
-
-// AllLichessLinks returns every link, for the audit sweep — the only fast
-// incident lever gamchess owns (lichess has no bulk revoke). Not paginated: it
-// exists to be fed to lichess's token test in batches of 1000, and a store big
-// enough for that to hurt is a store worth paginating deliberately.
-func AllLichessLinks(ctx context.Context, db *pgxpool.Pool) ([]LichessLink, error) {
-	rows, err := db.Query(ctx, `SELECT `+lichessCols+` FROM lichess_links ORDER BY linked_at`)
+	rows, err := db.Query(ctx,
+		`SELECT `+lichessCols+` FROM lichess_links WHERE steam_id = ANY($1)`, steamIDs)
 	if err != nil {
 		return nil, fmt.Errorf("list lichess links: %w", err)
 	}
 	defer rows.Close()
 
-	var out []LichessLink
 	for rows.Next() {
 		l, err := scanLink(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, l)
+		out[l.SteamID] = l
 	}
 	return out, rows.Err()
 }
 
-// LinksNeedingReEncrypt returns links whose token is NOT sealed under the current
-// key version — the work list for the M15 re-encrypt sweep. That is every legacy
-// (version 0) row plus anything sealed under a now-superseded data key.
+// DeleteLichessLink removes a link. Reports whether a row actually went — the
+// unlink handler uses that to answer honestly rather than claim success for a
+// link that was never there.
 //
-// Paged by a steam_id CURSOR (afterSteamID, exclusive), not by OFFSET: the sweep
-// advances the cursor past every row it fetches whether or not that row could be
-// re-sealed, so a row that fails to decrypt is skipped rather than re-fetched
-// forever. A whole giant store never lands in one result set, and one bad row
-// can't spin the sweep.
-func LinksNeedingReEncrypt(ctx context.Context, db *pgxpool.Pool, current int32, afterSteamID int64, limit int) ([]LichessLink, error) {
-	rows, err := db.Query(ctx,
-		`SELECT `+lichessCols+` FROM lichess_links
-		  WHERE key_version <> $1 AND steam_id > $2 ORDER BY steam_id LIMIT $3`,
-		current, afterSteamID, limit)
+// NOTE what this no longer does: revoke. The token is the client's, and
+// DELETE /api/token must be signed BY that token, so only the client can kill
+// it. gamchess just forgets the row — which is finally the honest division of
+// labour rather than the best-effort revoke it used to attempt.
+func DeleteLichessLink(ctx context.Context, db *pgxpool.Pool, steamID int64) (bool, error) {
+	tag, err := db.Exec(ctx, `DELETE FROM lichess_links WHERE steam_id = $1`, steamID)
 	if err != nil {
-		return nil, fmt.Errorf("list links needing re-encrypt: %w", err)
-	}
-	defer rows.Close()
-
-	var out []LichessLink
-	for rows.Next() {
-		l, err := scanLink(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, l)
-	}
-	return out, rows.Err()
-}
-
-// ReEncryptLinkToken rewrites one link's sealed token to a new key version, but
-// ONLY if it still carries the version the sweep read (fromVersion). That guard
-// is what makes the sweep safe to run against a live server: a player who
-// re-links mid-sweep writes a fresh token at the CURRENT version, and this
-// conditional update then no-ops on the stale row rather than clobbering their
-// new token with a re-seal of the old one. Reports whether the row was updated.
-func ReEncryptLinkToken(ctx context.Context, db *pgxpool.Pool, steamID int64,
-	tokenEnc, tokenNonce []byte, toVersion, fromVersion int32) (bool, error) {
-	tag, err := db.Exec(ctx, `
-		UPDATE lichess_links
-		   SET token_enc = $1, token_nonce = $2, key_version = $3
-		 WHERE steam_id = $4 AND key_version = $5`,
-		tokenEnc, tokenNonce, toVersion, steamID, fromVersion)
-	if err != nil {
-		return false, fmt.Errorf("re-encrypt link token: %w", err)
+		return false, fmt.Errorf("delete lichess link: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
 }

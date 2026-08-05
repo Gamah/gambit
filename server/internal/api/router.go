@@ -6,13 +6,11 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"path"
 	"strings"
 	"time"
 
-	"github.com/gamah/gambit/server/internal/keyring"
 	"github.com/gamah/gambit/server/internal/lichess"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -36,17 +34,16 @@ type handler struct {
 	sessions *sessions
 	nonces   *nonceStore
 
-	// Lichess (M8). keys is nil when LICHESS_TOKEN_KEY is unset, which switches
-	// the whole feature off — we never fall back to storing a plaintext token.
-	// There is no client-id field: lichess.ClientID is a constant, because
-	// lichess records the redirect ORIGIN on a token and never the client_id.
+	// Lichess (M8, rebuilt by HTTPFIX). NOTE WHAT IS NOT HERE ANY MORE: a key
+	// ring, a cipher, a token store and a play relay. The client holds its own
+	// token and talks to lichess itself, so this process holds no lichess secret
+	// and needs no key to protect one. The whole feature is gated on baseURL
+	// alone — a redirect URI to come back to.
 	//
-	// It is a KeyRing, not a single cipher (M15): the env key is the KEK, and it
-	// wraps rotating data keys that actually seal the tokens. SealToken/OpenToken
-	// carry a version so a row can always be opened by the key that sealed it.
-	keys    *keyring.KeyRing
-	pending *pendingLinks
-	relay   *relay
+	// There is no client-id field either: lichess.ClientID is a constant, because
+	// lichess records the redirect ORIGIN on a token and never the client_id.
+	links      *linkSlots
+	rendezvous *rendezvous
 
 	// TV (M9) is deliberately NOT gated on tokens: /api/tv/{channel}/feed is
 	// anonymous upstream, so TV must keep working for a player who has never
@@ -66,20 +63,6 @@ type Config struct {
 	BaseURL       string
 	FrontendDir   string
 	SessionSecret string
-
-	// LichessTokenKey is 32 bytes (base64 or hex): the KEK that wraps the rotating
-	// data keys. Blank ⇒ lichess is off.
-	LichessTokenKey string
-	// LichessTokenKeyOld is the PREVIOUS KEK during a KEK rotation (M15). Blank
-	// normally; set it for one deploy so any data key the new KEK can't open is
-	// unwrapped with the old one and re-sealed under the new, then drop it.
-	LichessTokenKeyOld string
-	// KeyRotationDays is how often the data key rotates. 0 disables timed rotation
-	// (versioning and the legacy-row migration still run); main.go defaults a blank
-	// env to 30.
-	KeyRotationDays int
-	// LichessAuditKey gates POST /api/v1/lichess/audit. Blank ⇒ no such route.
-	LichessAuditKey string
 }
 
 func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
@@ -90,37 +73,18 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 		baseURL:  strings.TrimSuffix(cfg.BaseURL, "/"),
 		sessions: newSessions(cfg.SessionSecret),
 		nonces:   newNonceStore(openidNonceTTL),
-		pending:  newPendingLinks(pendingTTL),
-		auditKey: cfg.LichessAuditKey,
 	}
+	h.links = newLinkSlots(linkTTL)
+	h.rendezvous = newRendezvous()
 
-	// The keyring is the on/off switch for everything lichess. Absent KEK ⇒
-	// feature off with a warning, never fatal and never plaintext — the same
-	// discipline as a blank SESSION_SECRET. A key that is PRESENT but broken is
-	// fatal, because the operator meant to set it. The load also bootstraps the
-	// first data key and re-wraps under a rotated KEK, so a broken/mismatched DB
-	// state surfaces here at startup rather than on the first game.
-	switch k, err := keyring.New(context.Background(), db, cfg.LichessTokenKey, cfg.LichessTokenKeyOld, log); {
-	case errors.Is(err, keyring.ErrNoKey):
-		log.Warn("LICHESS_TOKEN_KEY not set — lichess linking and play are disabled")
-	case err != nil:
-		log.Fatal("LICHESS_TOKEN_KEY is set but unusable", zap.Error(err))
-	default:
-		h.keys = k
-		// Rotate the data key on the cadence and drain any legacy/lagging rows onto
-		// the current key. Process-lived context: the daemon dies with the process,
-		// matching the rest of this server's background goroutines.
-		go k.Run(context.Background(), time.Duration(cfg.KeyRotationDays)*24*time.Hour, 0)
-		if h.baseURL == "" {
-			log.Warn("PUBLIC_BASE_URL not set — lichess linking is disabled (no redirect URI)")
-		} else {
-			log.Info("lichess linking enabled",
-				zap.String("client_id", lichess.ClientID),
-				zap.String("redirect_uri", h.lichessRedirectURL()),
-				zap.Int32("key_version", k.CurrentVersion()))
-		}
+	if h.baseURL == "" {
+		log.Warn("PUBLIC_BASE_URL not set — lichess linking is disabled (no redirect URI)")
+	} else {
+		log.Info("lichess linking enabled",
+			zap.String("client_id", lichess.ClientID),
+			zap.String("redirect_uri", h.lichessRedirectURL()),
+			zap.String("scopes", lichess.Scopes))
 	}
-	h.relay = newRelay(log, db, h.keys)
 	h.tv = newTv(log)
 
 	// Reap matchmaking adverts whose opener vanished without cancelling (M19).
@@ -179,19 +143,31 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 	mux.HandleFunc("GET /lichess/callback", h.lichessCallback)
 	mux.HandleFunc("POST /lichess/unlink", h.lichessWebUnlink)
 
-	// Lichess, from in-game. FP-token gated (the status/unlink pair also accept a
-	// web session, so the viewer can show the same thing).
+	// Lichess, from in-game. FP-token/session gated.
+	//
+	// NOTE WHAT IS GONE: /play, /seek, /challenge, /open, the play long poll and
+	// its action route. Those were the relay — gamchess playing lichess games on
+	// a player's behalf because the s&box client could not read a stream. The
+	// client does that itself now, straight to lichess, with its own token.
+	//
+	// `linked` and `username` keep their JSON names on the status route: gamchess
+	// deploys before the s&box package updates, so an OLD client polls it for a
+	// window and must degrade rather than null out.
 	mux.HandleFunc("GET /api/v1/lichess", h.lichessStatus)
 	mux.HandleFunc("DELETE /api/v1/lichess", h.lichessUnlink)
-	mux.HandleFunc("POST /api/v1/lichess/play", h.lichessPlay)
-	// A lobby seek: one player, a random opponent. Rapid or slower only, and
-	// capped at ~5/min across the WHOLE playerbase (the limit is per IP).
-	mux.HandleFunc("POST /api/v1/lichess/seek", h.lichessSeek)
-	mux.HandleFunc("POST /api/v1/lichess/challenge", h.lichessChallenge)
-	mux.HandleFunc("POST /api/v1/lichess/open", h.lichessOpen)
-	mux.HandleFunc("GET /api/v1/lichess/play/{id}", h.lichessPlayState)
-	mux.HandleFunc("DELETE /api/v1/lichess/play/{id}", h.lichessPlayCancel)
-	mux.HandleFunc("POST /api/v1/lichess/play/{id}/{action}", h.lichessPlayAct)
+
+	// The link flow's in-game half: register a PKCE challenge, then collect the
+	// code the browser parked, then claim an identity with the resulting token.
+	// gamchess never sees the verifier, so a parked code is inert in its hands.
+	mux.HandleFunc("POST /api/v1/lichess/link/start", h.lichessLinkStart)
+	mux.HandleFunc("POST /api/v1/lichess/link/collect", h.lichessLinkCollect)
+	mux.HandleFunc("POST /api/v1/lichess/claim", h.lichessClaim)
+
+	// The directory: two seats that have BOTH posted an intent for the same
+	// client_game_id learn each other's lichess username, so one can challenge
+	// the other by name. The two-intent rule survives as a disclosure rule — see
+	// lichess.go — not as a consent one.
+	mux.HandleFunc("POST /api/v1/lichess/rendezvous", h.lichessRendezvous)
 
 	// lichess TV (M9, WebSocket push since M18), for the spectator wall.
 	// Session-gated like everything else — anonymous upstream is exactly why an open
@@ -205,10 +181,6 @@ func NewRouter(db *pgxpool.Pool, log *zap.Logger, cfg Config) *http.ServeMux {
 	// keeps the literal ahead of {channel}, so the ordering is already correct.
 	mux.HandleFunc("GET /api/v1/tv/channels", h.tvChannels)
 	mux.HandleFunc("GET /api/v1/tv/{channel}", h.tvSocket)
-
-	// The audit sweep: the only fast incident lever we own (lichess has no bulk
-	// revoke). Operator-gated by LICHESS_AUDIT_KEY; 404s when that is unset.
-	mux.HandleFunc("POST /api/v1/lichess/audit", h.lichessAudit)
 
 	// The archive viewer. Registered last and rooted at "/", which in Go 1.22's
 	// mux is the least-specific pattern — every route above still wins. Blank

@@ -30,10 +30,9 @@ services:
       PUBLIC_BASE_URL: "${PUBLIC_BASE_URL}"
       FRONTEND_DIR: "/frontend"
       SESSION_SECRET: "${SESSION_SECRET}"
-      # Lichess (M8). A blank LICHESS_TOKEN_KEY switches linking and play off and
-      # the server starts anyway — it never falls back to plaintext tokens.
-      LICHESS_TOKEN_KEY: "${LICHESS_TOKEN_KEY}"
-      LICHESS_AUDIT_KEY: "${LICHESS_AUDIT_KEY}"
+      # No lichess variables: since HTTPFIX the token lives on the player's own
+      # machine and gamchess holds no lichess secret. PUBLIC_BASE_URL above is
+      # what lichess linking still needs — it derives the redirect_uri.
     depends_on:
       postgres:
         condition: service_healthy
