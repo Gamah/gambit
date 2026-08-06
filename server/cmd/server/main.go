@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -65,44 +64,21 @@ func main() {
 		log.Warn("SESSION_SECRET not set — web sessions will not survive a restart")
 	}
 
-	// LICHESS_TOKEN_KEY is the KEK: it wraps the rotating data keys that seal the
-	// board:play tokens at rest (32 bytes, base64 or hex). Blank switches lichess
-	// off entirely — the router warns and starts. It is never a fallback to
-	// plaintext: gamchess holding a plaintext token store is the one outcome that
-	// must not be reachable by forgetting a config key.
-	lichessTokenKey := strings.TrimSpace(os.Getenv("LICHESS_TOKEN_KEY"))
-
-	// LICHESS_TOKEN_KEY_OLD is the PREVIOUS KEK, set only while rotating the KEK
-	// (M15). For one deploy it lets gamchess re-wrap any data key the new KEK can't
-	// open; drop it once the logs show the re-wrap happened. Blank normally.
-	lichessTokenKeyOld := strings.TrimSpace(os.Getenv("LICHESS_TOKEN_KEY_OLD"))
-
-	// LICHESS_KEY_ROTATION_DAYS is how often the data key rotates. Blank ⇒ 30. "0"
-	// (or anything non-positive) disables timed rotation — versioning and the
-	// legacy-row migration still run, there is just no automatic re-key.
-	rotationDays := 30
-	if v := strings.TrimSpace(os.Getenv("LICHESS_KEY_ROTATION_DAYS")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			rotationDays = n
-		} else {
-			log.Warn("LICHESS_KEY_ROTATION_DAYS is not a number — using the default 30",
-				zap.String("value", v))
-		}
-	}
-
-	// LICHESS_AUDIT_KEY gates the token-audit sweep — the only fast incident
-	// lever we own, since lichess has no bulk revoke. Blank hides the route.
-	lichessAuditKey := strings.TrimSpace(os.Getenv("LICHESS_AUDIT_KEY"))
+	// NO LICHESS SECRETS. HTTPFIX moved the lichess token onto the player's own
+	// machine, so LICHESS_TOKEN_KEY, LICHESS_TOKEN_KEY_OLD,
+	// LICHESS_KEY_ROTATION_DAYS and LICHESS_AUDIT_KEY are all gone: there is no
+	// token to encrypt, no data key to rotate and no store to audit. If any of
+	// them are still set in a .env they are simply ignored.
+	//
+	// PUBLIC_BASE_URL is still load-bearing for lichess, though — it derives the
+	// byte-for-byte redirect_uri, and it is what keeps the test instance pointing
+	// at itself.
 
 	mux := api.NewRouter(pool, log, api.Config{
-		Version:            version,
-		BaseURL:            baseURL,
-		FrontendDir:        frontendDir,
-		SessionSecret:      sessionSecret,
-		LichessTokenKey:    lichessTokenKey,
-		LichessTokenKeyOld: lichessTokenKeyOld,
-		KeyRotationDays:    rotationDays,
-		LichessAuditKey:    lichessAuditKey,
+		Version:       version,
+		BaseURL:       baseURL,
+		FrontendDir:   frontendDir,
+		SessionSecret: sessionSecret,
 	})
 
 	port := os.Getenv("PORT")

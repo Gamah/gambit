@@ -107,9 +107,21 @@ public static class GamchessCommands
 
 	static async Task DoLichess()
 	{
+		// LOCAL first, and this is the whole custody change in one command: the token
+		// is on this machine, so "am I linked" is answerable with no network at all.
+		// gamchess's opinion is a SECOND question, and the two disagreeing is a real
+		// state worth naming rather than a contradiction to hide.
+		Log.Info( Gambit.Api.Lichess.LichessTokenStore.Linked
+			? $"[Gambit] this PC: linked as {Gambit.Api.Lichess.LichessTokenStore.Username}"
+				+ $" ({Gambit.Api.Lichess.LichessTokenStore.LichessId})"
+			: "[Gambit] this PC: no lichess token stored." );
+
+		if ( Gambit.Api.Lichess.LichessTokenStore.ScopesAreStale )
+			Log.Warning( "[Gambit]   the stored grant predates this build's scope set — link again." );
+
 		if ( !GamchessAuth.Available )
 		{
-			Log.Warning( "[Gambit] no Steam identity — lichess linking needs one." );
+			Log.Warning( "[Gambit] no Steam identity — gamchess can't be asked." );
 			return;
 		}
 
@@ -120,7 +132,7 @@ public static class GamchessCommands
 			return;
 		}
 
-		var link = GamchessApi.Deserialize<LichessLink>( res.Body );
+		var link = GamchessApi.Deserialize<LichessLinkStatus>( res.Body );
 		if ( link == null )
 		{
 			Log.Warning( $"[Gambit] unreadable reply: {GamchessApi.Truncate( res.Body, 200 )}" );
@@ -129,19 +141,29 @@ public static class GamchessCommands
 
 		if ( link.linked )
 		{
-			Log.Info( $"[Gambit] lichess: linked as {link.username} ({link.lichess_id})" );
+			Log.Info( $"[Gambit] gamchess: agrees — {link.username} ({link.lichess_id})" );
 			Log.Info( $"[Gambit]   unlink in-game at the east wall board, or revoke at {LichessApi.SecurityUrl}" );
 			Log.Info( "[Gambit]   NOTE: changing your lichess password does NOT unlink — only a revoke does." );
+			Log.Info( "[Gambit]   the token lives on THIS PC (lichess.json in the game's data folder);" );
+			Log.Info( "[Gambit]   gamchess holds no copy, so deleting the game's data drops it here but" );
+			Log.Info( "[Gambit]   does NOT revoke it at lichess." );
 			return;
 		}
 
-		Log.Info( "[Gambit] lichess: not linked." );
+		Log.Info( "[Gambit] gamchess: no link recorded." );
+		if ( Gambit.Api.Lichess.LichessTokenStore.Linked )
+			Log.Warning( "[Gambit]   DISAGREEMENT: this PC holds a token gamchess doesn't know about, so"
+				+ " the two-seat flow can't look up an opponent's name. Link again." );
 		Log.Info( $"[Gambit]   link at: {LichessApi.LinkUrl}" );
 	}
 
-	/// <summary>Unlink from lichess: gamchess revokes the token, then forgets it.
-	/// Best-effort revoke — the row goes either way, so if lichess was down when
-	/// you did this, revoke it yourself at lichess.org/account/security.</summary>
+	/// <summary>Unlink from lichess: revoke the token AT LICHESS with the token
+	/// itself, delete it from this PC, then tell gamchess to forget the row.
+	///
+	/// <para>The order matters. DELETE /api/token must be signed BY the token, so
+	/// only this machine can revoke — and only while it still has it. The revoke is
+	/// best-effort and the delete is not: if lichess was down, revoke it yourself at
+	/// lichess.org/account/security.</para></summary>
 	[ConCmd( "gambit_lichess_unlink" )]
 	public static void LichessUnlink() => _ = DoLichessUnlink();
 
@@ -153,7 +175,7 @@ public static class GamchessCommands
 			return;
 		}
 
-		await LichessLinkState.Unlink();
+		await Gambit.Api.Lichess.LichessLink.Unlink();
 		Log.Info( LichessLinkState.Linked
 			? "[Gambit] unlink failed — still linked. Is gamchess up?"
 			: "[Gambit] lichess: unlinked." );

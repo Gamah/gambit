@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Runs the Sandbox-free half of the client's lichess code on a dev host with
+       no s&box toolchain: SHA-256, PKCE, the etiquette governor, ndjson framing,
+       and the clock/speed floors.
+
+       net10.0 because only the 10.x runtime is installed here (net8 builds but
+       won't launch). ImplicitUsings because the client leans on s&box's global
+       usings. Same two settings as scripts/seataim_harness. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>lichess_harness</AssemblyName>
+    <RootNamespace>LichessHarness</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="Shim.cs" />
+    <Compile Include="GamchessShim.cs" />
+
+    <!-- The REAL files, verbatim. Nothing is copied or reimplemented here.
+         The whole Code/Api/Lichess folder is compiled, not just the Sandbox-free
+         part: the tests below only EXERCISE four of these, but compiling all of
+         them is itself the check that matters most on a host with no s&box
+         toolchain — ~1500 lines of new C# that would otherwise meet a compiler
+         for the first time in the editor, one error at a time. -->
+    <Compile Include="../../client/Code/Api/Lichess/*.cs" />
+
+    <!-- Sandbox-free already, and on the seam the lichess client sits on. -->
+    <Compile Include="../../client/Code/Game/TimeControl.cs" />
+    <Compile Include="../../client/Code/Game/LichessTable.cs" />
+    <Compile Include="../../client/Code/Api/GamchessModels.cs" />
+    <Compile Include="../../client/Code/Api/LichessApi.cs" />
+    <Compile Include="../../client/Code/Api/LichessLinkState.cs" />
+  </ItemGroup>
+
+</Project>

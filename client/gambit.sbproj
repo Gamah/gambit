@@ -22,7 +22,8 @@
     "LeaderboardType": "None",
     "CsProjName": "",
     "HttpAllowList": [
-      "https://chess.gamah.net/"
+      "https://chess.gamah.net/",
+      "https://lichess.org/"
     ],
     "StartupScene": "scenes/lobby.scene"
   }

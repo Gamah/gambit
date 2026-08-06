@@ -35,93 +35,26 @@ public sealed class GamchessError
 	public string error { get; set; }
 }
 
-/// <summary>Reply from <c>GET /api/v1/lichess</c> — is this player linked?
-/// <para>Note what isn't here: the lichess token. It never crosses this seam in
-/// either direction. The client authenticates to gamchess; gamchess acts on
-/// lichess.</para></summary>
-public sealed class LichessLink
+/// <summary>Reply from <c>GET /api/v1/lichess</c> and <c>POST /api/v1/lichess/claim</c>
+/// — which lichess account this Steam account plays as, per gamchess.
+///
+/// <para>Since HTTPFIX the answer is advisory here: the client holds its own token
+/// and knows locally whether it is linked. What gamchess's copy is FOR is the
+/// two-seat directory — it is how the opposite seat learns your username.</para>
+///
+/// <para><c>linked</c> and <c>username</c> keep their names across that change on
+/// purpose: gamchess deploys before the s&amp;box package updates, so for a window
+/// an old client polls this route and must degrade rather than null out.</para>
+///
+/// <para><b>The TYPE was renamed</b> (it was <c>LichessLink</c>) because HTTPFIX
+/// added <see cref="Lichess.LichessLink"/> — the link FLOW — and a DTO and a flow
+/// sharing a name is a CS0104 waiting for the first file that uses both.</para></summary>
+public sealed class LichessLinkStatus
 {
 	public bool linked { get; set; }
 	public string lichess_id { get; set; }   // canonical lowercase — the identity
 	public string username { get; set; }     // display casing — cosmetic
 	public string link_url { get; set; }
-}
-
-/// <summary>One snapshot of a relayed lichess game, from
-/// <c>GET /api/v1/lichess/play/{id}</c>.
-///
-/// <para><c>moves</c> is lichess's own full UCI list from the start position —
-/// never a delta — which is why a dropped or duplicated poll costs nothing and
-/// there is no reconciliation to get wrong. Replay it into a ChessGame.</para>
-///
-/// <para><c>version</c> is the long-poll cursor: pass it back as <c>since</c> and
-/// gamchess holds the request until the state moves past it.</para>
-///
-/// <para>SteamIDs are STRINGS, as everywhere in this API: a SteamID64 is past
-/// JavaScript's 2^53 and the web viewer reads the same contract.</para></summary>
-public sealed class LichessPlayState
-{
-	/// <summary>"waiting" (the other seat hasn't asked yet) · "challenging" ·
-	/// "live" · "over" · "failed".</summary>
-	public string status { get; set; }
-	public string error { get; set; }
-	public ulong version { get; set; }
-
-	public string game_id { get; set; }
-	public string url { get; set; }
-
-	/// <summary>The link the seated player hands to their browser opponent (the
-	/// OPPOSITE colour's url of an open-challenge game). Empty for every other flow.
-	/// See <see cref="LichessApi.OpenLink"/> and the server's runOpen.</summary>
-	public string share_url { get; set; }
-
-	public string white_steam_id { get; set; }
-	public string black_steam_id { get; set; }
-	public string white_name { get; set; }
-	public string black_name { get; set; }
-
-	public string moves { get; set; }
-
-	// Milliseconds, straight from lichess. lichess is the only authority on its own
-	// clocks — but it only SENDS one when a move happens, so the client runs the
-	// side-to-move's value down locally between moves and snaps back to these on the
-	// next state (see LichessGameController's countdown). The two staleness fields
-	// below are what let it do that without reading HIGH.
-	public long white_time_ms { get; set; }
-	public long black_time_ms { get; set; }
-	public long white_inc_ms { get; set; }
-	public long black_inc_ms { get; set; }
-
-	/// <summary>How long ago gamchess received these clocks from lichess, and how long
-	/// it held our request — both in ms, both computed at send. The client subtracts
-	/// this frame's staleness (age + measured network, where network = round trip −
-	/// hold) before running a clock down, so a stale frame never reads HIGHER than the
-	/// time actually left. Identical machinery and reasoning to <see cref="TvState"/>'s
-	/// two fields. 0 (omitted) from an older gamchess ⇒ no correction ⇒ the old
-	/// frozen-between-moves behaviour, never a broken clock.</summary>
-	public long clock_age_ms { get; set; }
-	public long hold_ms { get; set; }
-
-	/// <summary>A game against a RANDOM lichess opponent rather than the player
-	/// sitting opposite. The stranger has no SteamID, so one seat id is empty and
-	/// <see cref="your_color"/> is the only way to know which side you have.</summary>
-	public bool seek { get; set; }
-
-	/// <summary>"white" | "black" | null — which side YOU play. Stamped per caller
-	/// by gamchess, and the only per-caller field in an otherwise shared snapshot.
-	/// <para>Authoritative over matching SteamIDs: for a seek there is no opponent
-	/// SteamID to match, and for a paired game gamchess knows what it actually
-	/// started.</para></summary>
-	public string your_color { get; set; }
-
-	/// <summary>lichess's own status: created/started/mate/resign/outoftime/…</summary>
-	public string lichess_status { get; set; }
-	public string winner { get; set; }        // "white" | "black" | null
-	public bool finished { get; set; }
-	public bool white_draw { get; set; }      // that side is offering a draw
-	public bool black_draw { get; set; }
-	public bool white_takeback { get; set; }  // that side is proposing a takeback
-	public bool black_takeback { get; set; }
 }
 
 /// <summary>The game session bearer, from <c>POST /api/v1/session</c> (M9).
@@ -146,9 +79,9 @@ public sealed class SessionResponse
 /// <para>Every message is the whole state, not a delta: latest-wins, no cursor. The
 /// pre-M18 long poll's <c>version</c> and <c>hold_ms</c> fields are gone with it.</para>
 ///
-/// <para><b>Clocks are SECONDS here</b>, not the milliseconds
-/// <see cref="LichessPlayState"/> uses for the same idea: two lichess endpoints, two
-/// units. Seconds is what <c>TimeControl.Format</c> takes, so nothing converts.</para>
+/// <para><b>Clocks are SECONDS here</b>, not the milliseconds the Board API uses for
+/// the same idea: two lichess endpoints, two units. Seconds is what
+/// <c>TimeControl.Format</c> takes, so nothing converts.</para>
 ///
 /// <para>Nobody in a TV game is a Gambit player. There are no SteamIDs and no seats —
 /// this is a spectate-only feed and none of it may ever be treated as a caller.</para></summary>

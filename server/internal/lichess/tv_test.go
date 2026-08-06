@@ -129,8 +129,13 @@ func TestStreamTvBacksOffAfter429(t *testing.T) {
 	}
 }
 
-// A 429 earned by TV must stop the BOARD API too, and vice versa. Per-IP means
-// the budget is shared across every feature, so the backoff is process-wide.
+// A 429 earned by TV must stop the link path too, and vice versa. Per-IP means
+// the budget is shared across every call this box makes, so the backoff is
+// process-wide.
+//
+// It used to assert this against the Board API, which is the client's now. The
+// property is unchanged and so is the reason for it — only the other endpoint
+// available to name has changed.
 func TestTv429StopsEverythingElse(t *testing.T) {
 	ResetGovernor()
 	t.Cleanup(ResetGovernor)
@@ -146,8 +151,12 @@ func TestTv429StopsEverythingElse(t *testing.T) {
 
 	StreamTv(context.Background(), ChannelBlitz, func(TvEvent) {})
 
-	if err := StreamGame(context.Background(), "a-token", "gameid", func(GameEvent) {}); err != ErrBackingOff {
-		t.Errorf("a TV 429 left the board API running: %v — the limit is per-IP and we are one IP", err)
+	prevAccount := accountEndpoint
+	accountEndpoint = srv.URL + "/api/account"
+	defer func() { accountEndpoint = prevAccount }()
+
+	if _, _, err := Account(context.Background(), "a-token"); err != ErrBackingOff {
+		t.Errorf("a TV 429 left the link path running: %v — the limit is per-IP and we are one IP", err)
 	}
 }
 

@@ -25,8 +25,12 @@ wall-clock panic + instant checkmate fanfare — **plus PR #17, the lichess draw
 fix (PLAN #2)** folded in before it published — so the next release is `0.0.3`). The changes
 field is written in **five sbox.game categories, in this order**:
 
-> **`0.0.3` is unpublished and already carries P99 and M19** (look-aim at the board; play the
-> computer, cross-lobby matchmaking, the four-tab setup panel, the move-history panel). **PR #18
+> **`0.0.3` is unpublished and already carries P99, M19 and HTTPFIX** (look-aim at the board;
+> play the computer, cross-lobby matchmaking, the four-tab setup panel, the move-history panel;
+> and the lichess token moving onto the player's own PC). **HTTPFIX is a player-facing change
+> even though it reads as plumbing** — everyone re-links, the grant asks for more than it did,
+> the key now lives on their machine, and a crash mid-lichess-game flags instead of being
+> resigned for them. All four belong in the notes, and the last two belong under Known issues. **PR #18
 > merged with NO release-notes section**, breaking the roll-up rule below — so the cutter has to
 > write M19's notes from the commit log rather than concatenating them, and should not assume the
 > absence of notes means the absence of player-facing change. It is the largest chunk of the
@@ -46,134 +50,232 @@ field is written in **five sbox.game categories, in this order**:
   editor**. Each PR should list its "needs editor verification" items; the cutter confirms that
   list was walked before publishing.
 
-### Lichess: real games, and gamchess holds the token
+### Lichess: real games, and THE CLIENT holds the token
 
 Gambit plays **real lichess games** from a table (M8): link your lichess account, and a game
-here is a game there, in your real history. Two ways in — play the person sitting opposite
-you (a direct challenge), or play a stranger (a lobby seek). It also puts **lichess TV** on
-the north wall (M9) — which needs no account, no link, and no token at all.
+here is a game there, in your real history. Four ways in — play the person sitting opposite
+you, play a named lichess user, take a stranger from lichess's lobby, or hand out a shareable
+link a browser opponent joins. It also puts **lichess TV** on the north wall (M9) — which needs
+no account, no link, and no token at all.
 
-The old pre-M7 lichess integration is **still not the starting point** for anything. It was
-ripped out on `m7-gamchess-identity` and M8 was a clean-slate rebuild against re-derived API
-facts. The `lichess-final` tag holds the old one for reference only; do not restore those
-files.
+The old pre-M7 lichess integration is **still not the starting point** for anything. The
+`lichess-final` tag holds it for reference only; do not restore those files.
 
-**Provenance for everything below:** read from the live `lichess-org/api` OpenAPI spec and
-`lichess-org/lila` master on **2026-07-15**, not recalled. Re-read before trusting any of it.
-Facts marked **[SOURCE]** are inferred from lila's source, not a documented contract, and can
-change without notice.
+**Provenance for everything below:** the flows and traps were read from the live
+`lichess-org/api` OpenAPI spec and `lichess-org/lila` master on **2026-07-15**, with the custody
+change re-derived **2026-08-05**, not recalled. Re-read before trusting any of it. Facts marked
+**[SOURCE]** are inferred from lila's source, not a documented contract, and can change without
+notice.
 
-#### The custody decision: gamchess holds the token (position 2)
+#### The custody decision was REVERSED (HTTPFIX). The client holds its own token.
 
-**Why it is not a preference.** Playing a lichess game requires holding a long-lived ndjson
-stream open, and lichess has no polling substitute (they answer a poller with a literal
-*"Please don't poll this endpoint, it is intended to be streamed"* 429). The s&box client
-**cannot read a stream**: `Http.RequestAsync` buffers the whole body before returning,
-`HttpCompletionOption` is off the API whitelist, and `Http.RequestStreamAsync` is broken
-upstream (it `using`s the response then returns its stream). So whoever reads the stream must
-hold the token. `board:play` is also a single all-or-nothing scope — there is no read-only
-subset to give gamchess while keeping write capability on the client.
+**Read this before anything else, because half the repo's folklore is about the old world.**
 
-The ideal (client-only token) is **two small upstream engine changes away**. Nothing here may
-foreclose that migration.
+gamchess used to hold every linked player's `board:play` token, and it was never a preference.
+Playing a lichess game means holding a long-lived ndjson stream open, lichess has no polling
+substitute (they answer a poller with a literal *"Please don't poll this endpoint, it is
+intended to be streamed"* 429), and **the s&box client could not read a stream**:
+`Http.RequestStreamAsync` was broken upstream — it `using`d the response and then returned its
+stream, so the body was buffered and the task never resolved for a stream that never ends. So
+whoever read the stream had to hold the token.
 
-**What that costs, and what pays it down.** An RCE or DB dump hands over every linked player's
-account for up to a year, and **lichess has no bulk revoke** — `DELETE /api/token` kills one
-token and must be signed by *that* token. So:
+**That was an engine bug, and it is ours-fixed** (`facepunch/sbox-public` `42cee680`,
+`Http.RequestStreamAsync` now sends with `HttpCompletionOption.ResponseHeadersRead` and returns
+a `ResponseStream` that owns the response). CLAUDE.md used to say the ideal was "two small
+upstream engine changes away"; **it was one**.
 
-- **Tokens are encrypted at rest under envelope encryption (M15).** `LICHESS_TOKEN_KEY` is now
-  the **KEK**: it wraps rotating **data keys** (`internal/keyring`, `lichess_key_versions`), and
-  those seal the tokens. A blank KEK still switches lichess **off**; it never falls back to
-  plaintext. **Back the KEK up** — it is still the one durable secret. What CHANGED: there is now
-  a rotation path. The data key rolls on a timer (`LICHESS_KEY_ROTATION_DAYS`, default 30) with a
-  background re-encrypt sweep, and the KEK itself can be re-keyed without orphaning links by
-  setting `LICHESS_TOKEN_KEY_OLD` for one deploy (re-wraps a few DEK rows, never the tokens). Old
-  rows carry `key_version = 0` = "sealed directly under the KEK, pre-M15" and migrate on their
-  own. **The envelope adds no secrecy on this deployment** — KEK and DB share a box, so a full
-  compromise reads both; its value is the rotate/re-key-without-orphaning capability, not
-  confidentiality vs a DB-only dump. How rotation actually runs, and the KEK-rotation runbook,
-  are under **gamchess deployment facts** below.
-- **The audit sweep is the only fast lever we own.** `POST /api/v1/lichess/audit` →
-  `POST /api/token/test` (1000 tokens/call) says which of our tokens are still live, in
-  seconds. It cannot revoke them. Auditing is the capability; mass revocation is not.
-- **Unlink revokes then deletes**, best-effort revoke, never fatal.
+So the whole apparatus that existed to manage a risk we only took because of that bug is
+**deleted, not mitigated**: the envelope encryption (`internal/keyring`, `lichess_key_versions`,
+the KEK/DEK chain), the rotation daemon and its runbook, the audit sweep, the play relay
+(`internal/api/relay.go`), the Board API client (`internal/lichess/board.go`), and the four
+`LICHESS_*` config keys. **gamchess ends with no lichess secrets at all.** (`SESSION_SECRET`
+remains — it is ours, and optional.)
 
-**Incident-response reality** (verified against lila):
+**What gamchess still does, and each is a thing the client genuinely cannot:**
+
+1. **Holds the redirect URI.** lichess compares `redirect_uri` byte-for-byte between authorize
+   and token, and the client cannot listen on a socket, so there is no loopback escape.
+   `PUBLIC_BASE_URL` derives it once — which is also what keeps the test instance pointing at
+   itself rather than at prod.
+2. **Shows the disclosure page.** Consent belongs somewhere with a URL bar.
+3. **Is the directory.** Two seats need each other's lichess usernames to challenge by name, and
+   neither client may simply be told the other's.
+
+**The link flow INVERTED, and the shape is the point.** It was mint-on-redirect /
+burn-on-callback because the callback did the exchange. Now: the client mints a PKCE pair and
+registers the CHALLENGE (`POST /api/v1/lichess/link/start`); the player opens the **constant**
+`/lichess/link` and consents; the callback **parks** the code without burning the state; the
+client collects it (`link/collect`, keyed on the caller's authenticated SteamID and **never on a
+state from the body**) and exchanges at lichess itself. **Burn-on-use moved from callback to
+collect.** gamchess never sees a verifier, so a parked code is inert in its hands — not by
+policy, by construction.
+
+> **Keep `/lichess/link` as the constant the board copies — do NOT show the raw authorize URL.**
+> This is the call most likely to be got wrong, because showing the lichess URL directly looks
+> simpler. The constant is safe *precisely because it carries no secret*: it is Steam-web-session
+> gated, so whoever opens it links **their own** accounts, and handing it to a friend just links
+> the friend. A raw authorize URL is bound to **your** state and **your** SteamID — a friend who
+> opened it would consent on *their* lichess account and **you** would end up holding a
+> `board:play` grant on it. That is strictly worse than anything the old custody design could do.
+
+**Identity costs ONE token transit, and there is no way round it.** `POST /api/token` returns no
+user id; `POST /api/token/test` is anonymous but you must still POST the token, and it returns a
+`userId` only (no display username, so a second request). So at link the client POSTs its fresh
+token to `/api/v1/lichess/claim` once, gamchess calls **`GET /api/account`** — `security:
+[OAuth2: []]`, a token but **no specific scope** — records what lichess echoes back, and
+discards it. Never stored, never logged, never in an error string (there is a Go test for the
+last one; `GamchessApi.Redact` is the client-side precedent).
+
+- **"gamchess cannot hold your token" is a PROMISE here, not a structure**, and the copy must not
+  overclaim it. The owner's call (2026-08-05): token compromise is not what we optimise against.
+- **Do NOT "fix" this with a second scopeless token.** It would rebuild the pile of long-lived
+  credentials this change exists to delete, in exchange for a username.
+- **Do NOT accept a client-asserted identity.** A claim would let anyone squat a real account's
+  row and permanently lock its owner out of ever linking. Because the id comes from lichess, the
+  plain `UNIQUE(lichess_id)` is safe and there is no claimed-vs-verified split to build.
+
+**The token lives in `FileSystem.Data`, in its OWN file** (`lichess.json`), never in
+`player.json` — `PlayerData._cache` is a static blob serialized whole on every settings write, so
+a token inside it would eventually land in a log or a dump, and a separate file makes "forget my
+token" a single delete. **No prompt and no toggle**: verbose copy instead. The risk was
+re-derived rather than assumed (this replaces the never-closed "rogue lobby host" spike): joining
+an **editor host or a local-project dedicated server** compiles that host's source into your
+process before the scene loads, and whitelisted C# can read `FileSystem.Data`; a host running a
+**published** package sends no code at all, and memory-only bought little anyway, since anyone
+playing on lichess is linked *that session* and injected code shares the process.
+
+> **This is NOT the rule gamchess credentials live under.** `GamchessApi._session` and
+> `GamchessAuth._token` stay **memory-only**, because a gamchess session is stateless and
+> **unrevokable** short of rotating `SESSION_SECRET`, while a lichess token is revokable by its
+> owner on `/account/security` at any time. Different credentials, different reasoning — do not
+> "make them consistent".
+
+**Unlink is finally correct rather than best-effort, and the division of labour is the point.**
+`DELETE /api/token` must be signed BY the token being revoked (verified against the live spec
+2026-08-05: *"Revokes the access token sent as Bearer for this request"*, 204), which only the
+client holds. So the **client revokes and then deletes**, and gamchess just forgets the row. The
+web unlink button says plainly that it can only do the second half.
 
 | Lever | Real? |
 |---|---|
 | User revokes our grant | ✅ on **`/account/security`** — NOT `/account/oauth/token`, which lists *personal* tokens only and hides app grants. A documented trap; the copy must name the right page. |
 | A password change unlinks us | ❌ **does nothing.** Password change / "log out everywhere" touch web sessions only; `OAuthServer.auth` never reads the session flag. The in-game and web copy must say this plainly. |
-| We mass-revoke | ❌ no bulk endpoint. N serial signed calls. |
-| We audit | ✅ seconds. |
+| We revoke someone's token | ❌ **not any more, and that is the trade.** We don't have it. Deleting the game's data drops the key from that PC and revokes nothing — the copy says so. |
 | Lichess kills our whole app | ✅ but manual on their side, keyed on **`clientOrigin`** (our redirect URI's scheme+host). Ask via Discord. |
 
-#### Identity and authorisation
+**The honest regression: a crash mid-game is no longer resigned within ~30s.** `relay.watchAbandonment`
+tracked each seat's poll and resigned a silent one with its own token; nobody else holds the
+token now, so a dropped client's game just flags — exactly as it does for every other Board API
+client. Standing up still keeps the game live (M17 behaviour); only quitting drops the stream.
+The player-facing copy says this rather than burying it.
 
-- **`client_id` is `net.gamah.gambit`, a CONSTANT in `internal/lichess`, not config and not a
-  credential.** lichess has no client registration (`client_id required (choose any)`), and
-  **does not record it on the token** — an `AccessToken` stores `clientOrigin` and has no
-  client_id field. So changing it revokes nothing and configures nothing; the player's "revoke
-  this app" button and any lichess-side kill both key on the ORIGIN. It is public and
-  **impersonable by design** (lichess cannot bind a redirect_uri to an unregistered client_id),
-  so it authenticates nothing: PKCE secures the exchange, the redirect URI decides who gets a code.
-- **`redirect_uri` is derived once** from `PUBLIC_BASE_URL` (`+ "/lichess/callback"`), exactly as
-  `steamReturnURL()` is. lichess compares it **byte-for-byte** between authorize and token, and
-  deriving it once is also what keeps the test instance pointing at itself rather than prod.
-- **Starting a game against the other seat needs BOTH seats to POST** an intent for the same
-  `client_game_id`, each FP-authenticated. This is the whole authorisation story, not a
-  formality: gamchess holds a token for every linked player, so a one-sided start would let any
-  linked player drag any other into a game from anywhere. `client_game_id` is **not a secret**
-  (it is `[Sync]`ed to the lobby) — it is the rendezvous key; the two FP tokens are the
-  authority. A **seek** needs one caller: nobody else is being committed to anything.
-- gamchess holds both seats' tokens, so it **challenges with White's and accepts by id with
-  Black's** — it never watches `/api/stream/event` for the paired flow, and so is not bound by
-  the one-event-stream-per-token rule there. A seek DOES need the event stream (a seek's own
-  response carries no game id), which is why only one seek per user may run.
-- A **direct challenge to a named user** (`ChallengeKeepAlive`, `/api/challenge/{name}` with
-  `keepAliveStream`) is a third relayed flow, one intent like a seek — the named opponent
-  consents on lichess, so nobody here is committed. Its trap is documented, not intuitive:
-  **closing the keep-alive stream does NOT withdraw the challenge.** lila only stops a 15s
-  ping; the challenge then goes Offline and stays acceptable for **hours**, so `relay.Cancel`
-  POSTs an explicit `/cancel` and an unanswered one is bounded by `challengeAnswerTTL`. Read
-  from lila, not the OpenAPI doc, which says the opposite.
+#### Scopes: no longer `board:play` alone
 
-#### The shareable link IS a relayed game — anon browser vs your board (open + accept?color=)
+**`board:play puzzle:read puzzle:write follow:read`** (owner, 2026-08-05, `msg:write` dropped
+2026-08-06). The old
+rule — *`board:play` is the only scope we ever request* — is retired, but read WHY before
+widening again. One of its two reasons was that a scope change forces a full re-link for
+everyone (tokens are long-lived, there are no refresh tokens); **HTTPFIX forced that re-link
+anyway**, which made this the one moment in the project's life when widening cost nothing extra.
+It is not licence to widen casually — the next one costs a re-link from every player.
 
-**An anonymous browser player CAN play your authed, board-relayed account. It is a real flow, it
-worked before M8, and getting it wrong twice is why this section is long.** The mechanism was
-re-derived from the live spec (`lichess-org/api` master, 2026-07-17) after a wrong "it's
-impossible" claim sat here:
+- **`board:play`** plays games. A single all-or-nothing grant with no read-only subset; it also
+  satisfies the challenge endpoints, whose spec lists challenge:write/bot:play/board:play as
+  ALTERNATIVES.
+- **`puzzle:read|write`** — puzzles in the lobby, on the player's real puzzle record.
+- **`follow:read`** — which lichess friends are online.
+- **`msg:write` was asked for and then DROPPED before HTTPFIX shipped**, and the reasoning is
+  worth keeping so it isn't re-asked for casually. It is **SENDING ONLY, permanently**: there is
+  no `msg:read` scope at all, and reading an inbox is `AuthOrScoped(_.Web.Mobile)` (lila
+  `app/controllers/Msg.scala`, read 2026-08-05). So anything built on it is fire-and-forget by
+  nature — Gambit could message an opponent and never see a reply — and nothing was built on it.
+  A scope nothing uses is one more line on the consent page a cautious player reads.
 
-| endpoint | `security:` | what it does for us |
-|---|---|---|
-| `POST /api/challenge/open` | **`[]`** (anonymous) | mint the link. A `board:play` token 403s it ("Missing scope: challenge:write"), so we send **no** token. |
-| `POST /api/challenge/{id}/accept?color=` | `["challenge:write","bot:play","board:play"]` | **seats our token holder** in the open challenge, on the chosen side. `board:play` is accepted; `color` is "only valid if this is an open challenge". |
-| `POST /api/challenge/{username}` | `["challenge:write","bot:play","board:play"]` | the direct challenge — same scope list, which is *why it works on `board:play`* and the open-create 403 looked contradictory. |
+**`web:mobile` and `web:polygon` stay out, and for a different reason than risk.** Their own
+descriptions are "Official Lichess mobile app" and "Take Take Take"; taking one means claiming
+first-party status to bypass a gate lichess put on third-party board clients deliberately. That
+is what blitz seeks and quick pairing are behind (PLAN's "recorded, not to fix" row). **The
+owner's "token compromise is not what we optimise against" decision does not reach this** — that
+call is about blast radius; this is about honesty toward lichess. `web:mod` is moderator tooling
+and is not ours to ask for.
 
-So `relay.runOpen`: **create the open challenge anonymously → `AcceptChallengeColor` with the
-player's token (this is the step M8 dropped, leaving the creator's seat empty and the game never
-starting) → publish `share_url` (the opposite colour's url) → watch the event stream for the
-opponent joining, as a seek does → `streamGame` the player's side to the board.** The browser
-opponent needs no lichess account.
+> **The disclosure copy is part of the scope set, and must be decided with it.** `InfoScreen`'s
+> Lichess branch and `lichess_pages.go`'s consent page used to promise the grant "cannot read
+> your email, read or send messages, see who you follow, or change your account" — two of those
+> four clauses became false. The copy now enumerates what the grant **can** do rather than
+> reciting a shorter list of what it can't. **This is the highest-risk copy in the repo**: it is
+> the sentence a cautious player reads before consenting.
 
-- **No `challenge:write`, no re-link.** `board:play` is enough (create is anonymous, accept takes
-  board:play). The old pre-M8 code requested `challenge:write` but never needed it; the M8 rule
-  "board:play only" was fine — the M8 *bug* was skipping the accept step, not the scope.
-- **Blitz+ only**, unlike the old M8 one-shot that allowed bullet: OUR side plays through the
-  Board API now (we relay it), which won't play faster than blitz. The link is a *relayed game*
-  with a `client_game_id`, polled like a seek — not a bare link.
-- **It is a solo flow** (`PlayRequest.Open`, `solo()` true, one pending slot, one event stream).
-  `State.seek` is true (the browser opponent is a stranger); `ShareURL` is the only extra field.
-- **Colour** is which side WE take; the opponent's `share_url` is the opposite. "random"/"" accepts
-  without a colour and we learn our side from `gameFull` (`resolveSoloColor`), same as a seek.
-  Client-side, picking the colour **moves the player's seat** (`LobbyPlayer.SwitchSeat`) so the
-  board shows them where they'll play; random moves once the game starts.
-- **Cancellation is best-effort.** We created anonymously, so a `/cancel` may be refused; an
-  unjoined open challenge expires in 24h. `runOpen` bounds the wait by `challengeAnswerTTL` (same
-  hazard bound as the keep-alive challenge) and best-effort withdraws on timeout.
-- **The consent model still holds:** a game at a table is local unless a player picks a lichess
-  flow — `InfoScreen`'s Welcome + Lichess branches say it; keep saying it.
+#### The flows, and which one touches the event stream
+
+The old flows were shaped by custody: gamchess held **both** seats' tokens, so it challenged
+with White's and accepted by id with Black's. Each client acts with its own token now and can
+only ever commit itself, so the authorisation story collapses into "you did it, with your own
+credential".
+
+- **Paired (the two seats at a table).** Both seats POST `/api/v1/lichess/rendezvous`; White then
+  challenges Black **by name** and publishes the challenge id; Black accepts by id.
+  **How Black learns the id is the thing a next session will get wrong.** The reflex is "Black
+  opens the event stream and waits for a `challenge` event". **Don't.** White's challenge response
+  carries the id, both seats are in the *same s&box lobby*, and the station already `[Sync]`s
+  state — so the id rides `LichessGameController.ChallengeId` and Black accepts by id. That
+  preserves exactly the property the deleted `relay.go` documented: **the paired flow never
+  watches `/api/stream/event`**, and so is not bound by the one-per-token rule. Worth having when
+  a server held the stream; worth much more now a client does.
+- **Seek.** NEEDS the event stream — a real-time seek's response carries no game id (it is a
+  stream of empty lines whose only job is to stay open; closing it cancels the seek), so lichess's
+  own instruction is to learn about the game from `gameStart`.
+- **Challenge a named stranger.** NEEDS the event stream: nothing else reports an acceptance.
+  **`ChallengeKeepAlive` was deliberately NOT ported.** Its only benefit is lichess's 15s ping,
+  its trap has already bitten once, and an explicit `/cancel` on a plain buffered challenge is
+  strictly simpler — dropping it removes a whole third stream shape from the client. The cost is
+  real and stated in the UI: an unanswered real-time challenge is swept after **~20 seconds**.
+- **Open / shareable link.** Unchanged in mechanism and still the subtlest. NEEDS the event stream.
+
+> ### THE TWO-INTENT RULE SURVIVES, WITH A DIFFERENT JUSTIFICATION
+>
+> It existed because gamchess held everyone's tokens: a one-sided start would have let any linked
+> player drag any other into a game from anywhere. **That reason is gone** — a one-sided start now
+> just leaves a challenge sitting in someone's notifications.
+>
+> What it still does is a **DIRECTORY-DISCLOSURE rule**: gamchess must not hand out a player's
+> lichess username to whoever asks, so it reveals seat B's username to seat A only once **both**
+> seats have posted an intent for the same `client_game_id`, and only to those two.
+> `client_game_id` is not a secret (it is `[Sync]`ed to the lobby) — it is the rendezvous key.
+> **The old wording "two independently-authenticated intents are what make it consent" is FALSE
+> and must not be carried forward.**
+
+> ### ONE EVENT STREAM PER TOKEN — a process-wide singleton
+>
+> Opening a second closes the first, **server-side, silently**. The victim reports a clean EOF,
+> which is indistinguishable from "the game ended" — so a second stream does not error, it makes
+> the first flow hang with **no message**. With client custody the hazard is newly live: a second
+> table, a second s&box instance, a hotload orphan.
+>
+> `LichessEventStream` is therefore one owner with refcounting, never one per controller. That
+> makes it impossible within a process; lichess's own rule then enforces a partial version for
+> free across processes, which is the backstop that makes the one-lichess-game-at-a-time gate
+> tolerable as **advisory** (it was `relay.Join`'s `hasOtherLivePlay` server-side, and gamchess
+> can no longer know). `SetupPanel`'s "playing at Table N, this table plays a local game"
+> treatment stays.
+>
+> **And a stream failure must never degrade into a poll** — lichess answers a poller with a
+> "please don't poll" 429. Exponential backoff (3s → 6s → 12s, capped), and never reopen a game
+> stream once lichess has reported the game finished.
+
+> ### THREAD AFFINITY AND HOTLOAD — what `LichessTvSource` does NOT teach
+>
+> `LichessTvSource` is the model for the connection LIFECYCLE (backoff, reconnect,
+> unhook-before-Dispose) and teaches nothing about threads, because `Sandbox.WebSocket` hands you
+> each message on the game thread. **A raw `Stream` read completes on a THREAD-POOL thread.** So
+> `LichessStream`'s read loop touches only a lock-guarded queue, and every `Scene` / `[Sync]` /
+> `GameObject` touch happens in `Drain()` from `OnUpdate`.
+>
+> **Hotload is the matching hazard and it fails silently.** An orphaned read task leaves a LIVE
+> HTTP CONNECTION to lichess — which on the Board API means both "this player is present" and
+> "this token's one event-stream slot is taken". Nothing errors; the next flow just never
+> delivers. Every loop carries a GENERATION, checked after each read and bumped on every start,
+> so an orphan exits on its next line. `Dispose` on **every** exit path.
 
 #### The traps
 
@@ -185,11 +287,15 @@ opponent needs no lichess account.
   → **Bullet never reaches lichess by any path.** The default table (Blitz 3+0, estimate 180)
   is challengeable but **not** seekable — which is why a direct challenge is the primary flow.
   Unlimited *is* challengeable (no clock → Correspondence speed) but not seekable.
+  → `Code/Game/LichessTable.cs` encodes both floors client-side, is Sandbox-free, and is
+  harness-checked against every preset in `TimeControl.All`. **It was the model for the whole
+  C# port** and it survived HTTPFIX untouched.
 - **A seek's `time` is MINUTES; a challenge's `clock.limit` is SECONDS.** An easy way to ask
   for a ten-second game while meaning ten minutes.
 - **Omitting both clock fields is how you ask for an unlimited challenge.** Sending `0/0` asks
   for a rejected 0+0 clock instead.
 - **`clock.limit` has a domain**: 0, 15, 30, 45, 60, 90, or any multiple of 60 up to 10800.
+  Not a smooth range — a 100-second clock is a 400.
 - **An omitted `ratingRange` does NOT mean "pair me with anyone" — it means "lichess picks a band
   centred on me", and that is the best matchmaking available to us.** Re-derived from lila +
   the OpenAPI spec 2026-07-16. This one inverts the obvious reading, so the chain matters:
@@ -219,9 +325,9 @@ opponent needs no lichess account.
     further than 500 from its own rating. **[SOURCE]**
   - `GET /api/account` is **`security: [OAuth2: []]`** — a token, but **no specific scope**, so
     `board:play` reads it — and ratings live at **`perfs.<speed>.rating`**, with `prov: true`
-    marking provisional (lichess disables its own range control when provisional). Recorded
-    because it is the fact that *looks* like it unblocks a rating chip; it doesn't, because the
-    chip shouldn't exist.
+    marking provisional. Recorded because it is the fact that *looks* like it unblocks a rating
+    chip; it doesn't, because the chip shouldn't exist. (It is also the call the link flow
+    makes, for identity — see the custody section.)
 - **An offer POST always answers `200 {"ok":true}`, whether or not lichess took it.**
   `setDraw`/`setTakeback` return Unit in lila and the controller wraps them in `fuccess`, so
   the documented `400 "The draw offering failed"` never fires. lichess silently drops a draw
@@ -242,29 +348,26 @@ opponent needs no lichess account.
   either** — lila clears the flag only via `Drawer.no`, and a move routes through it too
   (`MovePlayer.scala:77` fires an implicit decline on the opponent's reply). Even that
   declining move's own `gameState` is built one line *before* the clear (`notifyMove`, `:73`),
-  so it still carries `wdraw:true`; the flag only reads false on a LATER move's full snapshot
-  (rebuilt from a DB that already cleared it — `wdraw`/`bdraw` are omitted-when-false, so
-  "absent" = cleared). Earliest the offerer's own next move (~2 plies out), and on a bare
-  decline **never**. So no client may show "waiting for a reply" on a lichess draw — `GameHud`
-  says **"Draw offered. Lichess won't signal a decline."** for a lichess game, and keeps the
-  honest "waiting for your opponent" only for a takeback (whose decline IS pushed) and for a
-  LOCAL draw (whose decline is relayed).
+  so it still carries `wdraw:true`; the flag only reads false on a LATER move's full snapshot.
+  Earliest the offerer's own next move (~2 plies out), and on a bare decline **never**. So no
+  client may show "waiting for a reply" on a lichess draw — `GameHud` says **"Draw offered.
+  Lichess won't signal a decline."** for a lichess game, and keeps the honest "waiting for your
+  opponent" only for a takeback (whose decline IS pushed) and for a LOCAL draw.
 - **Draw and takeback are ONE endpoint each, not three.** `/draw/{accept}` and
   `/takeback/{accept}`: offering and accepting are the same call, and the path segment is
   parsed by lila's `Form.trueish` (`1|true|True|on|yes`) — so decline is "any non-truthy
   word", not a `no` keyword. Both are on the **Board** API, not just the Bot API.
 - **A takeback offer arrives as an ordinary `gameState`.** lila `pushState`s on
   `BoardTakebackOffer` exactly as it does on a move — there is no takeback event type to
-  look for. (The offer's classifier subscribes to `BoardTakeback.makeChan`, which *reads*
-  like a dead handler until you find `BoardTakebackOffer.makeChan = BoardTakeback.makeChan`.)
+  look for.
 - **Premove is not a lichess concept.** There is no API surface for it and no server
-  involvement: every `premove` hit in lila is `ui/` TypeScript or a *user preference*
-  (`enablePremove`) that lichess's own client reads. A premove is just "POST the move the
-  instant it is legal" — so ours is client-only by nature, not by choice.
+  involvement: every `premove` hit in lila is `ui/` TypeScript or a *user preference*. A premove
+  is just "POST the move the instant it is legal" — so ours is client-only by nature, not by
+  choice, and custody never had anything to do with it.
 - **Quick pairing and blitz seeks are both locked behind ONE door: the `web:mobile` scope.**
-  Re-derived from lila + lila-ws master 2026-07-16, correcting an earlier, blunter claim in
-  this file that the API simply forbids them. It doesn't — it gates them on being lichess's
-  own app, which amounts to the same thing for us and is a very different reason.
+  Re-derived from lila + lila-ws master 2026-07-16, correcting an earlier, blunter claim that
+  the API simply forbids them. It doesn't — it gates them on being lichess's own app, which
+  amounts to the same thing for us and is a very different reason.
   - **Quick pairing (the homepage pools) is not `POST /api/board/seek`.** They are different
     systems in lila: a seek is a *hook*, quick pairing is a *pool*. `grep -i pool` over
     lila's `conf/routes` returns **nothing** — there is no HTTP endpoint at all. Pools live
@@ -274,15 +377,10 @@ opponent needs no lichess account.
   - **Blitz seeks are not universally refused.** `SetupForm.boardApiHook` takes an
     **`allowFastGames`** flag that skips the Rapid check entirely, and `Setup.boardApiHook`
     passes `ctx.isMobileOauth || ctx.isTakex3 || (ctx.isAnon && isLichessMobile)`. Both
-    `isMobileOauth` and `isTakex3` are scope checks (`Web.Mobile` = `web:mobile`,
-    `Web.Takex3` = `web:polygon`). So blitz IS seekable — **if you hold the scope whose own
-    description reads "Official Lichess mobile app"**.
-  - **We do not request it, and this is a rule, not an oversight.** `board:play` is the only
-    scope we ever ask for. Taking `web:mobile` would mean claiming to be lichess's first-party
-    app to bypass a gate they put on third-party board clients deliberately — against an API
-    whose limits our whole playerbase shares on one IP, whose traffic we made attributable
-    to us on purpose, and which lichess can kill wholesale on `clientOrigin`. It would also
-    force every linked player through a re-link. **Don't "fix" the blitz seek this way.**
+    are scope checks. So blitz IS seekable — **if you hold the scope whose own description
+    reads "Official Lichess mobile app"**.
+  - **We do not request it, and this is a rule, not an oversight.** See the scopes section:
+    the argument is honesty toward lichess, and HTTPFIX did not weaken it.
   → The consequence stands: **a blitz table can never find a stranger**, and quick pairing is
   not a feature we can have. The direct challenge is the primary flow *because* of this.
 - **A real-time seek's response carries no game id** — it is a stream of empty lines whose
@@ -290,11 +388,49 @@ opponent needs no lichess account.
   the event stream and the paired flow doesn't. A **correspondence** seek is the exception:
   plain JSON, returns `{"id":…}` immediately, no held connection. There is also an
   undocumented `DELETE /api/board/seek` (`Setup.boardApiHookCancel`) that the spec omits.
-- Tokens are long-lived (~1 year) with **no refresh tokens**. A scope change forces a full
-  re-link for everyone, so `board:play` is the only scope we ever request.
+- **Tokens are long-lived (~1 year) with no refresh tokens.** A scope change forces a full
+  re-link for everyone — which is what made HTTPFIX the moment to widen, and what makes the
+  next widening expensive again.
+- **Closing a challenge keep-alive stream does NOT withdraw the challenge.** lila only stops a
+  15s ping; the challenge then goes Offline and stays acceptable for **hours** (a later ping
+  revives it outright). Read from lila, not the OpenAPI doc, which says the opposite. Gambit
+  doesn't use the keep-alive stream at all, and still POSTs an explicit `/cancel`.
 - **Imported games are unrated and attributed to NOBODY** — `[White]`/`[Black]` are display
   strings, never account links. `POST /api/import` makes a game *viewable*, not *counted*. It
   is a strictly weaker outcome than playing live, and the copy must not imply otherwise.
+
+#### The shareable link IS a relayed game — anon browser vs your board (open + accept?color=)
+
+**An anonymous browser player CAN play your authed, board-relayed account. It is a real flow, it
+worked before M8, and getting it wrong twice is why this section exists.** The mechanism was
+re-derived from the live spec (`lichess-org/api` master, 2026-07-17) after a wrong "it's
+impossible" claim sat here:
+
+| endpoint | `security:` | what it does for us |
+|---|---|---|
+| `POST /api/challenge/open` | **`[]`** (anonymous) | mint the link. A `board:play` token 403s it ("Missing scope: challenge:write"), so we send **no** token. |
+| `POST /api/challenge/{id}/accept?color=` | `["challenge:write","bot:play","board:play"]` | **seats our token holder** in the open challenge, on the chosen side. `board:play` is accepted; `color` is "only valid if this is an open challenge". |
+| `POST /api/challenge/{username}` | `["challenge:write","bot:play","board:play"]` | the direct challenge — same scope list, which is *why it works on `board:play`* and the open-create 403 looked contradictory. |
+
+So the flow is: **create the open challenge anonymously → accept it with the player's own token
+(this is the step M8 dropped, leaving the creator's seat empty so the game never started) →
+publish the opposite colour's url → watch the event stream for the opponent joining → stream the
+player's side to the board.** The browser opponent needs no lichess account.
+
+- **No `challenge:write` needed.** Create is anonymous; accept takes `board:play`. The old
+  pre-M8 code requested `challenge:write` and never needed it; the M8 *bug* was skipping the
+  accept step, not the scope.
+- **Blitz+ only** — OUR side plays through the Board API, which won't play faster than blitz.
+- **It is a solo flow.** `State.seek` is true (the opponent is a stranger); `ShareUrl` is the
+  only extra field.
+- **Colour** is which side WE take; the opponent's `share_url` is the opposite. "random"/""
+  accepts without a colour and we learn our side from `gameFull`, same as a seek. Client-side,
+  picking the colour **moves the player's seat** (`LobbyPlayer.SwitchSeat`); random moves once
+  the game starts.
+- **Cancellation is best-effort.** We created anonymously, so a `/cancel` may be refused; an
+  unjoined open challenge expires in 24h.
+- **The consent model still holds:** a game at a table is local unless a player picks a lichess
+  flow — `InfoScreen`'s Welcome + Lichess branches say it; keep saying it.
 
 #### TV is the exception: no token, no custody, no security surface (M9)
 
@@ -501,6 +637,7 @@ lists to each other so they can't drift silently.
 
 #### The game session: one Facepunch call an hour, not one per request (M9)
 
+
 **gamchess verified the FP token against Facepunch on EVERY authed request** — a live HTTP
 call per request. That was already wrong for M8's relay poll and TV would have multiplied it
 by everyone at a wall. `POST /api/v1/session` (**FP-gated only**) trades an FP token for a
@@ -523,75 +660,116 @@ by everyone at a wall. `POST /api/v1/session` (**FP-gated only**) trades an FP t
 - **Memory only, never `FileSystem.Data`** — same rule as the FP token, same reason (the
   rogue-lobby-host spike is still open).
 
-#### Being a good API citizen (`internal/lichess/etiquette.go`)
+#### Being a good API citizen — now in TWO places
 
-**Gambit's whole relay is ONE IP**, and lichess's limits are per-IP — so every player shares one
-budget, and misbehaving breaks the feature for everyone rather than throttling one user. Their
-published rules (`lichess.org/page/api-tips`) are short and we follow all of them:
+The rules live in `server/internal/lichess/etiquette.go` **and**
+`client/Code/Api/Lichess/LichessEtiquette.cs`, because both halves talk to lichess now. They are
+the same rules and the client's are harness-proven (`scripts/lichess_harness`).
 
-- **User-Agent on every request, streams included**, via a RoundTripper so no call site can
-  forget. It names the project, URL and a contact — lichess records a `userAgent` per token, so
-  this is how they can attribute or reach us. This matters if we ever ask for headroom.
-- **A 429 anywhere stops everything for a full minute.** Their words: "wait a full minute before
-  resuming API usage". Per-IP means a 429 on one call means we are collectively too fast.
-- **Self-limit lobby seeks** to lila's own 5/min/IP (`Limiters.setupPost` **[SOURCE]**), refusing
-  locally with a legible reason rather than spending the shared budget to earn a 429.
+**What changed:** Gambit's whole relay used to be ONE IP, so every player shared one budget and
+one player mashing a button could break the feature for everyone. Each client spends its own IP
+now, and the only Gambit traffic left on the server's IP is **TV** — one upstream stream per
+channel plus one `game/export` per game end, bounded by the channel count rather than the player
+count.
+
+**What did NOT change, and must not be "simplified" on the grounds that it's my own budget now:**
+
+- **Identify ourselves on every request, streams included** — and the two halves cannot do it
+  the same way, which cost a broken link flow to find out. Server-side a RoundTripper sets a real
+  `User-Agent` and no call site can forget. **The client cannot set `User-Agent` AT ALL**: it is
+  on `Http.ForbiddenHeaders`, so `Http.CreateRequest` **throws**
+  `InvalidOperationException("Not allowed to set header 'User-Agent'")` before the request leaves
+  — and even past that, `SboxHttpHandler.HandleRequestAsync` `Remove`s the header and re-adds
+  `"facepunch-sbox"` on every send, redirects included (read from the shipped engine 2026-08-06;
+  `Referer` and `Origin` are forced/forbidden the same way, and `WebSocket.Connect` applies the
+  same list). **There is no bypass and `TryAddWithoutValidation` is not one** — every client
+  request reaches lichess as `facepunch-sbox`. So the client sends the same string under
+  **`X-Gambit-Client`** (`LichessEtiquette.IdentityHeader`), which is honest and attributable
+  even though nothing reads it, and is what lets someone reading lichess's logs join our TV
+  traffic to our game traffic. Fixing it properly is an upstream change (let a game APPEND to the
+  engine UA) and the forced UA is deliberate, so ask first.
+  **The single-seam rule is unchanged and matters more now**: every lichess request is built in
+  `LichessClient`, exactly as `GamchessApi.SendAuthed` is the only `Http.RequestAsync` call site
+  for our own backend. A `Http.Request*` to lichess.org anywhere else in `client/` is a bug.
+- **A 429 anywhere stops everything for a full minute.** Their words. Per-IP, so a 429 on one
+  call means that machine is going too fast.
+- **Self-limit lobby seeks** to lila's own 5/min/IP (`Limiters.setupPost` **[SOURCE]**). **It
+  keeps its number and loses its reason:** a player mashing the button now earns a 429 that arms
+  *their own* 60-second stop-everything, so refusing locally with a legible reason is still
+  strictly better — and a household, LAN party or NAT still shares an IP. **Delete every string
+  saying the budget is shared by the whole playerbase**; they are gone from the code, the README
+  and the copy.
 - **Never retry into a throttle.** Report the reason; let the player decide.
-- **An abandoned relayed game is RESIGNED, not left to rot** (`relay.watchAbandonment`,
-  `abandonTTL` 30s). gamchess holds the token and streams the game, but a game only ends on
-  lichess when someone resigns, flags, or draws — a client that stops polling (editor closed,
-  crash, walk-away) does none of those, so without this the opponent waits out the whole clock
-  and we leave dead games on an API where our IP is attributable. The relay tracks each seat's
-  `lastPoll` and, on a LIVE game whose seat has been silent past `abandonTTL`, resigns THAT seat
-  with THAT seat's token (paired: the one who left loses, the one still there wins; solo: the one
-  player's game just ends). The TTL is well clear of `pollHold` + a reconnect/hotload grace so a
-  blip can't resign a live game, and it fires once (no retry storm). **So: closing the editor
-  mid-game will lose that lichess game after ~30–40s — by design.**
-- **ONE relayed lichess game per player at a time; further tables play locally.** You can sit at
-  N tables and play N games (M17 decoupled seat/camera/relay), but only the FIRST is on lichess —
-  the rest are gamchess-only local games. **This is a deliberate gate, not a code limit reached:**
-  lichess does **not document permission** to play concurrent games through the Board API (the
-  event stream is one-per-token, the Board API docs are silent on multiple board games, and the
-  one public thread reports the streams *interfere* and was closed privately — checked
-  2026-07, `lichess.org/api` + the api forum). Re-derived here rather than assumed; if lichess
-  ever documents an allowance, this gate is what to lift. Enforced in two places: `relay.Join`
-  refuses a second live play for the same SteamID (`hasOtherLivePlay`), and `SetupPanel` hides the
-  lichess options at a table when `LobbyPlayer.LichessGameElsewhere` finds one already live —
-  showing "playing at Table N, this table plays a local game" instead. **Local two-seat games have
-  no such limit** — the gate is lichess-specific.
+- **Dispose every stream on every path.** New with client custody and the one that fails
+  silently: a leaked game stream means "this player is present" to lichess (so the opponent gets
+  no away signal) and a leaked event stream holds this token's one slot. See the thread-affinity
+  box above.
+- **ONE lichess game per player at a time; further tables play locally.** You can sit at N tables
+  and play N games (M17 decoupled seat/camera/relay), but only the FIRST is on lichess. **A
+  deliberate gate, not a code limit reached:** lichess does not document permission to play
+  concurrent games through the Board API (the event stream is one-per-token, the docs are silent
+  on multiple board games, and the one public thread reports the streams *interfere* and was
+  closed privately — checked 2026-07). If lichess ever documents an allowance, this is what to
+  lift. **It is ADVISORY since HTTPFIX** — it was enforced server-side by `relay.Join`'s
+  `hasOtherLivePlay`, and gamchess can no longer know. What enforces a partial version for free
+  is lichess's own one-event-stream-per-token rule; what shows it is `SetupPanel`'s
+  "playing at Table N, this table plays a local game" (`LobbyPlayer.LichessGameElsewhere`), which
+  cannot see a second s&box instance. **Local two-seat games have no such limit.**
+
+**An abandoned game is no longer resigned for you.** `relay.watchAbandonment` tracked each seat's
+poll and resigned a silent one with that seat's token within ~30s, because a game only ends on
+lichess when someone resigns, flags or draws. Nobody else holds the token now, so a crash
+mid-game means the game **flags** — as it does for every other Board API client. Standing up
+keeps the game live (M17); only quitting drops the stream. The player-facing copy says so.
 
 The accommodation channel is **Discord `#lichess-api-support`** (`https://discord.gg/MS9MejQqha`)
 — **not email**; there is no API branch in their contact form. Bring real traffic numbers and the
-specific limit hit; outcome is discretionary.
+specific limit hit; outcome is discretionary. **There is probably nothing to ask for any more** —
+see PLAN.
 
-#### Corrections to old repo folklore (verified against `sbox-public` @ `ca96c2a9`)
-
-Three long-standing claims in this file were **wrong** and are now removed:
+#### Corrections to old repo folklore (verified against `sbox-public`)
 
 1. **`HttpAllowList` gates nothing — the "D8 allowlist" mechanism does not exist.**
    `Http.IsAllowed` checks only scheme, loopback-port rules, IP-literals and DNS-rebinding.
-   There is no per-package host allowlist in the engine. The entry in `gambit.sbproj` is inert;
-   "add a host to the allowlist" is a non-step, and the old "blocked before connecting →
-   allowlist is wrong" diagnostic diagnosed a mechanism that isn't there.
-2. **The client cannot read a stream** — see the custody decision above. This is a fact about
-   the engine, not a preference, and it is what forces server-side custody.
+   There is no per-package host allowlist in the engine. The entries in `gambit.sbproj` are
+   inert; "add a host to the allowlist" is a non-step, and the old "blocked before connecting →
+   allowlist is wrong" diagnostic diagnosed a mechanism that isn't there. (`https://lichess.org/`
+   was added there by HTTPFIX anyway, as a declaration of intent — the client acquired a second
+   host it means to talk to.)
+2. **~~The client cannot read a stream~~ — FIXED, and it is what HTTPFIX is built on.**
+   `Http.RequestStreamAsync` used to `using` the response and return its stream, so the body was
+   buffered and a stream that never ends never resolved. Our fix (`facepunch/sbox-public`
+   `42cee680`) sends with `HttpCompletionOption.ResponseHeadersRead` and returns a
+   `ResponseStream` that owns the response. Verified in the shipped source 2026-08-05:
+   `RequestStreamAsync( uri, method = "GET", content = null, headers = null, ct = default )` —
+   headers included. Its own doc comment carries the two facts the design turns on: **"the
+   returned stream owns the response — dispose it or the connection stays open"**, and
+   **`HttpClient.Timeout` does not bound the body read**, so a `CancellationToken` is what bounds
+   how long you are willing to read. (That is the OPPOSITE of `GamchessApi`'s 8s `CancelAfter`: a
+   game stream is bounded by the game's life, never by a clock.)
 3. **`Sandbox.WebSocket` streams fine**, supports custom headers and incremental receive, and
-   its `Connect` goes through the **same** `Http.IsAllowedAsync` — which closes the old open
-   spike: yes, the URL policy covers WS, and since that policy is just scheme/IP checks,
-   `wss://chess.gamah.net` is allowed. **This fact is now load-bearing: M18 moved TV to a
-   WebSocket push** (`LichessTvSource` holds a `Sandbox.WebSocket`, sending an `Authorization`
-   header over `wss://`). The old caveat here — "we still use a long poll because gamchess can't
-   add a Go WS library, no Go/Docker to regenerate `go.sum`" — is **dead**: `gorilla/websocket`
-   was already pinned in `server/go.sum` (transitive), so adding it needed no new hashes and no
-   trust decision, and a networked machine can `go get` the `.zip` into the cache when the
-   dev-host lacks it. The **game relay** (`/lichess/play/{id}`) is still a long poll — not for
-   want of the library, but because it simply wasn't part of the M18 migration; if it moves, it
-   is one function each side, exactly as TV was.
+   its `Connect` goes through the **same** `Http.IsAllowedAsync` — the URL policy does cover WS,
+   and since that policy is just scheme/IP checks, `wss://chess.gamah.net` is allowed. M18 moved
+   TV to a WebSocket push on the strength of it. **The game relay's long poll is not "still" a
+   poll — it is DELETED**: the client streams the Board API directly.
+4. **~~SHA-256 is hand-rolled here~~ — there is no such code, and none is needed.** This claim
+   had no implementation behind it for the whole of the repo's life (it was cited in two comments
+   in `ChessEngine.cs` as precedent for something that did not exist). PKCE needs SHA-256, one
+   was hand-rolled for HTTPFIX and then **deleted**:
+   `engine/Sandbox.Access/Rules/BaseAccess.cs:362` whitelists
+   `System.Security.Cryptography.SHA256*` outright (read 2026-08-05), so
+   `SHA256.HashData` just works. **`RandomNumberGenerator` is genuinely absent** from that list
+   (only `HashAlgorithm*`/`MD5*`/`SHA1*`/`SHA256*`/`SHA512*` are there), which is why
+   `Pkce.New` uses `Random.Shared` and says so.
 
-Status: gamchess client + server built, plus the M8 lichess link + Board API relay. The
-**Go half compiles and its tests pass** (Go 1.22 from `~/.local/share/toolchains/`; `go test
-./... -race`). The **engine half has never been compiled** — this host has no s&box toolchain
-— so expect a fixup pass on first open in the editor. Nothing is deployed (no Docker here).
+Status: gamchess client + server built. **HTTPFIX moved the lichess token to the client**, so
+the server's lichess surface is a link flow, a disclosure page and a directory; the C# lichess
+client is new and large. The **Go half compiles and its tests pass** (Go 1.22 from
+`~/.local/share/toolchains/`; `go test ./... -race`), and the **Sandbox-free half of the C#
+lichess client passes its harness** (`scripts/lichess_harness`, `dotnet run`). The **engine half
+has never been compiled** — this host has no s&box toolchain — so expect a fixup pass on first
+open in the editor, and this branch ports ~900 lines of Go into it. Nothing is deployed (no
+Docker here).
 
 ---
 
@@ -959,12 +1137,12 @@ construction** — the host freezes that controller's clocks and its `ChessGame`
 | Controller | Networked? | What it does |
 |---|---|---|
 | `LocalGameController` | host-folded `[Sync] BoardFen`/`Phase`/`ClientGameId` | the two-seat game at a table, and the archive upload (**D7**) |
-| `LichessGameController` | **participants poll; spectators MIRROR (M14)** — each participant polls gamchess for itself and `[Rpc.Host]`-reports its observed move list into `[Sync] MirrorMoves/MirrorLive`, from which every non-engaged client rebuilds a display game (`Mirroring`, same IBoardGame seam). Before this a lichess game was INVISIBLE to every non-participant — solo flows (seek/challenge/link) especially | a real lichess game on this table (**M8**). Adjudicates nothing — lichess is the only authority, and the position is rebuilt from the UCI list it sends — but it DOES run the ticking seat's clock down locally between moves (**M12**), because lichess only sends a clock on a move and a frozen clock reads as a stopped game. Same countdown machinery as `LichessTvSource`, house rule and all; a local clock hitting 0 clamps and waits for lichess to call the flag |
+| `LichessGameController` | **participants STREAM lichess directly; spectators MIRROR (M14)** — each participant holds its own `/api/board/game/stream/{id}` and `[Rpc.Host]`-reports its observed move list into `[Sync] MirrorMoves/MirrorLive`, from which every non-engaged client rebuilds a display game (`Mirroring`, same IBoardGame seam). Before this a lichess game was INVISIBLE to every non-participant — solo flows especially. **The mirror was UNTOUCHED by HTTPFIX**, because it was always fed by the participant's own observations rather than by gamchess; the path just got more direct | a real lichess game on this table (**M8**, rebuilt by HTTPFIX). Adjudicates nothing — lichess is the only authority, and the position is rebuilt from the UCI list it sends — but it DOES run the ticking seat's clock down locally between moves (**M12**), because lichess only sends a clock on a move and a frozen clock reads as a stopped game. **The staleness apparatus is GONE with the poll** (`_version`, `_bankLag`, `_lastRoundTrip`, `clock_age_ms`/`hold_ms`): a stream has no hold to measure and no cursor to reconcile, exactly as M18 found for TV, and keeping it would reintroduce the M11 sawtooth. What is left is a fixed `ClockLeadSeconds` undershoot; a local clock hitting 0 clamps and waits for lichess to call the flag |
 | `RelayGameController` | polls gamchess's relay for a live cross-lobby game | a game against someone in ANOTHER lobby, paired through gamchess's directory (**M19**) — or yourself across two hosts. Not lichess: gamchess is the authority and the whole exchange is ours. Colour is **assigned at random by the server**, never chosen |
 | `SpectatorController` | reads the host-folded FEN; **polls gamchess for TV** | north wall: cycles live tables, then lichess TV (**M9**) |
 
 **While a lichess game runs, the local controller is a shell** holding the seats and the
-`ClientGameId`. Its `ChessGame` never advances (moves go to the relay, not `NetChessMove`), so
+`ClientGameId`. Its `ChessGame` never advances (moves go to lichess, not `NetChessMove`), so
 its clocks and result are stale by construction — the host stops ticking them
 (`HostTickClocks` early-returns on `LichessGame`) precisely so it can't flag a player who is
 fine on lichess's clock. Anything reading a clock, a turn or a result during a lichess game
@@ -1196,8 +1374,13 @@ only DRAWS it (the crosshair, and which way Escape goes next).
 `gambit_gamchess_ping` — is gamchess up?
 `gambit_gamchess_signin` — mint an FP token and prove the auth round-trip.
 `gambit_gamchess_games` — list your archived games.
-`gambit_lichess` — am I linked, and where do I link/revoke?
-`gambit_lichess_unlink` — revoke at lichess and forget the token.
+`gambit_lichess` — am I linked? Prints **this PC first** (the token is local now, so the answer
+needs no network at all), then gamchess's opinion, and names the case where they DISAGREE — a
+token here that gamchess doesn't know about breaks only the two-seat directory lookup, which
+would otherwise be discovered at the moment two people sit down to play.
+`gambit_lichess_unlink` — revoke at lichess with the token, delete it from this PC, then tell
+gamchess to forget the row. In that order: the revoke must be signed by the token, so a token
+already deleted can never be revoked by anyone but the player.
 `gambit_tv` — why is the TV wall doing that? Prints the whole chain: the local setting,
 the channel, what the wall thinks it's showing, and gamchess's raw state. Exists because
 "nothing is showing" was twice diagnosed by guesswork and once wrongly — none of the chain
@@ -1294,42 +1477,32 @@ shared toolchain — `make test` runs `go test ./... -race` in a container on a
 machine that has Docker, and the same suite passes locally with Go 1.22. If you
 are changing the server, run the tests; "can't build it here" is no longer true for Go.
 
-**Secrets live in `.env` and are generated, not requested.** lichess issues nothing — no client
-id, no secret, no API key — so `LICHESS_TOKEN_KEY` (the KEK that wraps the rotating data keys;
-blank = lichess off; **back it up**) and `LICHESS_AUDIT_KEY` (gates the audit sweep) are ours.
-`make up` / `make testinst` mint any that `.env` lacks and **never overwrite one that has a
-value** — regenerating `LICHESS_TOKEN_KEY` mid-life would leave the stored DEK rows undecryptable,
-so **re-key it deliberately (below), never by regenerating**. Two optional knobs, both fine blank:
-`LICHESS_TOKEN_KEY_OLD` (set for one deploy to rotate the KEK) and `LICHESS_KEY_ROTATION_DAYS`
-(data-key cadence, default 30; 0 disables the timer).
+**gamchess holds NO lichess secrets.** lichess issues nothing — no client id, no secret, no API
+key, no client registration at all — and since HTTPFIX there is nothing of our own to hold
+either: the token lives on the player's machine, so there is no ciphertext to key, no data key to
+rotate and no store to audit. `LICHESS_TOKEN_KEY`, `LICHESS_TOKEN_KEY_OLD`,
+`LICHESS_KEY_ROTATION_DAYS` and `LICHESS_AUDIT_KEY` are **retired and ignored**; `make keys` is a
+deliberate no-op (kept because `up`/`rebuild`/`testinst` depend on it) and `keys-note` now says
+there is nothing to back up. `internal/keyring`, `lichess_key_versions` and the whole KEK→DEK→
+token envelope are deleted, along with `test.sh`, which existed only to validate key rotation.
 
-**How key rotation runs — the envelope (`internal/keyring`, `lichess_key_versions`).**
-`LICHESS_TOKEN_KEY` is the **KEK**; it wraps rotating **data keys** (DEKs), and those seal the
-tokens. Every `lichess_links` row carries the `key_version` that sealed it; **`key_version = 0` is
-the legacy sentinel** — sealed directly under the KEK before this existed, opened with the KEK, and
-migrated onto a real DEK by the boot sweep (that migration is exactly the `re-encrypted lichess
-tokens onto the current key, rows:N` log line the first deploy produces).
+**The only lichess-relevant config left is `PUBLIC_BASE_URL`**, and it is load-bearing: it
+derives the byte-for-byte `redirect_uri`, and it is what keeps the test instance pointing at
+itself rather than at prod. `SESSION_SECRET` is ours, optional, and unaffected.
 
-- **The DATA KEY rotates automatically**, every `LICHESS_KEY_ROTATION_DAYS` (default 30, zero
-  maintenance). `KeyRing.Run` does one pass at boot then checks daily; past the cadence it mints a
-  new DEK, the sweep re-seals every token onto it, and the drained key is retired (kept loaded, not
-  deleted, so no row can ever be unopenable). **The cadence is anchored to the DEK's DB
-  `created_at`, not process uptime** — so `make up` deploys neither reset nor trigger it. The
-  rotate→re-encrypt→retire log trio is what to look for when it fires.
-- **The KEK does NOT auto-rotate** — that is the deliberate manual incident lever. To rotate it:
-  new key into `LICHESS_TOKEN_KEY`, the current one into `LICHESS_TOKEN_KEY_OLD`, `make up` once
-  (logs `re-wrapped a data key under the new KEK` — it rewrites the few DEK rows, **never the
-  tokens**), then **clear `LICHESS_TOKEN_KEY_OLD`** and deploy again. No player re-links. A KEK that
-  can't open a DEK with no old key set **fails at boot** by design, rather than run half-broken.
-- **One-way after deploy.** Once the boot sweep lifts a row onto a DEK, its token is DEK-sealed and
-  pre-M15 code cannot read it — so a *code* rollback after deploy orphans the swept links. Recover
-  from a pre-deploy DB backup, never by reverting the binary alone. (`test.sh` at the repo root is
-  the host smoke test for all of this: migration is zero-downtime, app bootstraps a DEK, KEK
-  rotates, and it fails closed on a bad KEK.)
+> **If you are rolling BACK to a pre-HTTPFIX binary you need `LICHESS_TOKEN_KEY` again** — keep a
+> copy somewhere until you're sure. But note the migration DELETED every link row, so a rollback
+> gets you a working old binary and no links; players re-link either way.
+>
+> **The deploy has one manual step, and it must happen BEFORE it.** Every linked player should
+> unlink in-game (which still revokes, while the old binary can still sign it) or revoke Gambit
+> on lichess's `/account/security`. Deleting the rows does not revoke anything, and once they are
+> gone the grants stay live for up to a year, revokable only by each player. No sweep tool was
+> built: lichess has no bulk revoke — `DELETE /api/token` is signed BY the token it kills — so a
+> sweep is N serial calls, and N was 1.
 
-Test and prod **share** the token key deliberately: same host, same `.env`, so a second key
-isolates nothing, and each only ever decrypts its own already-separate database. What does
-differ is the redirect ORIGIN — lichess records `clientOrigin` per token, so `testchess` and
+Test and prod share `.env` and now have no lichess key to share. What differs, and always
+mattered more, is the redirect ORIGIN — lichess records `clientOrigin` per token, so `testchess` and
 `chess` are **two separate apps** to lichess. A player who links on both has two grants and two
 `/account/security` entries. **Linking on test is a real grant against a real account**, not a
 sandbox.
@@ -1403,7 +1576,9 @@ Deviating from them is how un-compilable mistakes get in.
   `[Rpc.Host]` request / `[Rpc.Broadcast]` relay pattern (see ChessStation occupancy)
 - **Storage**: `FileSystem.Data.ReadAllText/WriteAllText` for JSON player data
 - **HTTP**: `await Http.RequestStringAsync(url)`; `await Http.RequestAsync(url, "POST", content, headers)` —
-  the trailing headers dictionary is undocumented in `../sbox-docs` but works
+  the trailing headers dictionary is undocumented in `../sbox-docs` but works, **except that a
+  forbidden header name THROWS rather than being dropped** (`User-Agent`, `Referer`, `Origin`,
+  `Host`, `Sec-*`, `Proxy-*`, …). See the etiquette section: it broke the lichess link flow
 - **Hotload**: C# changes hotload in milliseconds. Procedural builders rebuild via
   `[EditorEvent.Hotload]` in `Editor/HotloadRebuild.cs` — keep new builders registered there
 - **Self-attaching UI**: **GameHud, SpectatorScreen, the M12 voice pair (VoiceScreen +

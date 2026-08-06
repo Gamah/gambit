@@ -3,7 +3,6 @@ package lichess
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -11,10 +10,15 @@ import (
 
 // Being a good lichess API citizen.
 //
-// This file exists because Gambit's whole relay runs from ONE IP, so every
-// Gambit player shares one set of lichess's per-IP limits. Misbehaving wouldn't
-// just get one user throttled — it would break the feature for everyone and burn
-// the goodwill needed to ever ask for more headroom.
+// gamchess still talks to lichess for ONE thing — TV (an anonymous feed per
+// channel, plus a game/export per game end) — and that traffic all leaves from
+// one IP under one User-Agent. Since HTTPFIX it is no longer every player's game
+// traffic as well: each client now spends its own IP on its own games, and the
+// client carries its own port of these rules (Code/Api/Lichess).
+//
+// What did NOT change is the obligation. We are still attributable, still
+// bounded by lichess's per-IP limits, and still one 429 away from being asked to
+// slow down on behalf of every wall in every lobby.
 //
 // lichess's published rules (lichess.org/page/api-tips and the API spec intro,
 // read 2026-07-15) are short and we follow all of them:
@@ -39,8 +43,7 @@ const UserAgent = "TerrysGambit/1.0 (+https://chess.gamah.net; chess in s&box; c
 
 // Backoff after a 429. lichess says "wait a full minute"; we take that literally
 // and apply it to EVERY outbound call, not just the one that got limited —
-// their limits are per-IP and we are one IP, so a 429 anywhere means we are
-// collectively going too fast.
+// their limits are per-IP, so a 429 anywhere means this box is going too fast.
 const backoffAfter429 = 60 * time.Second
 
 // ErrBackingOff means we are inside the post-429 minute and refused to send.
@@ -54,22 +57,9 @@ type governor struct {
 
 	// until is when the post-429 backoff expires.
 	until time.Time
-
-	// seeks records recent real-time seek attempts, because lichess's lobby limit
-	// (5 per minute per IP — lila Limiters.setupPost) is the one Gambit is most
-	// likely to hit: it is shared across every player, and a seek is a thing a
-	// bored player will click repeatedly. Better to refuse locally with a real
-	// explanation than to spend the shared budget on a 429.
-	seeks []time.Time
 }
 
 var gov = &governor{}
-
-// SeeksPerMinute mirrors lila's Limiters.setupPost — RateLimit[IpAddress](5,
-// 1.minute). Per IP, so this is 5 per minute for every Gambit player COMBINED.
-//
-// [SOURCE] lila master, 2026-07-15. Re-check before relying on it.
-const SeeksPerMinute = 5
 
 // check reports whether we may send at all.
 func (g *governor) check() error {
@@ -88,31 +78,6 @@ func (g *governor) note429() {
 	g.mu.Unlock()
 }
 
-// takeSeek reserves one of the shared per-minute seek slots, or reports how long
-// to wait. Best-effort: it tracks what WE sent, and other clients on this IP
-// (there are none today) would not be counted.
-func (g *governor) takeSeek() (wait time.Duration, ok bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	now := time.Now()
-	cutoff := now.Add(-time.Minute)
-	kept := g.seeks[:0]
-	for _, t := range g.seeks {
-		if t.After(cutoff) {
-			kept = append(kept, t)
-		}
-	}
-	g.seeks = kept
-
-	if len(g.seeks) >= SeeksPerMinute {
-		// Oldest one leaves the window at oldest+1m.
-		return time.Until(g.seeks[0].Add(time.Minute)), false
-	}
-	g.seeks = append(g.seeks, now)
-	return 0, true
-}
-
 // Backoff reports how long until we'll talk to lichess again, or 0.
 func Backoff() time.Duration {
 	gov.mu.Lock()
@@ -120,11 +85,10 @@ func Backoff() time.Duration {
 	return time.Until(gov.until)
 }
 
-// ResetGovernor clears the backoff and the seek window. Tests only.
+// ResetGovernor clears the backoff. Tests only.
 func ResetGovernor() {
 	gov.mu.Lock()
 	gov.until = time.Time{}
-	gov.seeks = nil
 	gov.mu.Unlock()
 }
 
@@ -132,9 +96,10 @@ func ResetGovernor() {
 // 429s.
 //
 // A RoundTripper rather than a header set at each call site, deliberately: it is
-// the only way to be sure EVERY path is covered — buffered calls, both streams,
-// and anything added later. A call site that forgets is a call site lichess can't
-// attribute.
+// the only way to be sure EVERY path is covered — buffered calls, streams, and
+// anything added later. A call site that forgets is a call site lichess can't
+// attribute. (The s&box client has no RoundTripper; it replaces this guarantee
+// with a single seam every request is built through. Same property, hand-held.)
 type agentTransport struct{ base http.RoundTripper }
 
 func (t *agentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -168,19 +133,3 @@ func guard(ctx context.Context) error {
 	}
 	return gov.check()
 }
-
-// TakeSeekSlot reserves one of the shared 5-per-minute lobby seek slots.
-//
-// Callers MUST take a slot before seeking, and must report the wait to the
-// player rather than retrying. This is the limit Gambit is most likely to hit,
-// and it is shared by the entire playerbase.
-func TakeSeekSlot() error {
-	if wait, ok := gov.takeSeek(); !ok {
-		return fmt.Errorf("%w: lichess allows about %d lobby seeks a minute across all of Terry's Gambit; about %ds to wait",
-			ErrSeekBudget, SeeksPerMinute, int(wait.Seconds())+1)
-	}
-	return nil
-}
-
-// ErrSeekBudget means the shared per-minute seek budget is spent.
-var ErrSeekBudget = errors.New("lichess: the shared seek budget is spent")

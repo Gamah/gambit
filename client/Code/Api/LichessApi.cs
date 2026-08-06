@@ -1,241 +1,132 @@
-using System;
 using System.Threading.Tasks;
-using Gambit.Game;
 
 namespace Gambit.Api;
 
 /// <summary>
-/// Lichess, as far as the client is concerned (M8).
+/// gamchess's lichess routes (HTTPFIX).
 ///
-/// <para><b>Every call here goes to gamchess, never to lichess.</b> The client
-/// holds no lichess token and speaks no lichess protocol: it authenticates to
-/// gamchess with the Facepunch token exactly as the archive does, and gamchess
-/// acts on lichess with the token it stores. That is the whole shape of the
-/// custody decision — see CLAUDE.md.</para>
+/// <para><b>Read the name carefully: this is not a lichess client.</b> Every call
+/// here goes to gamchess. The lichess client is <see cref="Gambit.Api.Lichess"/>,
+/// and the split is the custody decision made visible — gamchess does the three
+/// things a client genuinely cannot, and nothing else.</para>
 ///
-/// <para>Why it has to be that way: playing a lichess game means holding a
-/// long-lived ndjson stream open, and this client cannot read a stream at all
-/// (<c>Sandbox.Http</c> buffers the whole body before returning, and
-/// <c>HttpCompletionOption</c> is off the API whitelist). Whoever reads the
-/// stream must hold the token.</para>
+/// <list type="number">
+/// <item><b>Holds the redirect URI.</b> lichess compares <c>redirect_uri</c>
+/// byte-for-byte between authorize and token, and this client cannot listen on a
+/// socket, so the browser has to come back to a server.</item>
+/// <item><b>Shows the disclosure.</b> Consent belongs somewhere with a URL bar,
+/// and what is being granted should be readable before lichess's own screen asks
+/// for approval.</item>
+/// <item><b>Is the directory.</b> Two seats need each other's lichess usernames
+/// to challenge by name, and neither client may simply be told the other's.</item>
+/// </list>
 ///
-/// <para>Thin on purpose: this is a URL table over <see cref="GamchessApi"/>, so
-/// it inherits the 8s timeout, the shared circuit breaker, and the re-mint-once
-/// -on-401 rule rather than reimplementing any of them. <b>Lichess being down,
-/// or unlinked, or refusing, must never be something that stops local chess</b> —
-/// the same rule gamchess itself lives under.</para>
+/// <para>What gamchess no longer does: hold a token, play a game, relay a move,
+/// or revoke anything. <c>/api/v1/lichess/play</c>, <c>/seek</c>,
+/// <c>/challenge</c>, <c>/open</c> and the play long poll are gone from both
+/// halves.</para>
+///
+/// <para>Thin on purpose: a URL table over <see cref="GamchessApi"/>, so it
+/// inherits the timeout, the circuit breaker and the token dance rather than
+/// reimplementing them. <b>gamchess being down must never stop a lichess game in
+/// progress</b> — the game stream is between this client and lichess, and
+/// nothing here is on its path.</para>
 /// </summary>
 public static class LichessApi
 {
-	/// <summary>The URL the in-game board copies to the clipboard.
-	///
-	/// <para>A constant with no secret in it, and safe precisely because of that:
-	/// it is Steam-session gated, so whoever opens it links <i>their own</i>
-	/// accounts. Handing it to a friend just links the friend.</para></summary>
-	public const string LinkUrl = GamchessApi.Base + "/lichess/link";
-
 	/// <summary>Where a player really turns Gambit off, if they don't trust us to.
 	/// Worth naming in the UI: lichess's <c>/account/oauth/token</c> page does NOT
 	/// list this grant (it shows personal tokens only), so someone looking there
 	/// sees an empty list and concludes nothing is linked.</summary>
 	public const string SecurityUrl = "https://lichess.org/account/security";
 
+	/// <summary>The URL the in-game board copies to the clipboard. A constant with
+	/// no secret in it, and safe precisely because of that — it is Steam-session
+	/// gated, so whoever opens it links <i>their own</i> accounts.
+	///
+	/// <para><see cref="Lichess.LichessLink.LinkUrl"/> is the one to SHOW: the
+	/// server returns its own copy when a flow starts, which is what keeps the test
+	/// instance pointing at itself.</para></summary>
+	public const string LinkUrl = GamchessApi.Base + "/lichess/link";
+
 	// ── Linking ──
 
-	/// <summary>Am I linked? Answers only about the caller — there is no way to ask
-	/// about anyone else, and no SteamID parameter to pass.</summary>
+	/// <summary>Step ①: register a PKCE challenge before showing the link. gamchess
+	/// never sees the verifier behind it.</summary>
+	public static Task<GamchessApi.Result> LinkStart( string codeChallenge ) =>
+		GamchessApi.SendAuthed( "/api/v1/lichess/link/start", "POST", GamchessApi.Json( new
+		{
+			code_challenge = codeChallenge,
+		} ) );
+
+	/// <summary>Step ④: has the browser come back yet? Answered from our
+	/// authenticated SteamID and nothing else — there is no state to pass, which is
+	/// what makes a state seen in a URL bar useless to anyone else.</summary>
+	public static Task<GamchessApi.Result> LinkCollect() =>
+		GamchessApi.SendAuthed( "/api/v1/lichess/link/collect", "POST", null );
+
+	/// <summary>Step ⑤: record who we are on lichess.
+	///
+	/// <para><b>This is the one call in the codebase that sends the lichess token
+	/// anywhere but lichess</b>, and it happens exactly once per link. gamchess
+	/// calls <c>GET /api/account</c> with it and discards it — it does not store it,
+	/// log it, or put it in an error string.</para>
+	///
+	/// <para>We could assert our own username (we can read <c>/api/account</c>
+	/// ourselves) and deliberately do not: an asserted identity is a claim, and a
+	/// claim would let anyone squat a real account's row and lock its owner out of
+	/// ever linking. Same rule as gamchess trusting only the SteamId Facepunch
+	/// echoes back.</para></summary>
+	public static Task<GamchessApi.Result> Claim( string token ) =>
+		GamchessApi.SendAuthed( "/api/v1/lichess/claim", "POST", GamchessApi.Json( new
+		{
+			token,
+		} ) );
+
+	/// <summary>Am I linked, as far as gamchess is concerned? Answers only about the
+	/// caller — there is no way to ask about anyone else.
+	///
+	/// <para>Note what this is NOT for: "am I linked" is answerable locally now, from
+	/// <see cref="Lichess.LichessTokenStore"/>, instantly and offline. This says
+	/// whether gamchess AGREES, which is what the two-seat directory needs.</para></summary>
 	public static Task<GamchessApi.Result> Status() =>
 		GamchessApi.SendAuthed( "/api/v1/lichess", "GET", null );
 
-	/// <summary>Unlink: gamchess revokes the token at lichess, then forgets it.</summary>
+	/// <summary>Make gamchess forget the link. <b>Half of unlinking</b> — the revoke
+	/// is ours to do, because it must be signed by the token, which only we hold.
+	/// <see cref="Lichess.LichessLink.Unlink"/> does both in the right order.</summary>
 	public static Task<GamchessApi.Result> Unlink() =>
 		GamchessApi.SendAuthed( "/api/v1/lichess", "DELETE", null );
 
-	// ── Playing ──
+	// ── The directory ──
 
 	/// <summary>
-	/// "I want this table's game played on lichess."
+	/// "I'm playing this table's game on lichess; who is opposite me?"
 	///
-	/// <para><b>BOTH seats must call this</b>, each from their own client with their
-	/// own Facepunch token, before gamchess will issue a challenge. That is not a
-	/// formality: gamchess holds a token for every linked player, so if one seat
-	/// could start a game alone, any linked player could drag any other into a
-	/// lichess game at will. Two independently-authenticated intents are what make
-	/// it consent.</para>
+	/// <para><b>BOTH seats must call this</b>, and the reason has CHANGED even
+	/// though the rule has not. It used to be the consent story: gamchess held both
+	/// players' tokens, so a one-sided start would have let any linked player drag
+	/// any other into a real game from anywhere. That is gone — each client acts with
+	/// its own token and can only ever commit itself, and a one-sided start now just
+	/// leaves a challenge sitting in someone's notifications.</para>
 	///
-	/// <para><paramref name="clientGameId"/> is the table's synced id — the
-	/// rendezvous key both seats agree on. It is not a secret and carries no
-	/// authority; the FP tokens do.</para>
+	/// <para>What it still does is DIRECTORY DISCLOSURE: gamchess must not hand out a
+	/// player's lichess username to whoever asks, so it reveals the opposite seat's
+	/// only once both seats have posted for the same <paramref name="clientGameId"/>,
+	/// and only to those two.</para>
+	///
+	/// <para><paramref name="clientGameId"/> is the table's synced id — the rendezvous
+	/// key both seats agree on. It is not a secret and carries no authority; the two
+	/// authenticated calls do.</para>
 	/// </summary>
-	public static Task<GamchessApi.Result> Play( string clientGameId, ulong whiteSteamId,
-		ulong blackSteamId, TimeControl tc ) =>
-		GamchessApi.SendAuthed( "/api/v1/lichess/play", "POST", GamchessApi.Json( new
+	public static Task<GamchessApi.Result> Rendezvous( string clientGameId, ulong whiteSteamId,
+		ulong blackSteamId ) =>
+		GamchessApi.SendAuthed( "/api/v1/lichess/rendezvous", "POST", GamchessApi.Json( new
 		{
 			client_game_id = clientGameId,
 			white_steam_id = whiteSteamId.ToString(),
 			black_steam_id = blackSteamId.ToString(),
-			limit_seconds = tc.InitialSeconds,
-			increment_seconds = tc.IncrementSeconds,
-			unlimited = tc.IsUnlimited,
 		} ) );
-
-	/// <summary>
-	/// Find a RANDOM lichess opponent (a lobby seek).
-	///
-	/// <para>Unlike <see cref="Play"/> this needs only ONE caller: you are spending
-	/// your own grant to play a stranger who opts in on lichess's side by their own
-	/// choice, so there is nobody to get consent from. It works from a table you're
-	/// sitting at alone — the opponent isn't in this lobby at all.</para>
-	///
-	/// <para><b>Rapid or slower only.</b> lichess's lobby refuses blitz and faster
-	/// (a stricter floor than a direct challenge's), so the fast presets can only be
-	/// played against the person opposite you.</para>
-	///
-	/// <para><b>Scarce.</b> lichess allows ~5 lobby seeks a minute PER IP, and all
-	/// of Terry's Gambit is one IP — so this budget is shared by every player alive.
-	/// gamchess self-limits and explains rather than spending it on a 429. Don't
-	/// retry on failure; show the reason.</para>
-	///
-	/// <para><paramref name="timeMinutes"/> is MINUTES — lichess's unit for a seek,
-	/// where a challenge takes seconds. The asymmetry is theirs.</para>
-	/// </summary>
-	public static Task<GamchessApi.Result> Seek( string clientGameId, float timeMinutes,
-		int incrementSeconds, bool rated, string ratingRange = null, string color = null ) =>
-		GamchessApi.SendAuthed( "/api/v1/lichess/seek", "POST", GamchessApi.Json( new
-		{
-			client_game_id = clientGameId,
-			time_minutes = timeMinutes,
-			increment_seconds = incrementSeconds,
-			rated,
-			rating_range = ratingRange ?? "",
-			color = color ?? "",
-		} ) );
-
-	/// <summary>
-	/// Challenge a SPECIFIC lichess user by name.
-	///
-	/// <para>One caller, like <see cref="Seek"/> and unlike <see cref="Play"/>: you
-	/// spend your own grant to invite a stranger who accepts in their own client, by
-	/// their own choice. Nobody in this lobby is committed to anything.</para>
-	///
-	/// <para><b>Reaches blitz</b>, where a seek cannot — lichess gates a challenge at
-	/// blitz and a seek at rapid. And it spends the per-user challenge budget rather
-	/// than the shared 5/min-per-IP lobby budget, so it is the kinder of the two on
-	/// the playerbase. <paramref name="tc"/> is the table's own control, in seconds
-	/// (a seek's unit is minutes — the asymmetry is lichess's).</para>
-	///
-	/// <para><paramref name="color"/> is the side the CHALLENGER wants; leaving it
-	/// empty lets gamchess default to the seat they hold at the table, so the lichess
-	/// game mirrors the board they're sitting at.</para>
-	/// </summary>
-	public static Task<GamchessApi.Result> Challenge( string clientGameId, string opponent,
-		TimeControl tc, bool rated, string color = null ) =>
-		GamchessApi.SendAuthed( "/api/v1/lichess/challenge", "POST", GamchessApi.Json( new
-		{
-			client_game_id = clientGameId,
-			opponent,
-			limit_seconds = tc.InitialSeconds,
-			increment_seconds = tc.IncrementSeconds,
-			unlimited = tc.IsUnlimited,
-			rated,
-			color = color ?? "",
-		} ) );
-
-	/// <summary>Withdraw a seek, or drop a pairing that hasn't started.
-	///
-	/// <para>Not politeness — the held connection IS the seek, so this is what
-	/// actually removes it from lichess's lobby. A player who walks away without
-	/// this stays pairable and gets dropped into a game nobody is sitting at.</para></summary>
-	public static Task<GamchessApi.Result> Cancel( string clientGameId ) =>
-		GamchessApi.SendAuthed(
-			$"/api/v1/lichess/play/{Uri.EscapeDataString( clientGameId )}", "DELETE", null );
-
-	/// <summary>
-	/// Mint a SHAREABLE link — an anonymous browser opponent plays YOU on the board.
-	///
-	/// <para>A real relayed game, not a bare link: gamchess creates an open challenge
-	/// anonymously, seats your authed account in it with your token
-	/// (<c>accept?color=</c>), and streams your side to this board while whoever opens
-	/// the returned <c>share_url</c> takes the other seat. So it drives the board like
-	/// a seek/challenge — mint a client_game_id and poll — and needs no lichess account
-	/// on their side.</para>
-	///
-	/// <para><b>Blitz+ only</b>, unlike the old bullet-friendly one-shot: your side
-	/// plays through the Board API now, which won't play faster than blitz.</para>
-	///
-	/// <para><paramref name="color"/> is the side YOU take; your opponent's
-	/// <c>share_url</c> is the opposite colour. "random"/"" lets lichess pick.</para>
-	/// </summary>
-	public static Task<GamchessApi.Result> OpenLink( string clientGameId, TimeControl tc,
-		bool rated, string color = null ) =>
-		GamchessApi.SendAuthed( "/api/v1/lichess/open", "POST", GamchessApi.Json( new
-		{
-			client_game_id = clientGameId,
-			limit_seconds = tc.InitialSeconds,
-			increment_seconds = tc.IncrementSeconds,
-			unlimited = tc.IsUnlimited,
-			rated,
-			color = color ?? "",
-		} ) );
-
-	/// <summary>
-	/// The game-state transport: a long poll. gamchess holds this open for ~5s
-	/// waiting for the state to pass <paramref name="since"/>, then answers.
-	///
-	/// <para>Still a poll, where TV moved to a WebSocket push in M18. Not because
-	/// s&amp;box can't stream — <c>Sandbox.WebSocket</c> streams fine, and gorilla is
-	/// now a gamchess dependency, so the "can't add a Go WS library" reason this
-	/// comment used to give is gone. It stays a poll because the game relay was simply
-	/// not part of that migration: a long poll suits a client whose HTTP buffers whole
-	/// bodies anyway and costs one round trip of latency, which blitz affords. If it
-	/// ever moves, it is one function each side, exactly as TV was.</para>
-	///
-	/// <para>The 5s hold is deliberately under <see cref="GamchessApi.Timeout"/>:
-	/// a hold longer than that would look like a timeout to us and trip the
-	/// breaker on every poll.</para>
-	/// </summary>
-	public static Task<GamchessApi.Result> PollState( string clientGameId, ulong since ) =>
-		GamchessApi.SendAuthed(
-			$"/api/v1/lichess/play/{Uri.EscapeDataString( clientGameId )}?since={since}", "GET", null );
-
-	/// <summary>Play a move on lichess. gamchess uses OUR token — a seat can only
-	/// ever act for itself.</summary>
-	public static Task<GamchessApi.Result> Move( string clientGameId, string uci ) =>
-		Act( clientGameId, "move", new { uci } );
-
-	public static Task<GamchessApi.Result> Resign( string clientGameId ) =>
-		Act( clientGameId, "resign", null );
-
-	/// <summary>Offer a draw, or accept one that's been offered — lichess treats
-	/// both as the same call.</summary>
-	public static Task<GamchessApi.Result> OfferDraw( string clientGameId ) =>
-		Act( clientGameId, "draw", null );
-
-	public static Task<GamchessApi.Result> DeclineDraw( string clientGameId ) =>
-		Act( clientGameId, "draw-decline", null );
-
-	/// <summary>Propose a takeback, or accept one already proposed — one call for
-	/// both, exactly as with a draw.
-	///
-	/// <para>lichess refuses a takeback until both players have moved, and it
-	/// refuses by IGNORING the call rather than failing it. Nothing here can
-	/// report that; the standing offer on the next poll is the only truth.</para>
-	/// </summary>
-	public static Task<GamchessApi.Result> OfferTakeback( string clientGameId ) =>
-		Act( clientGameId, "takeback", null );
-
-	public static Task<GamchessApi.Result> DeclineTakeback( string clientGameId ) =>
-		Act( clientGameId, "takeback-decline", null );
-
-	/// <summary>Abort — only legal before both sides have moved; lichess refuses
-	/// otherwise and says so.</summary>
-	public static Task<GamchessApi.Result> Abort( string clientGameId ) =>
-		Act( clientGameId, "abort", null );
-
-	static Task<GamchessApi.Result> Act( string clientGameId, string action, object body ) =>
-		GamchessApi.SendAuthed(
-			$"/api/v1/lichess/play/{Uri.EscapeDataString( clientGameId )}/{action}", "POST",
-			body == null ? null : GamchessApi.Json( body ) );
 }
 
 /// <summary>

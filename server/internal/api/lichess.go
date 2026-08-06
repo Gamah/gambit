@@ -1,15 +1,11 @@
 package api
 
 import (
-	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,49 +16,87 @@ import (
 	"go.uber.org/zap"
 )
 
-// The lichess link flow and the play relay's HTTP surface.
+// The lichess link flow, and the directory that lets two seats find each other.
 //
-// Two halves, two identities, one rule:
-//   - LINKING happens in a browser, gated on a Steam OpenID session, because the
-//     OAuth consent has to happen somewhere with a URL bar the player can read.
-//   - PLAYING happens in-game, gated on a Facepunch token.
+// # What gamchess does here, and what it deliberately does not
 //
-// Both prove the same SteamID, and neither ever takes a SteamID from a request.
+// Since HTTPFIX the s&box client holds its own lichess token and talks to
+// lichess itself. gamchess is left with three jobs, each of which exists because
+// the client genuinely cannot do it:
+//
+//  1. HOLD THE REDIRECT URI. lichess compares redirect_uri byte-for-byte between
+//     authorize and token, and the client cannot listen on a socket, so there is
+//     no loopback escape. The browser has to come back to a server.
+//  2. SHOW THE DISCLOSURE. The consent has to happen somewhere with a URL bar the
+//     player can read, and what we are asking for should be readable before
+//     lichess's own screen asks them to approve it.
+//  3. BE THE DIRECTORY. Two seats at a table need each other's lichess usernames
+//     to challenge by name, and neither client may simply be told the other's.
+//
+// What it does NOT do: exchange the code (the client holds the PKCE verifier, so
+// a code parked here is worthless to us by construction), hold a token, play a
+// game, or revoke anything. There are no lichess secrets in this process.
+//
+// Two identities, one rule, unchanged: linking is Steam-session gated in a
+// browser, everything in-game is Facepunch/session gated, and neither ever takes
+// a SteamID from a request.
 
-// pendingTTL bounds an in-flight OAuth link. Ten minutes is long enough to read
-// the consent screen and short enough that an abandoned flow is forgotten.
-const pendingTTL = 10 * time.Minute
+// linkTTL bounds an in-flight OAuth link. Ten minutes is long enough to read the
+// consent screen and short enough that an abandoned flow is forgotten.
+const linkTTL = 10 * time.Minute
 
-// pendingLink is one in-flight OAuth link: the PKCE verifier, and the SteamID
-// the flow was started for.
+// linkSlot is one in-flight link: who started it, the PKCE challenge they will
+// prove, and the code lichess parks on the way back.
 //
-// The SteamID is bound HERE, server-side, at the moment we redirect — never
-// taken from the callback. That is what stops a stranger completing someone
-// else's link: the state string is the only thing the browser carries back, and
-// it maps to a SteamID we chose.
-type pendingLink struct {
-	steamID  int64
-	verifier string
-	created  time.Time
+// NOTE WHAT IS NOT HERE: the code_verifier. The client mints the verifier/
+// challenge pair and keeps the verifier. We hold only the challenge (to build
+// the authorize URL) and, briefly, the code. A code without its verifier cannot
+// be exchanged, so gamchess never holds anything that could become a token —
+// not in transit, not at rest, not in a log.
+//
+// The SteamID is bound HERE, server-side, when the CLIENT registers the flow —
+// never taken from the callback. That is what stops a stranger completing
+// someone else's link.
+type linkSlot struct {
+	steamID   int64
+	challenge string
+	code      string
+	created   time.Time
 }
 
-// pendingLinks is the state store: mint-on-redirect, burn-on-callback.
+// linkSlots is the state store: the inverse of the pre-HTTPFIX pendingLinks.
 //
-// Modelled on nonceStore (web_auth.go) — same mutex, same lazy sweep on the
-// write path, same check-and-burn in one method. In-memory is right: one
-// container, and a restart mid-link just means "click the link again".
-type pendingLinks struct {
-	mu  sync.Mutex
-	m   map[string]pendingLink
-	ttl time.Duration
+// It used to be mint-on-redirect / burn-on-callback, because the callback was
+// where the exchange happened. Now the callback only PARKS a code and the client
+// collects it, so burn-on-use moved to collect — burning at the callback would
+// make collection impossible.
+//
+// Same shape otherwise, and deliberately so: one mutex, a lazy sweep on the
+// write path, check-and-burn in one method. Modelled on nonceStore (web_auth.go).
+// In-memory is right: one container, and a restart mid-link just means "click
+// the link again".
+type linkSlots struct {
+	mu sync.Mutex
+	// byState is the browser's key — the credential on the browser hop.
+	byState map[string]*linkSlot
+	// bySteam is the client's key. The client never sends a state back to us:
+	// collect is answered from the CALLER'S AUTHENTICATED SteamID and nothing
+	// else, so a state guessed or stolen from a URL bar cannot collect a code.
+	bySteam map[int64]string
+	ttl     time.Duration
 }
 
-func newPendingLinks(ttl time.Duration) *pendingLinks {
-	return &pendingLinks{m: map[string]pendingLink{}, ttl: ttl}
+func newLinkSlots(ttl time.Duration) *linkSlots {
+	return &linkSlots{byState: map[string]*linkSlot{}, bySteam: map[int64]string{}, ttl: ttl}
 }
 
-// put mints a state string bound to steamID and verifier.
-func (p *pendingLinks) put(steamID int64, verifier string) (string, error) {
+// start registers a flow for steamID and returns its state.
+//
+// NEWEST WINS: a player who starts a second link (they lost the tab, they
+// changed their mind) evicts the first. Two live slots for one SteamID would
+// make collect ambiguous, and the ambiguity would resolve differently depending
+// on which browser tab they finished.
+func (p *linkSlots) start(steamID int64, challenge string) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		// A guessable state is a CSRF hole in the link flow. Refuse to start one.
@@ -72,32 +106,88 @@ func (p *pendingLinks) put(steamID int64, verifier string) (string, error) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.sweepLocked()
 
-	now := time.Now()
-	for k, v := range p.m { // sweep on the write path, as nonceStore does
-		if now.Sub(v.created) > p.ttl {
-			delete(p.m, k)
-		}
+	if old, ok := p.bySteam[steamID]; ok {
+		delete(p.byState, old)
 	}
-	p.m[state] = pendingLink{steamID: steamID, verifier: verifier, created: now}
+	p.byState[state] = &linkSlot{steamID: steamID, challenge: challenge, created: time.Now()}
+	p.bySteam[steamID] = state
 	return state, nil
 }
 
-// use consumes a state exactly once. False means unknown, expired, or replayed —
-// all of which are "refuse", and none of which get a distinguishing message.
-func (p *pendingLinks) use(state string) (pendingLink, bool) {
+func (p *linkSlots) sweepLocked() {
+	now := time.Now()
+	for state, slot := range p.byState {
+		if now.Sub(slot.created) > p.ttl {
+			delete(p.byState, state)
+			if p.bySteam[slot.steamID] == state {
+				delete(p.bySteam, slot.steamID)
+			}
+		}
+	}
+}
+
+// forSteam returns the live slot a player started, or nil.
+func (p *linkSlots) forSteam(steamID int64) *linkSlot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state, ok := p.bySteam[steamID]
+	if !ok {
+		return nil
+	}
+	slot := p.byState[state]
+	if slot == nil || time.Since(slot.created) > p.ttl {
+		return nil
+	}
+	copy := *slot
+	return &copy
+}
+
+// park stores the code lichess sent back, against its state.
+//
+// It does NOT burn the state — collect does. It DOES refuse a slot that already
+// holds a code: a browser refresh replays a spent authorization code, and
+// quietly overwriting a good code with a dead one would turn a stray F5 into a
+// failed link with no explanation.
+func (p *linkSlots) park(state, code string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	v, ok := p.m[state]
+	slot, ok := p.byState[state]
+	if !ok || time.Since(slot.created) > p.ttl || slot.code != "" {
+		return false
+	}
+	slot.code = code
+	return true
+}
+
+// collect burns the whole slot and returns the parked code, if any.
+// (code == "", ok == true) means "the flow is live but the browser hasn't come
+// back yet" — the slot survives that case, since there is nothing to burn.
+func (p *linkSlots) collect(steamID int64) (code string, live bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	state, ok := p.bySteam[steamID]
 	if !ok {
-		return pendingLink{}, false
+		return "", false
 	}
-	delete(p.m, state) // burn it, whether or not it turns out to be fresh
-	if time.Since(v.created) > p.ttl {
-		return pendingLink{}, false
+	slot := p.byState[state]
+	if slot == nil || time.Since(slot.created) > p.ttl {
+		delete(p.byState, state)
+		delete(p.bySteam, steamID)
+		return "", false
 	}
-	return v, true
+	if slot.code == "" {
+		return "", true // still waiting on the browser
+	}
+	// Ready: burn the whole slot atomically. The code is single-use at lichess
+	// too, so handing it out twice could only ever produce one working exchange
+	// and one confusing failure.
+	delete(p.byState, state)
+	delete(p.bySteam, steamID)
+	return slot.code, true
 }
 
 // lichessRedirectURL is THE redirect URI, derived once from PUBLIC_BASE_URL
@@ -105,28 +195,110 @@ func (p *pendingLinks) use(state string) (pendingLink, bool) {
 //
 // Deriving it once is not tidiness: lichess compares the authorize and token
 // values byte for byte, so two hand-built copies that differ by a slash is a
-// link flow that fails at the last step. It also means the test instance points
-// at itself and never at prod.
+// link flow that fails at the last step. It is also what keeps the test instance
+// pointing at itself rather than prod — which is why it is RETURNED to the
+// client for its exchange rather than hardcoded there.
 func (h *handler) lichessRedirectURL() string {
 	return strings.TrimSuffix(h.baseURL, "/") + "/lichess/callback"
 }
 
-// lichessReady reports whether linking can run: a base URL to come back to, and
-// a key to encrypt the token with.
-func (h *handler) lichessReady() bool {
-	return h.baseURL != "" && h.keys != nil
+// lichessReady reports whether linking can run. Since HTTPFIX that is one
+// condition, not two: a base URL to come back to. There is no token key any
+// more, because there is no token to encrypt.
+func (h *handler) lichessReady() bool { return h.baseURL != "" }
+
+// ── The five steps ──
+
+// linkStartPost is step ①: the client registers a flow before showing the link.
+type linkStartPost struct {
+	// CodeChallenge is the client's PKCE S256 challenge. We never see the
+	// verifier behind it.
+	CodeChallenge string `json:"code_challenge"`
 }
 
-// GET /lichess/link — the page the player lands on, and the URL the in-game
-// board copies to the clipboard.
+type linkStartJSON struct {
+	State        string `json:"state"`
+	AuthorizeURL string `json:"authorize_url"`
+	RedirectURI  string `json:"redirect_uri"`
+	LinkURL      string `json:"link_url"`
+}
+
+// POST /api/v1/lichess/link/start — "I am about to link; here is my challenge."
 //
-// Steam-session gated, which is what makes the copy-a-URL flow safe: the URL is
-// a CONSTANT with no secret in it, so whoever opens it links THEIR OWN accounts.
-// Handing it to a friend just links the friend. There is nothing to leak.
+// FP/session gated, so the flow is bound to a verified SteamID before any
+// browser is involved.
 //
-// This renders the disclosure page rather than bouncing straight to lichess: the
-// player should read what they're about to grant before a consent screen asks
-// them to approve it. /lichess/start is the bounce.
+// It returns the authorize URL for completeness, but the client must NOT open it
+// directly — see lichessLink below for why that would be strictly worse than
+// today. The client shows LinkURL, which is a constant.
+func (h *handler) lichessLinkStart(w http.ResponseWriter, r *http.Request) {
+	steamID, ok := h.callerSteamID(w, r)
+	if !ok {
+		return
+	}
+	if !h.lichessReady() {
+		writeError(w, http.StatusNotImplemented, "lichess linking is not configured on this server")
+		return
+	}
+
+	var in linkStartPost
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed body")
+		return
+	}
+	// RFC 7636: a base64url S256 challenge is 43 chars. Shape-check it rather
+	// than pass anything at all into an authorize URL.
+	if !validCodeChallenge(in.CodeChallenge) {
+		writeError(w, http.StatusBadRequest, "code_challenge must be a base64url-encoded S256 challenge")
+		return
+	}
+
+	state, err := h.links.start(steamID, in.CodeChallenge)
+	if err != nil {
+		h.log.Error("could not mint a link state", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, linkStartJSON{
+		State:        state,
+		AuthorizeURL: lichess.AuthorizeURL(lichess.ClientID, h.lichessRedirectURL(), state, in.CodeChallenge),
+		RedirectURI:  h.lichessRedirectURL(),
+		LinkURL:      h.baseURL + "/lichess/link",
+	})
+}
+
+// validCodeChallenge shape-checks an S256 PKCE challenge: 43 base64url chars,
+// unpadded.
+func validCodeChallenge(s string) bool {
+	if len(s) != 43 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// GET /lichess/link — step ②: the page the player lands on, and the URL the
+// in-game board copies to the clipboard.
+//
+// # This stays a CONSTANT, and the raw authorize URL must NOT replace it
+//
+// Showing the lichess URL directly looks simpler and is the call most likely to
+// be got wrong. This URL is safe PRECISELY because it carries no secret: it is
+// Steam-session gated, so whoever opens it links THEIR OWN accounts, and handing
+// it to a friend just links the friend. A raw authorize URL is bound to YOUR
+// state and YOUR SteamID — a friend who opened it would consent on THEIR lichess
+// account and YOU would end up holding a grant on it. That is strictly worse
+// than anything the old custody design could do.
+//
+// Keeping a page in the middle is also what preserves the disclosure copy and
+// the byte-exact redirect_uri.
 func (h *handler) lichessLink(w http.ResponseWriter, r *http.Request) {
 	if !h.lichessReady() {
 		h.renderLichessPage(w, http.StatusNotImplemented, lichessPage{
@@ -135,17 +307,31 @@ func (h *handler) lichessLink(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if _, ok := h.sessions.read(r); !ok {
+	steamID, ok := h.sessions.read(r)
+	if !ok {
 		// Sign in with Steam first. The OpenID return lands on "/", so the player
 		// clicks the link once more — a redirect chain that survives that round
 		// trip isn't worth the state it would need.
 		http.Redirect(w, r, "/auth/steam/login", http.StatusFound)
 		return
 	}
+
+	// The flow is registered by the GAME, not by this page: the client holds the
+	// verifier, so it has to start. Someone who opens this URL without the game
+	// running gets told that rather than a broken consent screen.
+	if h.links.forSteam(steamID) == nil {
+		h.renderLichessPage(w, http.StatusOK, lichessPage{
+			Title: "Start from the game",
+			Body: "Open the lichess board in Terry's Gambit and press Link, then come back to this page. " +
+				"The game holds a secret that proves this link is yours, so it has to start there.",
+		})
+		return
+	}
 	h.renderLichessConsent(w)
 }
 
-// GET /lichess/start — mint the PKCE pair and bounce to lichess's consent screen.
+// GET /lichess/start — the Continue button on the disclosure page. Bounces to
+// lichess's own consent screen with the challenge the client registered.
 func (h *handler) lichessStart(w http.ResponseWriter, r *http.Request) {
 	if !h.lichessReady() {
 		h.renderLichessPage(w, http.StatusNotImplemented, lichessPage{
@@ -154,43 +340,51 @@ func (h *handler) lichessStart(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
 	steamID, ok := h.sessions.read(r)
 	if !ok {
 		http.Redirect(w, r, "/auth/steam/login", http.StatusFound)
 		return
 	}
 
-	verifier, challenge, err := lichess.NewVerifier()
-	if err != nil {
-		h.log.Error("could not mint a PKCE verifier", zap.Error(err))
-		h.renderLichessPage(w, http.StatusInternalServerError, lichessPage{
-			Title: "Something went wrong",
-			Body:  "Couldn't start the link. Try again.",
+	slot := h.links.forSteam(steamID)
+	if slot == nil {
+		h.renderLichessPage(w, http.StatusBadRequest, lichessPage{
+			Title: "That link expired",
+			Body:  "Start again from the lichess board in-game.",
 		})
 		return
 	}
 
-	state, err := h.pending.put(steamID, verifier)
-	if err != nil {
-		h.log.Error("could not mint a link state", zap.Error(err))
-		h.renderLichessPage(w, http.StatusInternalServerError, lichessPage{
-			Title: "Something went wrong",
-			Body:  "Couldn't start the link. Try again.",
-		})
-		return
-	}
-
-	http.Redirect(w, r, lichess.AuthorizeURL(lichess.ClientID, h.lichessRedirectURL(), state, challenge),
+	// The state we hand lichess is the one bound to this SteamID, and the
+	// challenge is the client's. Neither came from this request.
+	http.Redirect(w, r,
+		lichess.AuthorizeURL(lichess.ClientID, h.lichessRedirectURL(), h.stateFor(steamID), slot.challenge),
 		http.StatusFound)
 }
 
-// GET /lichess/callback — lichess sends the browser back here.
+// stateFor reads back the state bound to a SteamID. Separate from forSteam only
+// because the slot copy deliberately doesn't carry it — the state is the
+// browser's credential and has no business being handed around in-process more
+// than it must.
+func (h *handler) stateFor(steamID int64) string {
+	h.links.mu.Lock()
+	defer h.links.mu.Unlock()
+	return h.links.bySteam[steamID]
+}
+
+// GET /lichess/callback — step ③: lichess sends the browser back here.
+//
+// It PARKS the code and does not exchange it: we hold no verifier, so the code
+// is inert in our hands. The state is still the credential on the browser hop
+// and an unknown/expired/replayed one is still refused with no detail, because
+// it is either a bug or an attack and neither deserves one.
 //
 // NOTE the Caddy rule this route inherits: the OAuth code arrives in the QUERY
 // STRING, so these vhosts must never gain a `log` directive — Caddy would write
-// the code to disk. Caddy logs nothing unless configured; the job is not to
-// start. Same rule as /auth/steam/return.
+// it to disk. Caddy logs nothing unless configured; the job is not to start.
+//
+// It also can no longer name the account it just linked, because gamchess has no
+// token at this point and identity costs one. The page says so.
 func (h *handler) lichessCallback(w http.ResponseWriter, r *http.Request) {
 	if !h.lichessReady() {
 		h.renderLichessPage(w, http.StatusNotImplemented, lichessPage{
@@ -211,12 +405,9 @@ func (h *handler) lichessCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The state carries the identity — burn it first, and fail closed. An
-	// unknown, expired or replayed state gets no detail: it is either a bug or
-	// an attack, and neither deserves one.
-	pend, ok := h.pending.use(q.Get("state"))
-	if !ok {
-		h.log.Warn("lichess callback with an unknown or replayed state")
+	code := q.Get("code")
+	if code == "" || !h.links.park(q.Get("state"), code) {
+		h.log.Warn("lichess callback with an unknown, replayed or already-used state")
 		h.renderLichessPage(w, http.StatusBadRequest, lichessPage{
 			Title: "That link expired",
 			Body:  "Start again from the lichess board in-game.",
@@ -224,187 +415,142 @@ func (h *handler) lichessCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	code := q.Get("code")
-	if code == "" {
-		h.renderLichessPage(w, http.StatusBadRequest, lichessPage{
-			Title: "That link expired",
-			Body:  "Start again from the lichess board in-game.",
+	h.renderLichessLinked(w)
+}
+
+// linkCollectJSON is step ④'s answer.
+type linkCollectJSON struct {
+	// Status is "none" (no flow running), "waiting" (the browser hasn't come
+	// back) or "ready".
+	Status string `json:"status"`
+	Code   string `json:"code,omitempty"`
+	// RedirectURI must be sent to lichess's token endpoint byte-identically to
+	// the authorize call. The client uses THIS, never a hardcoded one — a
+	// hardcoded copy silently breaks the test instance.
+	RedirectURI string `json:"redirect_uri,omitempty"`
+	ClientID    string `json:"client_id,omitempty"`
+}
+
+// POST /api/v1/lichess/link/collect — step ④: "has my browser come back yet?"
+//
+// Keyed on the CALLER'S AUTHENTICATED SteamID and never on a state from the
+// body. That is the whole access control: a state seen in a URL bar, a browser
+// history or a shoulder-surf collects nothing.
+func (h *handler) lichessLinkCollect(w http.ResponseWriter, r *http.Request) {
+	steamID, ok := h.callerSteamID(w, r)
+	if !ok {
+		return
+	}
+	code, live := h.links.collect(steamID)
+	switch {
+	case !live:
+		writeJSON(w, http.StatusOK, linkCollectJSON{Status: "none"})
+	case code == "":
+		writeJSON(w, http.StatusOK, linkCollectJSON{Status: "waiting"})
+	default:
+		writeJSON(w, http.StatusOK, linkCollectJSON{
+			Status:      "ready",
+			Code:        code,
+			RedirectURI: h.lichessRedirectURL(),
+			ClientID:    lichess.ClientID,
 		})
+	}
+}
+
+// lichessClaimPost is step ⑤: the client has a token and wants an identity
+// recorded against it.
+type lichessClaimPost struct {
+	// Token is the player's fresh lichess token. IT TRANSITS THIS PROCESS ONCE
+	// AND IS DISCARDED — never stored, never logged, never put in an error
+	// string. See lichess.Account for the full reasoning and the honest
+	// statement of what that costs.
+	Token string `json:"token"`
+}
+
+// POST /api/v1/lichess/claim — record who this player is on lichess.
+//
+// The client could tell us its own username (it can read /api/account itself),
+// and we do not let it: an asserted identity is a claim, and a claim would let
+// anyone squat a real account's row and lock its owner out of ever linking. So
+// the token comes here, gamchess asks lichess whose it is, and lichess's answer
+// is what gets stored. Same rule as trusting only the SteamId Facepunch echoes
+// back.
+func (h *handler) lichessClaim(w http.ResponseWriter, r *http.Request) {
+	steamID, ok := h.callerSteamID(w, r)
+	if !ok {
+		return
+	}
+	if h.db == nil {
+		writeError(w, http.StatusNotImplemented, "lichess is not configured")
+		return
+	}
+
+	var in lichessClaimPost
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "malformed body")
+		return
+	}
+	in.Token = strings.TrimSpace(in.Token)
+	if in.Token == "" {
+		writeError(w, http.StatusBadRequest, "token is required")
 		return
 	}
 
 	ctx := r.Context()
-
-	// redirect_uri must be byte-identical to the one we authorized with.
-	tok, err := lichess.Exchange(ctx, lichess.ClientID, h.lichessRedirectURL(), code, pend.verifier)
+	lichessID, username, err := lichess.Account(ctx, in.Token)
 	if err != nil {
-		h.log.Warn("lichess token exchange failed", zap.Error(err))
-		h.renderLichessPage(w, http.StatusBadGateway, lichessPage{
-			Title: "Couldn't finish the link",
-			Body:  "Lichess didn't complete the exchange. Try again.",
-		})
-		return
-	}
-
-	// Identity is what lichess echoes back for this token — never anything the
-	// browser told us. Same rule as trusting only Facepunch's SteamId.
-	lichessID, username, err := lichess.Account(ctx, tok.AccessToken)
-	if err != nil {
-		h.log.Warn("lichess account lookup failed", zap.Error(err))
-		h.renderLichessPage(w, http.StatusBadGateway, lichessPage{
-			Title: "Couldn't finish the link",
-			Body:  "Lichess wouldn't say who that token belongs to. Try again.",
-		})
-		return
-	}
-
-	// Encrypt BEFORE the row exists. There is no plaintext token column and no
-	// code path that writes one. keyVersion stamps which data key sealed it, so
-	// the sweep and OpenToken can find the right key later.
-	ct, nonce, keyVersion, err := h.keys.SealToken(tok.AccessToken)
-	if err != nil {
-		h.log.Error("could not encrypt the lichess token", zap.Error(err))
-		h.renderLichessPage(w, http.StatusInternalServerError, lichessPage{
-			Title: "Couldn't finish the link",
-			Body:  "Try again.",
-		})
+		// Deliberately does not echo err: it is the one error in this file built
+		// from a request that carried a token.
+		h.log.Warn("lichess would not identify a claimed token")
+		writeError(w, http.StatusBadGateway, "lichess wouldn't say who that token belongs to")
 		return
 	}
 
 	// The player is Steam-verified, so the FK target is honest.
-	if err := store.EnsurePlayer(ctx, h.db, pend.steamID, true); err != nil {
-		h.log.Error("ensure player failed on lichess link", zap.Error(err))
-		h.renderLichessPage(w, http.StatusInternalServerError, lichessPage{
-			Title: "Couldn't finish the link", Body: "Try again.",
-		})
+	if err := store.EnsurePlayer(ctx, h.db, steamID, true); err != nil {
+		h.log.Error("ensure player failed on lichess claim", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
 	_, err = store.UpsertLichessLink(ctx, h.db, store.LichessLink{
-		SteamID:    pend.steamID,
-		LichessID:  lichessID,
-		Username:   username,
-		TokenEnc:   ct,
-		TokenNonce: nonce,
-		KeyVersion: keyVersion,
-		Scopes:     lichess.Scope,
+		SteamID:   steamID,
+		LichessID: lichessID,
+		Username:  username,
 	})
 	if errors.Is(err, store.ErrLichessIDTaken) {
 		// Someone else already holds this lichess account. Never a silent steal.
-		// The token we just minted is useless to us now — kill it rather than
-		// leave a live grant lying around for an account we didn't link.
-		h.revokeQuietly(tok.AccessToken)
-		h.renderLichessPage(w, http.StatusConflict, lichessPage{
-			Title: "That lichess account is already linked",
-			Body: "The lichess account " + username + " is linked to a different Steam account. " +
-				"Unlink it there first, then try again.",
-		})
+		//
+		// Unlike the custody version, there is no token for us to revoke on the
+		// way out: it is the player's, on their machine, and only they can kill
+		// it. The copy tells them how.
+		writeError(w, http.StatusConflict,
+			"the lichess account "+username+" is linked to a different Steam account — unlink it there first")
 		return
 	}
 	if err != nil {
 		h.log.Error("could not store the lichess link", zap.Error(err))
-		h.revokeQuietly(tok.AccessToken)
-		h.renderLichessPage(w, http.StatusInternalServerError, lichessPage{
-			Title: "Couldn't finish the link", Body: "Try again.",
-		})
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
-	h.log.Info("lichess account linked", zap.Int64("steam_id", pend.steamID),
+	h.log.Info("lichess account linked", zap.Int64("steam_id", steamID),
 		zap.String("lichess_id", lichessID))
-	h.renderLichessLinked(w, username)
+	writeJSON(w, http.StatusOK, lichessLinkJSON{
+		Linked:    true,
+		LichessID: lichessID,
+		Username:  username,
+	})
 }
 
-// revokeQuietly kills a token we minted but couldn't use. Best-effort and
-// detached: the browser is waiting, and a token we fail to revoke is a nuisance
-// rather than a hole (it is ours, and unlinking revokes it later).
-func (h *handler) revokeQuietly(token string) {
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := lichess.Revoke(ctx, token); err != nil {
-			h.log.Warn("could not revoke an unused lichess token", zap.Error(err))
-		}
-	}()
-}
+// ── Status and unlink ──
 
-// POST /lichess/unlink — the web unlink button on the linked page.
+// lichessLinkJSON is the wire shape of a link.
 //
-// POST, never GET: a link that unlinks would fire on any prefetch or crawl.
-// Session-gated, and SameSite=Lax keeps the cookie off a cross-site POST.
-//
-// Shares revokeAndForget with the in-game DELETE, so there is exactly one
-// implementation of "unlink" and the two surfaces cannot drift.
-func (h *handler) lichessWebUnlink(w http.ResponseWriter, r *http.Request) {
-	steamID, ok := h.sessions.read(r)
-	if !ok {
-		http.Redirect(w, r, "/auth/steam/login", http.StatusFound)
-		return
-	}
-	if h.db == nil {
-		h.renderLichessPage(w, http.StatusNotImplemented, lichessPage{
-			Title: "Lichess is switched off", Body: "Nothing to unlink here.",
-		})
-		return
-	}
-
-	switch err := h.revokeAndForget(r.Context(), steamID); {
-	case errors.Is(err, store.ErrNotFound):
-		h.renderLichessPage(w, http.StatusOK, lichessPage{
-			Title: "Not linked",
-			Body:  "There was no lichess account linked to your Steam account.",
-		})
-	case err != nil:
-		h.log.Error("web unlink failed", zap.Error(err))
-		h.renderLichessPage(w, http.StatusInternalServerError, lichessPage{
-			Title: "Couldn't unlink", Body: "Try again.",
-		})
-	default:
-		h.renderLichessPage(w, http.StatusOK, lichessPage{
-			Title: "Unlinked",
-			Body: "Your lichess account is no longer linked, and we've asked lichess to " +
-				"revoke the token. You can link again any time from the lichess board in-game.",
-		})
-	}
-}
-
-// revokeAndForget is the one implementation of "unlink": best-effort revoke at
-// lichess, then delete the row.
-//
-// The order matters and so does the "best-effort". We revoke first because a
-// token we've already forgotten can never be revoked (the revoke must be signed
-// BY that token — lichess has no admin form). But we delete the row whether or
-// not the revoke worked, because a player who pressed unlink must end up
-// unlinked; a failed revoke leaves a token that dies on its own in ~a year, and
-// that is why the copy tells people lichess's Security page is the real off
-// switch.
-//
-// Returns store.ErrNotFound when there was nothing linked.
-func (h *handler) revokeAndForget(ctx context.Context, steamID int64) error {
-	link, err := store.LichessLinkBySteamID(ctx, h.db, steamID)
-	if err != nil {
-		return err
-	}
-
-	if h.keys != nil {
-		if token, derr := h.keys.OpenToken(link.TokenEnc, link.TokenNonce, link.KeyVersion); derr == nil {
-			if rerr := lichess.Revoke(ctx, token); rerr != nil {
-				h.log.Warn("could not revoke the lichess token on unlink",
-					zap.Int64("steam_id", steamID), zap.Error(rerr))
-			}
-		} else {
-			h.log.Warn("could not decrypt a token to revoke it", zap.Error(derr))
-		}
-	}
-
-	if _, err := store.DeleteLichessLink(ctx, h.db, steamID); err != nil {
-		return err
-	}
-	h.log.Info("lichess account unlinked", zap.Int64("steam_id", steamID))
-	return nil
-}
-
-// lichessLinkJSON is the wire shape of a link, for the client's status poll.
+// `linked` and `username` KEEP THEIR NAMES across HTTPFIX on purpose: gamchess
+// deploys before the s&box package updates, so for a window an OLD client polls
+// this route, and a renamed field would null out its whole link state rather
+// than degrade.
 type lichessLinkJSON struct {
 	Linked    bool   `json:"linked"`
 	LichessID string `json:"lichess_id,omitempty"`
@@ -418,6 +564,10 @@ type lichessLinkJSON struct {
 // Only ever answers about the CALLER. There is no ?steam_id=, for the same
 // reason the archive has none: it would make every player's lichess identity
 // enumerable by anyone who could sign in.
+//
+// The client no longer NEEDS this to know whether it is linked — it holds the
+// token, so that is answerable locally, instantly and offline. What this answers
+// is whether gamchess agrees, which matters for the rendezvous directory.
 func (h *handler) lichessStatus(w http.ResponseWriter, r *http.Request) {
 	steamID, ok := h.callerSteamID(w, r)
 	if !ok {
@@ -441,9 +591,6 @@ func (h *handler) lichessStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	// Note what is NOT here: the token. It never crosses this seam in either
-	// direction — the client authenticates to gamchess, and gamchess acts on
-	// lichess.
 	writeJSON(w, http.StatusOK, lichessLinkJSON{
 		Linked:    true,
 		LichessID: link.LichessID,
@@ -453,8 +600,10 @@ func (h *handler) lichessStatus(w http.ResponseWriter, r *http.Request) {
 
 // DELETE /api/v1/lichess — unlink, from in-game.
 //
-// The same revoke-then-forget as the web button; see revokeAndForget for why the
-// revoke is best-effort and the delete is not.
+// UNLINK IS FINALLY CORRECT RATHER THAN BEST-EFFORT, and the division of labour
+// is the point: the CLIENT revokes (DELETE /api/token must be signed by the
+// token, which only it holds) and gamchess forgets the row. The old version
+// tried to do both and could only promise one.
 func (h *handler) lichessUnlink(w http.ResponseWriter, r *http.Request) {
 	steamID, ok := h.callerSteamID(w, r)
 	if !ok {
@@ -464,45 +613,157 @@ func (h *handler) lichessUnlink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "lichess is not configured")
 		return
 	}
-
-	err := h.revokeAndForget(r.Context(), steamID)
-	// Nothing linked is the state the caller asked for, so it's a 200, not a 404.
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	if _, err := store.DeleteLichessLink(r.Context(), h.db, steamID); err != nil {
 		h.log.Error("unlink failed", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	h.log.Info("lichess account unlinked", zap.Int64("steam_id", steamID))
 	writeJSON(w, http.StatusOK, lichessLinkJSON{Linked: false})
 }
 
-// ── Play relay ──
+// POST /lichess/unlink — the web unlink button on the linked page.
+//
+// POST, never GET: a link that unlinks would fire on any prefetch or crawl.
+// Session-gated, and SameSite=Lax keeps the cookie off a cross-site POST.
+//
+// The web has no token to revoke with — the token is on the player's gaming PC —
+// so this forgets the row and the copy points at /account/security, which is the
+// only place a browser can actually revoke.
+func (h *handler) lichessWebUnlink(w http.ResponseWriter, r *http.Request) {
+	steamID, ok := h.sessions.read(r)
+	if !ok {
+		http.Redirect(w, r, "/auth/steam/login", http.StatusFound)
+		return
+	}
+	if h.db == nil {
+		h.renderLichessPage(w, http.StatusNotImplemented, lichessPage{
+			Title: "Lichess is switched off", Body: "Nothing to unlink here.",
+		})
+		return
+	}
 
-// playPost is one seat's intent to play this table's game on lichess.
-type playPost struct {
+	gone, err := store.DeleteLichessLink(r.Context(), h.db, steamID)
+	switch {
+	case err != nil:
+		h.log.Error("web unlink failed", zap.Error(err))
+		h.renderLichessPage(w, http.StatusInternalServerError, lichessPage{
+			Title: "Couldn't unlink", Body: "Try again.",
+		})
+	case !gone:
+		h.renderLichessPage(w, http.StatusOK, lichessPage{
+			Title: "Not linked",
+			Body:  "There was no lichess account linked to your Steam account.",
+		})
+	default:
+		h.renderLichessUnlinked(w)
+	}
+}
+
+// ── The rendezvous directory ──
+//
+// Two seats at one table want to play their game on lichess. One challenges the
+// other BY NAME, so it needs the other's lichess username — and gamchess must
+// not hand a player's lichess username to whoever asks for it.
+//
+// # The two-intent rule survives, and its justification has changed
+//
+// Under custody, both seats had to post an intent because gamchess held both
+// their tokens: a one-sided start would have let any linked player drag any
+// other into a real game from anywhere. That reason is GONE — each client now
+// acts with its own token and can only ever commit itself, and a one-sided start
+// just leaves a challenge sitting in someone's notifications.
+//
+// What the rule still does is DIRECTORY DISCLOSURE: seat B's username is
+// revealed to seat A only once BOTH seats have posted an intent for the same
+// client_game_id, and only to those two. Do not carry over the old
+// "two independently-authenticated intents are what make it consent" wording —
+// it is false now.
+
+// rendezvousTTL bounds a pairing. Generous: the two clients post within a frame
+// or two of each other, and a stale entry costs a map slot.
+const rendezvousTTL = 10 * time.Minute
+
+type rendezvousSeat struct {
+	steamID  int64
+	username string
+	posted   time.Time
+}
+
+type rendezvous struct {
+	mu sync.Mutex
+	m  map[string]*[2]*rendezvousSeat // client_game_id → white, black
+}
+
+func newRendezvous() *rendezvous { return &rendezvous{m: map[string]*[2]*rendezvousSeat{}} }
+
+// post records one seat's intent and reports whether both are now in.
+func (rv *rendezvous) post(gameID string, side int, seat rendezvousSeat) (other *rendezvousSeat) {
+	rv.mu.Lock()
+	defer rv.mu.Unlock()
+
+	now := time.Now()
+	for id, pair := range rv.m {
+		fresh := false
+		for _, s := range pair {
+			if s != nil && now.Sub(s.posted) <= rendezvousTTL {
+				fresh = true
+			}
+		}
+		if !fresh {
+			delete(rv.m, id)
+		}
+	}
+
+	pair, ok := rv.m[gameID]
+	if !ok {
+		pair = &[2]*rendezvousSeat{}
+		rv.m[gameID] = pair
+	}
+	pair[side] = &seat
+
+	o := pair[1-side]
+	if o == nil || now.Sub(o.posted) > rendezvousTTL {
+		return nil
+	}
+	return o
+}
+
+type rendezvousPost struct {
 	ClientGameID string `json:"client_game_id"`
 	WhiteSteamID string `json:"white_steam_id"`
 	BlackSteamID string `json:"black_steam_id"`
-	LimitSeconds int    `json:"limit_seconds"`
-	IncrementSec int    `json:"increment_seconds"`
-	Unlimited    bool   `json:"unlimited"`
 }
 
-// POST /api/v1/lichess/play — "I want this table's game played on lichess".
+type rendezvousJSON struct {
+	// Ready is true once both seats have posted; only then is Opponent filled in.
+	Ready bool `json:"ready"`
+	// YourColor is "white" or "black" — which seat the caller holds.
+	YourColor string `json:"your_color"`
+	// Opponent is the other seat's lichess identity, once both have posted.
+	Opponent string `json:"opponent,omitempty"`
+	// OpponentID is the canonical lowercase id. The client checks an incoming
+	// challenge's challenger id against this before accepting — cheap, strong,
+	// and defence in depth against a bug rather than against a liar.
+	OpponentID string `json:"opponent_id,omitempty"`
+}
+
+// POST /api/v1/lichess/rendezvous — "I'm playing this table's game on lichess;
+// who is opposite me?"
 //
-// BOTH seats must post this, each with their own Facepunch token, before a
-// challenge is issued. See the relay's doc comment for why that is the whole
-// authorisation story and not a formality.
-func (h *handler) lichessPlay(w http.ResponseWriter, r *http.Request) {
-	steamID, ok := h.requireSteam(w, r)
+// Both seats post, each with their own verified identity. The caller learns the
+// other's lichess username only once both have.
+func (h *handler) lichessRendezvous(w http.ResponseWriter, r *http.Request) {
+	steamID, ok := h.callerSteamID(w, r)
 	if !ok {
 		return
 	}
-	if !h.relay.Enabled() {
-		writeError(w, http.StatusNotImplemented, "lichess play is not configured on this server")
+	if h.db == nil {
+		writeError(w, http.StatusNotImplemented, "lichess is not configured")
 		return
 	}
 
-	var in playPost
+	var in rendezvousPost
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "malformed body")
 		return
@@ -511,7 +772,6 @@ func (h *handler) lichessPlay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "client_game_id must be a UUID")
 		return
 	}
-
 	white, okW := parseSeat(in.WhiteSteamID)
 	black, okB := parseSeat(in.BlackSteamID)
 	if !okW || !okB || white == nil || black == nil {
@@ -523,511 +783,58 @@ func (h *handler) lichessPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Same rule as archiving: the seats are CLAIMS, so you may only ask for a
+	// Same rule as archiving: the seats are CLAIMS, so you may only ask about a
 	// game you are sitting in.
-	if !seatMatches(steamID, white) && !seatMatches(steamID, black) {
-		writeError(w, http.StatusForbidden, "you may only start a game you are seated in")
-		return
-	}
-
-	// Bullet can never reach lichess from any path — the Board API refuses
-	// anything faster than blitz. Reject it here with a readable reason rather
-	// than spending a lichess request to be told the same thing.
-	if !in.Unlimited && !lichess.ChallengeCompatible(in.LimitSeconds, in.IncrementSec) {
-		writeError(w, http.StatusBadRequest,
-			"lichess's Board API won't play anything faster than blitz — bullet tables can't mirror")
-		return
-	}
-
-	p, err := h.relay.Join(r.Context(), steamID, PlayRequest{
-		ClientGameID: in.ClientGameID,
-		WhiteSteamID: *white,
-		BlackSteamID: *black,
-		LimitSeconds: in.LimitSeconds,
-		IncrementSec: in.IncrementSec,
-		Unlimited:    in.Unlimited,
-	})
-	if err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, h.stamped(p, steamID))
-}
-
-// seekPost asks lichess's lobby to find a random opponent.
-type seekPost struct {
-	ClientGameID string `json:"client_game_id"`
-	// Minutes, matching lichess's own unit for a seek (their challenge endpoint
-	// uses seconds — the asymmetry is theirs).
-	TimeMinutes  float64 `json:"time_minutes"`
-	IncrementSec int     `json:"increment_seconds"`
-	Rated        bool    `json:"rated"`
-	RatingRange  string  `json:"rating_range"`
-	Color        string  `json:"color"`
-}
-
-// POST /api/v1/lichess/seek — play a random lichess opponent.
-//
-// Unlike /play, this needs ONE caller, not two: you are spending your own token
-// to play a stranger who opts in on lichess's side by their own choice. Nobody
-// is dragged into anything, so there is nobody to get consent from.
-//
-// The opponent is not in this lobby, so the table's other seat is irrelevant —
-// this works from a table you're sitting at alone.
-func (h *handler) lichessSeek(w http.ResponseWriter, r *http.Request) {
-	steamID, ok := h.requireSteam(w, r)
-	if !ok {
-		return
-	}
-	if !h.relay.Enabled() {
-		writeError(w, http.StatusNotImplemented, "lichess play is not configured on this server")
-		return
-	}
-
-	var in seekPost
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed body")
-		return
-	}
-	if _, err := uuid.Parse(in.ClientGameID); err != nil {
-		writeError(w, http.StatusBadRequest, "client_game_id must be a UUID")
-		return
-	}
-
-	limitSeconds := int(in.TimeMinutes * 60)
-
-	// A real-time seek needs RAPID or slower — a stricter floor than a challenge's
-	// blitz. Two different lila functions, both called isBoardCompatible; see the
-	// lichess package. Refuse here with a reason rather than spend one of the five
-	// seeks-per-minute the whole playerbase shares.
-	if !lichess.SeekCompatible(limitSeconds, in.IncrementSec) {
-		writeError(w, http.StatusBadRequest,
-			"lichess's lobby only takes rapid or slower seeks — blitz and faster can't be seeked (a direct challenge at a table can)")
-		return
-	}
-	if in.RatingRange != "" && !validRatingRange(in.RatingRange) {
-		writeError(w, http.StatusBadRequest, `rating_range must look like "1500-1800"`)
-		return
-	}
-	switch in.Color {
-	case "", "random", "white", "black":
+	side := -1
+	switch {
+	case seatMatches(steamID, white):
+		side = 0
+	case seatMatches(steamID, black):
+		side = 1
 	default:
-		writeError(w, http.StatusBadRequest, `color must be white, black or random`)
+		writeError(w, http.StatusForbidden, "you may only rendezvous for a game you are seated in")
 		return
 	}
 
-	p, err := h.relay.Join(r.Context(), steamID, PlayRequest{
-		ClientGameID: in.ClientGameID,
-		Seek:         true,
-		SoloSteamID:  steamID,
-		LimitSeconds: limitSeconds,
-		IncrementSec: in.IncrementSec,
-		Rated:        in.Rated,
-		RatingRange:  in.RatingRange,
-		Color:        in.Color,
-	})
+	links, err := store.LichessLinksBySteamIDs(r.Context(), h.db, []int64{*white, *black})
 	if err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, h.stamped(p, steamID))
-}
-
-// challengePost challenges a NAMED lichess user directly.
-type challengePost struct {
-	ClientGameID string `json:"client_game_id"`
-	// Opponent is a lichess username. Validated before it costs a request.
-	Opponent string `json:"opponent"`
-	// Clock in SECONDS — lichess's own unit for a challenge (a seek uses minutes;
-	// the asymmetry is theirs). Omit both and set Unlimited for a clockless game.
-	LimitSeconds int  `json:"limit_seconds"`
-	IncrementSec int  `json:"increment_seconds"`
-	Unlimited    bool `json:"unlimited"`
-	Rated        bool `json:"rated"`
-	// Color is which side the CHALLENGER wants. Defaults to the seat they hold at
-	// the table, filled in below — a physical board has sides, and the lichess
-	// game should mirror the one they're sitting at.
-	Color string `json:"color"`
-}
-
-// POST /api/v1/lichess/challenge — play a specific lichess user by name.
-//
-// One caller, like a seek and unlike /play: you spend your own token to invite a
-// stranger who accepts in their own client, by their own choice. Nobody is
-// dragged into anything.
-//
-// It reaches BLITZ where a seek cannot (lila gates challenges at Speed.Blitz and
-// seeks at Speed.Rapid — see the lichess package), and it spends the per-user
-// challenge budget rather than the shared 5/min-per-IP lobby budget, so it is
-// the kinder of the two flows to the playerbase.
-func (h *handler) lichessChallenge(w http.ResponseWriter, r *http.Request) {
-	steamID, ok := h.requireSteam(w, r)
-	if !ok {
-		return
-	}
-	if !h.relay.Enabled() {
-		writeError(w, http.StatusNotImplemented, "lichess play is not configured on this server")
-		return
-	}
-
-	var in challengePost
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed body")
-		return
-	}
-	if _, err := uuid.Parse(in.ClientGameID); err != nil {
-		writeError(w, http.StatusBadRequest, "client_game_id must be a UUID")
-		return
-	}
-	if !lichess.ValidUsername(in.Opponent) {
-		writeError(w, http.StatusBadRequest, "opponent must be a lichess username")
-		return
-	}
-
-	// Bullet can never reach lichess from any path — the Board API refuses
-	// anything faster than blitz. Reject it here rather than spend a request being
-	// told the same thing.
-	if !in.Unlimited && !lichess.ChallengeCompatible(in.LimitSeconds, in.IncrementSec) {
-		writeError(w, http.StatusBadRequest,
-			"lichess's Board API won't play anything faster than blitz")
-		return
-	}
-	switch in.Color {
-	case "", "random", "white", "black":
-	default:
-		writeError(w, http.StatusBadRequest, `color must be white, black or random`)
-		return
-	}
-
-	p, err := h.relay.Join(r.Context(), steamID, PlayRequest{
-		ClientGameID: in.ClientGameID,
-		Challenge:    true,
-		Opponent:     in.Opponent,
-		SoloSteamID:  steamID,
-		LimitSeconds: in.LimitSeconds,
-		IncrementSec: in.IncrementSec,
-		Unlimited:    in.Unlimited,
-		Rated:        in.Rated,
-		Color:        in.Color,
-	})
-	if err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, h.stamped(p, steamID))
-}
-
-// openPost asks for a shareable-link game: an anonymous browser opponent, our seated
-// player relayed to their board. Carries the clock, the rated flag, and which colour
-// the seated player takes (their opponent gets the other side's url).
-type openPost struct {
-	ClientGameID string `json:"client_game_id"`
-	LimitSeconds int    `json:"limit_seconds"`
-	IncrementSec int    `json:"increment_seconds"`
-	Unlimited    bool   `json:"unlimited"`
-	Rated        bool   `json:"rated"`
-	Color        string `json:"color"` // white | black | random
-}
-
-// POST /api/v1/lichess/open — mint a shareable link and relay the seated player's side.
-//
-// One caller, like a seek/challenge. UNLIKE the M8 version this is a real relayed game,
-// not a one-shot link: gamchess creates the open challenge anonymously, accepts it with
-// the player's token to seat them (see relay.runOpen), and streams their side to the
-// board — the browser opponent opens the returned share_url and plays them for real.
-//
-// The blitz floor DOES apply: our side plays through the Board API, which won't play
-// faster than blitz. (The M8 one-shot allowed bullet because nobody was relayed — here
-// the creator is.)
-func (h *handler) lichessOpen(w http.ResponseWriter, r *http.Request) {
-	steamID, ok := h.requireSteam(w, r)
-	if !ok {
-		return
-	}
-	if !h.relay.Enabled() {
-		writeError(w, http.StatusNotImplemented, "lichess play is not configured on this server")
-		return
-	}
-
-	var in openPost
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "malformed body")
-		return
-	}
-	if _, err := uuid.Parse(in.ClientGameID); err != nil {
-		writeError(w, http.StatusBadRequest, "client_game_id must be a UUID")
-		return
-	}
-	if !in.Unlimited && !lichess.ChallengeCompatible(in.LimitSeconds, in.IncrementSec) {
-		writeError(w, http.StatusBadRequest,
-			"lichess's Board API won't play anything faster than blitz")
-		return
-	}
-	switch in.Color {
-	case "", "random", "white", "black":
-	default:
-		writeError(w, http.StatusBadRequest, `color must be white, black or random`)
-		return
-	}
-
-	p, err := h.relay.Join(r.Context(), steamID, PlayRequest{
-		ClientGameID: in.ClientGameID,
-		Open:         true,
-		SoloSteamID:  steamID,
-		LimitSeconds: in.LimitSeconds,
-		IncrementSec: in.IncrementSec,
-		Unlimited:    in.Unlimited,
-		Rated:        in.Rated,
-		Color:        in.Color,
-	})
-	if err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, h.stamped(p, steamID))
-}
-
-// ratingRangeRe matches lichess's "1500-1800" form.
-var ratingRangeRe = regexp.MustCompile(`^[0-9]{3,4}-[0-9]{3,4}$`)
-
-func validRatingRange(s string) bool { return ratingRangeRe.MatchString(s) }
-
-// DELETE /api/v1/lichess/play/{id} — withdraw a seek, or drop a pending pairing.
-//
-// For a seek this is what actually removes it from lichess's lobby (the held
-// connection IS the seek), so it is not optional politeness: a player who walks
-// away must stop being pairable.
-func (h *handler) lichessPlayCancel(w http.ResponseWriter, r *http.Request) {
-	steamID, ok := h.requireSteam(w, r)
-	if !ok {
-		return
-	}
-	p, found := h.relay.Lookup(r.PathValue("id"))
-	if !found {
-		writeError(w, http.StatusNotFound, "no such game")
-		return
-	}
-	if _, seated := p.seatOf(steamID); !seated {
-		writeError(w, http.StatusNotFound, "no such game")
-		return
-	}
-	if err := h.relay.Cancel(p, steamID); err != nil {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, h.stamped(p, steamID))
-}
-
-// stamped returns the play's state with YourColor filled in for this caller.
-//
-// The snapshot is shared by everyone watching, but "which side am I?" isn't —
-// and for a seek it is the ONLY way a client can know, because the opponent is a
-// stranger with no SteamID to match against.
-func (h *handler) stamped(p *play, steamID int64) PlayState {
-	state, _ := p.snapshot()
-	if color, ok := p.seatOf(steamID); ok {
-		state.YourColor = color
-	}
-	// Nothing was held here (these are the immediate-return paths), so hold is now.
-	now := time.Now()
-	state.ageAt(now, now)
-	return state
-}
-
-// GET /api/v1/lichess/play/{id}?since=N — the game-state transport.
-//
-// A long poll: hangs up to pollHold seconds waiting for the state to pass
-// version N, then answers with whatever it has. The client loops. See play.Wait
-// for why this is a poll and not a WebSocket.
-func (h *handler) lichessPlayState(w http.ResponseWriter, r *http.Request) {
-	steamID, ok := h.requireSteam(w, r)
-	if !ok {
-		return
-	}
-	if !h.relay.Enabled() {
-		writeError(w, http.StatusNotImplemented, "lichess play is not configured on this server")
-		return
-	}
-
-	p, found := h.relay.Lookup(r.PathValue("id"))
-	if !found {
-		writeError(w, http.StatusNotFound, "no such game")
-		return
-	}
-	// 404, not 403 — the same rule as the archive: a game you aren't in must be
-	// indistinguishable from one that doesn't exist.
-	if _, seated := p.seatOf(steamID); !seated {
-		writeError(w, http.StatusNotFound, "no such game")
-		return
-	}
-	// Liveness for the abandonment watcher: this seat is still here. A seat that goes
-	// silent on a live game past abandonTTL is resigned on its behalf.
-	p.markPolled(steamID)
-
-	since, _ := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
-	// Before Wait, which hangs up to pollHold: HoldMs is how long we sat here, and
-	// the client reads it back off its own round trip to leave the network leg.
-	reqStart := time.Now()
-	state := p.Wait(r.Context(), since)
-	if color, seated := p.seatOf(steamID); seated {
-		state.YourColor = color
-	}
-	state.ageAt(time.Now(), reqStart)
-	writeJSON(w, http.StatusOK, state)
-}
-
-// POST /api/v1/lichess/play/{id}/{action} — move / resign / draw / abort.
-//
-// gamchess acts with the CALLER's own token, and only for the seat they hold.
-func (h *handler) lichessPlayAct(w http.ResponseWriter, r *http.Request) {
-	steamID, ok := h.requireSteam(w, r)
-	if !ok {
-		return
-	}
-	if !h.relay.Enabled() {
-		writeError(w, http.StatusNotImplemented, "lichess play is not configured on this server")
-		return
-	}
-
-	p, found := h.relay.Lookup(r.PathValue("id"))
-	if !found {
-		writeError(w, http.StatusNotFound, "no such game")
-		return
-	}
-	if _, seated := p.seatOf(steamID); !seated {
-		writeError(w, http.StatusNotFound, "no such game")
-		return
-	}
-
-	var in struct {
-		Uci string `json:"uci"`
-	}
-	// A body is optional (resign has none) — a decode failure is not fatal here.
-	json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&in)
-
-	if err := h.relay.Act(r.Context(), p, steamID, r.PathValue("action"), in.Uci); err != nil {
-		var apiErr *lichess.APIError
-		if errors.As(err, &apiErr) && apiErr.Unauthorized() {
-			// The player revoked our grant on lichess (or it expired) — the link
-			// row is now useless, and they need to re-link.
-			writeError(w, http.StatusUnauthorized, "lichess rejected the token — re-link your account")
-			return
-		}
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	// The confirmed state comes back down the stream, not from here: lichess is
-	// the authority on what actually happened, and the poll will carry it.
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-// POST /api/v1/lichess/audit — sweep our token store against lichess.
-//
-// THIS IS THE ONLY FAST INCIDENT LEVER WE OWN. If the store is ever suspected,
-// this says which of our tokens are still live, in seconds. It cannot revoke
-// them — lichess has no bulk revoke, and DELETE /api/token kills exactly one and
-// must be signed by it. Auditing is the capability; mass revocation is not.
-//
-// Operator-gated: it needs the audit key, not a player session. Any linked
-// player could otherwise learn how many accounts are linked.
-func (h *handler) lichessAudit(w http.ResponseWriter, r *http.Request) {
-	if h.auditKey == "" {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	given := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	// Constant-time: this is a shared secret on an otherwise unauthenticated
-	// route, and a timing oracle would let it be guessed byte by byte. 404 (not
-	// 401) on a miss, so the route isn't discoverable by probing.
-	if subtle.ConstantTimeCompare([]byte(given), []byte(h.auditKey)) != 1 {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	if !h.relay.Enabled() {
-		writeError(w, http.StatusNotImplemented, "lichess is not configured")
-		return
-	}
-
-	links, err := store.AllLichessLinks(r.Context(), h.db)
-	if err != nil {
-		h.log.Error("audit: could not list links", zap.Error(err))
+		h.log.Error("rendezvous link lookup failed", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-
-	type row struct {
-		SteamID   string `json:"steam_id"`
-		LichessID string `json:"lichess_id"`
-		Live      bool   `json:"live"`
-		Scopes    string `json:"scopes,omitempty"`
-		Note      string `json:"note,omitempty"`
-	}
-
-	// Batch at lichess's documented limit of 1000 tokens per call.
-	const batch = 1000
-	out := make([]row, 0, len(links))
-	byToken := map[string]store.LichessLink{}
-	var tokens []string
-
-	flush := func() error {
-		if len(tokens) == 0 {
-			return nil
-		}
-		res, err := lichess.TokenTest(r.Context(), tokens)
-		if err != nil {
-			return err
-		}
-		for _, tok := range tokens {
-			link := byToken[tok]
-			st := res[tok]
-			out = append(out, row{
-				SteamID:   strconv.FormatInt(link.SteamID, 10),
-				LichessID: link.LichessID,
-				Live:      st.Live,
-				Scopes:    st.Scopes,
-			})
-		}
-		tokens = tokens[:0]
-		return nil
-	}
-
-	for _, link := range links {
-		token, err := h.keys.OpenToken(link.TokenEnc, link.TokenNonce, link.KeyVersion)
-		if err != nil {
-			out = append(out, row{
-				SteamID:   strconv.FormatInt(link.SteamID, 10),
-				LichessID: link.LichessID,
-				Note:      "stored token will not decrypt",
-			})
-			continue
-		}
-		byToken[token] = link
-		tokens = append(tokens, token)
-		if len(tokens) == batch {
-			if err := flush(); err != nil {
-				h.log.Error("audit: token test failed", zap.Error(err))
-				writeError(w, http.StatusBadGateway, "lichess token test failed")
-				return
-			}
-		}
-	}
-	if err := flush(); err != nil {
-		h.log.Error("audit: token test failed", zap.Error(err))
-		writeError(w, http.StatusBadGateway, "lichess token test failed")
+	me, linked := links[steamID]
+	if !linked {
+		writeError(w, http.StatusBadRequest, "link your lichess account first")
 		return
 	}
 
-	live := 0
-	for _, rr := range out {
-		if rr.Live {
-			live++
-		}
+	color := "white"
+	if side == 1 {
+		color = "black"
 	}
-	h.log.Info("lichess token audit", zap.Int("links", len(links)), zap.Int("live", live))
-	writeJSON(w, http.StatusOK, map[string]any{
-		"links": len(links),
-		"live":  live,
-		"rows":  out,
+
+	other := h.rendezvous.post(in.ClientGameID, side, rendezvousSeat{
+		steamID:  steamID,
+		username: me.Username,
+		posted:   time.Now(),
+	})
+	if other == nil {
+		writeJSON(w, http.StatusOK, rendezvousJSON{YourColor: color})
+		return
+	}
+
+	// The other seat posted, so we may disclose. Read their identity from the
+	// STORE rather than from what they posted — the rendezvous entry is a
+	// liveness record, not an identity source.
+	link, ok := links[other.steamID]
+	if !ok {
+		writeError(w, http.StatusConflict, "the other seat's lichess account isn't linked")
+		return
+	}
+	writeJSON(w, http.StatusOK, rendezvousJSON{
+		Ready:      true,
+		YourColor:  color,
+		Opponent:   link.Username,
+		OpponentID: link.LichessID,
 	})
 }

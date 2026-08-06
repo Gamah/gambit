@@ -26,7 +26,11 @@ public enum BotLevel { None = 0, Easy = 1, Medium = 2, Hard = 3 }
 /// the cost lands on the one machine that already ticks every table's clock.</para>
 ///
 /// <para>Randomness is a hand-rolled xorshift seeded by the caller, never
-/// <c>System.Random</c> — same reason SHA-256 is hand-rolled: it sidesteps any
+/// <c>System.Random</c>. (This used to cite "same reason SHA-256 is hand-rolled";
+/// <b>there was never any such code</b>, and PKCE now uses the engine's own
+/// whitelisted <c>SHA256</c> — see <c>Pkce.cs</c>. The real reason stands on its
+/// own and is a better one: a seeded xorshift is REPRODUCIBLE, which is what lets
+/// the harness replay a bot game exactly.) It sidesteps any
 /// whitelist doubt and stays deterministic for the harness. The lower levels ADD
 /// noise and the occasional outright blunder on purpose; that is what separates Easy
 /// from Hard, not just search depth.</para>
@@ -379,7 +383,7 @@ public sealed partial class ChessGame
 	}
 
 	/// <summary>A tiny deterministic xorshift RNG. Hand-rolled rather than
-	/// <c>System.Random</c> for the same reason SHA-256 is: no whitelist doubt, and it
+	/// <c>System.Random</c>: no whitelist doubt, reproducible from a seed, and it
 	/// reproduces exactly in the harness from a seed.</summary>
 	struct Rng
 	{
