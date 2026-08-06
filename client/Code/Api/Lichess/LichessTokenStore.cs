@@ -197,7 +197,7 @@ public static class LichessTokenStore
 /// risk reasons: their own descriptions are "Official Lichess mobile app" and
 /// "Take Take Take". Taking one would be claiming first-party status to bypass a
 /// gate lichess put on third-party board clients deliberately. That is the door
-/// blitz seeks and quick pairing are behind, and PLAN No. 12 records the decision
+/// blitz seeks and quick pairing are behind, and PLAN No. 13 records the decision
 /// not to walk through it.</para></summary>
 public static class LichessScopes
 {
