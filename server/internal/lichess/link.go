@@ -71,7 +71,11 @@ var (
 // and lichess_pages.go's consent page enumerate what the grant can do. Adding a
 // scope here without rewriting them ships a lie to the one screen a cautious
 // player reads before consenting.
-const Scopes = "board:play puzzle:read puzzle:write follow:read msg:write"
+//	msg:write — dropped before HTTPFIX shipped. It is SENDING ONLY and
+//	permanently so (there is no msg:read scope at all, and reading an inbox is
+//	web:mobile), so anything built on it is fire-and-forget by nature — and
+//	nothing was. A scope nothing uses is one more line on the consent page.
+const Scopes = "board:play puzzle:read puzzle:write follow:read"
 
 // ClientID identifies Gambit to lichess. A CONSTANT, not config, and not a
 // credential — worth being precise about, because it looks like both.

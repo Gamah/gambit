@@ -209,12 +209,6 @@ public static class LichessScopes
 	public const string PuzzleWrite = "puzzle:write";
 	public const string FollowRead = "follow:read";
 
-	/// <summary>SENDING ONLY, and permanently so: there is no <c>msg:read</c>
-	/// scope at all, and reading an inbox needs <c>web:mobile</c>. Any feature
-	/// built on this is fire-and-forget by nature — Gambit can message an opponent
-	/// and can never see a reply. Design for that or drop the scope.</summary>
-	public const string MsgWrite = "msg:write";
-
 	public const string All = BoardPlay + " " + PuzzleRead + " " + PuzzleWrite + " "
-		+ FollowRead + " " + MsgWrite;
+		+ FollowRead;
 }

@@ -169,14 +169,10 @@ lichess — and land in your real lichess history.</p>
       real lichess puzzle record.</li>
   <li><strong>See which of your lichess friends are online.</strong> Reading only;
       we can't follow or unfollow anyone.</li>
-  <li><strong>Send a lichess message</strong> — so you can say "good game" to
-      someone you just played. <strong>Sending only: we can never read your
-      messages</strong>, including a reply to one we sent. Lichess has no
-      read-my-messages permission for apps like this at all.</li>
 </ul>
-<p><strong>What none of this lets us do:</strong> read your email address, change
-anything about your account, change who you follow, or touch your teams, studies
-or tournaments.</p>
+<p><strong>What none of this lets us do:</strong> read or send your lichess
+messages, read your email address, change anything about your account, change who
+you follow, or touch your teams, studies or tournaments.</p>
 
 <h2>Where the key is kept</h2>
 <p><strong>On this PC.</strong> The access token lichess gives you is written to
@@ -231,9 +227,8 @@ at this moment our server doesn't know. The game does.</p>
 
 <h2>What you just granted</h2>
 <p><span class="scope">{{.Scope}}</span> — play games as you, solve puzzles on your
-record, see which lichess friends are online, and send a lichess message (sending
-only; we can never read one). It cannot read your email, change your account, or
-change who you follow.</p>
+record, and see which lichess friends are online. It cannot read or send your
+messages, read your email, change your account, or change who you follow.</p>
 <p>The key lives in the game's data folder <strong>on the PC you linked from</strong>.
 Deleting the game's data removes it from that PC but does <strong>not</strong>
 revoke it at lichess.</p>
