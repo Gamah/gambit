@@ -723,12 +723,13 @@
 			HashCode.Combine( LichessLinkState.Linked, LichessLinkState.Username,
 				LichessLinkState.Offline, LichessButton.SinceCopied < 2f,
 				LichessButton.SinceSecurityCopied < 2f, _unlinking, _playTab,
-				HashCode.Combine( Gambit.Api.Lichess.LichessLink.InProgress,
-					Gambit.Api.Lichess.LichessLink.Status, Gambit.Api.Lichess.LichessLink.Error,
-					LichessLinkState.ScopesAreStale, LichessLinkState.ServerDisagrees ),
-				// MORE's other buttons each need their own term, or their labels would only
-				// flip when something else in this hash happened to move. Nested again
-				// because HashCode.Combine takes at most eight arguments.
-				HashCode.Combine( GamesButton.SinceCopied < 2f,
-					SkafinityButton.SinceCopied < 2f ) ) );
+				// Eight arguments is the ceiling, so the link-flow terms and MORE's other
+				// buttons share this last slot through one more nesting. MORE's buttons each
+				// need their own term, or their labels would only flip when something else
+				// in this hash happened to move.
+				HashCode.Combine(
+					HashCode.Combine( Gambit.Api.Lichess.LichessLink.InProgress,
+						Gambit.Api.Lichess.LichessLink.Status, Gambit.Api.Lichess.LichessLink.Error,
+						LichessLinkState.ScopesAreStale, LichessLinkState.ServerDisagrees ),
+					GamesButton.SinceCopied < 2f, SkafinityButton.SinceCopied < 2f ) ) );
 }
