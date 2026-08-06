@@ -72,10 +72,25 @@ Console.WriteLine( "Etiquette" );
 	LichessEtiquette.UseClock( () => now );
 	LichessEtiquette.Reset();
 
-	Check( "the User-Agent identifies us",
+	Check( "the identifying string identifies us",
 		LichessEtiquette.UserAgent.Contains( "TerrysGambit" ) &&
 		LichessEtiquette.UserAgent.Contains( "chess.gamah.net" ) &&
 		LichessEtiquette.UserAgent.Contains( "contact:" ) );
+
+	// The engine forbids User-Agent outright — Http.CreateRequest THROWS on it,
+	// which is how linking broke — so the header name we send it under must not
+	// be that one, nor any other name on Http.ForbiddenHeaders' list. Only the
+	// ones a lichess request could plausibly want are worth asserting here.
+	Check( "and travels under a header the engine will let us set",
+		!string.Equals( LichessEtiquette.IdentityHeader, "User-Agent",
+			StringComparison.OrdinalIgnoreCase ) &&
+		!string.Equals( LichessEtiquette.IdentityHeader, "Referer",
+			StringComparison.OrdinalIgnoreCase ) &&
+		!string.Equals( LichessEtiquette.IdentityHeader, "Origin",
+			StringComparison.OrdinalIgnoreCase ) &&
+		!LichessEtiquette.IdentityHeader.StartsWith( "Sec-", StringComparison.OrdinalIgnoreCase ) &&
+		!LichessEtiquette.IdentityHeader.StartsWith( "Proxy-", StringComparison.OrdinalIgnoreCase ),
+		LichessEtiquette.IdentityHeader );
 
 	Check( "ready when nothing has happened", !LichessEtiquette.BackingOff );
 

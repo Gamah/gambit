@@ -35,9 +35,44 @@ public static class LichessEtiquette
 	///
 	/// <para><b>Kept byte-identical to the server's</b> <c>lichess.UserAgent</c>.
 	/// Every Gambit request should look like Gambit whether it came from a wall
-	/// or from a board.</para></summary>
+	/// or from a board.</para>
+	///
+	/// <para><b>But the CLIENT cannot send it as <c>User-Agent</c>, and no amount
+	/// of trying will change that</b> — see <see cref="IdentityHeader"/>. Read
+	/// that before "fixing" the header name back.</para></summary>
 	public const string UserAgent =
 		"TerrysGambit/1.0 (+https://chess.gamah.net; chess in s&box; contact: anthropic@gamah.net)";
+
+	/// <summary>The header <see cref="UserAgent"/> actually travels in, from the
+	/// client.
+	///
+	/// <para><b><c>User-Agent</c> is not settable from a s&amp;box game, twice
+	/// over</b>, verified in the shipped engine 2026-08-06: it is in
+	/// <c>Http.ForbiddenHeaders</c>, so <c>Http.CreateRequest</c> <b>throws</b>
+	/// <c>InvalidOperationException("Not allowed to set header 'User-Agent'")</c>
+	/// before the request leaves — which is what broke linking — and even past
+	/// that, <c>SboxHttpHandler.HandleRequestAsync</c> unconditionally
+	/// <c>Remove</c>s the header and re-adds <c>"facepunch-sbox"</c> on every
+	/// send, redirects included. So there is no bypass to find: every request a
+	/// client makes reaches lichess as <c>facepunch-sbox</c>. (<c>Referer</c> is
+	/// forced the same way, and <c>WebSocket.Connect</c> applies the same list.)
+	/// The rule is the engine's, not a policy of ours to argue with, and
+	/// <c>TryAddWithoutValidation</c> does not dodge it.</para>
+	///
+	/// <para>So the client says who it is in a header it IS allowed to set. This
+	/// is weaker than a real User-Agent — lichess's own etiquette asks for the
+	/// standard header and nothing reads this one — but it is honest and it is
+	/// attributable, and the alternative is Gambit traffic that is
+	/// indistinguishable from every other s&amp;box game. <b>The SERVER still
+	/// sends the real thing</b> (its RoundTripper is unaffected by any of this),
+	/// so Gambit's TV traffic is still properly identified; the same string here
+	/// is what lets someone reading lichess's logs join the two up.</para>
+	///
+	/// <para>If this is ever worth fixing properly it is an upstream change —
+	/// the same shape as our <c>RequestStreamAsync</c> fix — letting a game
+	/// APPEND to the engine's User-Agent rather than replace it. Ask before
+	/// building it: the forced UA is deliberate on Facepunch's part.</para></summary>
+	public const string IdentityHeader = "X-Gambit-Client";
 
 	/// <summary>lichess: <i>"wait a full minute before resuming API usage"</i>. We
 	/// take that literally and apply it to EVERY outbound call, not just the one

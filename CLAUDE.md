@@ -171,7 +171,8 @@ The player-facing copy says this rather than burying it.
 
 #### Scopes: no longer `board:play` alone
 
-**`board:play puzzle:read puzzle:write follow:read msg:write`** (owner, 2026-08-05). The old
+**`board:play puzzle:read puzzle:write follow:read`** (owner, 2026-08-05, `msg:write` dropped
+2026-08-06). The old
 rule — *`board:play` is the only scope we ever request* — is retired, but read WHY before
 widening again. One of its two reasons was that a scope change forces a full re-link for
 everyone (tokens are long-lived, there are no refresh tokens); **HTTPFIX forced that re-link
@@ -183,10 +184,12 @@ It is not licence to widen casually — the next one costs a re-link from every 
   ALTERNATIVES.
 - **`puzzle:read|write`** — puzzles in the lobby, on the player's real puzzle record.
 - **`follow:read`** — which lichess friends are online.
-- **`msg:write`** — **SENDING ONLY, permanently.** There is no `msg:read` scope at all, and
-  reading an inbox is `AuthOrScoped(_.Web.Mobile)` (lila `app/controllers/Msg.scala`, read
-  2026-08-05). Any feature built on this is fire-and-forget by nature: Gambit can message an
-  opponent and can never see a reply. Design for that or drop the scope.
+- **`msg:write` was asked for and then DROPPED before HTTPFIX shipped**, and the reasoning is
+  worth keeping so it isn't re-asked for casually. It is **SENDING ONLY, permanently**: there is
+  no `msg:read` scope at all, and reading an inbox is `AuthOrScoped(_.Web.Mobile)` (lila
+  `app/controllers/Msg.scala`, read 2026-08-05). So anything built on it is fire-and-forget by
+  nature — Gambit could message an opponent and never see a reply — and nothing was built on it.
+  A scope nothing uses is one more line on the consent page a cautious player reads.
 
 **`web:mobile` and `web:polygon` stay out, and for a different reason than risk.** Their own
 descriptions are "Official Lichess mobile app" and "Take Take Take"; taking one means claiming
@@ -671,12 +674,23 @@ count.
 
 **What did NOT change, and must not be "simplified" on the grounds that it's my own budget now:**
 
-- **User-Agent on every request, streams included.** Server-side a RoundTripper guarantees it —
-  no call site can forget. **The client has no RoundTripper**, so the guarantee is replaced by a
-  RULE: every lichess request is built in `LichessClient`, exactly as `GamchessApi.SendAuthed` is
-  the only `Http.RequestAsync` call site for our own backend. A `Http.Request*` to lichess.org
-  anywhere else in `client/` is a bug. The string is byte-identical on both sides, so all Gambit
-  traffic looks like Gambit.
+- **Identify ourselves on every request, streams included** — and the two halves cannot do it
+  the same way, which cost a broken link flow to find out. Server-side a RoundTripper sets a real
+  `User-Agent` and no call site can forget. **The client cannot set `User-Agent` AT ALL**: it is
+  on `Http.ForbiddenHeaders`, so `Http.CreateRequest` **throws**
+  `InvalidOperationException("Not allowed to set header 'User-Agent'")` before the request leaves
+  — and even past that, `SboxHttpHandler.HandleRequestAsync` `Remove`s the header and re-adds
+  `"facepunch-sbox"` on every send, redirects included (read from the shipped engine 2026-08-06;
+  `Referer` and `Origin` are forced/forbidden the same way, and `WebSocket.Connect` applies the
+  same list). **There is no bypass and `TryAddWithoutValidation` is not one** — every client
+  request reaches lichess as `facepunch-sbox`. So the client sends the same string under
+  **`X-Gambit-Client`** (`LichessEtiquette.IdentityHeader`), which is honest and attributable
+  even though nothing reads it, and is what lets someone reading lichess's logs join our TV
+  traffic to our game traffic. Fixing it properly is an upstream change (let a game APPEND to the
+  engine UA) and the forced UA is deliberate, so ask first.
+  **The single-seam rule is unchanged and matters more now**: every lichess request is built in
+  `LichessClient`, exactly as `GamchessApi.SendAuthed` is the only `Http.RequestAsync` call site
+  for our own backend. A `Http.Request*` to lichess.org anywhere else in `client/` is a bug.
 - **A 429 anywhere stops everything for a full minute.** Their words. Per-IP, so a 429 on one
   call means that machine is going too fast.
 - **Self-limit lobby seeks** to lila's own 5/min/IP (`Limiters.setupPost` **[SOURCE]**). **It
@@ -1562,7 +1576,9 @@ Deviating from them is how un-compilable mistakes get in.
   `[Rpc.Host]` request / `[Rpc.Broadcast]` relay pattern (see ChessStation occupancy)
 - **Storage**: `FileSystem.Data.ReadAllText/WriteAllText` for JSON player data
 - **HTTP**: `await Http.RequestStringAsync(url)`; `await Http.RequestAsync(url, "POST", content, headers)` —
-  the trailing headers dictionary is undocumented in `../sbox-docs` but works
+  the trailing headers dictionary is undocumented in `../sbox-docs` but works, **except that a
+  forbidden header name THROWS rather than being dropped** (`User-Agent`, `Referer`, `Origin`,
+  `Host`, `Sec-*`, `Proxy-*`, …). See the etiquette section: it broke the lichess link flow
 - **Hotload**: C# changes hotload in milliseconds. Procedural builders rebuild via
   `[EditorEvent.Hotload]` in `Editor/HotloadRebuild.cs` — keep new builders registered there
 - **Self-attaching UI**: **GameHud, SpectatorScreen, the M12 voice pair (VoiceScreen +

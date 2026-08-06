@@ -184,14 +184,16 @@ unavoidable: `POST /api/token` returns no user id, and a client-*asserted* ident
 which would let anyone squat a real account's row and lock its owner out of ever linking. So
 "gamchess cannot hold your token" is a **promise**, not a structure, and the copy says so.
 
-**Scopes: `board:play puzzle:read puzzle:write follow:read msg:write`.** `board:play` is the one
+**Scopes: `board:play puzzle:read puzzle:write follow:read`.** `board:play` is the one
 that plays games — a single all-or-nothing grant with no read-only subset, which also satisfies
 the challenge endpoints (their spec lists the acceptable scopes as *alternatives*). The rest were
 added when HTTPFIX forced a re-link on everyone anyway, which is the one moment widening costs
 nothing extra: lichess tokens are long-lived (~1 year) with **no refresh tokens**, so a scope
-change normally means every linked player re-links. `msg:write` buys **sending only** — there is
-no `msg:read` scope at all, and reading an inbox needs `web:mobile`, which Gambit will not take
-(see PLAN No. 12). **`web:mobile`, `web:polygon` and `web:mod` stay out.**
+change normally means every linked player re-links. **`msg:write` was asked for and then dropped
+before HTTPFIX shipped**: it is sending-only and permanently so (there is no `msg:read` scope at
+all, and reading an inbox needs `web:mobile`), nothing was built on it, and a scope nothing uses
+is one more line on the consent page. **`web:mobile`, `web:polygon` and `web:mod` stay out** (see
+PLAN No. 12).
 
 **`client_id` is `net.gamah.gambit`, a constant, and not a credential.** lichess has no client
 registration — its own error text is `client_id required (choose any)`. It is not recorded on
@@ -263,8 +265,10 @@ challenge's `clock.limit` is in **seconds**.
 not relax: a 429 anywhere stops that client's every outbound call for a full minute, per
 lichess's own instruction; lobby seeks are self-limited to 5/minute (lila's `setupPost`) because
 mashing the button would otherwise earn a 429 that stops everything, and a household or NAT still
-shares an IP; and every request, streams included, carries a `User-Agent` naming the project and
-a contact — byte-identical to gamchess's, so all Gambit traffic looks like Gambit.
+shares an IP; and every request, streams included, identifies the project and a contact. The
+string is byte-identical on both halves, but the header is not: gamchess sends a real
+`User-Agent`, while a s&box game **cannot** — the engine forbids that header outright and forces
+its own — so the client sends the same string as `X-Gambit-Client`.
 
 **An abandoned game is no longer resigned for you.** gamchess used to notice a client that
 stopped polling and resign that seat within ~30s. Nobody else holds the token now, so a crash

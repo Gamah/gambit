@@ -19,8 +19,8 @@ namespace Gambit.Api.Lichess;
 /// stream open. That engine bug is fixed (our own fix, <c>42cee680</c>), so the
 /// token lives on this machine now and this file is what talks to lichess.</para>
 ///
-/// <para><b>Why a single seam and not a helper.</b> The server guaranteed the
-/// User-Agent with a <c>RoundTripper</c> — a call site physically could not
+/// <para><b>Why a single seam and not a helper.</b> The server guaranteed its
+/// identification with a <c>RoundTripper</c> — a call site physically could not
 /// forget it. s&amp;box has no such mechanism; headers are a per-call dictionary.
 /// So the guarantee is replaced by a rule: <b>every lichess request in the
 /// codebase is built here</b>, exactly as <see cref="GamchessApi.SendAuthed"/> is
@@ -105,8 +105,12 @@ public static class LichessClient
 		var h = new Dictionary<string, string>
 		{
 			["Accept"] = accept,
-			// The obligation this whole seam exists to keep.
-			["User-Agent"] = LichessEtiquette.UserAgent,
+			// The obligation this whole seam exists to keep — under the one header
+			// name the engine will let a game set. "User-Agent" THROWS here (it is
+			// in Http.ForbiddenHeaders) and is overwritten with "facepunch-sbox"
+			// even if it didn't; see LichessEtiquette.IdentityHeader for why there
+			// is no way round that and why we send it anyway.
+			[LichessEtiquette.IdentityHeader] = LichessEtiquette.UserAgent,
 		};
 		if ( !string.IsNullOrEmpty( token ) ) h["Authorization"] = "Bearer " + token;
 		if ( form ) h["Content-Type"] = "application/x-www-form-urlencoded";
