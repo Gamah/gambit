@@ -140,8 +140,19 @@ so subsequent updates reconcile.
 **Two files deliberately differ from the package.** `Code/Skafinity.csproj` is not committed (the
 solution generator rewrites it per machine with absolute Steam paths), and
 `SkafinityMusicPanel.razor.scss` lives at **`client/Code/UI/`**, not in the library — see the
-library-scss rule in `SBOX-NOTES.md`. **An install brings the scss back into the library, where it
-shadows the game copy silently. Re-delete it every time.**
+library-scss rule in `SBOX-NOTES.md`.
+
+> **Every install brings that scss back into the library, and the ritual is MOVE, not delete.**
+> `git mv`/`mv` it over `client/Code/UI/SkafinityMusicPanel.razor.scss`, replacing what is there,
+> then commit both halves of the move. Both paths mount as `UI/SkafinityMusicPanel.razor.scss`, so
+> a copy left in the library shadows the game copy silently — but **deleting it instead leaves the
+> game copy describing the previous version of the board.** That failure looks like a *rendering*
+> bug, not a stale-file bug: the stylesheet loads fine and simply names classes the razor no longer
+> emits, so the panel renders with no layout at all — full-width bleed, stock blue transport
+> buttons, labels scattered across the screen. Indistinguishable at a glance from the issue-#12
+> "open and unstyled" board, and reached from the opposite direction. It has happened; the class
+> names are the tell (`.music`/`.queue`/`.vibe-grid` is the pre-rewrite sheet, `.board`/`.btn`/
+> `.transport`/`.plrow` is the current one).
 
 ---
 
