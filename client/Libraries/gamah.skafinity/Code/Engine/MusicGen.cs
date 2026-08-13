@@ -71,6 +71,16 @@ public sealed partial class MusicGen
 		return g;
 	}
 
+	/// <summary>As <see cref="BeginPlan(string,Config)"/>, with every voice's onsets recorded as it
+	/// plays them (see <see cref="PlanTrace"/>). The trace has to be attached BEFORE the plan runs,
+	/// which is the whole reason this overload exists.</summary>
+	internal static MusicGen BeginPlan( string tag, Config cfg, PlanTrace trace )
+	{
+		var g = new MusicGen( cfg ) { Trace = trace };
+		g.ComposePlan( tag );
+		return g;
+	}
+
 	public int TotalSamples => _bufL?.Length ?? 0;
 	public int SampleRate => _sr;
 
@@ -84,19 +94,16 @@ public sealed partial class MusicGen
 	internal string Explain()
 	{
 		var sb = new System.Text.StringBuilder();
-		// The genre's saturation points ride along, because the TEMPO knob's ends clamp there —
-		// a swept knob that stops moving the tempo is the knob working, not the seed misreading.
-		// The DRAWN tempo, not the first section's. They differ by that section's TempoMul, and the
-		// drawn one is the number every tempo decision reads — the band, the knob's saturation and
-		// whether the guitar may play thirty-seconds.
+		// The genre's own bands ride along, so a tempo can be read against what the genre plays
+		// rather than in isolation. The DRAWN tempo, not the first section's. They differ by that section's TempoMul, and the
+		// drawn one is the number every tempo decision reads.
 		// Swing reads as STRAIGHT rather than "0.00": a song either swings or it does not, and a
 		// number that can be zero invited reading a very small one as "swings a little" — which is
 		// exactly the mistake the SwingChance draw exists to make unrepresentable.
 		sb.AppendLine( $"tempo     {_bpm} bpm{(_fast ? " (uptempo band)" : "")}, "
 			+ $"{(_time.Swing <= 0f ? "straight" : $"swing {_time.Swing:0.00}")}"
 			+ $"{(_time.Swing >= _prof.ShuffleMin && _prof.ShuffleChance > 0 ? " — SHUFFLE" : "")}"
-			+ $" [genre plays {_prof.TempoFloor}–{_prof.TempoCeil}"
-			+ $"{(_bpm <= _prof.TempoFloor || _bpm >= _prof.TempoCeil ? ", KNOB SATURATED" : "")}]" );
+			+ $" [genre plays {_prof.BpmMin}–{_prof.BpmMax}, uptempo {_prof.FastBpmMin}–{_prof.FastBpmMax}]" );
 		sb.AppendLine( $"key       root midi {_rootMidi}, scale [{string.Join( " ", _scale )}]" );
 		sb.AppendLine( $"changes   [{string.Join( " ", _prog )}] at {_chordBars} bar(s)/chord, voicing [{string.Join( " ", _voicing )}]" );
 		sb.AppendLine( _susVoice >= 0
@@ -109,17 +116,22 @@ public sealed partial class MusicGen
 		for ( int c = 0; c < _vlShift.Length; c++ )
 			vl[c] = $"[{string.Join( " ", _vlShift[c] )}]";
 		sb.AppendLine( $"voicelead {string.Join( " ", vl )} (semitones per voice, per chord)" );
-		sb.AppendLine( $"groove    {_groove.Name}, ride pref {_ridePref:0.00}" );
+		sb.AppendLine( $"groove    {_songGroove.Name} (the song's — each section draws its own, below),"
+			+ $" ride pref {_ridePref:0.00}, kit {(_kitLeads ? "leads" : "follows the band")}" );
 		sb.AppendLine( $"parts     comp {_songComp.LengthTicks / _time.BarTicks} bar(s), bass {_songBass.LengthTicks / _time.BarTicks} bar(s)"
 			+ $"{(_songKeys != null ? $", keys {_songKeys.LengthTicks / _time.BarTicks} bar(s)" : "")}"
 			+ $"{(_songLoud != null ? $", loud comp {_songLoud.LengthTicks / _time.BarTicks} bar(s) as {_prof.LoudComp} from energy {_prof.LoudFrom:0.00}" : "")}"
 			+ $"{(_riffBass ? ", bass doubles the riff" : "")}" );
 		sb.AppendLine( $"tunes     chorus {(_chorusTune == null ? "—" : $"{_chorusTune.LengthTicks / _time.BarTicks} bars, {_chorusTune.Count} notes")}"
-			+ $" | verse {(_verseTune == null ? "—" : $"{_verseTune.LengthTicks / _time.BarTicks} bars, {_verseTune.Count} notes")}" );
+			+ $" | verse {(_verseTune == null ? "—" : $"{_verseTune.LengthTicks / _time.BarTicks} bars, {_verseTune.Count} notes")}"
+			// Whether the tune is a PERIOD or a plain call and answer, and how long one phrase of it
+			// is. A listening note about a melody is nearly always about how often it comes round.
+			+ $" | {(_chorusTune != null && _chorusTune.LengthTicks > 2 * _tunePhraseTicks ? "period" : "call+answer")}"
+			+ $", {_tunePhraseTicks / _time.BarTicks}-bar phrases" );
 		sb.AppendLine( $"ending    {_ending}" );
 		sb.AppendLine( $"ska bits  horns {_hasHorns}, organ {_organBubble}, lead voice {_lead}" );
 		sb.AppendLine( "form" );
-		var structure = BuildStructure( _genre );
+		var structure = _form;
 		for ( int i = 0; i < structure.Count; i++ )
 		{
 			var p = structure[i];
@@ -132,7 +144,7 @@ public sealed partial class MusicGen
 				// the first thing to check when a listening note is about a cymbal, because "the
 				// ride is too loud" and "the crash is too loud" are different repairs and a section
 				// on the hats is neither.
-				+ $"  {CymbalHand( i )}" );
+				+ $"  {CymbalHand( i )}  {(i < _sections.Count ? _sections[i].Groove : "?")}" );
 		}
 		return sb.ToString();
 	}
@@ -168,7 +180,7 @@ public sealed partial class MusicGen
 		starts.Sort();
 
 		var bars = new List<int>();
-		var structure = BuildStructure( _genre );
+		var structure = _form;
 		int tick = 0;
 		foreach ( var part in structure )
 			for ( int bar = 0; bar < part.Bars; bar++ )
@@ -189,6 +201,26 @@ public sealed partial class MusicGen
 	/// <summary>The genre this plan was composed for (diagnostics).</summary>
 	internal int Genre => _genre;
 
+	/// <summary>What the song's CHORUSES play — the draws that are the song's rhythm-section
+	/// identity. A sweep counts distinct combinations of these, which is the number that says how
+	/// many different rhythm sections a genre can produce at all: they come out of tables, so it is
+	/// a table-size ceiling rather than anything randomness can reach.</summary>
+	internal (Pattern Comp, Pattern Keys, Pattern Bass, DrumGroove Groove) SongParts =>
+		(_songComp, _songKeys, _songBass, _songGroove);
+
+	/// <summary>Whether this song's band wrote to the kit or the kit to the band. Cohesion is
+	/// achieved by two different mechanisms depending on the answer, so a sweep that averages the
+	/// two describes neither.</summary>
+	internal bool KitLeads => _kitLeads;
+
+	/// <summary>The song's two tunes (diagnostics — see <see cref="Melody"/>).</summary>
+	internal (Pattern Chorus, Pattern Verse) Tunes => (_chorusTune, _verseTune);
+
+	/// <summary>THIS SONG's form. One accessor rather than five call sites re-deriving it: a form
+	/// that varies per song must be the same list everywhere, or the diagnostics' bar rulers
+	/// disagree with the song that was rendered.</summary>
+	internal IReadOnlyList<Part> Form => _form;
+
 	/// <summary>Every audible note as (sample start, frequency), in composition order. The
 	/// per-voice score behind the <c>--score</c> diagnostic: solo a voice, read what it actually
 	/// played and where. Double-tracking emits two takes per note, so a caller that wants NOTES
@@ -206,7 +238,7 @@ public sealed partial class MusicGen
 	{
 		var bars = new List<int>();
 		int tick = 0;
-		foreach ( var part in BuildStructure( _genre ) )
+		foreach ( var part in _form )
 			for ( int bar = 0; bar < part.Bars; bar++ )
 			{
 				bars.Add( tick );
@@ -218,7 +250,7 @@ public sealed partial class MusicGen
 	internal int[] GridSamples()
 	{
 		var grid = new List<int>();
-		var structure = BuildStructure( _genre );
+		var structure = _form;
 		int tick = 0;
 		const int step = 1;
 		foreach ( var part in structure )
@@ -326,8 +358,12 @@ public sealed partial class MusicGen
 		public readonly int Start, End;
 		public readonly bool Ride, CrashRide;
 		public readonly string Type;
-		public SectionInfo( int start, int end, bool ride, bool crashRide, string type )
-		{ Start = start; End = end; Ride = ride; CrashRide = crashRide; Type = type; }
+		/// <summary>The groove this section drew. Per SECTION now, so it is no more derivable from
+		/// the genre or the seed's knobs than the cymbal hand is — and it is the other half of the
+		/// same answer when a listening note is about the drums.</summary>
+		public readonly string Groove;
+		public SectionInfo( int start, int end, bool ride, bool crashRide, string type, string groove )
+		{ Start = start; End = end; Ride = ride; CrashRide = crashRide; Type = type; Groove = groove; }
 	}
 
 	readonly List<SectionInfo> _sections = new();
@@ -413,12 +449,26 @@ public sealed partial class MusicGen
 	// loud comp at all (null otherwise). Drawn once per song rather than per section on purpose:
 	// the loud sections are the choruses, and every chorus must agree — that is the song's hook.
 	Pattern _songLoud;
-	DrumGroove _groove;      // the song's groove — per-genre tables, not a shared switch default
+	DrumGroove _groove;      // the CURRENT SECTION's groove — per-genre tables, not a shared switch default
+	DrumGroove _songGroove;  // and the song's own, which every chorus plays
+	// What the kit actually plays this section: the groove's patterns, worked on by the arranger.
+	// Separate fields rather than a rebuilt DrumGroove so the groove stays the thing that was drawn
+	// and these stay the thing that is played — the same split PlanTrace records.
+	Pattern _kickFig, _snareFig;
+	Pattern _songKick, _songSnare;   // …and the song's own, which every chorus replays
+	bool _kitLeads;          // per song: does the band write to the kit, or the kit to the band
 	bool _riffBass;          // the bass reads the riff's onsets instead of playing its own pattern
 	EndingStyle _ending;     // how this song lands (see EndingStyle) — a per-song draw, not a fixed pad
 	readonly List<Hit> _riffOnsets = new(); // this bar's riff, for the bass to double
+	// Where every part's onsets get written when a sweep is watching (see PlanTrace). Null in
+	// every ordinary render, so this is a null check per bar per voice and nothing else.
+	internal PlanTrace Trace;
 	bool _ride;              // per-SECTION: ride cymbal drives the eighth pulse instead of closed hats (set in RenderSection from _ridePref)
 	float _ridePref;         // per-song lean toward riding the ride vs the hats; each section rolls its own _ride against this
+	/// <summary>The band a song's reverb wet is drawn from. Not 0..1: bone dry and swimming are
+	/// both reachable there and neither is a thing any of these genres is.</summary>
+	internal const float ReverbMin = 0.15f, ReverbMax = 0.75f;
+	float _reverbWet = 0.5f; // this song's room, drawn per song (see ComposePlan)
 	bool _crashBrightLeft;   // per-song: which side the kit's two crashes sit on (bright crash left ⇄ dark crash right, or flipped)
 	bool _crashRide;         // per-SECTION: the cymbal hand is on a crash rather than the ride (GenreProfile.CrashRideFrom)
 	int _footCells;          // per-SECTION: the hi-hat pedal's own figure as an 8-bit eighth mask (measured — see FootOccupancy)
@@ -451,6 +501,10 @@ public sealed partial class MusicGen
 	// ── per-SECTION state ──
 	// Set once per section in RenderSection; every voice reads these instead of asking "am I in
 	// a verse?" (see Part). This is what makes a chorus a chorus rather than a repeat.
+	// THIS SONG's form, drawn once in ComposePlan and read everywhere. Five places used to derive
+	// it from the genre alone; that was harmless while the answer was a constant and is a ruler for
+	// a different song the moment it varies (see DrawForm).
+	List<Part> _form = new();
 	int[] _sectionStart = Array.Empty<int>(); // first tick of each section
 	int _sectionTick;        // the current section's first tick — patterns loop from here
 	int _sectionTicks;       // its length in ticks — a section shorter than the tune sings the

@@ -18,7 +18,38 @@ namespace Skafinity;
 /// <see cref="Open"/> for the open hat / ride bell — which of the two instruments plays is the
 /// section's hats-or-ride roll, not the groove's business.
 ///
-/// WHERE THE HITS FALL IS MEASURED, the same way the accent weights in
+/// WHAT IS MEASURED IS THE TABLE, AND WHAT SHIPS IS ARRANGED FROM IT. Read this before quoting
+/// any number below. The placements were fitted to a played corpus and they are real; the engine
+/// then draws a groove per SECTION and works on its kick and snare against the section's skeleton
+/// (see <see cref="MusicGen.ArrangeKit"/>), so a bar that reaches a listener is a mutation of a
+/// measured pattern rather than the pattern itself. Three things follow and they are separable:
+///
+///   * <b>the tables are measured SEED material.</b> The placements are real, the three
+///     corrections below are still why these tables look the way they do, and the arranger never
+///     invents a gesture the genre does not have.
+///   * <b>what the engine plays is a design call</b>, bounded by the SPINE (see
+///     <see cref="SpineOf"/>) — the struck backbeat and the downbeat kick, which mutation may not
+///     reach, so a genre's identity survives being arranged.
+///   * <b>the accent weights are untouched and remain measured.</b> Velocity was a separate
+///     question off the same pass and nothing about arranging placements reaches it.
+///
+/// RESTORING THE MEASURED OCCUPANCY WAS CONSIDERED AND LOST, and this is recorded because the
+/// paragraph below is what will make a future session rediscover it. The pass read a DISTRIBUTION
+/// — what fraction of bars carry each drum at each position — and then thresholded it to binary
+/// cells, so the variance was measured and thrown away at authoring time; drawing the cells from
+/// those probabilities instead would give bar-to-bar variation that is the corpus's own rather
+/// than anyone's invention, and the near-certain positions would be a genre guard for free.
+/// (<see cref="MusicGen.FootOccupancy"/> is the one place it survives.) It lost on three counts:
+/// it caps variety at whatever the dataset's variance happens to be, it needs a fresh pass over
+/// Groove MIDI that neither this repo nor its tooling contains, and metal is not in the dataset at
+/// all. It is the fallback if free mutation ever turns out to wreck the genres, and it is scoped.
+///
+/// This distinction is <see cref="GenreProfile.FillHits"/>'s, and it is here for the reason that
+/// block gives in its own words: a sentence in this register is READ as a measurement, so leaving
+/// the header saying "where the hits fall is measured" would launder an arrangement into a
+/// citation.
+///
+/// WHERE THE TABLES' HITS FALL IS MEASURED, the same way the accent weights in
 /// <see cref="GenreProfile"/> are, off the same source: Google Magenta's Groove MIDI Dataset
 /// (CC BY 4.0; verified 2026-08-02, https://magenta.tensorflow.org/datasets/groove). Method, since
 /// neither the dataset nor the reader is in this repo: fold every note-on of every 4/4 performance
@@ -70,6 +101,50 @@ sealed class DrumGroove
 
 	/// <summary>Chance of a crash on the section's first downbeat.</summary>
 	public float CrashOnOne { get; init; } = 0.35f;
+
+	/// <summary>
+	/// THE SPINE: which of a groove's onsets ARE the genre, and so may not be dropped or moved.
+	///
+	/// This is the drums' answer to <see cref="CellClass"/>, and it is what stops arranging the kit
+	/// from eroding the three measured tells the corpus pass corrected. It is a LAW rather than a
+	/// per-groove list of ticks, because a list is a table that has to be re-authored every time a
+	/// groove is added and gets it wrong silently when nobody does:
+	///
+	///   * <b>every STRUCK snare</b>. The backbeat is where a genre puts it — 2 and 4 in most of
+	///     them, 3 alone in pop's half-time — and a rule phrased in beat numbers would be wrong for
+	///     whichever genre disagrees. The ghosts around it are the density and stay arrangeable,
+	///     which is the whole of what punk's snare has to say: strike two, ghost the rest.
+	///   * <b>every kick ON A BEAT.</b> A KICK ON THE BEAT IS THE PULSE; A KICK OFF IT IS THE PUSH,
+	///     and the push is the thing a drummer varies. Protecting the bar's first beat alone was
+	///     not enough and the failure was specific rather than general: beat 1 held at 96–97% in
+	///     every genre while every OTHER anchor eroded — country's beat 3, half of boom-chick, went
+	///     missing in 23% of bars, pop's beat 4 in 24%, rock's beat 3 in 15%. The kick count per
+	///     bar barely moved, so nothing about its level or its density said so; what a listener
+	///     gets is a kick that flickers where the pulse should be.
+	///
+	/// AND A GROOVE'S IDENTITY IS PARTLY WHERE IT DOES NOT PLAY, which a rule about onsets cannot
+	/// say on its own. The one drop IS the hole on beat 1, so <see cref="MusicGen.Add"/> may not
+	/// put a kick on a beat either — same law read the other way round, and without it ska's beat-1
+	/// occupancy climbed 41% → 45% as one-drop bars quietly acquired the downbeat they are defined
+	/// by not having. On the beat is the groove; off the beat is the arrangement.
+	///
+	/// The cymbal has no spine here because the cymbal is not arranged at all: it is the pulse, and
+	/// country's hat on the "and" — the largest mismatch the corpus pass found — is preserved by
+	/// construction rather than by a rule that could be got wrong.
+	/// </summary>
+	public static bool[] SpineOf( Pattern p, bool kick, int barTicks )
+	{
+		if ( p == null ) return null;
+		var spine = new bool[p.Count];
+		for ( int i = 0; i < p.Count; i++ )
+			spine[i] = kick ? IsPulse( p.TickAt( i ) ) : p.ValueAt( i ) != Ghost;
+		return spine;
+	}
+
+	/// <summary>A tick the kick's spine lives on — see <see cref="SpineOf"/>. One law, read two
+	/// ways: an onset here may not be dropped or moved, and an onset may not be ADDED here.
+	/// </summary>
+	public static bool IsPulse( int tick ) => tick % Timing.TicksPerBeat == 0;
 
 	const int R = Harmony.Rest;
 	static Pattern E( params int[] c ) => Pattern.Eighths( c );
@@ -196,6 +271,36 @@ sealed class DrumGroove
 			Cymbal = E( 0, 0, 0, 0, 0, 0, 0, 0 ),
 			GhostRate = 0.3f, CrashOnOne = 0.5f,
 		},
+		new()
+		{
+			Name = "two-step",
+			// The same beat punk gets, and deliberately the same: bum-tis-bumbum-tis is played in
+			// both genres and inventing a heavier variant for metal would be answering a question
+			// nobody asked. What separates the two here is everything around it — tempo, kit, the
+			// ghost rate below, and the riff on top.
+			//
+			//         1   e   &   a   2   e   &   a
+			//   kick  K   .   .   .   K   K   .   .
+			//   snare .   .   S   .   .   .   S   .
+			//
+			// A separate OBJECT because no two genres may share a groove (the suite asserts it),
+			// which is a rule about tables accidentally converging rather than about two genres
+			// never playing the same rhythm.
+			//
+			// WEIGHTED BEHIND EACH GENRE'S OWN GROOVE, on purpose. This one was added because a
+			// listener said it was missing, and the check on that kind of change is not whether the
+			// reason was good — it was, the beat really was absent from both tables — but whether
+			// the WEIGHT came from the same evidence. It did not: joint-top billing was a choice,
+			// and it pushed "eighth drive", which this file calls the punk engine, from 60% of punk
+			// songs to 37%. A genre's signature stays its most common groove and a new arrival
+			// earns its share; ~29% is present without displacing anything.
+			Kick = S( 0, R, R, R, 0, 0, R, R,
+			          0, R, R, R, 0, 0, R, R ),
+			Snare = S( R, R, 0, R, R, R, 0, R,
+			           R, R, 0, R, R, R, 0, R ),
+			Cymbal = E( 0, 0, 0, 0, 0, 0, 0, 0 ),
+			GhostRate = 0.25f, CrashOnOne = 0.5f,
+		},
 	};
 
 	// ── Punk ──
@@ -219,12 +324,41 @@ sealed class DrumGroove
 		new()
 		{
 			Name = "d-beat",
+			// Early punk, and it stays as it is. Notations of the d-beat vary in where the kick's
+			// offbeats sit and this is a legitimate one; it is also NOT the sixteenth gallop the
+			// "two-step" entry below carries, which is the beat this table was actually missing.
 			Kick = E( 0, R, R, 0, R, 0, R, R,
 			          0, R, R, 0, R, 0, R, R ),
 			Snare = E( R, R, 0, R, R, R, 0, R,
 			           R, R, 0, R, R, R, 0, Ghost ),
 			Cymbal = E( 0, 0, 0, 0, 0, 0, 0, 0 ),
 			GhostRate = 0.5f, CrashOnOne = 0.5f,
+		},
+		new()
+		{
+			Name = "two-step",
+			// THE PUNK ENGINE'S OTHER GEAR: kick on the beat, snare on the "&", and the kick
+			// doubled at the SIXTEENTH going into every other beat —
+			//
+			//         1   e   &   a   2   e   &   a
+			//   kick  K   .   .   .   K   K   .   .
+			//   snare .   .   S   .   .   .   S   .
+			//
+			// — repeating twice a bar. Drummers call it the two-step or the skank beat; it is not
+			// the d-beat (that keeps its snare on 2 and 4, and has its own entry above).
+			//
+			// IT IS A 2-BEAT CELL AND THAT IS THE WHOLE POINT. The same figure written over four
+			// beats — kick, snare, doubled kick on 3, snare — is the identical pattern counted at
+			// half the rate, and at this genre's tempo that puts the double every 1.4 s instead of
+			// every 0.7 s. It reads as an ordinary rock beat rather than as punk. This engine has
+			// been caught by exactly that ambiguity before (see the ska tempo block in
+			// GenreProfile): a rhythm means nothing until you say which pulse it is counted against.
+			Kick = S( 0, R, R, R, 0, 0, R, R,
+			          0, R, R, R, 0, 0, R, R ),
+			Snare = S( R, R, 0, R, R, R, 0, R,
+			           R, R, 0, R, R, R, 0, R ),
+			Cymbal = E( 0, 0, 0, 0, 0, 0, 0, 0 ),
+			GhostRate = 0.35f, CrashOnOne = 0.4f,
 		},
 	};
 
@@ -327,7 +461,15 @@ public sealed partial class MusicGen
 		// tables were written and nothing ever read it, so no crash landed on any downbeat in the
 		// engine — only at the end of a fill and the end of a song. It is one draw, on the one bar
 		// it can apply to, so it costs the same from every section's stream.
-		if ( barTick == _sectionTick && noise.Chance( _groove.CrashOnOne ) )
+		// NOT ON THE SONG'S OWN FIRST BAR. A crash PUNCTUATES a transition — it is the drummer
+		// marking the seam between one section and the next, and every other place this fires has
+		// one. Bar 1 of the intro has nothing behind it to mark, so what lands there is three
+		// seconds of cymbal wash over the sparsest section in the song, belonging to no groove and
+		// answering nothing that was played. It reads as a cymbal that was already ringing when the
+		// song started, which is exactly what it is.
+		//
+		// The roll still happens, so a genre's draw count does not depend on which bar it is on.
+		if ( barTick == _sectionTick && noise.Chance( _groove.CrashOnOne ) && barTick > 0 )
 			RenderCrashCym( _time.TickToSample( barTick ),
 				_c.CrashVol * KitGain( barTick, 1f, 0.5f ), _crashBright, dark: false );
 
@@ -346,6 +488,7 @@ public sealed partial class MusicGen
 		{
 			var h = play[i];
 			if ( h.Tick >= to ) break;
+			Trace?.Add( TraceVoice.Cymbal, h.Tick );
 			int at = _time.TickToSample( h.Tick );
 			int next = i + 1 < play.Count ? _time.TickToSample( play[i + 1].Tick ) : int.MaxValue;
 			int cell = h.Value;
@@ -402,7 +545,9 @@ public sealed partial class MusicGen
 		// waveform at the identical level sixteen times a bar — which is what machine-gunning is.
 		// Its depth is under the cymbal hand's and near the fill's: the kick is the floor of the
 		// groove and should breathe least.
-		foreach ( var h in _groove.Kick.Slice( barTick, to, _sectionTick, _feel ) )
+		var kicks = _kickFig.Slice( barTick, to, _sectionTick, _feel );
+		Trace?.Add( TraceVoice.Kick, kicks );
+		foreach ( var h in kicks )
 			RenderKick( _time.TickToSample( h.Tick ), noise, KitGain( h.Tick, h.Vel, 0.30f ),
 				_kickTone, 0f );
 
@@ -415,12 +560,13 @@ public sealed partial class MusicGen
 					RenderKick( _time.TickToSample( t ), noise, KitGain( t, 0.85f, 0.30f ),
 						_kickTone, 0f );
 
-		foreach ( var h in _groove.Snare.Slice( barTick, to, _sectionTick, _feel ) )
+		foreach ( var h in _snareFig.Slice( barTick, to, _sectionTick, _feel ) )
 		{
 			bool ghost = h.Value == DrumGroove.Ghost;
 			// The groove's own ghost notes thin out with the section rather than hammering a
 			// verse as hard as a chorus.
 			if ( ghost && !noise.Chance( 0.35f + 0.65f * _energy ) ) continue;
+			Trace?.Add( TraceVoice.Snare, h.Tick, !ghost );
 			RenderSnare( _time.TickToSample( h.Tick ), noise, ghost );
 		}
 
@@ -590,6 +736,29 @@ public sealed partial class MusicGen
 		_ => 1f,
 	};
 
+	/// <summary>
+	/// What the rest of the section is doing where this fill cell lands — the one thing a fill did
+	/// not read, on a grid that was already built for it.
+	///
+	/// A fill is the drummer's bar, but it is not played over silence: the melodic voices play
+	/// THROUGH a fill (only the kit hands over), so a fill that puts a hit on the note the tune is
+	/// landing on is two things arriving on the same beat. And the seam is what the fill is FOR —
+	/// it is crossing one, and leaning on it is the gesture.
+	///
+	/// A multiplier on a probability, so it changes nothing about how much of the stream a fill
+	/// spends: <see cref="FillCells"/>'s rule holds, and the density target still means what it
+	/// said. Deliberately gentle in both directions — a fill that dodged the tune outright would
+	/// be a fill written by the melody.
+	/// </summary>
+	float FillAgainst( int tick )
+	{
+		var sk = _skeleton;
+		if ( sk == null ) return 1f;
+		int c = sk.CellAt( tick );
+		if ( c < 0 ) return 1f;
+		return (sk.TuneOn[c] ? 0.6f : 1f) * (sk.Seam[c] ? 1.25f : 1f);
+	}
+
 	// One fill across a span. The span is whatever FillStart drew, so the same code plays a
 	// one-beat pickup and a two-bar blow-out; the terminal crash lands on the downbeat it is
 	// leading into.
@@ -600,13 +769,32 @@ public sealed partial class MusicGen
 		int beats = Math.Max( 1, span / Timing.TicksPerBeat );
 
 		var shape = rng.PickWeighted( FillShapeTable, _prof.FillShapes );
-		bool triplet = rng.Chance( _c.TripletChance );
+		// A SHUFFLE IS ALREADY A TRIPLET FEEL, so a fill on the straight grid under one is not
+		// straight — it is neither. Ticks are metrical and the shuffle is a warp applied on the way
+		// to samples (see Timing), which interpolates between eighth ANCHORS: the four sixteenths of
+		// a beat come out 2:2:1:1, so the back half of every beat runs at double the speed of the
+		// front. At 115 bpm with swing 0.33 they land at 0/173/347/434 ms. That is right for a comp
+		// landing an occasional sixteenth between two eighths the band shares, and wrong for the one
+		// voice that runs continuous sixteenths — a drummer shuffling fills in triplets.
+		//
+		// The Chance draw still happens either way, so the genre's stream position is untouched: the
+		// feel decides the GRID, never how much of the stream a fill spends (see FillCells).
+		bool triplet = rng.Chance( _c.TripletChance ) || _time.Swing >= GenreProfile.ShuffleGrid;
 		bool tomLed = rng.Chance( 0.45f );
 
 		// A fill longer than a bar still has to keep the time while it happens. A gesture or a
 		// pickup stretched over two bars is not a sparser fill, it is a hole in the arrangement —
 		// the kit has already handed over to it, so there is nothing else playing the beat.
 		if ( beats > 4 && shape != FillShape.Rolling ) shape = FillShape.Ramp;
+
+		// And the same rule from the other end: a PICKUP is a wait and then a flurry, so it needs a
+		// span to wait in. Over one beat there is nothing to wait through and the shape degenerates
+		// into the flurry alone — five or six 32nds in the beat the kit has just handed over to,
+		// with no groove either side of them. That is the most common fill length there is (a beat
+		// is 55% of the draw), so a genre with any weight on Pickup plays it constantly, and it
+		// reads as a drummer arriving late and cramming the whole fill in anyway. A fill that short
+		// accelerates into the bar line instead.
+		if ( beats == 1 && shape == FillShape.Pickup ) shape = FillShape.Ramp;
 
 		float[] grid = triplet ? FillTriplet : FillStraight;
 		// The genre's hits-per-bar turned into per-cell probabilities: the position weights are the
@@ -632,9 +820,9 @@ public sealed partial class MusicGen
 				float r = rng.Next(), d = rng.Next();
 				if ( i >= n ) continue;
 				float p = flurry ? flurryK * FillFlurry[i] : cells[i];
-				if ( r >= Math.Clamp( p * dens, 0f, 1f ) ) continue;
-
 				int cellTick = beatTick + i * Timing.TicksPerBeat / n;
+				if ( r >= Math.Clamp( p * dens * FillAgainst( cellTick ), 0f, 1f ) ) continue;
+
 				// A tuplet divides its own span evenly; a straight cell is a grid position and
 				// shuffles with everything else the band lands on (see Timing).
 				int t = triplet
