@@ -766,10 +766,12 @@ Status: gamchess client + server built. **HTTPFIX moved the lichess token to the
 the server's lichess surface is a link flow, a disclosure page and a directory; the C# lichess
 client is new and large. The **Go half compiles and its tests pass** (Go 1.22 from
 `~/.local/share/toolchains/`; `go test ./... -race`), and the **Sandbox-free half of the C#
-lichess client passes its harness** (`scripts/lichess_harness`, `dotnet run`). The **engine half
-has never been compiled** — this host has no s&box toolchain — so expect a fixup pass on first
-open in the editor, and this branch ports ~900 lines of Go into it. Nothing is deployed (no
-Docker here).
+lichess client passes its harness** (`scripts/lichess_harness`, `dotnet run`). **HTTPFIX merged
+2026-08-06 (PR #31) having been opened in the editor**: it compiles, and a real lichess game was
+linked and played end to end through the shareable-link flow — so the streaming premise the whole
+branch rests on is proven in the room, not just argued. **The PAIRED flow (two seats at one
+table) has still never been run**, along with seek and challenge-by-name; PLAN carries the row.
+Nothing is deployed (no Docker here).
 
 ---
 

@@ -193,7 +193,7 @@ change normally means every linked player re-links. **`msg:write` was asked for 
 before HTTPFIX shipped**: it is sending-only and permanently so (there is no `msg:read` scope at
 all, and reading an inbox needs `web:mobile`), nothing was built on it, and a scope nothing uses
 is one more line on the consent page. **`web:mobile`, `web:polygon` and `web:mod` stay out** (see
-PLAN No. 12).
+PLAN No. 13).
 
 **`client_id` is `net.gamah.gambit`, a constant, and not a credential.** lichess has no client
 registration — its own error text is `client_id required (choose any)`. It is not recorded on

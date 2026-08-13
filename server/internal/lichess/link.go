@@ -63,7 +63,7 @@ var (
 //	web:mobile / web:polygon — their own descriptions are "Official Lichess
 //	mobile app" and "Take Take Take". Taking one is claiming first-party status
 //	to bypass a gate lichess put on third-party board clients deliberately. See
-//	PLAN No. 12; do not "fix" the blitz seek this way.
+//	PLAN No. 13; do not "fix" the blitz seek this way.
 //
 //	web:mod — moderator tooling, not ours to ask for.
 //
