@@ -134,20 +134,22 @@ the new half naming members the old half doesn't have yet. It has happened **twi
 With nothing on disk there is nothing for the download loop to skip, so the manifest lands whole.
 That is a reliable fix and does not depend on knowing the cause — which is just as well:
 
-> **WHY it appends is OPEN, and the obvious answer is wrong.** `LibrarySystem.Install`
-> (`sbox-public`, `engine/Sandbox.Tools/Editor/LibrarySystem/`, read 2026-08-13) gates its prune
-> pass on `gamah.skafinity/.version` existing, and the download loop `continue`s past any file
-> already on disk — so "no `.version`, therefore append-only" is the natural reading, and it is
-> what this repo and rotaliate-client both wrote down after the FIRST incident. **It does not
-> explain the second one: `.version` was present and tracked** (`6b41555`), and with the prune
-> running a stale file is deleted whether its manifest path matches (CRC differs) or doesn't
-> (`!Any(...)`), then re-downloaded. So either something else gates the pass, or the `.version` the
-> installer consults is not the one in the repo.
+> **WHY the SECOND one appended is still unexplained, and the obvious answer has been ruled out.**
+> `LibrarySystem.Install` (`sbox-public`, `engine/Sandbox.Tools/Editor/LibrarySystem/`, read
+> 2026-08-13) gates its prune pass on `gamah.skafinity/.version` existing, and the download loop
+> `continue`s past any file already on disk — so "no `.version`, therefore append-only" is the
+> natural reading, and it explains the FIRST incident. **It does not explain the second: `.version`
+> was present and tracked** (`6b41555`). Nor is the mechanism itself suspect —
+> `../rotaliate-client` ran the same update from the same one-revision-behind state with its
+> `.version` in place and **reconciled cleanly** (23 files replaced, 5 added, `1.0.338456` →
+> `1.0.341414`), so the prune does what the code says. Whatever went wrong was local to this
+> machine or this checkout: something else gated the pass, or the `.version` the installer consults
+> was not the one in the repo.
 >
-> **Do not add a second `.version`, and do not repeat the gated-on-`.version` claim as the cause.**
-> `../rotaliate-client`'s `skafinity-update-test` branch is the control — same library, one
-> revision behind, `.version` present — and its next update settles it. If it appends there too,
-> the mechanism is wrong in both repos and wants rewriting rather than restating.
+> **So: do not add a second `.version` if it happens again, and do not blame the mechanism.**
+> Delete the folder, commit, install — the recovery above works without a diagnosis. If you want
+> one, the thing to establish first is which `.version` path the installer actually reads, since
+> that is the only untested link left.
 
 **ONE file deliberately differs from the package**: `Code/Skafinity.csproj` is not committed (the
 solution generator rewrites it per machine with absolute Steam paths, and `.gitignore` already
