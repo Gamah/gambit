@@ -137,22 +137,15 @@ the old half doesn't have yet.
 disk there is nothing for the loop to skip, so the manifest downloads whole. `.version` is tracked
 so subsequent updates reconcile.
 
-**Two files deliberately differ from the package.** `Code/Skafinity.csproj` is not committed (the
-solution generator rewrites it per machine with absolute Steam paths), and
-`SkafinityMusicPanel.razor.scss` lives at **`client/Code/UI/`**, not in the library — see the
-library-scss rule in `SBOX-NOTES.md`.
+**ONE file deliberately differs from the package**: `Code/Skafinity.csproj` is not committed (the
+solution generator rewrites it per machine with absolute Steam paths, and `.gitignore` already
+excludes `Code/*.csproj`). **Everything else is the package as installed — commit it verbatim.**
 
-> **Every install brings that scss back into the library, and the ritual is MOVE, not delete.**
-> `git mv`/`mv` it over `client/Code/UI/SkafinityMusicPanel.razor.scss`, replacing what is there,
-> then commit both halves of the move. Both paths mount as `UI/SkafinityMusicPanel.razor.scss`, so
-> a copy left in the library shadows the game copy silently — but **deleting it instead leaves the
-> game copy describing the previous version of the board.** That failure looks like a *rendering*
-> bug, not a stale-file bug: the stylesheet loads fine and simply names classes the razor no longer
-> emits, so the panel renders with no layout at all — full-width bleed, stock blue transport
-> buttons, labels scattered across the screen. Indistinguishable at a glance from the issue-#12
-> "open and unstyled" board, and reached from the opposite direction. It has happened; the class
-> names are the tell (`.music`/`.queue`/`.vibe-grid` is the pre-rewrite sheet, `.board`/`.btn`/
-> `.transport`/`.plrow` is the current one).
+> **`SkafinityMusicPanel.razor.scss` used to be moved out to `client/Code/UI/`. It isn't any more
+> (2026-08-13) — leave it in the library.** That patch created two files at one resolved path with
+> nothing keeping them equal, so every update left the game copy describing the *previous* board
+> and the panel drew with no layout at all. **The reasoning, and the editor-hosted-join cost the
+> revert accepts, are in `SBOX-NOTES.md` — read that before reinstating it.**
 
 ---
 

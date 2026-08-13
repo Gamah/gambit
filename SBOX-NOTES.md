@@ -65,13 +65,34 @@ an editor-hosted lobby mounts no package: it gets code via the compiled CodeArch
 *panel class* always arrives) and loose files only from the host's networked-file table, which is
 built by walking **the game package's `Code/` + `Assets/` alone** (plus `.sbproj` `Resources`
 globs, which also only filter the game filesystem). Library folders are never walked, so a
-stylesheet inside one styles the host and 404s on every joiner. Hence the vendor patch:
-`SkafinityMusicPanel.razor.scss` lives at `client/Code/UI/` (the panel resolves it by mounted path,
-`UI/SkafinityMusicPanel.razor.scss`, which both locations map to — keep exactly ONE copy).
+stylesheet inside one styles the host and 404s on every joiner.
 
-> **The library update ritual must re-delete it.** Syncing the vendored library from upstream (or
-> an editor install/update from sbox.game) brings the scss back beside the razor, where it shadows
-> the game copy at the same mounted path — silently, since both parse.
+**Gambit used to patch around this** by keeping `SkafinityMusicPanel.razor.scss` at
+`client/Code/UI/` instead of in the library. **That patch is reverted (2026-08-13) and must not be
+reinstated without reading what it cost.** The library owns its own stylesheet again, exactly as
+skafinity's own project and terryball have it.
+
+> **Why: the patch traded a rare failure for a silent, recurring one.** It created two files at one
+> resolved path, and there is no mechanism keeping them equal — so every library update left the
+> game copy describing the *previous* version of the board. That does not present as a stale file.
+> The sheet loads, parses and applies; it simply names classes the razor no longer emits, so the
+> panel renders with **no layout at all** — full-width bleed, stock-blue transport buttons, labels
+> scattered across the screen. Indistinguishable at a glance from the issue-#12 unstyled board, and
+> reached from the opposite direction. It shipped that way once.
+>
+> **The accepted cost, stated plainly:** a joiner of an **editor-hosted** gambit lobby gets the
+> music board unstyled, because the host's networked-file table still doesn't walk library folders.
+> That is a *dev-testing* condition — including "Join via new instance" on one machine — so expect
+> it there and don't diagnose it as a regression. **A published package is unaffected**: its
+> manifest sweeps every library's `Code/` path, scss included.
+
+**How a panel resolves its sheet, since the old note asserted this rather than reading it**
+(`PanelComponent.LoadStyleSheet` → `StyleSheet.FromFile` → `UpdateFromFile`, read 2026-08-13): the
+path is `ClassFileLocationAttribute.Path + ".scss"` — the razor's **compile-time source path** —
+read from `ctx.FileMount`. The panel never searches; it asks for one exact path. Which mount wins
+when two of them expose that same path was **never established**, and the duplicate is deleted
+rather than ordered, so nothing depends on the answer any more. **Don't create a second copy of a
+panel's stylesheet on the strength of a guess about that ordering.**
 
 The host mounts library content into `FileSystem.Mounted` ONLY in the editor (`GameInstanceDll.cs`
 gates it on `Application.IsEditor`), which is why the host always styled while joiners never could.
