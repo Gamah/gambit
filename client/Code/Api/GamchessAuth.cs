@@ -48,7 +48,7 @@ public static class GamchessAuth
 	/// <para>Read from <c>Connection.Local</c>, the same source the rest of the
 	/// codebase uses (LobbyNetworkManager, ChessStation). Null-guarded because it
 	/// isn't populated before the connection settles — see the deferred host spawn
-	/// in CLAUDE.md.</para></summary>
+	/// in GAMCHESS.md.</para></summary>
 	public static ulong LocalSteamId => Connection.Local?.SteamId ?? 0UL;
 
 	/// <summary>

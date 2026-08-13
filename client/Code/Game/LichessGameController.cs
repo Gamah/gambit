@@ -599,7 +599,7 @@ public sealed class LichessGameController : Component, IBoardGame
 		// laziness: for a real-time hook lila discards a default range and centres a
 		// Gaussian band on the seeker's REAL rating, which it knows and we don't. So
 		// empty is the strongest value available, and anything we computed would be
-		// worse-informed. See CLAUDE.md before ever sending one.
+		// worse-informed. See LICHESS.md before ever sending one.
 		_ = ratingRange;
 
 		var seek = LichessBoard.Seek( Local.Tc, rated, color, out string why );

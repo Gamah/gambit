@@ -184,7 +184,7 @@ public sealed class TableSounds : Component
 	/// the whole of your think — the second never advances, so neither does this. It is
 	/// the same staleness the HUD's red clock already has at a lichess table, and it is
 	/// NOT fixable by counting down locally here: that is what the TV wall does, and
-	/// CLAUDE.md's TV-clock section is the record of it reading HIGH by the network
+	/// LICHESS.md's TV-clock section is the record of it reading HIGH by the network
 	/// latency for two milestones while three places claimed it read low. A local
 	/// countdown to decide when to make an urgent noise would be the same mistake with
 	/// worse consequences — beeping at a player who has more time than we think.</para>

@@ -81,7 +81,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	//
 	// EVERY knob in this block is a code default and can only be retuned by editing and
 	// hotloading — ChessRing is NOT in lobby.scene (LobbyRoom self-provisions it), exactly
-	// as CLAUDE.md warns for SpectatorWall. Not a bug; a real ergonomic cost. gambit_terry
+	// as SBOX-NOTES.md warns for SpectatorWall. Not a bug; a real ergonomic cost. gambit_terry
 	// prints the whole chain so the loop is at least legible.
 
 	/// <summary>
@@ -2060,7 +2060,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// <summary>Build the plate + its one-string panel on a caller-owned GameObject. The caller
 	/// owns the LIFETIME on purpose: this thing must be strictly client-local, and a station is
 	/// NetworkSpawned — hanging it under one would put its transform and its enabled state on the
-	/// host's snapshot, which is the trap CLAUDE.md records for the music board. See
+	/// host's snapshot, which is the trap SBOX-NOTES.md records for the music board. See
 	/// <see cref="SeatSettingsPlate"/>, which parents it to nothing and drives it in world space.</summary>
 	public Gambit.UI.SeatSettingsPanel BuildSeatSettingsPlate( GameObject plate )
 	{

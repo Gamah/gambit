@@ -133,7 +133,7 @@ public sealed class LobbyPlayer : Component
 		// plate (issue #28) — every other WorldPanel here is `pointer-events: none` by the
 		// one-string root rule, so nothing else changes behaviour by this existing.
 		//
-		// It is the engine's own mechanism and CLAUDE.md's stated thing-to-reach-for; the
+		// It is the engine's own mechanism and SBOX-NOTES.md's stated thing-to-reach-for; the
 		// alternative is a hand-rolled tilted-plane hit test, which P99 wrote twice and deleted
 		// twice. Local player only — it hangs on our camera, and proxies have none.
 		if ( _cameraObject.IsValid() && _cameraObject.Components.Get<WorldInput>() == null )
@@ -184,7 +184,7 @@ public sealed class LobbyPlayer : Component
 	/// is the keyboard driver (G toggles voice, B the mute roster); VoicePanel is its chip/roster HUD.
 	/// Both are strictly client-local (the mute/enabled state lives in per-user cookies), so parenting
 	/// them off the ScreenPanel — not off a networked object — is what keeps them from riding anyone's
-	/// snapshot (see the HUD-parenting rule in CLAUDE.md).</summary>
+	/// snapshot (see the HUD-parenting rule in SBOX-NOTES.md).</summary>
 	void EnsureVoiceScreen()
 	{
 		var screen = SceneUiScreen();
@@ -203,7 +203,7 @@ public sealed class LobbyPlayer : Component
 	/// same self-heal as EnsureGameHud, so no scene rewire is needed. It draws its own seated
 	/// opener and nothing else until it is opened, and it is strictly client-local (every row is
 	/// a PlayerData value), which is why it must be built here rather than authored in
-	/// lobby.scene — see the NetworkMode fork in CLAUDE.md.</summary>
+	/// lobby.scene — see the NetworkMode fork in SBOX-NOTES.md.</summary>
 	void EnsureBoardSettings()
 	{
 		var screen = SceneUiScreen();
@@ -514,7 +514,7 @@ public sealed class LobbyPlayer : Component
 	///
 	/// <para><b>This exists because of the snapshot trap, and it will bite without it.</b>
 	/// <c>GameObject.Serialize</c> serialises Tags, and <c>ModelRenderer.BodyGroups</c> is a
-	/// plain serialised [Property]. Per CLAUDE.md's issue-#12 rule, a joining client
+	/// plain serialised [Property]. Per SBOX-NOTES.md's issue-#12 rule, a joining client
 	/// REBUILDS every <c>NetworkMode.Snapshot</c> object from the host's LIVE state — and
 	/// the PlayerTemplate's Body child is NetworkMode 2. So if the HOST is sitting at a
 	/// table with its head bodygroup off and a "viewer" tag on, a joiner rebuilds the host's

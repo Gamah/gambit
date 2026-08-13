@@ -23,13 +23,13 @@ namespace Gambit.World;
 /// plate, so there is never a second one to place.</item>
 /// <item>Client-local and parented to NOTHING. A <see cref="ChessStation"/> is NetworkSpawned, so
 /// a child of one rides the host's snapshot — its transform and its enabled state included. That
-/// is exactly how the music board came to render open and unstyled on joiners (CLAUDE.md, issue
+/// is exactly how the music board came to render open and unstyled on joiners (SBOX-NOTES.md, issue
 /// #12). Driving it in world space off the station's transform costs two lines and cannot leak.</item>
 /// </list></para>
 ///
 /// <para><b>The click needs <see cref="WorldInput"/></b> — the engine component
 /// <see cref="LobbyPlayer"/> hangs on the camera, which feeds a ray into the UI system so a
-/// WorldPanel with <c>pointer-events: auto</c> becomes clickable. It is the mechanism CLAUDE.md
+/// WorldPanel with <c>pointer-events: auto</c> becomes clickable. It is the mechanism SBOX-NOTES.md
 /// names as the thing to reach for instead of a third hand-rolled plane hit test. Nothing on the
 /// dev host can prove it works; a plane test could not be proven either, and only one of the two
 /// is the engine's own.</para>

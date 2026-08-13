@@ -389,7 +389,7 @@ public static class ChessSetBuilder
 	// frame is built as straight segments with a sphere at each vertex to hide the mitre,
 	// and every segment is a PAIR OF ENDPOINTS in the caller's local space. That is the
 	// whole reason to prefer it over a swept mesh on this host: an endpoint is arithmetic,
-	// and CLAUDE.md's rule is that nothing here can render, so check where the EDGES land.
+	// and SBOX-NOTES.md's rule is that nothing here can render, so check where the EDGES land.
 
 	/// <summary>One unit cylinder — radius 1, height 1, spanning z 0..1 — shared by every
 	/// tube on every chair. A rectangle profile revolved IS a cylinder, so this is the

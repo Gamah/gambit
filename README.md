@@ -18,7 +18,9 @@ arranged in a ring and:
 - **Watch** — a live game from the tables mirrors onto the big wall board.
 
 Forked from rotaliate-client; the lobby/station scaffolding is inherited. See
-**[CLAUDE.md](CLAUDE.md)** for how it's built. **[PLAN.md](PLAN.md)** is what's left.
+**[CLAUDE.md](CLAUDE.md)** for how it's built — it indexes the subject docs
+([LICHESS.md](LICHESS.md), [GAMCHESS.md](GAMCHESS.md), [SBOX-NOTES.md](SBOX-NOTES.md),
+[TERRY-HALFRISE.md](TERRY-HALFRISE.md)). **[PLAN.md](PLAN.md)** is what's left.
 
 ## Stack
 

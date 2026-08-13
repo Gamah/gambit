@@ -9,7 +9,7 @@ namespace Gambit.World;
 /// Click-to-copy for the lichess link URL, and for lichess's own Security page.
 ///
 /// <para>Copy, not open: there is no documented API to open a URL or the Steam
-/// overlay from in-game (CLAUDE.md), so every link Gambit offers is
+/// overlay from in-game (SBOX-NOTES.md), so every link Gambit offers is
 /// click-to-copy. Same shape as <see cref="DiscordButton"/>, which proved the
 /// pattern.</para>
 ///

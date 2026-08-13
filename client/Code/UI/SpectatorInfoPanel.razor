@@ -42,7 +42,7 @@
 		@if ( HasGame() )
 		{
 			@* One div per line — a div's auto height doesn't grow for wrapped text, and
-			   inline spans inside a text div become separate flex items (CLAUDE.md). *@
+			   inline spans inside a text div become separate flex items (SBOX-NOTES.md). *@
 			<div class="players" style="color:@WallTheme.Text;">@PlayerLine( white: true )</div>
 			<div class="vs" style="color:@WallTheme.TextFaint;">vs</div>
 			<div class="players" style="color:@WallTheme.Text;">@PlayerLine( white: false )</div>
@@ -183,7 +183,7 @@
 		: "Sit at a table to start a game";
 
 	/// <summary>Where the game is up to. One line, built as a single string — inline spans
-	/// would become separate flex items (CLAUDE.md).
+	/// would become separate flex items (SBOX-NOTES.md).
 	///
 	/// <para>A table game has a real time control ("Blitz 3+0") because we set it. A TV
 	/// game's is the CHANNEL, which the line above already says — so repeating it here

@@ -24,7 +24,7 @@
 
 	Display-only: no pointer input (like the board itself), so it never eats a board click.
 	It renders only the TAIL of a long game (overflow hidden, no scroll — a scroll panel
-	drag-pans and fights input, CLAUDE.md), which also keeps it bounded on screen.
+	drag-pans and fights input, SBOX-NOTES.md), which also keeps it bounded on screen.
 *@
 
 <root>
@@ -36,7 +36,7 @@
 			<div class="moves">
 				@* One whole "12. Nf3 Nc6" string per div — never inline spans in a flex
 				   row (they split into items and the source whitespace renders literally,
-				   CLAUDE.md UI Gotchas). *@
+				   SBOX-NOTES.md UI gotchas). *@
 				@foreach ( var line in MoveRows( src ) )
 				{
 					<div class="move-row">@line</div>
