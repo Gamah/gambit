@@ -1,7 +1,8 @@
 # PLAN.md — Terry's Gambit: what's left
 
-How the game is built and the s&box lore live in **`CLAUDE.md`**. The gamchess API
-contract lives in **`README.md`**. This file is only ever upcoming work.
+How the game is built lives in **`CLAUDE.md`**, which indexes the four subject docs:
+**`LICHESS.md`**, **`GAMCHESS.md`**, **`SBOX-NOTES.md`** and **`TERRY-HALFRISE.md`**. The
+gamchess API contract lives in **`README.md`**. This file is only ever upcoming work.
 
 **This is a list of things that need doing, ranked 1–100, highest first. Nothing else.**
 

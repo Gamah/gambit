@@ -16,7 +16,7 @@ namespace Gambit.World;
 /// positioned 100% child) and it is inherently one-string-per-panel; it cannot be composed.
 /// So the composition moved into 3D, where it is arithmetic: two mesh plates each carrying a
 /// one-string <see cref="TableClockTextPanel"/>, and a mesh bar between them. PLAN.md decided
-/// this originally ("the board is real meshes and the clock should be too") and CLAUDE.md
+/// this originally ("the board is real meshes and the clock should be too") and SBOX-NOTES.md
 /// says it as a rule — reach for meshes over panel art.</para>
 ///
 /// <para><b>Everything reads the IBoardGame seam, never LocalGameController.</b> During a

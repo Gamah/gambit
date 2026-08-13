@@ -18,7 +18,7 @@
 
 	Clickability is the one thing here that is NOT screen-space precedent: it needs
 	`Sandbox.WorldInput` on the camera (LobbyPlayer adds it) to feed a ray into the UI system.
-	That is the engine's own mechanism and CLAUDE.md's stated thing-to-reach-for — the
+	That is the engine's own mechanism and SBOX-NOTES.md's stated thing-to-reach-for — the
 	alternative, a hand-rolled tilted-plane hit test, was built twice for P99 and deleted twice.
 	Nothing on the dev host can prove either, but only one of them is the engine's.
 
@@ -40,7 +40,7 @@
 
 	/*
 		nowrap AND flex-shrink: 0 — one rule, two halves, and the most expensive line in
-		CLAUDE.md. A shrunk text div does not ellipsize, it WRAPS, and a wrapped line renders
+		SBOX-NOTES.md. A shrunk text div does not ellipsize, it WRAPS, and a wrapped line renders
 		as a sliver of its own middle. Belt-and-braces on a div with no siblings, kept because
 		they cost nothing and are exactly what was missing the last five times.
 	*/

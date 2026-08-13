@@ -293,7 +293,7 @@
 				   LichessTable.CanMirror/CanSeek; this is copy, not the rule. *@
 				<div class="body" style="color:@WallTheme.TextDim;">Naming your opponent — the person opposite you, or a lichess player by username — works from Blitz 3+0 up, Unlimited included. A random stranger from lichess's lobby is Rapid 10+0 or Classical 30+0 only: lichess won't put faster games in its lobby, an Unlimited game has no clock to match on, and Bullet can't reach lichess at all. Those are lichess's rules, not ours.</div>
 
-				@* There is no rating control here, and that is deliberate — see CLAUDE.md's
+				@* There is no rating control here, and that is deliberate — see LICHESS.md's
 				   ratingRange trap. lichess matches a seek to a band around your real
 				   rating whether we ask or not, and it knows your rating where we don't.
 				   This line exists because we deleted a "Near my rating" chip that sent a
@@ -709,7 +709,7 @@
 
 		// Fit the engaged card to the viewport height so the tall Welcome page never clips
 		// off-screen on a short/wide viewport. Scale, not scroll: the card has click-to-copy
-		// controls and a scroll panel fights the clicks (CLAUDE.md), and the point is to see
+		// controls and a scroll panel fights the clicks (SBOX-NOTES.md), and the point is to see
 		// all of it at once. root's first child is .screen-fit, whose first child is .info-fit.
 		var card = Panel?.Children.FirstOrDefault()?.Children.FirstOrDefault();
 		if ( card is not null )

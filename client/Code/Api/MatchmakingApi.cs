@@ -76,7 +76,7 @@ public static class MatchmakingApi
 	public static Task<GamchessApi.Result> RelayAction( string id, string action ) =>
 		GamchessApi.SendAuthed( $"/api/v1/relaygame/{id}/{action}", "POST", null );
 
-	// ── Response DTOs (snake_case on the wire, mirrored by hand — CLAUDE.md) ──
+	// ── Response DTOs (snake_case on the wire, mirrored by hand — GAMCHESS.md) ──
 
 	public sealed class OpenResponse
 	{

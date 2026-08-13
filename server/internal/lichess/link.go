@@ -23,7 +23,7 @@
 //
 // # Facts re-derived 2026-08-05
 //
-// Per CLAUDE.md's re-derive rule, the constants here came from the live
+// Per LICHESS.md's re-derive rule, the constants here came from the live
 // lichess-org/api OpenAPI spec and lichess-org/lila master on that date, not
 // from this repo's history. Re-read the spec before trusting any of it.
 package lichess

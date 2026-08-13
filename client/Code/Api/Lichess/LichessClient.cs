@@ -42,7 +42,7 @@ public static class LichessClient
 {
 	/// <summary>lichess's API root. Also in <c>gambit.sbproj</c>'s HttpAllowList —
 	/// which gates nothing (the engine has no per-package host allowlist; see
-	/// CLAUDE.md, and do not diagnose against it) but declares the hosts we mean
+	/// GAMCHESS.md, and do not diagnose against it) but declares the hosts we mean
 	/// to talk to, and this is the second one.</summary>
 	public const string Base = "https://lichess.org";
 

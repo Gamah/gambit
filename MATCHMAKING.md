@@ -106,7 +106,7 @@ Endpoints (all `requireSteam`):
 
 **Staleness:** `open` rows are presence; presence lies when a client vanishes. A sweeper closes
 `open`/`matched` rows past a short TTL unless re-touched; the client heartbeats its open row.
-Model on the TV ref-count/linger discipline (CLAUDE.md): the guaranteed path is a client that
+Model on the TV ref-count/linger discipline (LICHESS.md): the guaranteed path is a client that
 stops heartbeating, the TTL is the backstop. This is our own service — no lichess IP-share
 concern — but don't busy-poll.
 
@@ -157,7 +157,7 @@ the PGN; idempotent on the game id). It IS a real game between two real accounts
 - **Auto-seat overrides walk-up colour** (A): that is the feature — the opener can't self-assign
   White by sitting first; the host seats by gamchess's assignment regardless of where they walked.
 - **Mode B clock never reads HIGH** — inherit the LichessTvSource / LichessGameController
-  countdown discipline verbatim (CLAUDE.md's TV clock section). gamchess is the sole authority;
+  countdown discipline verbatim (LICHESS.md's TV clock section). gamchess is the sole authority;
   local drift can't outlive one move. **Mind which version you copy**: `LichessGameController`
   is on a STREAM now, so it carries no staleness correction at all beyond a fixed lead — a poll
   is a different case and needs the `age`/`hold` reasoning that M18 kept for TV's connect path.
