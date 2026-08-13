@@ -124,18 +124,30 @@ them.
 package in the editor**, not by hand-copying from `../skafinity` — that sibling repo may be ahead
 of, or diverged from, whatever version is actually published.
 
-**The install is delete-and-replace only when `gamah.skafinity/.version` exists.**
-`LibrarySystem.Install` (read from `sbox-public`, `engine/Sandbox.Tools/Editor/LibrarySystem/`,
-2026-08-13) gates its entire prune pass on that one file: with it, every existing file whose CRC
-differs from the manifest — or that is no longer in the manifest — is deleted and re-downloaded.
-Without it the prune is skipped entirely and the download loop `continue`s over every file already
-on disk, so **the install can only ADD**. That is what leaves new files beside stale ones and
-produces a wall of "does not contain a definition for" errors: the new half referring to members
-the old half doesn't have yet.
+**The known failure is an APPEND-ONLY install**: the new version's new files land beside the old
+version's stale ones, and the compiler reports a wall of "does not contain a definition for" —
+the new half naming members the old half doesn't have yet. It has happened **twice** (the flat
+`MusicGen.cs` beside `Code/Engine/`, then the board rewrite beside the pre-rewrite
+`GenreProfile`/`Pattern`/`DrumGroove`/`VibeCodec`).
 
-**If that happens: delete the whole folder, commit the deletion, then install.** With nothing on
-disk there is nothing for the loop to skip, so the manifest downloads whole. `.version` is tracked
-so subsequent updates reconcile.
+**Recovery is the same either way: delete the whole folder, commit the deletion, then install.**
+With nothing on disk there is nothing for the download loop to skip, so the manifest lands whole.
+That is a reliable fix and does not depend on knowing the cause — which is just as well:
+
+> **WHY it appends is OPEN, and the obvious answer is wrong.** `LibrarySystem.Install`
+> (`sbox-public`, `engine/Sandbox.Tools/Editor/LibrarySystem/`, read 2026-08-13) gates its prune
+> pass on `gamah.skafinity/.version` existing, and the download loop `continue`s past any file
+> already on disk — so "no `.version`, therefore append-only" is the natural reading, and it is
+> what this repo and rotaliate-client both wrote down after the FIRST incident. **It does not
+> explain the second one: `.version` was present and tracked** (`6b41555`), and with the prune
+> running a stale file is deleted whether its manifest path matches (CRC differs) or doesn't
+> (`!Any(...)`), then re-downloaded. So either something else gates the pass, or the `.version` the
+> installer consults is not the one in the repo.
+>
+> **Do not add a second `.version`, and do not repeat the gated-on-`.version` claim as the cause.**
+> `../rotaliate-client`'s `skafinity-update-test` branch is the control — same library, one
+> revision behind, `.version` present — and its next update settles it. If it appends there too,
+> the mechanism is wrong in both repos and wants rewriting rather than restating.
 
 **ONE file deliberately differs from the package**: `Code/Skafinity.csproj` is not committed (the
 solution generator rewrites it per machine with absolute Steam paths, and `.gitignore` already
