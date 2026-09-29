@@ -22,6 +22,14 @@ change. State what the game does now; never promise what it will do.
   indices are written and the floor is a plain checker. `scripts/gen_glyph_atlas.py` regenerates
   the atlas.
 
+Lighting that renders too dark splits into two questions. Gamma: a screenshot whose darks
+collapse far more than its lights (about old^2.2) means something read or blended in the wrong
+space; lost light scales both alike. Light: toggle the sun's `Shadows` and
+`r.shadows.contact.enabled 0`. The model vertex format changed with `sbox-public` `01cd5459`:
+after an engine update, force-recompile `floor_checker.shader` and the models, and give any
+procedural `Vertex` a real tangent, perpendicular to its normal, since a zero or parallel one
+shades black.
+
 ## The table ring
 
 `ChessRing` builds each table (`BuildChessTable`: table, board frame, 64 cells, two capture
