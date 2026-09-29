@@ -8,7 +8,7 @@ namespace Gambit.Chess;
 public enum GameResult { Ongoing, WhiteWon, BlackWon, Draw }
 
 /// <summary>
-/// The one seam between Gambit and the vendored Gera Chess Library (CLAUDE.md D2):
+/// The one seam between Gambit and the vendored Gera Chess Library (docs/chess.md):
 /// every caller — board view, game controllers, HUD, PGN import — talks to this
 /// wrapper and never to global::Chess types, so the vendor stays swappable for
 /// the compact hand-written move-gen fallback if the whitelist ever bites.
@@ -542,7 +542,7 @@ public sealed partial class ChessGame
 	/// <summary>Full PGN (headers + SAN movetext + result) for POST /api/import.</summary>
 	public string Pgn => _board.ToPgn();
 
-	// ── Perft (correctness gate — CLAUDE.md D2; run via the dotnet harness) ──
+	// ── Perft (correctness gate — docs/chess.md; run via the dotnet harness) ──
 
 	/// <summary>Leaf-node count of the legal move tree at the given depth.</summary>
 	public long Perft( int depth )

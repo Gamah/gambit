@@ -598,6 +598,6 @@ public static class SeatedHandSpikes
 		Log.Info( "   a. Does the pelvis override carry the LEG chains as spine_2 carried the arm's? (sweep verdict)" );
 		Log.Info( "   b. Do the pre-compensated foot pins keep the feet still through a rise? (look at the feet)" );
 		Log.Info( "   c. Does the rise READ as a person leaning over the table? (the taste call, as ever)" );
-		Log.Info( "   Kill chain: ChessRing.TerrySeated → gambit_terry_hands → gambit_terry_rise. Doc: TERRY-HALFRISE.md." );
+		Log.Info( "   Kill chain: ChessRing.TerrySeated → gambit_terry_hands → gambit_terry_rise. Doc: docs/terry.md." );
 	}
 }

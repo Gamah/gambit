@@ -10,7 +10,7 @@ using Sandbox.UI; // Clipboard
 namespace Gambit.Game;
 
 /// <summary>
-/// Anonymous two-seat chess at one table (CLAUDE.md D1/D7). One instance per
+/// Anonymous two-seat chess at one table (docs/world.md). One instance per
 /// station, added by ChessRing next to ChessStation, replicating with the
 /// network-spawned station GO.
 ///
