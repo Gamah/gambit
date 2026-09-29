@@ -609,7 +609,9 @@ public static class ChessSetBuilder
 				float t = (float)s / TubeSides;
 				float a = t * MathF.PI * 2f;
 				var normal = ( right * MathF.Cos( a ) + up * MathF.Sin( a ) ).Normal;
-				verts.Add( new Vertex( path[i] + normal * radius, normal, right,
+				// Tangent runs around the ring (+u); `right` would be parallel to the normal at a = 0.
+				var ringTangent = ( up * MathF.Cos( a ) - right * MathF.Sin( a ) ).Normal;
+				verts.Add( new Vertex( path[i] + normal * radius, normal, ringTangent,
 					new Vector4( t, i, 0, 0 ) ) );
 			}
 		}

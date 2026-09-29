@@ -90,6 +90,10 @@ generates the real `.sbproj`, so set that field in Project Settings on each dev 
 
 ## UI
 
+- Panels alpha-blend in sRGB space, like a browser (`sbox-public` `12b791d8`), so a
+  translucent dark backdrop reads darker than its alpha suggests. The near-black backdrops are
+  authored as `a = 1 − (1 − a₀)^(1/2.2)`, which lands where alpha `a₀` would under linear
+  blending.
 - A **board** is a display-only `WorldPanel` in the world; a **screen** is an interactive
   `ScreenPanel` shown while engaged at a station, clipped to the station rect through
   `ChessRing.ScreenFractionRect()` / `UiRectStyle()`.
