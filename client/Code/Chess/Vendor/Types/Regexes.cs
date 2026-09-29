@@ -7,7 +7,7 @@
 // *****************************************************
 //                                    Made by Geras1mleo
 
-// GAMBIT VENDOR PATCH (s&box API whitelist, CLAUDE.md D2):
+// GAMBIT VENDOR PATCH (s&box API whitelist, docs/chess.md):
 // System.Text.RegularExpressions is not whitelisted in s&box game code, so the
 // compiled Regex fields are replaced by hand-written parsers with the same
 // accept/reject semantics and "capture groups" as the original patterns. The

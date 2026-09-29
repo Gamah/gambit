@@ -31,7 +31,7 @@ public sealed class SettingsWall : Component, Component.ExecuteInEditor
 	//
 	// Both are also written into lobby.scene, and the code defaults match the scene on
 	// purpose — that is the fix, not tidiness. This row had already been bitten by
-	// CLAUDE.md's "a new [Property] gets the code default while the ones already in the
+	// docs/world.md's "a new [Property] gets the code default while the ones already in the
 	// scene get the scene's" hazard: the scene stated Host/World as +0.12/-0.12 but never
 	// gained a MusicXFrac, so Music kept the code default -0.26 and the row rendered
 	// +96 / -96 / -208. Nobody chose that; it was the residue of two edits meeting. Keep

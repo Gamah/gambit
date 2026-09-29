@@ -10,7 +10,7 @@ namespace Gambit.Game;
 /// Cross-session matchmaking, client side (M19). A CLIENT-LOCAL coordinator: it holds
 /// the browsable list, this player's own open advert, and the poll loop — none of it
 /// networked, so it survives the scene teardown a <c>Networking.Connect</c> does (it is
-/// static state in the assembly, not in the scene). See MATCHMAKING.md.
+/// static state in the assembly, not in the scene). See docs/matchmaking.md.
 ///
 /// <para>Two flows, both driven from the table setup panel:</para>
 /// <list type="bullet">
@@ -24,7 +24,7 @@ namespace Gambit.Game;
 /// <para><b>"Join up" mode only in this build.</b> The 'relay' mode (both players stay in
 /// their own lobbies, gamchess relays the game) has its whole backend built and tested,
 /// but the client-side relay controller is not wired yet — a relay match is declined with
-/// a legible message rather than half-joined. See MATCHMAKING.md's "what remains".</para>
+/// a legible message rather than half-joined. See docs/matchmaking.md's "what remains".</para>
 /// </summary>
 public static class Matchmaking
 {

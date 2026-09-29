@@ -1,7 +1,7 @@
 # Asset attribution
 
 All bundled art/audio is CC0 or self-generated, per the project's all-CC0 constraint
-(CLAUDE.md "Asset licensing"), with **exactly one documented exception** — the lichess
+(docs/setup.md), with **exactly one documented exception** — the lichess
 logo, below. Recorded here for auditability even when no attribution is legally required.
 
 ## Exception to the all-CC0 rule

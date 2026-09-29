@@ -27,7 +27,7 @@ $wall-divider-h:    0.75px;    // hairline divider thickness (Settings was 1.5px
 $wall-divider-gap:  1.5px;     // divider vertical margin (Settings was 3px)
 
 // Type scale — intrinsic panel px, NOT world size (the GO scale sizes the quad; see
-// CLAUDE.md). Calibrated on the trio.
+// docs/engine.md). Calibrated on the trio.
 $wall-fs-hero:      15px;      // the one instruction that IS the content (CenterInfo .prompt)
 $wall-fs-title:     13px;      // signpost / prompt-board title
 $wall-fs-title-sm:  10px;      // secondary boards (lichess, dev notes)

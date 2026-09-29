@@ -124,7 +124,7 @@ public static class TerryCommands
 		// The verbose per-line reading key lived here until the network path was verified
 		// working (mirror included) in a two-client session — now the dump speaks for
 		// itself and the key is one pointer.
-		Log.Info( "   (key: refs/game/avatar/body must all read ok; a spectator needs mirroring=True. Details: TERRY-HALFRISE.md)" );
+		Log.Info( "   (key: refs/game/avatar/body must all read ok; a spectator needs mirroring=True. Details: docs/terry.md)" );
 	}
 
 	[ConCmd( "gambit_terry" )]

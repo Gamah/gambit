@@ -16,7 +16,7 @@ public enum BotLevel { None = 0, Easy = 1, Medium = 2, Hard = 3 }
 /// <c>UciOf</c>, and — being under <c>Code/Chess/</c> with no Sandbox dependency — it
 /// runs in the dotnet harness, where it is actually proven (finds a mate in one,
 /// grabs a hanging queen, and Hard beats Easy over a match). See CLAUDE.md's
-/// "Three things DO run here".
+/// "What runs on this host".
 ///
 /// <para>Deliberately modest and SELF-CONTAINED. No opening book, no transposition
 /// table, no threads (the whitelist forbids them anyway). The search is bounded two
