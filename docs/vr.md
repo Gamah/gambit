@@ -3,9 +3,12 @@
 A headset on the existing desktop rig. Controls are unchanged: mouse, keyboard, cursor and every
 panel work exactly as they do without a headset, and no VR controller is read.
 
-`Game.IsRunningInVR` is true when a headset is connected and active at launch, so there is no
-setting and no second scene: `LobbyPlayer.OnStart` adds `World/VrRig.cs` to the local player and
-nothing else in the client knows about VR.
+**VR starts only with `-vr` on the command line**, and `-novr` overrides it; the check runs once
+at startup, so a headset plugged in later does nothing
+(`engine/Sandbox.Engine/Platform/VR/VRSystem.cs`, `Init`). The manual's "plug a headset in and
+you'll launch in VR" is older than that code. `Game.IsRunningInVR` is the result, so there is no
+setting of ours and no second scene: `LobbyPlayer.OnStart` adds `World/VrRig.cs` to the local
+player and nothing else in the client knows about VR.
 
 ## The playspace anchor, not the camera
 
