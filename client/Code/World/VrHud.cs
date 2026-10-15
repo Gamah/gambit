@@ -1,0 +1,135 @@
+using System.Collections.Generic;
+using Sandbox;
+
+namespace Gambit.World;
+
+/// <summary>
+/// Draws the lobby's screen UI on one quad pinned in front of the headset, head-locked.
+///
+/// <para><b>A screen panel cannot work in a stereo view.</b> <c>GameRootPanel.IsWorldPanel</c> is
+/// false, so it composites flat into each eye at identical screen coordinates — no disparity, so
+/// it reads as infinitely far away while it covers things an arm's length off. On top of that
+/// <c>GameRootPanel.UpdateScale</c> forces <c>Scale = 2.33</c> in high-quality VR, and a panel
+/// anchored to a screen edge at that scale lands outside the lens-visible part of the eye render.
+/// Both facts are in the engine's <c>ScreenPanel.cs</c>; neither is tunable from CSS.</para>
+///
+/// <para><b>So the root panel is swapped, not the panels.</b> This takes the GameObject the lobby's
+/// panels already live on, destroys its <c>ScreenPanel</c> and gives it a <c>WorldPanel</c>, which
+/// keeps every panel, every stylesheet and every <c>Ensure*</c> attach point in
+/// <see cref="LobbyPlayer"/> exactly as the desktop has them. Panel pixels become panel pixels on a
+/// quad, so edge-anchored rows sit on the quad's own edges instead of in the periphery.</para>
+///
+/// <para><b>Head-locked is a staging post, not the destination</b> — a panel welded to the view is
+/// the thing VR players complain about, and it still covers the board. It stands until the UI is
+/// something you point a controller at.</para>
+/// </summary>
+public sealed class VrHud : Component
+{
+	public static VrHud Instance { get; private set; }
+
+	/// <summary>The headset camera, handed over by <see cref="LobbyPlayer"/>.</summary>
+	public GameObject CameraObject { get; set; }
+
+	/// <summary>The GameObject carrying the lobby's panels — the scene's UI object, with a world
+	/// panel in place of its screen panel. <see cref="LobbyPlayer"/> attaches its runtime panels
+	/// here, so it must keep working after the swap.</summary>
+	public GameObject Host { get; private set; }
+
+	/// <summary>Distance from the eye to the quad, in world units. With
+	/// <see cref="RenderScale"/> it sets how much of the view the HUD covers: the quad is
+	/// <c>PanelSize.x * 0.05 * RenderScale</c> units wide (the engine's
+	/// <c>ScenePanelObject.ScreenToWorldScale</c>), and that width at this distance is the angle it
+	/// subtends.</summary>
+	[Property] public float Distance { get; set; } = 70f;
+
+	/// <summary>World units per panel pixel, on top of the engine's 0.05.</summary>
+	[Property] public float RenderScale { get; set; } = 0.75f;
+
+	/// <summary>The quad's pixel size, which is the layout space every panel's CSS is written
+	/// against. 1920x1080 is what the desktop's <c>ConsistentHeight</c> screen panel gives them, so
+	/// the same stylesheets lay out the same way here.</summary>
+	[Property] public Vector2 PanelSize { get; set; } = new Vector2( 1920f, 1080f );
+
+	WorldPanel _panel;
+
+	/// <summary>Move the lobby's panels off the screen and onto a quad. Called before
+	/// <see cref="LobbyPlayer"/>'s runtime panels attach, so they are built against the world panel
+	/// rather than re-parented afterwards.
+	///
+	/// <para>The screen panel is destroyed rather than disabled, which leaves the object with
+	/// exactly one root panel and takes the screen pass out of every camera's UI render — the
+	/// companion camera's included, so the HUD is not also painted flat over the monitor. The
+	/// authored component goes at runtime only; the scene asset is untouched.</para>
+	///
+	/// <para>Panels already built are rebuilt by toggling them, which is what re-parents them: a
+	/// panel whose parent was deleted does not re-home itself, because <c>EnsureParentPanel</c>
+	/// only acts on a null parent.</para></summary>
+	public void Adopt( ScreenPanel screen )
+	{
+		if ( Host.IsValid() || !screen.IsValid() ) return;
+
+		Host = screen.GameObject;
+		Instance = this;
+
+		screen.Destroy();
+
+		_panel = Host.AddComponent<WorldPanel>();
+		_panel.PanelSize = PanelSize;
+		_panel.RenderScale = RenderScale;
+		_panel.LookAtCamera = false; // Place() owns the rotation, in the same frame as the position
+
+		// Copied out before toggling: the toggle rebuilds panels, and that mutates the list.
+		foreach ( var c in new List<PanelComponent>( Host.Components.GetAll<PanelComponent>() ) )
+		{
+			if ( !c.IsValid() ) continue;
+			c.Enabled = false;
+			c.Enabled = true;
+		}
+
+		Place();
+	}
+
+	protected override void OnDestroy()
+	{
+		if ( Instance == this ) Instance = null;
+	}
+
+	protected override void OnUpdate() => Place();
+	protected override void OnPreRender() => Place();
+
+	/// <summary>Weld the quad to the view. The rotation is written here rather than left to
+	/// <c>WorldPanel.LookAtCamera</c>, which would derive it in its own <c>OnPreRender</c> — a
+	/// different frame's camera from the position set here, for a panel that must not swim.</summary>
+	void Place()
+	{
+		if ( !Host.IsValid() || !CameraObject.IsValid() ) return;
+
+		var eye = CameraObject.WorldTransform;
+
+		Host.WorldPosition = eye.Position + eye.Rotation.Forward * Distance;
+		Host.WorldRotation = Rotation.LookAt( -eye.Rotation.Forward, eye.Rotation.Up );
+
+		// Re-applied so the tuning commands take effect without a re-adopt.
+		if ( _panel.IsValid() ) _panel.RenderScale = RenderScale;
+	}
+
+	/// <summary>How far in front of the eye the HUD quad sits. Tune it from inside the headset.</summary>
+	[ConCmd( "gambit_vr_hud_distance" )]
+	public static void SetDistance( float units )
+	{
+		if ( Instance == null ) { Log.Info( "[Gambit] vr: no HUD (not running in VR?)" ); return; }
+
+		Instance.Distance = units;
+		Log.Info( $"[Gambit] vr: HUD distance {units}" );
+	}
+
+	/// <summary>World units per panel pixel: how big the HUD is at its distance.</summary>
+	[ConCmd( "gambit_vr_hud_scale" )]
+	public static void SetScale( float scale )
+	{
+		if ( Instance == null ) { Log.Info( "[Gambit] vr: no HUD (not running in VR?)" ); return; }
+
+		Instance.RenderScale = scale;
+		Log.Info( $"[Gambit] vr: HUD scale {scale}" );
+	}
+}

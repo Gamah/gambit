@@ -61,6 +61,7 @@ public sealed class LobbyPlayer : Component
 	public bool CameraSettled => Engaged && _engageTime >= CamBlendTime;
 
 	PlayerController _controller;
+	VrHud _vrHud;
 	Rigidbody _rigidbody;
 	GameObject _cameraObject;
 	SkinnedModelRenderer _bodyRenderer;
@@ -121,6 +122,7 @@ public sealed class LobbyPlayer : Component
 
 		Local = this;
 		_spawnPos = WorldPosition;
+		EnsureVr();
 		EnsureGameHud();
 		EnsureSpectatorScreen();
 		EnsureVoiceScreen();
@@ -139,12 +141,27 @@ public sealed class LobbyPlayer : Component
 		if ( _cameraObject.IsValid() && _cameraObject.Components.Get<WorldInput>() == null )
 			_cameraObject.AddComponent<WorldInput>();
 
-		// A headset, fixed to this rig: the playspace follows the feet and the seat, and the
-		// camera renders stereo from the HMD pose (VrRig). Everything else here — the controller,
-		// the engage blends, the locked camera — runs exactly as it does on the desktop; VrRig
-		// writes the camera last, in OnPreRender, so it wins without any of them knowing.
-		if ( Sandbox.Game.IsRunningInVR )
-			Components.GetOrCreate<VrRig>().CameraObject = _cameraObject;
+	}
+
+	/// <summary>A headset, fixed to this rig: the playspace follows the feet and the seat and the
+	/// camera renders stereo from the HMD pose (<see cref="VrRig"/>), and the lobby's screen UI
+	/// moves onto a quad in front of the eye (<see cref="VrHud"/>). Everything else in this class —
+	/// the controller, the engage blends, the locked camera, every <c>Ensure*</c> screen — runs
+	/// exactly as it does on the desktop; VrRig writes the camera last, in OnPreRender, so it wins
+	/// without any of them knowing.
+	///
+	/// <para>Ahead of the <c>Ensure*</c> calls, and <see cref="VrHud.Adopt"/> is called here rather
+	/// than left to its own <c>OnStart</c>: the root panel has to be the world one before those
+	/// panels are built, or each is built against the screen panel and then rebuilt.</para></summary>
+	void EnsureVr()
+	{
+		if ( !Sandbox.Game.IsRunningInVR ) return;
+
+		Components.GetOrCreate<VrRig>().CameraObject = _cameraObject;
+
+		_vrHud = Components.GetOrCreate<VrHud>();
+		_vrHud.CameraObject = _cameraObject;
+		_vrHud.Adopt( SceneUiScreen() );
 	}
 
 	/// <summary>The scene-authored UI ScreenPanel (the "UI" GameObject) — the self-attach target
@@ -164,15 +181,27 @@ public sealed class LobbyPlayer : Component
 		return null;
 	}
 
+	/// <summary>The GameObject the self-attaching screens below hang on: the scene's UI object,
+	/// whichever root panel it is carrying. In VR <see cref="VrHud"/> has replaced its screen
+	/// panel with a world one, so <see cref="SceneUiScreen"/> no longer finds it — the object and
+	/// every panel on it are the same ones either way.</summary>
+	GameObject HudHost()
+	{
+		if ( _vrHud.IsValid() && _vrHud.Host.IsValid() )
+			return _vrHud.Host;
+
+		return SceneUiScreen()?.GameObject;
+	}
+
 	/// <summary>Attach the seated-game HUD to the scene's ScreenPanel at runtime
 	/// (local player only) — no scene rewire needed for M2, same self-heal spirit
 	/// as LobbyRoom.EnsureChessRing.</summary>
 	void EnsureGameHud()
 	{
-		var screen = SceneUiScreen();
-		if ( screen == null ) return;
-		if ( screen.Components.Get<Gambit.UI.GameHud>() == null )
-			screen.GameObject.AddComponent<Gambit.UI.GameHud>();
+		var host = HudHost();
+		if ( host == null ) return;
+		if ( host.Components.Get<Gambit.UI.GameHud>() == null )
+			host.AddComponent<Gambit.UI.GameHud>();
 	}
 
 	/// <summary>Attach the spectator-wall channel picker to the scene ScreenPanel at
@@ -180,10 +209,10 @@ public sealed class LobbyPlayer : Component
 	/// screen draws nothing until the player engages the SpectatorStation.</summary>
 	void EnsureSpectatorScreen()
 	{
-		var screen = SceneUiScreen();
-		if ( screen == null ) return;
-		if ( screen.Components.Get<Gambit.UI.Screens.SpectatorScreen>() == null )
-			screen.GameObject.AddComponent<Gambit.UI.Screens.SpectatorScreen>();
+		var host = HudHost();
+		if ( host == null ) return;
+		if ( host.Components.Get<Gambit.UI.Screens.SpectatorScreen>() == null )
+			host.AddComponent<Gambit.UI.Screens.SpectatorScreen>();
 	}
 
 	/// <summary>Attach the proximity-voice driver + HUD (M12) to the scene ScreenPanel at runtime
@@ -194,16 +223,16 @@ public sealed class LobbyPlayer : Component
 	/// snapshot (see the HUD-parenting rule in docs/engine.md).</summary>
 	void EnsureVoiceScreen()
 	{
-		var screen = SceneUiScreen();
-		if ( screen == null ) return;
-		if ( screen.Components.Get<VoiceScreen>() == null )
-			screen.GameObject.AddComponent<VoiceScreen>();
-		if ( screen.Components.Get<Gambit.UI.Screens.VoicePanel>() == null )
-			screen.GameObject.AddComponent<Gambit.UI.Screens.VoicePanel>();
+		var host = HudHost();
+		if ( host == null ) return;
+		if ( host.Components.Get<VoiceScreen>() == null )
+			host.AddComponent<VoiceScreen>();
+		if ( host.Components.Get<Gambit.UI.Screens.VoicePanel>() == null )
+			host.AddComponent<Gambit.UI.Screens.VoicePanel>();
 		// The keycap stack (chat / music / voice) rides along here: it is the same kind of
 		// self-attaching client-local affordance, and it draws the G/B hints VoicePanel used to.
-		if ( screen.Components.Get<Gambit.UI.Screens.HudHints>() == null )
-			screen.GameObject.AddComponent<Gambit.UI.Screens.HudHints>();
+		if ( host.Components.Get<Gambit.UI.Screens.HudHints>() == null )
+			host.AddComponent<Gambit.UI.Screens.HudHints>();
 	}
 
 	/// <summary>Attach the BOARD SETTINGS panel (issue #28) to the scene ScreenPanel at runtime —
@@ -213,10 +242,10 @@ public sealed class LobbyPlayer : Component
 	/// lobby.scene — see the NetworkMode fork in docs/engine.md.</summary>
 	void EnsureBoardSettings()
 	{
-		var screen = SceneUiScreen();
-		if ( screen == null ) return;
-		if ( screen.Components.Get<Gambit.UI.Screens.BoardSettingsScreen>() == null )
-			screen.GameObject.AddComponent<Gambit.UI.Screens.BoardSettingsScreen>();
+		var host = HudHost();
+		if ( host == null ) return;
+		if ( host.Components.Get<Gambit.UI.Screens.BoardSettingsScreen>() == null )
+			host.AddComponent<Gambit.UI.Screens.BoardSettingsScreen>();
 	}
 
 	/// <summary>The tabletop BOARD SETTINGS plate (issue #28). Its driver lives on a runtime,

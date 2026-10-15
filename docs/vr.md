@@ -1,7 +1,8 @@
 # VR
 
-A headset on the existing desktop rig. Controls are unchanged: mouse, keyboard, cursor and every
-panel work exactly as they do without a headset, and no VR controller is read.
+A headset on the existing desktop rig. Controls are unchanged: mouse, keyboard and cursor work
+exactly as they do without a headset, and no VR controller is read. The screen UI moves onto a quad
+in front of the eye, which is the one thing that cannot stay as it is.
 
 **VR starts only with `-vr` on the command line**, and `-novr` overrides it; the check runs once
 at startup, so a headset plugged in later does nothing
@@ -85,9 +86,37 @@ control; doing it in `VrRig` keeps the anchor update and the pose that reads it 
 A camera whose `TargetEye` is left at `StereoTargetEye.None` renders only to the companion
 window and the headset shows nothing, so `VrRig` sets `Both`.
 
+## The UI is on a quad, because a screen panel cannot be in a stereo view
+
+Two facts in the engine's `ScreenPanel.cs`, neither reachable from CSS:
+
+- `GameRootPanel.IsWorldPanel` is false. A screen panel composites flat into each eye at identical
+  screen coordinates, so it carries no disparity: it reads as infinitely far away while covering
+  things an arm's length off.
+- `GameRootPanel.UpdateScale` forces `Scale = 2.33` in high-quality VR. A row anchored to a screen
+  edge at that scale sits outside the lens-visible part of the eye render, which is a smaller
+  inset than the render target.
+
+So `World/VrHud.cs` swaps the **root**, not the panels: the scene's UI object keeps every panel,
+stylesheet and `Ensure*` attach point, and its `ScreenPanel` is destroyed in favour of a
+`WorldPanel` welded in front of the eye. Panel pixels stay panel pixels (the quad's layout space is
+1920x1080, what the desktop's `ConsistentHeight` strategy gives them), so edge-anchored rows land on
+the quad's edges. `gambit_vr_hud_distance` and `gambit_vr_hud_scale` tune it from inside the
+headset.
+
+`LobbyPlayer.HudHost()` is the one seam that knows about this: the self-attaching screens hang on
+the UI **GameObject**, whichever root panel it carries. `EnsureVr` runs before them so the world
+panel is in place when they are built, and it calls `VrHud.Adopt` directly rather than leaving it to
+a component's own `OnStart` for the same reason.
+
+**Head-locked is a staging post.** A panel welded to the view is the thing VR players complain
+about, and it still covers the board. It stands until the UI is something you point a controller at.
+
 ## Known gaps
 
 - No tracked hands, no controller input, no pointing at a square: moves are made with the mouse.
+- `LocalMusicSystem` builds its own `ScreenPanel` on a `NotSaved` object, which `VrHud` does not
+  adopt — the music HUD is still flat in both eyes.
 - The seated body is hidden locally in VR (`LobbyPlayer.HideLocalAvatar`); remote players still
   see the citizen sitting.
 - World scale is the desktop's (`ChessRing.SeatEyeHeight` is a `[GUESS]`), unchecked against a
