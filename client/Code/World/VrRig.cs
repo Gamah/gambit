@@ -45,6 +45,7 @@ public sealed class VrRig : Component
 
 	LobbyPlayer _player;
 	PlayerController _controller;
+	CameraComponent _companion;
 
 	// The headset pose inside the playspace at sit-down, used to land the player's real seated
 	// pose on the seat's eye point: position so the board is in front of them wherever their
@@ -66,6 +67,53 @@ public sealed class VrRig : Component
 		if ( _controller.IsValid() ) _controller.ThirdPerson = false;
 		if ( CameraObject.IsValid() && CameraObject.Components.Get<CameraComponent>() is { } cam )
 			cam.TargetEye = StereoTargetEye.Both;
+
+		EnsureCompanion();
+	}
+
+	/// <summary>A flat camera for the monitor, following the headset.
+	///
+	/// <para><b>Without it the screen is black.</b> A camera whose <c>TargetEye</c> is not
+	/// <c>None</c> takes <c>SceneCamera.RenderStereo</c>, which renders both eyes for the
+	/// compositor and never touches the swap chain — so the one camera that can show the headset's
+	/// view to the room cannot be the one driving the headset. This is what makes the spike
+	/// watchable by anyone not wearing it, including over a screen share.</para>
+	///
+	/// <para>Never <c>Scene.Camera</c>: that is the main camera first and the lowest
+	/// <c>Priority</c> after (<c>Scene.UpdateMainCamera</c>), so this one is not main and sits far
+	/// behind. <c>Scene.Camera</c> has to stay the player's — <c>WorldInput</c>'s cursor ray,
+	/// <c>ScreenPixelToRay</c> and the board's own picking all read it.</para></summary>
+	void EnsureCompanion()
+	{
+		if ( _companion.IsValid() || !CompanionWanted ) return;
+
+		var go = new GameObject( true, "VR Companion" )
+		{
+			Parent = GameObject,
+			Flags = GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked
+		};
+
+		_companion = go.AddComponent<CameraComponent>();
+		_companion.IsMainCamera = false;
+		_companion.Priority = 16;
+		_companion.TargetEye = StereoTargetEye.None;
+
+		// The authored camera owns how the lobby looks (FOV 75, the clear colour behind the
+		// skybox); a default camera next to it would show a differently framed, differently
+		// cleared room and read as a bug in the scene.
+		if ( CameraObject.Components.Get<CameraComponent>() is { } main )
+		{
+			_companion.FieldOfView = main.FieldOfView;
+			_companion.FovAxis = main.FovAxis;
+			_companion.ZNear = main.ZNear;
+			_companion.ZFar = main.ZFar;
+			_companion.ClearFlags = main.ClearFlags;
+			_companion.BackgroundColor = main.BackgroundColor;
+		}
+
+		// Our own body is drawn for everyone else, and in VR the monitor is looking out of our
+		// head: the same exclusion the controller puts on the first-person camera.
+		_companion.RenderExcludeTags.Add( "viewer" );
 	}
 
 	protected override void OnDestroy()
@@ -92,6 +140,12 @@ public sealed class VrRig : Component
 		{
 			CameraObject.WorldPosition = head.Position;
 			CameraObject.WorldRotation = head.Rotation;
+		}
+
+		if ( _companion.IsValid() )
+		{
+			_companion.WorldPosition = head.Position;
+			_companion.WorldRotation = head.Rotation;
 		}
 	}
 
@@ -145,6 +199,36 @@ public sealed class VrRig : Component
 		// lands on the seat's eye point.
 		rot *= Rotation.FromYaw( -_seatHeadYaw );
 		Input.VR.Anchor = new Transform( seat.WorldPosition - rot * _seatHead, rot );
+	}
+
+	/// <summary>Whether the monitor gets a flat view of what the headset sees. On by default:
+	/// without it the screen is black while someone is in the headset.</summary>
+	static bool CompanionWanted = true;
+
+	/// <summary>Toggle the monitor's flat camera. It renders the scene a second time, so this is
+	/// the switch to reach for when the headset's frame rate is the thing being measured.</summary>
+	[ConCmd( "gambit_vr_companion" )]
+	public static void ToggleCompanion()
+	{
+		CompanionWanted = !CompanionWanted;
+
+		if ( _instance == null )
+		{
+			Log.Info( $"[Gambit] vr: companion camera {(CompanionWanted ? "ON" : "OFF")} (no rig yet)" );
+			return;
+		}
+
+		if ( CompanionWanted )
+		{
+			_instance.EnsureCompanion();
+		}
+		else if ( _instance._companion.IsValid() )
+		{
+			_instance._companion.GameObject.Destroy();
+			_instance._companion = null;
+		}
+
+		Log.Info( $"[Gambit] vr: companion camera {(CompanionWanted ? "ON" : "OFF")}" );
 	}
 
 	/// <summary>Re-capture the seated reference pose: sit comfortably, face the board, run this.

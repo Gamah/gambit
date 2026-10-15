@@ -10,6 +10,38 @@ you'll launch in VR" is older than that code. `Game.IsRunningInVR` is the result
 setting of ours and no second scene: `LobbyPlayer.OnStart` adds `World/VrRig.cs` to the local
 player and nothing else in the client knows about VR.
 
+A standalone export is the exception: `StandaloneAppSystem` appends `-vr` by itself when the
+package's control modes are VR-only (`ControlModeSettings.IsVROnly` — VR on, keyboard and gamepad
+off). Gambit's `.sbproj` declares no control modes at all, so nothing is implied either way.
+
+## Running it
+
+- **`-vr` goes on s&box itself**, not on the project: `VRSystem.Init` reads the process command
+  line once at bootstrap. `-novr` beats `-vr` when both are present, so the switch has to be
+  replaced rather than added to.
+- **VR only submits frames from a game scene**: `CameraComponent.UpdateSceneCameraStereo` sets
+  `WantsStereoSubmit = !Scene.IsEditor`, so the headset stays dark while editing and lights up on
+  Play.
+- **The editor's VR toggle (titlebar, and Editor → Settings → VR) is not a way to turn VR on.**
+  The titlebar button only exists when `VRSystem.HasHeadset`, which is set inside the `Init` that
+  `-vr` gates; and `VRSystem.Enable()` only moves the state to Active, without the instance
+  `Init` would have created. Launched with `-vr`, it is a pause button; launched without, it is
+  absent or a lie.
+- `vr_info` in the console prints the refresh rate, IPD and tracked devices, or
+  "VR not initialized."
+
+## The monitor sees nothing unless something else draws it
+
+A camera whose `TargetEye` is not `None` goes down `SceneCamera.RenderStereo`, which renders both
+eyes for the compositor and never touches the swap chain. So the camera driving the headset cannot
+also feed the screen, and `VrRig` adds a second flat one on the head
+(`gambit_vr_companion` toggles it; it renders the scene twice, so turn it off when measuring
+frame rate).
+
+It must never be `Scene.Camera` — the cursor ray, `ScreenPixelToRay` and board picking all read
+that. `Scene.UpdateMainCamera` takes the main camera first and the **lowest** `Priority` after, so
+the companion is not main and sits at 16 against the authored camera's 1.
+
 ## The playspace anchor, not the camera
 
 `Input.VR.Head` is the headset pose inside the playspace, which `Input.VR.Anchor` places in the
