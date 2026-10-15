@@ -143,7 +143,7 @@ public sealed class LobbyPlayer : Component
 		// camera renders stereo from the HMD pose (VrRig). Everything else here — the controller,
 		// the engage blends, the locked camera — runs exactly as it does on the desktop; VrRig
 		// writes the camera last, in OnPreRender, so it wins without any of them knowing.
-		if ( Game.IsRunningInVR )
+		if ( Sandbox.Game.IsRunningInVR )
 			Components.GetOrCreate<VrRig>().CameraObject = _cameraObject;
 	}
 

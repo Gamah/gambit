@@ -10,7 +10,8 @@ namespace Gambit.World;
 /// movement, the cursor and every panel.
 ///
 /// <para>Added at runtime by <see cref="LobbyPlayer"/> on the local player when
-/// <c>Game.IsRunningInVR</c>, so nothing VR has to be authored into the scene and the desktop
+/// <c>Sandbox.Game.IsRunningInVR</c> (plain <c>Game</c> here is the <c>Gambit.Game</c> namespace),
+/// so nothing VR has to be authored into the scene and the desktop
 /// path is untouched when no headset is present.</para>
 ///
 /// <para><b>The anchor is a FLOOR origin, never the eye.</b> <c>Input.VR.Head</c> is the headset
@@ -130,7 +131,7 @@ public sealed class VrRig : Component
 
 	void Drive()
 	{
-		if ( !Game.IsRunningInVR ) return;
+		if ( !Sandbox.Game.IsRunningInVR ) return;
 
 		UpdateAnchor();
 
