@@ -185,15 +185,36 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	/// <para><b>Static on purpose.</b> It is readable whether or not this system was ever
 	/// instantiated — which is itself one of the facts it reports, and the one that a dead stick,
 	/// a missing beam and an unclickable panel all reduce to.</para></summary>
+	/// <summary>The one thing worth shouting: which step of getting hands into the room failed.
+	/// Each answer is a different fault with the same symptom — nothing in the room — and they are
+	/// ordered so the first failure is the one named.</summary>
+	public static string HandsVerdict()
+	{
+		if ( VrHands.Instance == null ) return "HANDS: NONE";
+		if ( VrHands.LastError != null ) return "HANDS: THREW";
+		if ( !VrHands.Built ) return "HANDS: NO OBJS";
+		if ( VrHands.Placed == 0 ) return "HANDS: UNPLACED";
+		if ( !VrHands.Drawn ) return "HANDS: NO MODEL";
+		if ( !VrHands.BeamOn ) return "HANDS: NO BEAM";
+
+		return "HANDS: DRAWN";
+	}
+
+	/// <summary>Whatever went wrong, as a sentence, or null. Either component's throw will do:
+	/// in a headset they are the same fault — something is missing and nothing said why.</summary>
+	public static string Error => VrHands.LastError ?? VrRig.LastError;
+
 	public static List<string> StatusLines()
 	{
 		var lines = new List<string>
 		{
-			$"vr={Sandbox.Game.IsRunningInVR}  rig={VrRig.Active}  system={Current != null}",
-			$"hud={VrHud.Instance != null}  {VrHands.Status()}",
+			HandsVerdict(),
+			$"vr={Sandbox.Game.IsRunningInVR} rig={VrRig.Active} system={Current != null}"
+				+ $" hud={VrHud.Instance != null}",
+			VrHands.Status(),
 		};
 
-		if ( VrRig.LastError != null ) lines.Add( $"rig err: {VrRig.LastError}" );
+		if ( Error != null ) lines.Add( $"err: {Error}" );
 
 		if ( !Sandbox.Game.IsRunningInVR )
 		{
@@ -201,35 +222,47 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 			return lines;
 		}
 
-		var left = Input.VR.LeftHand;
-		var right = Input.VR.RightHand;
-
-		lines.Add( $"head={Fmt( Input.VR.Head.Position )}  anchor={Fmt( Input.VR.Anchor.Position )}" );
-		lines.Add( $"L pos={Fmt( left.Transform.Position )} stick={Fmt( left.Joystick.Value )}"
-			+ $" trig={left.Trigger.Value:0.00} a={Bit( left.ButtonA )} b={Bit( left.ButtonB )}" );
-		lines.Add( $"R pos={Fmt( right.Transform.Position )} stick={Fmt( right.Joystick.Value )}"
-			+ $" trig={right.Trigger.Value:0.00} a={Bit( right.ButtonA )} b={Bit( right.ButtonB )}" );
-		lines.Add( $"active L stick={left.Joystick.Active} trig={left.Trigger.Active}"
-			+ $"   R stick={right.Joystick.Active} trig={right.Trigger.Active}" );
-		lines.Add( $"model L={Name( left.GetModel() )}  R={Name( right.GetModel() )}" );
-		lines.Add( $"point={Pointing}  aim={(AimRay is { } r ? Fmt( r.Position ) : "none")}" );
-		lines.Add( $"move={Fmt( Input.AnalogMove )}  look={Input.AnalogLook.yaw:0.00}"
-			+ $"  suppressed={Input.Suppressed}" );
-		lines.Add( $"yaw: head={Input.VR.Head.Rotation.Angles().yaw:0} body={VrRig.BodyYaw:0}" );
-		lines.Add( $"trigger: last={LastTrigger:0.0}s ago  pulled={_pulls}  square={Hover()}" );
+		lines.Add( $"triggers={PullCount} last={LastTrigger:0.0}s square={HoverName()}" );
+		lines.AddRange( DetailLines() );
 
 		return lines;
 	}
 
+	/// <summary>The numbers, in the order they stop being needed. The board renders these smallest
+	/// and last: by the time a reading here matters, the verdict above has already said which of
+	/// them to look at.</summary>
+	public static List<string> DetailLines()
+	{
+		var left = Input.VR.LeftHand;
+		var right = Input.VR.RightHand;
+
+		return new List<string>
+		{
+			$"stick L {Fmt( left.Joystick.Value )}  R {Fmt( right.Joystick.Value )}",
+			$"btn L a{Bit( left.ButtonA )} b{Bit( left.ButtonB )}"
+				+ $"  R a{Bit( right.ButtonA )} b{Bit( right.ButtonB )}",
+			$"yaw head {Input.VR.Head.Rotation.Angles().yaw:0}  body {VrRig.BodyYaw:0}",
+			$"move {Fmt( Input.AnalogMove )}  look {Input.AnalogLook.yaw:0.00}",
+			$"head {Fmt( Input.VR.Head.Position )}  anchor {Fmt( Input.VR.Anchor.Position )}",
+			$"point {Pointing}  aim {(AimRay is { } r ? Fmt( r.Position ) : "none")}",
+			$"model L {Name( left.GetModel() )}  R {Name( right.GetModel() )}",
+			$"placed {VrHands.Placed}  beam {VrHands.BeamOn}  suppressed {Input.Suppressed}",
+		};
+	}
+
+	/// <summary>How many trigger pulls this session. With nothing else acknowledging a pull, "did
+	/// that register at all" is the first question a player asks.</summary>
+	public static int PullCount => _pulls;
+
 	/// <summary>The square the pointing hand is over at the local player's own table, as the board
 	/// itself sees it — so a trigger that did nothing can be told apart from one that was aimed
 	/// nowhere.</summary>
-	static string Hover()
+	public static string HoverName()
 	{
 		var view = ChessStation.Active?.Components.Get<ChessBoardView>();
-		if ( view == null ) return "not seated";
+		if ( view == null ) return "NOT SEATED";
 
-		return ChessBoardView.NameOf( view.HoverSquare ) ?? "off board";
+		return ChessBoardView.NameOf( view.HoverSquare )?.ToUpperInvariant() ?? "OFF BOARD";
 	}
 
 	static string Fmt( Vector3 v ) => $"{v.x:0},{v.y:0},{v.z:0}";

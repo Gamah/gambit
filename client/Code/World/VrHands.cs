@@ -146,6 +146,13 @@ public sealed class VrHands : Component
 
 	int _placed;
 
+	// Granular enough for a verdict, so nothing has to parse StatusLine's string to find out
+	// which step failed.
+	public static bool Built => Instance?._left.IsValid() ?? false;
+	public static int Placed => Instance?._placed ?? 0;
+	public static bool Drawn => (Instance?._leftModel.IsValid() ?? false) && Instance._leftModel.Model != null;
+	public static bool BeamOn => (Instance?._beam.IsValid() ?? false) && Instance._beam.Enabled;
+
 	/// <summary>Put both hands and the pointer where the controllers are, this frame. Called by
 	/// <see cref="VrRig"/> once the playspace anchor is set.</summary>
 	public void Place()
