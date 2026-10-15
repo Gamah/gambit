@@ -138,6 +138,13 @@ public sealed class LobbyPlayer : Component
 		// twice. Local player only — it hangs on our camera, and proxies have none.
 		if ( _cameraObject.IsValid() && _cameraObject.Components.Get<WorldInput>() == null )
 			_cameraObject.AddComponent<WorldInput>();
+
+		// A headset, fixed to this rig: the playspace follows the feet and the seat, and the
+		// camera renders stereo from the HMD pose (VrRig). Everything else here — the controller,
+		// the engage blends, the locked camera — runs exactly as it does on the desktop; VrRig
+		// writes the camera last, in OnPreRender, so it wins without any of them knowing.
+		if ( Game.IsRunningInVR )
+			Components.GetOrCreate<VrRig>().CameraObject = _cameraObject;
 	}
 
 	/// <summary>The scene-authored UI ScreenPanel (the "UI" GameObject) — the self-attach target
@@ -1040,7 +1047,10 @@ public sealed class LobbyPlayer : Component
 		// Hide the WHOLE body when the kill switch reverts to the pre-M13 world (TerrySeated
 		// false), OR when 2D play mode suppresses seated bodies (M16) — they are noise under the
 		// top-down camera. Same mechanism, same Disengage undo, for both.
-		bool hideAll = ChessRing.Instance is { TerrySeated: false } || SeatedTerry.ForceHidden;
+		// In VR the whole body comes off, not just the trim: the headset is inside our own head,
+		// and the seated rig is posed for a camera that is no longer where the view is. Local
+		// only — a remote player still sees our citizen sitting at the table.
+		bool hideAll = ChessRing.Instance is { TerrySeated: false } || SeatedTerry.ForceHidden || VrRig.Active;
 		if ( hideAll )
 		{
 			HideEveryRenderer();

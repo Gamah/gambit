@@ -75,6 +75,7 @@ fact.
 | `docs/terry.md` | Seated bodies and the hands that play the moves; the `gambit_terry_*` knobs. |
 | `docs/audio.md` | Board sounds, spoken moves, music, chat, proximity voice. |
 | `docs/engine.md` | s&box lore specific to Gambit, on top of `~/.claude/sbox.md`. |
+| `docs/vr.md` | The headset on the desktop rig: the playspace anchor, and why the camera code is untouched. |
 | `docs/setup.md` | First-time project setup, repo layout, the vendored skafinity library, assets, dev console commands. |
 | `PLAN.md` | The ranked table of work to start. Nothing else in the repo may cite it. |
 
