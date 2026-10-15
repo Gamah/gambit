@@ -139,7 +139,7 @@ computed and before any component runs — writes them, and **nothing downstream
 | --- | --- |
 | either trigger | `Select` (pick a square), `use` (sit down, engage a board) while roaming, and a panel click through `WorldInput`'s own VR branch |
 | B, and A | `Input.EscapePressed` — the cursor toggle while seated, standing up otherwise |
-| left stick | `Input.AnalogMove` |
+| left stick | `Input.AnalogMove`, in the direction the player is LOOKING |
 | right stick | `Input.AnalogLook` yaw, smooth, `VrInput.TurnRate` degrees per second |
 | grip | nothing, deliberately: it is what grabbing a piece will want |
 
@@ -148,6 +148,13 @@ controller profiles the engine ships (`game/core/cfg/fpxr/`), the Index one give
 `paths` key holding a single string, where every other single binding in both files uses `path` and
 every `paths` holds a per-hand object. Whether the native loader forgives that is not visible from
 the managed source, so the mapping does not rest on it.
+
+**The stick walks where the head faces, not where the body does.** A headset never writes
+`EyeAngles` — head rotation moves the playspace anchor and nothing else — while
+`PlayerController.InputMove` builds its wish direction out of `EyeAngles`. Left as it comes, "stick
+forward" means "forward along the body", which after any head turn is not where the player is
+facing. `VrInput.Walk` reads the stick in the head's frame and hands it over in the body's
+(`VrRig.BodyYaw`). The stick's own axes are not ambiguous: up is forward.
 
 **Movement is written in the FIXED stage, look in the update stage**, because that is where each is
 read: `UpdateEyeAngles` takes `Input.AnalogLook` from `OnUpdate`, but `InputMove` takes

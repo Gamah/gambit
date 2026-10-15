@@ -35,6 +35,12 @@ namespace Gambit.World;
 /// </summary>
 public sealed class VrRig : Component
 {
+	/// <summary>The yaw the player's BODY faces: the controller's eye angles, which the headset
+	/// never writes to. Head rotation moves the playspace anchor and nothing else, so this and
+	/// where the player is looking are two different directions — which is the whole reason
+	/// <see cref="VrInput"/> has to rotate the walk axis between them.</summary>
+	public static float BodyYaw => _instance?._controller?.EyeAngles.yaw ?? 0f;
+
 	/// <summary>True while a local VR rig is driving the view. Read by
 	/// <see cref="LobbyPlayer"/> to keep our own avatar out of our own headset.</summary>
 	public static bool Active { get; private set; }

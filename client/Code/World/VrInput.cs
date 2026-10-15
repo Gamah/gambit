@@ -215,7 +215,7 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		lines.Add( $"point={Pointing}  aim={(AimRay is { } r ? Fmt( r.Position ) : "none")}" );
 		lines.Add( $"move={Fmt( Input.AnalogMove )}  look={Input.AnalogLook.yaw:0.00}"
 			+ $"  suppressed={Input.Suppressed}" );
-		lines.Add( $"axes: {MoveAxesLine()}  (gambit_vr_move_axes s f t)" );
+		lines.Add( $"yaw: head={Input.VR.Head.Rotation.Angles().yaw:0} body={VrRig.BodyYaw:0}" );
 		lines.Add( $"trigger: last={LastTrigger:0.0}s ago  pulled={_pulls}  square={Hover()}" );
 
 		return lines;
@@ -247,49 +247,30 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 			Log.Info( $"[Gambit] vr: {line}" );
 	}
 
-	/// <summary>Left stick walks. <c>AnalogMove</c> is in the engine's axes — forward is +x and
-	/// LEFT is +y (<c>Input.ComputeAnalogMove</c>) — so the stick's x is negated rather than
-	/// copied. Pressing the movement actions instead would not help: they are only ever read by
-	/// <c>ComputeAnalogMove</c>, which runs before the tick and from real key state.
+	/// <summary>Left stick walks, where the player is LOOKING.
 	///
-	/// <para><b>Which way round the stick's own axes come is not something source can settle.</b>
-	/// The binding is <c>/input/thumbstick</c> in the engine's controller profile, and what the
-	/// runtime puts in x and y past that is the runtime's business — it differs by device and
-	/// cannot be read off any file here. So the mapping is three live bits
-	/// (<c>gambit_vr_move_axes</c>), the state board shows what they currently are, and whatever
-	/// turns out to be right becomes the default.</para></summary>
+	/// <para><b>The body and the view face different ways in VR, and only the body reaches the
+	/// controller.</b> A headset never writes <c>EyeAngles</c> — head rotation moves the playspace
+	/// anchor and nothing else — while <c>PlayerController.InputMove</c> builds its wish direction
+	/// out of <c>EyeAngles</c>. So "stick forward" means "forward along the body", which after any
+	/// head turn is not the direction the player is facing. Nothing about the stick's own axes is
+	/// ambiguous: up is forward.</para>
+	///
+	/// <para>So the stick is read in the head's frame and handed over in the body's: push the
+	/// composition through <c>Rotation</c> rather than trigonometry, because the sign errors in
+	/// the trigonometric version are invisible until someone turns around.</para></summary>
 	static void Walk( Vector2 stick )
 	{
 		if ( stick.Length < Deadzone ) return;
 
-		float forward = SwapMove ? stick.x : stick.y;
-		float strafe = SwapMove ? stick.y : stick.x;
+		// Engine axes: forward is +x, LEFT is +y.
+		var wish = new Vector3( stick.y, -stick.x, 0f );
 
-		if ( InvertForward ) forward = -forward;
-		if ( InvertStrafe ) strafe = -strafe;
+		float headYaw = Input.VR.Head.Rotation.Angles().yaw;
+		var world = Rotation.FromYaw( headYaw ) * wish;
 
-		Input.AnalogMove = new Vector3( forward, -strafe, 0f );
+		Input.AnalogMove = Rotation.FromYaw( VrRig.BodyYaw ).Inverse * world;
 	}
-
-	/// <summary>Read the stick's x as forward instead of its y.</summary>
-	public static bool SwapMove { get; private set; }
-	public static bool InvertForward { get; private set; }
-	public static bool InvertStrafe { get; private set; }
-
-	/// <summary>Find the right stick mapping from inside the headset: three bits, eight
-	/// combinations, one of them walks the way the stick points. Arguments are 0 or 1.</summary>
-	[ConCmd( "gambit_vr_move_axes" )]
-	public static void MoveAxes( int swap, int invertForward, int invertStrafe )
-	{
-		SwapMove = swap != 0;
-		InvertForward = invertForward != 0;
-		InvertStrafe = invertStrafe != 0;
-
-		Log.Info( $"[Gambit] vr: move axes {MoveAxesLine()}" );
-	}
-
-	static string MoveAxesLine() =>
-		$"swap={(SwapMove ? 1 : 0)} invF={(InvertForward ? 1 : 0)} invS={(InvertStrafe ? 1 : 0)}";
 
 	/// <summary>Right stick turns, smoothly. <c>AnalogLook</c> is added to the controller's eye
 	/// angles as degrees for this frame, so the rate is scaled by frame time here; yaw runs
