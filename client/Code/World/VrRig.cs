@@ -166,6 +166,11 @@ public sealed class VrRig : Component
 	{
 		if ( !Sandbox.Game.IsRunningInVR ) return;
 
+		// Built here rather than once at spawn: LobbyPlayer.OnStart runs once per spawn, so a VR
+		// component added by a code hotload into a running session is never asked for and fails
+		// silently — the same trap as a GameObjectSystem added mid-session (docs/engine.md).
+		if ( VrHands.Instance == null ) Components.GetOrCreate<VrHands>();
+
 		UpdateAnchor();
 
 		// Input.VR.Head is already anchor-to-world, so this IS the pose the anchor just defined.

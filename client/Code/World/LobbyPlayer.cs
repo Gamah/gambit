@@ -160,8 +160,8 @@ public sealed class LobbyPlayer : Component
 	{
 		if ( !Sandbox.Game.IsRunningInVR ) return;
 
+		// VrRig builds the hands itself, so a hotload cannot leave them unasked-for.
 		Components.GetOrCreate<VrRig>().CameraObject = _cameraObject;
-		Components.GetOrCreate<VrHands>();
 
 		_vrHud = Components.GetOrCreate<VrHud>();
 		_vrHud.CameraObject = _cameraObject;

@@ -7,12 +7,18 @@ namespace Gambit.World;
 /// <summary>
 /// The controllers in the room, and the beam that points with them.
 ///
-/// <para><b>Two hands, one pointer.</b> Both controllers are drawn, with the model the runtime
-/// reports for the device in hand (<c>VRController.GetModel</c>), so there is no art to keep in
-/// step with whatever headset is plugged in. The beam and the panel pointer belong to whichever
-/// hand last pulled its trigger — <see cref="VrInput.Pointing"/> — because two live pointers would
-/// need a priority rule for one hover state (the board's highlighted square, a panel's
-/// <c>:hover</c>) and the answer to "which one wins" is "the one you just used".</para>
+/// <para><b>Two hands, one pointer.</b> Both controllers are drawn as grip-sized primitives, and
+/// the beam and the panel pointer belong to whichever hand last pulled its trigger — see
+/// <see cref="VrInput.Pointing"/>. Two live pointers would need a priority rule for one hover
+/// state (the board's highlighted square, a panel's <c>:hover</c>), and the answer to "which one
+/// wins" is "the one you just used".</para>
+///
+/// <para><b>There is no device model to draw.</b> <c>VRController.GetModel</c> is a stub: it
+/// returns <c>Model.Cube</c> — <c>models/dev/box.vmdl</c> — for every device, and never null. Drawn
+/// unscaled at the grip pose, that is a 50-unit cube centred on the palm with the player's head
+/// inside it, so every face is a backface, nothing renders and nothing is occluded either: the
+/// room looks perfectly normal and the hands are simply absent. Primitives sized in world units
+/// are the honest alternative until there are hands worth animating.</para>
 ///
 /// <para><b>The grip pose carries the model, the aim pose carries the pointer.</b> They are
 /// different poses on the same controller: grip is the palm, aim is the direction the device
@@ -42,14 +48,19 @@ public sealed class VrHands : Component
 	/// <summary>HDR values (&gt;1) read as a glow with bloom, like the sun sphere's colour.</summary>
 	[Property] public Color BeamColor { get; set; } = new Color( 1.4f, 2.6f, 3.4f );
 
-	/// <summary>Scale for the stand-in box, when the runtime has no model for the device. A dev box
-	/// is 50 units across, which is a crate in the hand rather than a controller.</summary>
-	const float StandInScale = 0.12f;
+	/// <summary>Grip size in world units — 1 unit is an inch, so this is about 5 x 5 x 13 cm, a
+	/// chunky controller grip.</summary>
+	static readonly Vector3 GripSize = new( 2f, 2f, 5f );
+
+	/// <summary>Pointer tip size: small, bright, and at the aim pose rather than the grip, so which
+	/// hand is pointing is visible even when the beam is pointing away from the eye.</summary>
+	static readonly Vector3 TipSize = new( 1.2f, 1.2f, 1.2f );
 
 	GameObject _left;
 	GameObject _right;
 	ModelRenderer _leftModel;
 	ModelRenderer _rightModel;
+	ModelRenderer _tip;
 
 	GameObject _pointer;
 	LineRenderer _beam;
@@ -90,13 +101,17 @@ public sealed class VrHands : Component
 		_right = MakeHand( "VR Hand Right", out _rightModel );
 
 		_pointer = MakeLocalObject( "VR Pointer" );
+		_tip = AddBox( _pointer, "Tip", TipSize, new Color( 2.4f, 3.2f, 4f ) );
 		_input = _pointer.AddComponent<WorldInput>();
 
 		_beam = _pointer.AddComponent<LineRenderer>();
 		_beam.UseVectorPoints = true;
 		_beam.Color = BeamColor;
 		_beam.Width = BeamWidth;
-		_beam.Face = SceneLineObject.FaceMode.Camera;
+		// Cylinder, not camera-facing: a camera-facing strip builds its quad from the cross product
+		// of the line and the view vector, and this line points nearly straight away from the eye
+		// it is drawn for, where that product collapses and the beam thins to nothing.
+		_beam.Face = SceneLineObject.FaceMode.Cylinder;
 
 		// A beam that casts shadows is both wrong-looking and a shadow map we would be paying for
 		// every frame it moves.
@@ -115,8 +130,26 @@ public sealed class VrHands : Component
 	GameObject MakeHand( string name, out ModelRenderer model )
 	{
 		var go = MakeLocalObject( name );
-		model = go.AddComponent<ModelRenderer>();
+		model = AddBox( go, "Grip", GripSize, new Color( 0.08f, 0.08f, 0.09f ) );
 		return go;
+	}
+
+	/// <summary>A box of a given world size, the way every primitive in this scene is built: the
+	/// dev box normalised by its own bounds, tinted, on a child object so the hand's own transform
+	/// stays the controller pose and nothing has to undo a scale to read it.</summary>
+	static ModelRenderer AddBox( GameObject parent, string name, Vector3 size, Color tint )
+	{
+		var model = Model.Load( "models/dev/box.vmdl" );
+		if ( model == null ) return null;
+
+		var go = new GameObject( true, name ) { Parent = parent };
+		var bounds = model.Bounds.Size;
+		go.LocalScale = new Vector3( size.x / bounds.x, size.y / bounds.y, size.z / bounds.z );
+
+		var renderer = go.AddComponent<ModelRenderer>();
+		renderer.Model = model;
+		renderer.Tint = tint;
+		return renderer;
 	}
 
 	/// <summary>A client-local object at the scene root. Not a child of the avatar: the avatar is
@@ -150,7 +183,8 @@ public sealed class VrHands : Component
 	// which step failed.
 	public static bool Built => Instance?._left.IsValid() ?? false;
 	public static int Placed => Instance?._placed ?? 0;
-	public static bool Drawn => (Instance?._leftModel.IsValid() ?? false) && Instance._leftModel.Model != null;
+	public static bool Drawn => (Instance?._leftModel.IsValid() ?? false)
+		&& Instance._leftModel.Enabled && Instance._leftModel.Model != null;
 	public static bool BeamOn => (Instance?._beam.IsValid() ?? false) && Instance._beam.Enabled;
 
 	/// <summary>Put both hands and the pointer where the controllers are, this frame. Called by
@@ -174,40 +208,27 @@ public sealed class VrHands : Component
 		var left = Input.VR.LeftHand;
 		var right = Input.VR.RightHand;
 
-		PlaceHand( _left, _leftModel, left.Transform, left.GetModel() );
-		PlaceHand( _right, _rightModel, right.Transform, right.GetModel() );
+		// A controller that stopped reporting holds its last pose, and a grip left floating in the
+		// room is worse than no grip: it says "tracking" when nothing is.
+		PlaceHand( _left, left.Transform, left.Active );
+		PlaceHand( _right, right.Transform, right.Active );
 
 		PlacePointer();
+
+		// A frame that got all the way here had nothing to report; leaving a stale message on the
+		// board would pin it at THREW over one transient throw.
+		LastError = null;
 	}
 
-	void PlaceHand( GameObject go, ModelRenderer renderer, Transform pose, Model model )
+	static void PlaceHand( GameObject go, Transform pose, bool tracked )
 	{
 		if ( !go.IsValid() ) return;
 
+		go.Enabled = tracked;
+		if ( !tracked ) return;
+
 		go.WorldPosition = pose.Position;
 		go.WorldRotation = pose.Rotation;
-
-		if ( !renderer.IsValid() ) return;
-
-		// A renderer with no model draws nothing at all, and the runtime reports none until the
-		// device has finished waking up — so there is always something in hand, and the real model
-		// replaces the stand-in box whenever it turns up.
-		if ( model != null )
-		{
-			if ( renderer.Model != model )
-			{
-				renderer.Model = model;
-				go.WorldScale = 1f;
-			}
-
-			return;
-		}
-
-		if ( renderer.Model == null )
-		{
-			renderer.Model = Model.Load( "models/dev/box.vmdl" );
-			go.WorldScale = StandInScale;
-		}
 	}
 
 	void PlacePointer()
@@ -219,11 +240,13 @@ public sealed class VrHands : Component
 		if ( VrInput.AimRay is not { } ray )
 		{
 			if ( _beam.IsValid() ) _beam.Enabled = false;
+			if ( _tip.IsValid() ) _tip.Enabled = false;
 			if ( _input.IsValid() ) _input.Enabled = false;
 			return;
 		}
 
 		if ( _input.IsValid() ) _input.Enabled = true;
+		if ( _tip.IsValid() ) _tip.Enabled = true;
 
 		_pointer.WorldPosition = ray.Position;
 		_pointer.WorldRotation = Rotation.LookAt( ray.Forward );
@@ -236,7 +259,9 @@ public sealed class VrHands : Component
 			.IgnoreGameObjectHierarchy( GameObject.Root )
 			.Run();
 
-		float length = trace.Hit ? trace.Distance : Reach;
+		// Clamped: a ray that starts inside a collider (an arm through the table cabinet) traces
+		// zero, and two identical points are a line with no extent — drawn, enabled, invisible.
+		float length = MathF.Max( trace.Hit ? trace.Distance : Reach, 6f );
 
 		if ( !_beam.IsValid() ) return;
 

@@ -191,9 +191,23 @@ object's forward and reads the trigger as a click in VR — so the HUD quad and 
 needed nothing new. It has to be the **only** one in the scene, because the ray it feeds the UI is a
 global; `LobbyPlayer` leaves the camera's off in VR for that reason.
 
-A controller with no model from the runtime still gets a stand-in box, scaled down from the dev
-box's 50 units: a renderer holding no model draws nothing at all, and "nothing is drawn" and "the
-hands are not tracking" look identical in a headset. The real model replaces it whenever it arrives.
+**There is no device model to draw.** `VRController.GetModel` is a stub: it returns `Model.Cube`
+(`models/dev/box.vmdl`) for every device, and never null. Drawn unscaled at the grip pose that is a
+50-unit cube centred on the palm with the player's head inside it — every face a backface, so
+nothing renders and nothing is occluded either. The room looks perfectly normal and the hands are
+simply absent, which is the one failure that looks like no failure at all.
+
+So the hands are primitives sized in world units, built the way every other primitive in this scene
+is: the dev box normalised by its own `Bounds.Size` and tinted (`Streetlights.AddBox` is the
+pattern). A grip-sized box per hand at the grip pose, a small bright tip at the aim pose. A
+controller that stops reporting hides its grip rather than leaving it floating, because a grip left
+in mid-air claims tracking that isn't happening.
+
+The beam is a **cylinder**, not a camera-facing strip: a camera-facing strip builds its quad from
+the cross product of the line and the view vector, and this line points nearly straight away from
+the eye it is drawn for, where that product collapses. Its length is clamped, because a ray that
+starts inside a collider traces zero and two identical points are a line with no extent — drawn,
+enabled and invisible.
 
 ### The state board
 
@@ -213,6 +227,10 @@ rather than only logged, because the log is not where the player is.
 if the board is there, the lines on it can be believed — including the ones saying the input system
 or the hands are missing. Hosted on either of those, it would be silent in exactly the case it
 exists for.
+
+`VrRig` also *builds* the hands, lazily, rather than `LobbyPlayer` building them once at spawn:
+`OnStart` runs once per spawn, so a VR component added by a code hotload into a running session is
+never asked for and fails silently — the same trap as a `GameObjectSystem` added mid-session.
 
 `VrRig` places the hands, rather than them placing themselves: every one of those poses is the
 playspace anchor's, so whatever sets the anchor has to place everything derived from it or the hands
