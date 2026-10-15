@@ -56,6 +56,9 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	bool _leftTrigger;
 	bool _rightTrigger;
 
+	static RealTimeUntil _logUntil;
+	static RealTimeSince _logLast;
+
 	public VrInput( Scene scene ) : base( scene )
 	{
 		Listen( Stage.StartUpdate, 0, Tick, nameof( Tick ) );
@@ -115,9 +118,29 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 
 		Walk( left.Joystick.Value );
 		Turn( right.Joystick.Value );
+
+		// A trail for things that only happen with the headset ON. The log file outlives the
+		// session, so this is readable after stopping even though the state it describes is gone.
+		if ( _logUntil > 0 && _logLast >= 1f )
+		{
+			_logLast = 0;
+			Status();
+		}
 	}
 
 	static bool Pressed( DigitalInput d ) => d.IsPressed && !d.WasPressed;
+
+	/// <summary>Dump <see cref="Status"/> once a second for this many seconds, so a controller that
+	/// only misbehaves while worn leaves a trail in the log to read afterwards. Set a controller
+	/// down to read the console and it goes to sleep, which reads as "no input" — the one answer
+	/// this is trying to rule out.</summary>
+	[ConCmd( "gambit_vr_log" )]
+	public static void LogFor( float seconds )
+	{
+		_logUntil = seconds;
+		_logLast = 1f;
+		Log.Info( $"[Gambit] vr: logging status for {seconds}s" );
+	}
 
 	/// <summary>Everything the rig believes about itself, in one line per fact. A headset is a bad
 	/// place to debug from — you cannot see the console — so this is the thing to run after taking

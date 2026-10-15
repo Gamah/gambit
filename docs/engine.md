@@ -24,6 +24,11 @@ repeated here.
   dropped.
 - **Hotload**: procedural builders rebuild through `[EditorEvent.Hotload]` in
   `Editor/HotloadRebuild.cs`. Register every new builder there.
+- **A new `GameObjectSystem` needs a fresh scene.** Types are discovered once, when a `Scene` is
+  constructed (`Scene.InitSystems`); a hotload goes through `Scene.Reload` → `ReloadSystems`, which
+  recreates the systems already in the dictionary "without rediscovering types". So a system class
+  that did not exist when Play started never runs, however many times the code reloads — stop and
+  start Play. It fails silently and looks exactly like broken logic inside the system.
 
 ### Self-attaching UI
 
