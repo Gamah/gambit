@@ -149,6 +149,14 @@ controller profiles the engine ships (`game/core/cfg/fpxr/`), the Index one give
 every `paths` holds a per-hand object. Whether the native loader forgives that is not visible from
 the managed source, so the mapping does not rest on it.
 
+**Movement is written in the FIXED stage, look in the update stage**, because that is where each is
+read: `UpdateEyeAngles` takes `Input.AnalogLook` from `OnUpdate`, but `InputMove` takes
+`Input.AnalogMove` from `OnFixedUpdate` — and `Scene.SharedTick` runs the whole fixed update
+*before* it signals `StartUpdate`. With `Input.Process` recomputing both analogs from real keyboard
+state once per frame ahead of the tick, a move written at `StartUpdate` is consumed as zero and
+overwritten before anything reads it. Turning works and walking does nothing, with both written
+side by side in the same function; `Stage.StartFixedUpdate` is where the move write survives.
+
 Two rules hold this together:
 
 - **Actions are pulsed true on the press and never written false.** `Input.Pressed` compares
@@ -188,6 +196,11 @@ whether the input system exists, whether the controllers report at all, what the
 whether the models arrived, how many times the hands have been placed. `gambit_vr_debug` hides it;
 `gambit_vr_status` prints the same lines to the console and `gambit_vr_log <seconds>` dumps them once
 a second, for reading after the headset comes off.
+
+It also carries `VrRig.LastError` and `VrHands.LastError`. **An exception in a VR component is
+invisible**: the hands are simply absent, which looks identical to never having been asked for, and
+a throw in a per-frame placement leaves nothing behind at all. Both are caught and reported here
+rather than only logged, because the log is not where the player is.
 
 **`VrRig` builds and places it, and that is the point.** A tracked view proves `VrRig` is running, so
 if the board is there, the lines on it can be believed — including the ones saying the input system

@@ -276,6 +276,15 @@ public sealed class ChessBoardView : Component
 	List<string> _targets = new();
 	int _hoverSquare = -1;
 
+	/// <summary>The square the local player's pick ray is over, or -1. Set only while this client
+	/// may actually interact, which is what makes it worth reporting in VR: "the trigger did
+	/// nothing" and "the trigger was aimed nowhere" are different faults.</summary>
+	public int HoverSquare => _hoverSquare;
+
+	/// <summary>Algebraic name for a square index, or null if there is none.</summary>
+	public static string NameOf( int square ) =>
+		square >= 0 && square < 64 ? SquareNames[square] : null;
+
 	/// <summary>Does this client want the green target squares painted (issue #26)?
 	/// Read live rather than cached so the south-wall toggle takes effect on the next
 	/// frame; <see cref="Gambit.Game.PlayerData.Load"/> is memoised, so it is a field

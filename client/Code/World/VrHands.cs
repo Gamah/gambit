@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Sandbox;
 
@@ -54,10 +55,37 @@ public sealed class VrHands : Component
 	LineRenderer _beam;
 	WorldInput _input;
 
+	/// <summary>Why there are no hands, when there are no hands. A component that throws in
+	/// <c>OnStart</c> leaves no trace a headset can see: the objects are simply absent, which looks
+	/// exactly like never having been asked for. The state board reads this.</summary>
+	public static string LastError { get; private set; }
+
+	/// <summary>What this component built, readable whether or not it exists — "no component" and
+	/// "a component that built nothing" are different faults with the same symptom.</summary>
+	public static string Status()
+	{
+		if ( Instance == null ) return $"hands=NONE{(LastError == null ? "" : $" err: {LastError}")}";
+
+		return Instance.StatusLine() + (LastError == null ? "" : $" err: {LastError}");
+	}
+
 	protected override void OnStart()
 	{
 		Instance = this;
 
+		try
+		{
+			Build();
+		}
+		catch ( Exception e )
+		{
+			LastError = e.Message;
+			Log.Warning( e, "[Gambit] vr: hands failed to build" );
+		}
+	}
+
+	void Build()
+	{
 		_left = MakeHand( "VR Hand Left", out _leftModel );
 		_right = MakeHand( "VR Hand Right", out _rightModel );
 
@@ -121,6 +149,18 @@ public sealed class VrHands : Component
 	/// <summary>Put both hands and the pointer where the controllers are, this frame. Called by
 	/// <see cref="VrRig"/> once the playspace anchor is set.</summary>
 	public void Place()
+	{
+		try
+		{
+			PlaceAll();
+		}
+		catch ( Exception e )
+		{
+			LastError = e.Message;
+		}
+	}
+
+	void PlaceAll()
 	{
 		_placed++;
 

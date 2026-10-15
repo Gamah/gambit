@@ -57,12 +57,42 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	bool _leftTrigger;
 	bool _rightTrigger;
 
+	/// <summary>Seconds since either trigger was pulled, and how many pulls this session: with no
+	/// other feedback in the headset, "did that register at all" is the first question.</summary>
+	public static RealTimeSince LastTrigger { get; private set; }
+	static int _pulls;
+
 	static RealTimeUntil _logUntil;
 	static RealTimeSince _logLast;
 
 	public VrInput( Scene scene ) : base( scene )
 	{
 		Listen( Stage.StartUpdate, 0, Tick, nameof( Tick ) );
+
+		// Movement has to be written in the FIXED stage, because that is where it is read. See
+		// FixedTick.
+		Listen( Stage.StartFixedUpdate, 0, FixedTick, nameof( FixedTick ) );
+	}
+
+	/// <summary>Write the walk axis immediately before the controller consumes it.
+	///
+	/// <para><b>The look and move analogs are read at opposite ends of the tick, and that is the
+	/// whole reason turning worked while walking did nothing.</b> <c>UpdateEyeAngles</c> reads
+	/// <c>Input.AnalogLook</c> from <c>OnUpdate</c>, after <c>Stage.StartUpdate</c>; but
+	/// <c>InputMove</c> reads <c>Input.AnalogMove</c> from <c>OnFixedUpdate</c>, and
+	/// <c>Scene.SharedTick</c> runs the whole fixed update BEFORE it signals
+	/// <c>StartUpdate</c>. Since <c>Input.Process</c> recomputes both analogs from real keyboard
+	/// state once per frame ahead of the tick, a move written in <c>StartUpdate</c> was always
+	/// consumed as zero and overwritten before it was ever read.</para>
+	///
+	/// <para><c>Stage.StartFixedUpdate</c> is signalled inside the fixed update, ahead of the
+	/// components in it, which is the one place this write survives to be read.</para></summary>
+	void FixedTick()
+	{
+		if ( Scene is null || Scene.IsEditor ) return;
+		if ( !Sandbox.Game.IsRunningInVR || !VrRig.Active ) return;
+
+		Walk( Input.VR.LeftHand.Joystick.Value );
 	}
 
 	void Tick()
@@ -87,6 +117,12 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 
 		if ( leftPulled ) Pointing = Hand.Left;
 		if ( rightPulled ) Pointing = Hand.Right;
+
+		if ( leftPulled || rightPulled )
+		{
+			LastTrigger = 0;
+			_pulls++;
+		}
 
 		var aim = Pointing == Hand.Left ? left.AimTransform : right.AimTransform;
 		AimRay = new Ray( aim.Position, aim.Rotation.Forward );
@@ -154,8 +190,10 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		var lines = new List<string>
 		{
 			$"vr={Sandbox.Game.IsRunningInVR}  rig={VrRig.Active}  system={Current != null}",
-			$"hands={VrHands.Instance != null}  hud={VrHud.Instance != null}",
+			$"hud={VrHud.Instance != null}  {VrHands.Status()}",
 		};
+
+		if ( VrRig.LastError != null ) lines.Add( $"rig err: {VrRig.LastError}" );
 
 		if ( !Sandbox.Game.IsRunningInVR )
 		{
@@ -166,7 +204,7 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		var left = Input.VR.LeftHand;
 		var right = Input.VR.RightHand;
 
-		lines.Add( $"head={left.Transform.Position.z:0}  anchor={Input.VR.Anchor.Position}" );
+		lines.Add( $"head={Fmt( Input.VR.Head.Position )}  anchor={Fmt( Input.VR.Anchor.Position )}" );
 		lines.Add( $"L pos={Fmt( left.Transform.Position )} stick={Fmt( left.Joystick.Value )}"
 			+ $" trig={left.Trigger.Value:0.00} a={Bit( left.ButtonA )} b={Bit( left.ButtonB )}" );
 		lines.Add( $"R pos={Fmt( right.Transform.Position )} stick={Fmt( right.Joystick.Value )}"
@@ -177,9 +215,20 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		lines.Add( $"point={Pointing}  aim={(AimRay is { } r ? Fmt( r.Position ) : "none")}" );
 		lines.Add( $"move={Fmt( Input.AnalogMove )}  look={Input.AnalogLook.yaw:0.00}"
 			+ $"  suppressed={Input.Suppressed}" );
-		lines.Add( VrHands.Instance?.StatusLine() ?? "hands: no component" );
+		lines.Add( $"trigger: last={LastTrigger:0.0}s ago  pulled={_pulls}  square={Hover()}" );
 
 		return lines;
+	}
+
+	/// <summary>The square the pointing hand is over at the local player's own table, as the board
+	/// itself sees it — so a trigger that did nothing can be told apart from one that was aimed
+	/// nowhere.</summary>
+	static string Hover()
+	{
+		var view = ChessStation.Active?.Components.Get<ChessBoardView>();
+		if ( view == null ) return "not seated";
+
+		return ChessBoardView.NameOf( view.HoverSquare ) ?? "off board";
 	}
 
 	static string Fmt( Vector3 v ) => $"{v.x:0},{v.y:0},{v.z:0}";
@@ -197,27 +246,15 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 			Log.Info( $"[Gambit] vr: {line}" );
 	}
 
-	/// <summary>Left stick walks, by both routes the engine offers.
-	///
-	/// <para><c>AnalogMove</c> is what <c>PlayerController</c> reads, and in the engine's axes —
-	/// forward is +x and LEFT is +y (<c>Input.ComputeAnalogMove</c>) — so the stick's x is negated
-	/// rather than copied. That write is enough on paper: <c>Input.Process</c> recomputes the
-	/// analogs once per frame, before the scene ticks, so nothing overwrites it afterwards.</para>
-	///
-	/// <para>The movement ACTIONS are pressed as well, which is belt and braces rather than
-	/// duplication: anything that recomputes <c>AnalogMove</c> derives it from exactly these four
-	/// action bits, so the stick still walks even if a recompute lands somewhere this does not
-	/// expect. It costs the analog magnitude in that case and nothing otherwise.</para></summary>
+	/// <summary>Left stick walks. <c>AnalogMove</c> is in the engine's axes — forward is +x and
+	/// LEFT is +y (<c>Input.ComputeAnalogMove</c>) — so the stick's x is negated rather than
+	/// copied. Pressing the movement actions instead would not help: they are only ever read by
+	/// <c>ComputeAnalogMove</c>, which runs before the tick and from real key state.</summary>
 	static void Walk( Vector2 stick )
 	{
 		if ( stick.Length < Deadzone ) return;
 
 		Input.AnalogMove = new Vector3( stick.y, -stick.x, 0f );
-
-		if ( stick.y > Deadzone ) Input.SetAction( "Forward", true );
-		if ( stick.y < -Deadzone ) Input.SetAction( "Backward", true );
-		if ( stick.x < -Deadzone ) Input.SetAction( "Left", true );
-		if ( stick.x > Deadzone ) Input.SetAction( "Right", true );
 	}
 
 	/// <summary>Right stick turns, smoothly. <c>AnalogLook</c> is added to the controller's eye

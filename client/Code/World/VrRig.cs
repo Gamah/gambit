@@ -1,3 +1,4 @@
+using System;
 using Sandbox;
 using Sandbox.VR;
 
@@ -135,8 +136,25 @@ public sealed class VrRig : Component
 		}
 	}
 
-	protected override void OnUpdate() => Drive();
-	protected override void OnPreRender() => Drive();
+	/// <summary>Why the rig is not doing what it should, when it isn't. An exception thrown per
+	/// frame here is invisible in a headset, and the state board is the only place that can say
+	/// so.</summary>
+	public static string LastError { get; private set; }
+
+	protected override void OnUpdate() => Guard();
+	protected override void OnPreRender() => Guard();
+
+	void Guard()
+	{
+		try
+		{
+			Drive();
+		}
+		catch ( Exception e )
+		{
+			LastError = e.Message;
+		}
+	}
 
 	void Drive()
 	{
