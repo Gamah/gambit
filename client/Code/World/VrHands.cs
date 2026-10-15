@@ -35,10 +35,15 @@ public sealed class VrHands : Component
 	/// <summary>How far the beam reaches when it hits nothing, in world units.</summary>
 	[Property] public float Reach { get; set; } = 160f;
 
-	/// <summary>Beam thickness, in panel-ish pixels — <c>LineRenderer.Width</c> units.</summary>
-	[Property] public float BeamWidth { get; set; } = 0.6f;
+	/// <summary>Beam thickness in world units.</summary>
+	[Property] public float BeamWidth { get; set; } = 1.2f;
 
-	[Property] public Color BeamColor { get; set; } = new Color( 0.45f, 0.85f, 1f );
+	/// <summary>HDR values (&gt;1) read as a glow with bloom, like the sun sphere's colour.</summary>
+	[Property] public Color BeamColor { get; set; } = new Color( 1.4f, 2.6f, 3.4f );
+
+	/// <summary>Scale for the stand-in box, when the runtime has no model for the device. A dev box
+	/// is 50 units across, which is a crate in the hand rather than a controller.</summary>
+	const float StandInScale = 0.12f;
 
 	GameObject _left;
 	GameObject _right;
@@ -64,6 +69,10 @@ public sealed class VrHands : Component
 		_beam.Color = BeamColor;
 		_beam.Width = BeamWidth;
 		_beam.Face = SceneLineObject.FaceMode.Camera;
+
+		// A beam that casts shadows is both wrong-looking and a shadow map we would be paying for
+		// every frame it moves.
+		_beam.CastShadows = false;
 	}
 
 	protected override void OnDestroy()
@@ -115,10 +124,27 @@ public sealed class VrHands : Component
 		go.WorldPosition = pose.Position;
 		go.WorldRotation = pose.Rotation;
 
-		// The runtime can report no model until the device has finished waking up, so this keeps
-		// asking rather than latching a fallback box forever.
-		if ( renderer.IsValid() && model != null && renderer.Model != model )
-			renderer.Model = model;
+		if ( !renderer.IsValid() ) return;
+
+		// A renderer with no model draws nothing at all, and the runtime reports none until the
+		// device has finished waking up — so there is always something in hand, and the real model
+		// replaces the stand-in box whenever it turns up.
+		if ( model != null )
+		{
+			if ( renderer.Model != model )
+			{
+				renderer.Model = model;
+				go.WorldScale = 1f;
+			}
+
+			return;
+		}
+
+		if ( renderer.Model == null )
+		{
+			renderer.Model = Model.Load( "models/dev/box.vmdl" );
+			go.WorldScale = StandInScale;
+		}
 	}
 
 	void PlacePointer()

@@ -35,15 +35,18 @@ public sealed class VrHud : Component
 	/// here, so it must keep working after the swap.</summary>
 	public GameObject Host { get; private set; }
 
-	/// <summary>Distance from the eye to the quad, in world units. With
-	/// <see cref="RenderScale"/> it sets how much of the view the HUD covers: the quad is
-	/// <c>PanelSize.x * 0.05 * RenderScale</c> units wide (the engine's
-	/// <c>ScenePanelObject.ScreenToWorldScale</c>), and that width at this distance is the angle it
-	/// subtends.</summary>
-	[Property] public float Distance { get; set; } = 70f;
+	/// <summary>How far out the quad hangs, in world units. With <see cref="RenderScale"/> it sets
+	/// how much of the view the HUD covers: the quad is <c>PanelSize.x * 0.05 * RenderScale</c>
+	/// units wide (the engine's <c>ScenePanelObject.ScreenToWorldScale</c>), and that width at this
+	/// distance is the angle it subtends.</summary>
+	[Property] public float Distance { get; set; } = 85f;
+
+	/// <summary>How far the quad is lifted above the eye it hangs in front of. Seated, this is what
+	/// keeps it off the pieces.</summary>
+	[Property] public float Height { get; set; } = 26f;
 
 	/// <summary>World units per panel pixel, on top of the engine's 0.05.</summary>
-	[Property] public float RenderScale { get; set; } = 0.75f;
+	[Property] public float RenderScale { get; set; } = 1.4f;
 
 	/// <summary>The quad's pixel size, which is the layout space every panel's CSS is written
 	/// against. 1920x1080 is what the desktop's <c>ConsistentHeight</c> screen panel gives them, so
@@ -51,6 +54,7 @@ public sealed class VrHud : Component
 	[Property] public Vector2 PanelSize { get; set; } = new Vector2( 1920f, 1080f );
 
 	WorldPanel _panel;
+	PlayerController _controller;
 
 	/// <summary>Move the lobby's panels off the screen and onto a quad. Called before
 	/// <see cref="LobbyPlayer"/>'s runtime panels attach, so they are built against the world panel
@@ -70,6 +74,7 @@ public sealed class VrHud : Component
 
 		Host = screen.GameObject;
 		Instance = this;
+		_controller = Components.Get<PlayerController>();
 
 		screen.Destroy();
 
@@ -97,20 +102,54 @@ public sealed class VrHud : Component
 	protected override void OnUpdate() => Place();
 	protected override void OnPreRender() => Place();
 
-	/// <summary>Weld the quad to the view. The rotation is written here rather than left to
-	/// <c>WorldPanel.LookAtCamera</c>, which would derive it in its own <c>OnPreRender</c> — a
-	/// different frame's camera from the position set here, for a panel that must not swim.</summary>
+	/// <summary>Hang the quad in the world, in front of the player but never on their head.
+	///
+	/// <para><b>Nothing here follows head rotation.</b> A panel welded to the view turns with every
+	/// glance, which makes it impossible to look away from and impossible to read while moving. The
+	/// two placements it does have are both yaw-only and both in world space: over the board the
+	/// player is sitting at, or ahead of the body while roaming.</para>
+	///
+	/// <para>Seated, the quad is lifted clear of the board by <see cref="Height"/> so the pieces
+	/// stay visible under it; the seat anchor already points at the board centre, and only its yaw
+	/// is used, because the anchor itself is pitched steeply down.</para>
+	///
+	/// <para>Roaming, it follows the body: position from the feet at eye height, direction from the
+	/// controller's eye angles rather than the headset's. Walking and turning carry it along;
+	/// turning your head does not.</para>
+	///
+	/// <para>The rotation is written here rather than left to <c>WorldPanel.LookAtCamera</c>, which
+	/// would both reintroduce head tracking and derive it in its own <c>OnPreRender</c>, a
+	/// different frame's camera from the position set here.</para></summary>
 	void Place()
 	{
 		if ( !Host.IsValid() || !CameraObject.IsValid() ) return;
 
-		var eye = CameraObject.WorldTransform;
-
-		Host.WorldPosition = eye.Position + eye.Rotation.Forward * Distance;
-		Host.WorldRotation = Rotation.LookAt( -eye.Rotation.Forward, eye.Rotation.Up );
-
 		// Re-applied so the tuning commands take effect without a re-adopt.
 		if ( _panel.IsValid() ) _panel.RenderScale = RenderScale;
+
+		var station = ChessStation.Active;
+		var seat = station?.SeatAnchor( ChessStation.ActiveSeat );
+
+		Vector3 from;
+		Vector3 forward;
+
+		if ( seat.IsValid() )
+		{
+			from = seat.WorldPosition;
+			forward = seat.WorldRotation.Forward;
+		}
+		else
+		{
+			from = WorldPosition.WithZ( CameraObject.WorldPosition.z );
+			forward = (_controller.IsValid() ? _controller.EyeAngles.ToRotation() : WorldRotation).Forward;
+		}
+
+		forward = forward.WithZ( 0f );
+		if ( forward.LengthSquared < 0.0001f ) return;
+		forward = forward.Normal;
+
+		Host.WorldPosition = from + forward * Distance + Vector3.Up * Height;
+		Host.WorldRotation = Rotation.LookAt( -forward, Vector3.Up );
 	}
 
 	/// <summary>How far in front of the eye the HUD quad sits. Tune it from inside the headset.</summary>
@@ -121,6 +160,16 @@ public sealed class VrHud : Component
 
 		Instance.Distance = units;
 		Log.Info( $"[Gambit] vr: HUD distance {units}" );
+	}
+
+	/// <summary>How far the HUD sits above the eye it hangs in front of.</summary>
+	[ConCmd( "gambit_vr_hud_height" )]
+	public static void SetHeight( float units )
+	{
+		if ( Instance == null ) { Log.Info( "[Gambit] vr: no HUD (not running in VR?)" ); return; }
+
+		Instance.Height = units;
+		Log.Info( $"[Gambit] vr: HUD height {units}" );
 	}
 
 	/// <summary>World units per panel pixel: how big the HUD is at its distance.</summary>

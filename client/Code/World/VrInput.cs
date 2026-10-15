@@ -119,14 +119,59 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 
 	static bool Pressed( DigitalInput d ) => d.IsPressed && !d.WasPressed;
 
-	/// <summary>Left stick walks. <c>AnalogMove</c> is in the engine's axes — forward is +x and
-	/// LEFT is +y (<c>Input.ComputeAnalogMove</c>) — so the stick's x is negated rather than
-	/// copied.</summary>
+	/// <summary>Everything the rig believes about itself, in one line per fact. A headset is a bad
+	/// place to debug from — you cannot see the console — so this is the thing to run after taking
+	/// it off, and it reports the state rather than the symptom: whether the controllers are
+	/// tracking at all, what the sticks read, whether the models arrived, and what the hands and
+	/// the HUD were last placed against.</summary>
+	[ConCmd( "gambit_vr_status" )]
+	public static void Status()
+	{
+		Log.Info( $"[Gambit] vr: IsRunningInVR={Sandbox.Game.IsRunningInVR} rig={VrRig.Active} "
+			+ $"hands={VrHands.Instance != null} hud={VrHud.Instance != null} "
+			+ $"system={Current != null}" );
+
+		if ( !Sandbox.Game.IsRunningInVR )
+		{
+			Log.Info( "[Gambit] vr: not in VR — nothing below means anything" );
+			return;
+		}
+
+		var left = Input.VR.LeftHand;
+		var right = Input.VR.RightHand;
+
+		Log.Info( $"[Gambit] vr: head={Input.VR.Head.Position} anchor={Input.VR.Anchor.Position}" );
+		Log.Info( $"[Gambit] vr: left  stick={left.Joystick.Value} trigger={left.Trigger.Value} "
+			+ $"a={left.ButtonA.IsPressed} b={left.ButtonB.IsPressed} active={left.Joystick.Active} "
+			+ $"pos={left.Transform.Position} model={(left.GetModel() == null ? "none" : left.GetModel().ResourceName)}" );
+		Log.Info( $"[Gambit] vr: right stick={right.Joystick.Value} trigger={right.Trigger.Value} "
+			+ $"a={right.ButtonA.IsPressed} b={right.ButtonB.IsPressed} active={right.Joystick.Active} "
+			+ $"pos={right.Transform.Position} model={(right.GetModel() == null ? "none" : right.GetModel().ResourceName)}" );
+		Log.Info( $"[Gambit] vr: pointing={Pointing} aim={AimRay?.Position.ToString() ?? "none"} "
+			+ $"analogmove={Input.AnalogMove} suppressed={Input.Suppressed}" );
+	}
+
+	/// <summary>Left stick walks, by both routes the engine offers.
+	///
+	/// <para><c>AnalogMove</c> is what <c>PlayerController</c> reads, and in the engine's axes —
+	/// forward is +x and LEFT is +y (<c>Input.ComputeAnalogMove</c>) — so the stick's x is negated
+	/// rather than copied. That write is enough on paper: <c>Input.Process</c> recomputes the
+	/// analogs once per frame, before the scene ticks, so nothing overwrites it afterwards.</para>
+	///
+	/// <para>The movement ACTIONS are pressed as well, which is belt and braces rather than
+	/// duplication: anything that recomputes <c>AnalogMove</c> derives it from exactly these four
+	/// action bits, so the stick still walks even if a recompute lands somewhere this does not
+	/// expect. It costs the analog magnitude in that case and nothing otherwise.</para></summary>
 	static void Walk( Vector2 stick )
 	{
 		if ( stick.Length < Deadzone ) return;
 
 		Input.AnalogMove = new Vector3( stick.y, -stick.x, 0f );
+
+		if ( stick.y > Deadzone ) Input.SetAction( "Forward", true );
+		if ( stick.y < -Deadzone ) Input.SetAction( "Backward", true );
+		if ( stick.x < -Deadzone ) Input.SetAction( "Left", true );
+		if ( stick.x > Deadzone ) Input.SetAction( "Right", true );
 	}
 
 	/// <summary>Right stick turns, smoothly. <c>AnalogLook</c> is added to the controller's eye
