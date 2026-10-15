@@ -138,7 +138,10 @@ public sealed class LobbyPlayer : Component
 		// It is the engine's own mechanism and docs/engine.md's stated thing-to-reach-for; the
 		// alternative is a hand-rolled tilted-plane hit test, which P99 wrote twice and deleted
 		// twice. Local player only — it hangs on our camera, and proxies have none.
-		if ( _cameraObject.IsValid() && _cameraObject.Components.Get<WorldInput>() == null )
+		// In VR the pointer is a hand, not the view (VrHands), and the ray WorldInput feeds the UI
+		// is a global — two of them would fight every frame, so the camera gets none.
+		if ( _cameraObject.IsValid() && !Sandbox.Game.IsRunningInVR
+			&& _cameraObject.Components.Get<WorldInput>() == null )
 			_cameraObject.AddComponent<WorldInput>();
 
 	}
@@ -158,6 +161,7 @@ public sealed class LobbyPlayer : Component
 		if ( !Sandbox.Game.IsRunningInVR ) return;
 
 		Components.GetOrCreate<VrRig>().CameraObject = _cameraObject;
+		Components.GetOrCreate<VrHands>();
 
 		_vrHud = Components.GetOrCreate<VrHud>();
 		_vrHud.CameraObject = _cameraObject;

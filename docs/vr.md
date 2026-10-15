@@ -1,8 +1,9 @@
 # VR
 
-A headset on the existing desktop rig. Controls are unchanged: mouse, keyboard and cursor work
-exactly as they do without a headset, and no VR controller is read. The screen UI moves onto a quad
-in front of the eye, which is the one thing that cannot stay as it is.
+A headset on the existing desktop rig, with the controllers bridged onto the controls the lobby
+already has. Mouse and keyboard keep working throughout. Two things cannot stay as they are: the
+screen UI, which moves onto a quad in front of the eye, and the board's pick ray, which comes off
+the pointing controller.
 
 **VR starts only with `-vr` on the command line**, and `-novr` overrides it; the check runs once
 at startup, so a headset plugged in later does nothing
@@ -112,9 +113,74 @@ a component's own `OnStart` for the same reason.
 **Head-locked is a staging post.** A panel welded to the view is the thing VR players complain
 about, and it still covers the board. It stands until the UI is something you point a controller at.
 
+## The controllers, bridged onto the controls that already exist
+
+VR input is a parallel API: nothing in the engine's VR code writes the action system, so
+`Input.Pressed("Select")` never hears a trigger. But `Input.SetAction`, `Input.EscapePressed`,
+`Input.AnalogMove` and `Input.AnalogLook` are all public and settable, so `World/VrInput.cs` — a
+`GameObjectSystem` at `Stage.StartUpdate`, after the frame's real keyboard and mouse state is
+computed and before any component runs — writes them, and **nothing downstream knows VR exists**.
+
+| control | does |
+| --- | --- |
+| either trigger | `Select` (pick a square) and, through `WorldInput`'s own VR branch, a panel click |
+| A | `use` — sit down, engage a wall board |
+| B | `Input.EscapePressed` — the cursor toggle while seated, standing up otherwise |
+| left stick | `Input.AnalogMove` |
+| right stick | `Input.AnalogLook` yaw, smooth, `VrInput.TurnRate` degrees per second |
+| grip | nothing, deliberately: it is what grabbing a piece will want |
+
+Two rules hold this together:
+
+- **Actions are pulsed true on the press and never written false.** `Input.Pressed` compares
+  against a previous-frame bitfield captured before this write (`Input.Context.Flip`), so an action
+  held true every frame would fire `Pressed` every frame — a held trigger picking a square per
+  frame. Writing false is equally wrong, because the same bit carries the keyboard's state. One
+  true on the rising edge, and the engine's own flip clears it.
+- **The sticks write only off centre**, which is what leaves mouse look and WASD working exactly as
+  they do on the desktop.
+
+### The hands and the beam
+
+Both controllers are drawn with the model the runtime reports for the device
+(`VRController.GetModel`), so no art is ours to keep in step with whatever headset is plugged in.
+The model sits at the **grip** pose and the pointer at the **aim** pose — different poses on the
+same device, and no runtime promises they agree.
+
+The beam, and the panel pointer, belong to whichever hand last pulled its trigger
+(`VrInput.Pointing`): two live pointers need a priority rule for one hover state, and "the one you
+just used" is the answer. Panels are pointed at through the engine's `WorldInput`, which casts its
+object's forward and reads the trigger as a click in VR — so the HUD quad and the tabletop plate
+needed nothing new. It has to be the **only** one in the scene, because the ray it feeds the UI is a
+global; `LobbyPlayer` leaves the camera's off in VR for that reason.
+
+`VrRig` places the hands, rather than them placing themselves: every one of those poses is the
+playspace anchor's, so whatever sets the anchor has to place everything derived from it or the hands
+trail the body by a frame.
+
+**The cursor is forced hidden in VR**, every frame, because it is a global that the seat's aim
+toggle and the music screen each set for their own reasons. A visible cursor sends `WorldInput` down
+its camera-ray branch, so the hand would stop pointing the moment a panel with a button appeared.
+
+### The board pick comes off the controller
+
+`ChessBoardView.SquareUnderCursor` takes `VrInput.AimRay` when there is one, and the desktop's
+`camera.ScreenPixelToRay( SeatAim.PickPixel() )` otherwise. In VR the player's hand is in the same
+space as the board, so the device is a better description of where they are aiming than any screen
+pixel; neither aim mode applies, and a seated camera ray would pick from the eye rather than from
+where the beam is drawn. The pick is plane maths against the board surface with no colliders
+involved, which is why a different ray drops straight in.
+
+That also means the beam does not stop at the square: cells, pieces and panels have no colliders, so
+it lands on the table or the floor behind them. The hovered square's own highlight is the reticle —
+the same thing the desktop's look aim relies on.
+
 ## Known gaps
 
-- No tracked hands, no controller input, no pointing at a square: moves are made with the mouse.
+- No grab: a piece is still picked square-by-square, not lifted. Grip is reserved for it.
+- No IK and no arms — the controller model floats where the device is. The intended end is the
+  citizen's own arm and fingers driven by IK, with the ray still cast from the controller transform
+  regardless of where the animation puts the hand.
 - `LocalMusicSystem` builds its own `ScreenPanel` on a `NotSaved` object, which `VrHud` does not
   adopt — the music HUD is still flat in both eyes.
 - The seated body is hidden locally in VR (`LobbyPlayer.HideLocalAvatar`); remote players still

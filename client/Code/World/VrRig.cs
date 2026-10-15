@@ -148,6 +148,18 @@ public sealed class VrRig : Component
 			_companion.WorldPosition = head.Position;
 			_companion.WorldRotation = head.Rotation;
 		}
+
+		// Everything else that rides the playspace is placed from here, in this order, because
+		// every one of those poses is the anchor's: a component placing itself in its own update
+		// would read whichever anchor the frame happened to have when it ran.
+		VrHands.Instance?.Place();
+
+		// The pointer is a physical object now. The cursor has to be out of the way for that: a
+		// visible cursor sends WorldInput down its camera-ray branch (and the engine zeroes
+		// AnalogLook while one is up), so the hand would stop pointing the moment a panel with a
+		// button appeared. Written every frame rather than once, because it is a global that the
+		// seat's aim toggle and the music screen both set for their own reasons.
+		Mouse.Visibility = MouseVisibility.Hidden;
 	}
 
 	void UpdateAnchor()
