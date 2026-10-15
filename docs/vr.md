@@ -31,6 +31,10 @@ off). Gambit's `.sbproj` declares no control modes at all, so nothing is implied
   absent or a lie.
 - `vr_info` in the console prints the refresh rate, IPD and tracked devices, or
   "VR not initialized."
+- **`scripts/vr.bat` is the launcher**: it finds `sbox-dev.exe` (Steam's registry key, then the
+  usual library folders; `SBOX_DEV` overrides) and starts the editor on this project with `-vr`.
+  Make a desktop shortcut to it rather than a copy, since it resolves the project relative to
+  itself.
 
 ## The monitor sees nothing unless something else draws it
 
@@ -124,11 +128,16 @@ computed and before any component runs — writes them, and **nothing downstream
 | control | does |
 | --- | --- |
 | either trigger | `Select` (pick a square), `use` (sit down, engage a board) while roaming, and a panel click through `WorldInput`'s own VR branch |
-| A | nothing yet |
-| B | `Input.EscapePressed` — the cursor toggle while seated, standing up otherwise |
+| B, and A | `Input.EscapePressed` — the cursor toggle while seated, standing up otherwise |
 | left stick | `Input.AnalogMove` |
 | right stick | `Input.AnalogLook` yaw, smooth, `VrInput.TurnRate` degrees per second |
 | grip | nothing, deliberately: it is what grabbing a piece will want |
+
+**Escape answers to A as well as B**, which is not symmetry for its own sake: of the two
+controller profiles the engine ships (`game/core/cfg/fpxr/`), the Index one gives `button_b` a
+`paths` key holding a single string, where every other single binding in both files uses `path` and
+every `paths` holds a per-hand object. Whether the native loader forgives that is not visible from
+the managed source, so the mapping does not rest on it.
 
 Two rules hold this together:
 

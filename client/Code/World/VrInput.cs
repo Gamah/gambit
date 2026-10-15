@@ -102,7 +102,16 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 
 		// Escape is not an action — it is its own settable global, and LobbyPlayer clears it when
 		// it consumes one (the cursor toggle while seated, standing up otherwise).
-		if ( Pressed( left.ButtonB ) || Pressed( right.ButtonB ) ) Input.EscapePressed = true;
+		//
+		// B is the button for it; A answers too, because B is the one binding in the engine's
+		// Index profile written with the wrong key. `game/core/cfg/fpxr/valve_knuckles.json` gives
+		// button_b a `paths` (plural) holding a single string, where every other single binding in
+		// both shipped profiles uses `path` and every `paths` holds a per-hand object. Whether the
+		// native loader is lenient about that is not something the managed source can say, so the
+		// mapping does not depend on it.
+		if ( Pressed( left.ButtonB ) || Pressed( right.ButtonB )
+			|| Pressed( left.ButtonA ) || Pressed( right.ButtonA ) )
+			Input.EscapePressed = true;
 
 		Walk( left.Joystick.Value );
 		Turn( right.Joystick.Value );
