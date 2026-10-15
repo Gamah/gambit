@@ -47,6 +47,15 @@ public sealed class VrRig : Component
 	LobbyPlayer _player;
 	PlayerController _controller;
 	CameraComponent _companion;
+	GameObject _board;
+
+	/// <summary>The state board is on while this is a spike: nothing else in a headset can say
+	/// why a controller is doing nothing.</summary>
+	static bool DebugBoard = true;
+
+	/// <summary>Where the state board hangs, in world units.</summary>
+	static float BoardDistance = 170f;
+	static float BoardHeight = 20f;
 
 	// The headset pose inside the playspace at sit-down, used to land the player's real seated
 	// pose on the seat's eye point: position so the board is in front of them wherever their
@@ -153,6 +162,7 @@ public sealed class VrRig : Component
 		// every one of those poses is the anchor's: a component placing itself in its own update
 		// would read whichever anchor the frame happened to have when it ran.
 		VrHands.Instance?.Place();
+		PlaceDebugBoard();
 
 		// The pointer is a physical object now. The cursor has to be out of the way for that: a
 		// visible cursor sends WorldInput down its camera-ray branch (and the engine zeroes
@@ -242,6 +252,90 @@ public sealed class VrRig : Component
 		}
 
 		Log.Info( $"[Gambit] vr: companion camera {(CompanionWanted ? "ON" : "OFF")}" );
+	}
+
+	/// <summary>Where the player is looking, as a body rather than as a head: a point to hang
+	/// something in front of, and a horizontal direction to hang it along. Seated, that is the seat
+	/// anchor's yaw (the anchor itself is pitched steeply down at the board); roaming, it is the
+	/// controller's eye angles — NOT the headset's, so that a glance does not drag the world's
+	/// furniture around with it.
+	///
+	/// <para>One place decides this, because two things hang off it (the HUD quad and the debug
+	/// board) and a panel that disagreed with the other about where "in front" is would look like a
+	/// bug in whichever one you noticed second.</para></summary>
+	public static bool ViewAnchor( PlayerController controller, GameObject camera, out Vector3 from, out Vector3 forward )
+	{
+		from = default;
+		forward = default;
+
+		var station = ChessStation.Active;
+		var seat = station?.SeatAnchor( ChessStation.ActiveSeat );
+
+		if ( seat.IsValid() )
+		{
+			from = seat.WorldPosition;
+			forward = seat.WorldRotation.Forward;
+		}
+		else if ( controller.IsValid() && camera.IsValid() )
+		{
+			from = controller.WorldPosition.WithZ( camera.WorldPosition.z );
+			forward = controller.EyeAngles.ToRotation().Forward;
+		}
+		else
+		{
+			return false;
+		}
+
+		forward = forward.WithZ( 0f );
+		if ( forward.LengthSquared < 0.0001f ) return false;
+
+		forward = forward.Normal;
+		return true;
+	}
+
+	/// <summary>The rig's state, on a board in the room. A headset has no console in it, and every
+	/// VR fact worth knowing is only true while one is being worn.
+	///
+	/// <para><b>It is built here, by the component whose own symptom proves it runs.</b> A tracked
+	/// view means this code is executing; so if the board appears, every line on it can be
+	/// believed, including the lines that say the input system or the hands are missing. Hosting it
+	/// on either of those would make it silent in exactly the case it exists for.</para></summary>
+	void PlaceDebugBoard()
+	{
+		if ( !DebugBoard )
+		{
+			_board?.Destroy();
+			_board = null;
+			return;
+		}
+
+		if ( !_board.IsValid() )
+		{
+			_board = new GameObject( true, "VR Debug Board" )
+			{
+				Flags = GameObjectFlags.NotSaved | GameObjectFlags.NotNetworked
+			};
+			_board.NetworkMode = NetworkMode.Never;
+
+			// The wall boards' size, by the repo's own contract: default PanelSize, content
+			// height:auto, BoardScale as the GO scale. Nothing here invents a scale.
+			_board.LocalScale = WallBoardGeometry.BoardScale;
+			_board.AddComponent<WorldPanel>();
+			_board.AddComponent<Gambit.UI.VrStatusPanel>();
+		}
+
+		if ( !ViewAnchor( _controller, CameraObject, out var from, out var forward ) ) return;
+
+		_board.WorldPosition = from + forward * BoardDistance + Vector3.Up * BoardHeight;
+		_board.WorldRotation = Rotation.LookAt( -forward, Vector3.Up );
+	}
+
+	/// <summary>Show or hide the rig's state board.</summary>
+	[ConCmd( "gambit_vr_debug" )]
+	public static void ToggleDebugBoard()
+	{
+		DebugBoard = !DebugBoard;
+		Log.Info( $"[Gambit] vr: debug board {(DebugBoard ? "ON" : "OFF")}" );
 	}
 
 	/// <summary>Re-capture the seated reference pose: sit comfortably, face the board, run this.

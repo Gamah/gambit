@@ -56,6 +56,15 @@ public sealed class VrHud : Component
 	WorldPanel _panel;
 	PlayerController _controller;
 
+	/// <summary>Whether the desktop screen UI is drawn at all in VR.
+	///
+	/// <para><b>Off by default, because that UI is not a VR UI.</b> It is a 1920x1080 screen layout
+	/// with edge-anchored rows, a crosshair and keyboard hints, and enlarging it does not make it
+	/// belong in a room. The adoption still happens — the screen panel has to stop being a screen
+	/// panel either way, or it draws flat in both eyes — but the quad stays dark until there is a
+	/// panel designed for this, or until <c>gambit_vr_hud</c> asks for it.</para></summary>
+	public static bool Shown { get; private set; }
+
 	/// <summary>Move the lobby's panels off the screen and onto a quad. Called before
 	/// <see cref="LobbyPlayer"/>'s runtime panels attach, so they are built against the world panel
 	/// rather than re-parented afterwards.
@@ -83,15 +92,43 @@ public sealed class VrHud : Component
 		_panel.RenderScale = RenderScale;
 		_panel.LookAtCamera = false; // Place() owns the rotation, in the same frame as the position
 
-		// Copied out before toggling: the toggle rebuilds panels, and that mutates the list.
+		Rehome();
+		_panel.Enabled = Shown;
+
+		Place();
+	}
+
+	/// <summary>Rebuild every panel on the host so each re-parents to the root that is live now. A
+	/// panel whose parent was deleted does not re-home itself — <c>EnsureParentPanel</c> acts only
+	/// on a null parent — so the toggle is the mechanism, not a nudge.
+	///
+	/// <para>The list is copied first: rebuilding mutates the component list being walked.</para></summary>
+	void Rehome()
+	{
+		if ( !Host.IsValid() ) return;
+
 		foreach ( var c in new List<PanelComponent>( Host.Components.GetAll<PanelComponent>() ) )
 		{
 			if ( !c.IsValid() ) continue;
 			c.Enabled = false;
 			c.Enabled = true;
 		}
+	}
 
-		Place();
+	/// <summary>Draw the adopted desktop UI, or don't. Re-showing rebuilds the panels, because the
+	/// world panel deletes its root when disabled and takes their parents with it.</summary>
+	[ConCmd( "gambit_vr_hud" )]
+	public static void ToggleHud()
+	{
+		Shown = !Shown;
+
+		if ( Instance?._panel.IsValid() ?? false )
+		{
+			Instance._panel.Enabled = Shown;
+			if ( Shown ) Instance.Rehome();
+		}
+
+		Log.Info( $"[Gambit] vr: desktop HUD {(Shown ? "ON" : "OFF")}" );
 	}
 
 	protected override void OnDestroy()
@@ -127,26 +164,9 @@ public sealed class VrHud : Component
 		// Re-applied so the tuning commands take effect without a re-adopt.
 		if ( _panel.IsValid() ) _panel.RenderScale = RenderScale;
 
-		var station = ChessStation.Active;
-		var seat = station?.SeatAnchor( ChessStation.ActiveSeat );
-
-		Vector3 from;
-		Vector3 forward;
-
-		if ( seat.IsValid() )
-		{
-			from = seat.WorldPosition;
-			forward = seat.WorldRotation.Forward;
-		}
-		else
-		{
-			from = WorldPosition.WithZ( CameraObject.WorldPosition.z );
-			forward = (_controller.IsValid() ? _controller.EyeAngles.ToRotation() : WorldRotation).Forward;
-		}
-
-		forward = forward.WithZ( 0f );
-		if ( forward.LengthSquared < 0.0001f ) return;
-		forward = forward.Normal;
+		// VrRig owns where "in front of the player" is, so this and the state board cannot
+		// disagree about it.
+		if ( !VrRig.ViewAnchor( _controller, CameraObject, out var from, out var forward ) ) return;
 
 		Host.WorldPosition = from + forward * Distance + Vector3.Up * Height;
 		Host.WorldRotation = Rotation.LookAt( -forward, Vector3.Up );

@@ -1,0 +1,95 @@
+@using System;
+@using System.Collections.Generic;
+@using Sandbox;
+@using Sandbox.UI;
+@using Gambit.World;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	The rig's own state, on a board in the room, at wall-board scale. A headset has no console in
+	it: every VR fact worth knowing — whether the input system exists, whether the controllers
+	report at all, what the sticks read — is only true while wearing one, and only readable here.
+
+	VrRig builds and places it, because VrRig is the one VR component whose own symptom (a
+	tracked view) proves it is running. A diagnostic hosted by the thing it diagnoses says
+	nothing when that thing is dead.
+
+	Every line comes from VrInput.StatusLines, which gambit_vr_status also prints, so the board
+	and the console can never tell two stories.
+*@
+
+<root>
+	<div class="board" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
+		<div class="title" style="color:@WallTheme.Text;">VR RIG</div>
+		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+		@{ var lines = VrInput.StatusLines(); }
+		@for ( int i = 0; i < lines.Count; i++ )
+		{
+			<div class="line" style="color:@( i == 0 ? WallTheme.AccentCss : WallTheme.TextDim );">@lines[i]</div>
+		}
+		<div class="hint" style="color:@WallTheme.TextFaint;">gambit_vr_debug to hide</div>
+	</div>
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	.board {
+		width: 100%;
+		height: auto;
+		flex-direction: column;
+		align-items: stretch;
+		justify-content: flex-start;
+		padding: $wall-pad;
+		border-radius: $wall-radius;
+		font-family: $wall-font;
+		gap: $wall-gap;
+	}
+
+	.board > div {
+		flex-shrink: 0;
+	}
+
+	.title {
+		justify-content: center;
+		white-space: nowrap;
+		font-size: $wall-fs-hero;
+		font-weight: bold;
+		letter-spacing: 4px;
+	}
+
+	.divider {
+		height: $wall-divider-h;
+		margin: $wall-divider-gap 0;
+	}
+
+	/* Monospace: these lines are numbers that change every frame, and a proportional face makes
+	   a value jitter sideways as it counts. */
+	.line {
+		font-family: Consolas, monospace;
+		font-size: $wall-fs-body;
+		white-space: nowrap;
+	}
+
+	.hint {
+		justify-content: center;
+		font-size: $wall-fs-fine;
+		letter-spacing: 1px;
+		margin-top: 8px;
+	}
+</style>
+
+@code
+{
+	/// <summary>Repaint ten times a second: every number here is a live input value, and a board
+	/// keyed on a settled hash would sit on a stale frame exactly when it matters. Ten is fast
+	/// enough to watch a stick move and slow enough not to rebuild the tree every frame.</summary>
+	protected override int BuildHash() => (int)(RealTime.Now * 10f);
+}

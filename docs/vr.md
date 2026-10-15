@@ -109,11 +109,18 @@ stylesheet and `Ensure*` attach point, and its `ScreenPanel` is destroyed in fav
 the quad's edges. `gambit_vr_hud_distance`, `gambit_vr_hud_height` and `gambit_vr_hud_scale` tune it
 from inside the headset.
 
-**Nothing about the quad follows head rotation.** Both of its placements are yaw-only and in world
-space: over the board the player is seated at, lifted clear of the pieces and facing the seat, or
-ahead of the body while roaming — position from the feet at eye height, direction from the
-controller's eye angles rather than the headset's, so walking and turning carry it and a glance does
-not.
+**Nothing about the quad follows head rotation.** `VrRig.ViewAnchor` is the one place that decides
+where "in front of the player" is — the seat anchor's yaw while seated, the controller's eye angles
+while roaming, never the headset's — and both the quad and the state board hang off it, so they
+cannot disagree.
+
+**The adopted desktop UI is off by default** (`gambit_vr_hud` shows it). It is a 1920x1080 screen
+layout with edge-anchored rows, a crosshair and keyboard hints; enlarging it does not make it belong
+in a room. The adoption still happens, because a screen panel has to stop being a screen panel
+either way or it draws flat in both eyes — but the quad stays dark until there is a panel designed
+for this. **A VR panel is wall-board sized and built the way the wall boards are**
+(`WallBoardGeometry`: default `PanelSize`, content `height:auto`, `BoardScale` as the GO scale); the
+state board below is the first one, and the pattern to copy.
 
 `LobbyPlayer.HudHost()` is the one seam that knows about this: the self-attaching screens hang on
 the UI **GameObject**, whichever root panel it carries. `EnsureVr` runs before them so the world
@@ -173,10 +180,19 @@ A controller with no model from the runtime still gets a stand-in box, scaled do
 box's 50 units: a renderer holding no model draws nothing at all, and "nothing is drawn" and "the
 hands are not tracking" look identical in a headset. The real model replaces it whenever it arrives.
 
-`gambit_vr_status` prints what the rig believes — whether the controllers track, what the sticks
-read, whether models arrived, where the hands and the HUD were last placed. A headset is a bad place
-to read a console from, so it reports state to look at afterwards rather than symptoms to guess
-from.
+### The state board
+
+**A headset has no console in it**, and every VR fact worth knowing is only true while one is being
+worn. So `UI/VrStatusPanel.razor` puts the rig's state on a wall-board-scale panel in the room:
+whether the input system exists, whether the controllers report at all, what the sticks read,
+whether the models arrived, how many times the hands have been placed. `gambit_vr_debug` hides it;
+`gambit_vr_status` prints the same lines to the console and `gambit_vr_log <seconds>` dumps them once
+a second, for reading after the headset comes off.
+
+**`VrRig` builds and places it, and that is the point.** A tracked view proves `VrRig` is running, so
+if the board is there, the lines on it can be believed — including the ones saying the input system
+or the hands are missing. Hosted on either of those, it would be silent in exactly the case it
+exists for.
 
 `VrRig` places the hands, rather than them placing themselves: every one of those poses is the
 playspace anchor's, so whatever sets the anchor has to place everything derived from it or the hands

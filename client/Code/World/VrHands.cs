@@ -104,10 +104,26 @@ public sealed class VrHands : Component
 		return go;
 	}
 
+	/// <summary>What this component actually built and placed, for the status board — "the hands
+	/// exist" and "the hands are where the controllers are" are different claims, and only one of
+	/// them is visible when nothing is drawn.</summary>
+	public string StatusLine()
+	{
+		string models = $"{(_leftModel.IsValid() && _leftModel.Model != null ? "L" : "l")}"
+			+ $"{(_rightModel.IsValid() && _rightModel.Model != null ? "R" : "r")}";
+
+		return $"hands: objs={_left.IsValid()}/{_right.IsValid()} drawn={models}"
+			+ $" placed={_placed} beam={(_beam.IsValid() && _beam.Enabled)}";
+	}
+
+	int _placed;
+
 	/// <summary>Put both hands and the pointer where the controllers are, this frame. Called by
 	/// <see cref="VrRig"/> once the playspace anchor is set.</summary>
 	public void Place()
 	{
+		_placed++;
+
 		var left = Input.VR.LeftHand;
 		var right = Input.VR.RightHand;
 

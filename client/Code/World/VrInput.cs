@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Sandbox;
 using Sandbox.VR;
 
@@ -142,36 +143,58 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		Log.Info( $"[Gambit] vr: logging status for {seconds}s" );
 	}
 
-	/// <summary>Everything the rig believes about itself, in one line per fact. A headset is a bad
-	/// place to debug from — you cannot see the console — so this is the thing to run after taking
-	/// it off, and it reports the state rather than the symptom: whether the controllers are
-	/// tracking at all, what the sticks read, whether the models arrived, and what the hands and
-	/// the HUD were last placed against.</summary>
-	[ConCmd( "gambit_vr_status" )]
-	public static void Status()
+	/// <summary>Everything the rig believes about itself, one fact per line. The console command
+	/// and the in-world board both render this, so they cannot disagree.
+	///
+	/// <para><b>Static on purpose.</b> It is readable whether or not this system was ever
+	/// instantiated — which is itself one of the facts it reports, and the one that a dead stick,
+	/// a missing beam and an unclickable panel all reduce to.</para></summary>
+	public static List<string> StatusLines()
 	{
-		Log.Info( $"[Gambit] vr: IsRunningInVR={Sandbox.Game.IsRunningInVR} rig={VrRig.Active} "
-			+ $"hands={VrHands.Instance != null} hud={VrHud.Instance != null} "
-			+ $"system={Current != null}" );
+		var lines = new List<string>
+		{
+			$"vr={Sandbox.Game.IsRunningInVR}  rig={VrRig.Active}  system={Current != null}",
+			$"hands={VrHands.Instance != null}  hud={VrHud.Instance != null}",
+		};
 
 		if ( !Sandbox.Game.IsRunningInVR )
 		{
-			Log.Info( "[Gambit] vr: not in VR — nothing below means anything" );
-			return;
+			lines.Add( "not in VR - nothing else means anything" );
+			return lines;
 		}
 
 		var left = Input.VR.LeftHand;
 		var right = Input.VR.RightHand;
 
-		Log.Info( $"[Gambit] vr: head={Input.VR.Head.Position} anchor={Input.VR.Anchor.Position}" );
-		Log.Info( $"[Gambit] vr: left  stick={left.Joystick.Value} trigger={left.Trigger.Value} "
-			+ $"a={left.ButtonA.IsPressed} b={left.ButtonB.IsPressed} active={left.Joystick.Active} "
-			+ $"pos={left.Transform.Position} model={(left.GetModel() == null ? "none" : left.GetModel().ResourceName)}" );
-		Log.Info( $"[Gambit] vr: right stick={right.Joystick.Value} trigger={right.Trigger.Value} "
-			+ $"a={right.ButtonA.IsPressed} b={right.ButtonB.IsPressed} active={right.Joystick.Active} "
-			+ $"pos={right.Transform.Position} model={(right.GetModel() == null ? "none" : right.GetModel().ResourceName)}" );
-		Log.Info( $"[Gambit] vr: pointing={Pointing} aim={AimRay?.Position.ToString() ?? "none"} "
-			+ $"analogmove={Input.AnalogMove} suppressed={Input.Suppressed}" );
+		lines.Add( $"head={left.Transform.Position.z:0}  anchor={Input.VR.Anchor.Position}" );
+		lines.Add( $"L pos={Fmt( left.Transform.Position )} stick={Fmt( left.Joystick.Value )}"
+			+ $" trig={left.Trigger.Value:0.00} a={Bit( left.ButtonA )} b={Bit( left.ButtonB )}" );
+		lines.Add( $"R pos={Fmt( right.Transform.Position )} stick={Fmt( right.Joystick.Value )}"
+			+ $" trig={right.Trigger.Value:0.00} a={Bit( right.ButtonA )} b={Bit( right.ButtonB )}" );
+		lines.Add( $"active L stick={left.Joystick.Active} trig={left.Trigger.Active}"
+			+ $"   R stick={right.Joystick.Active} trig={right.Trigger.Active}" );
+		lines.Add( $"model L={Name( left.GetModel() )}  R={Name( right.GetModel() )}" );
+		lines.Add( $"point={Pointing}  aim={(AimRay is { } r ? Fmt( r.Position ) : "none")}" );
+		lines.Add( $"move={Fmt( Input.AnalogMove )}  look={Input.AnalogLook.yaw:0.00}"
+			+ $"  suppressed={Input.Suppressed}" );
+		lines.Add( VrHands.Instance?.StatusLine() ?? "hands: no component" );
+
+		return lines;
+	}
+
+	static string Fmt( Vector3 v ) => $"{v.x:0},{v.y:0},{v.z:0}";
+	static string Fmt( Vector2 v ) => $"{v.x:0.00},{v.y:0.00}";
+	static string Bit( DigitalInput d ) => d.IsPressed ? "1" : "0";
+	static string Name( Model m ) => m == null ? "none" : m.ResourceName;
+
+	/// <summary>Everything the rig believes about itself, to the console. Prefer the in-world
+	/// board (<c>gambit_vr_debug</c>) while wearing the headset; a console you cannot see is the
+	/// reason the hands went unexplained for three sessions.</summary>
+	[ConCmd( "gambit_vr_status" )]
+	public static void Status()
+	{
+		foreach ( var line in StatusLines() )
+			Log.Info( $"[Gambit] vr: {line}" );
 	}
 
 	/// <summary>Left stick walks, by both routes the engine offers.
