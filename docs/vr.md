@@ -123,8 +123,8 @@ computed and before any component runs — writes them, and **nothing downstream
 
 | control | does |
 | --- | --- |
-| either trigger | `Select` (pick a square) and, through `WorldInput`'s own VR branch, a panel click |
-| A | `use` — sit down, engage a wall board |
+| either trigger | `Select` (pick a square), `use` (sit down, engage a board) while roaming, and a panel click through `WorldInput`'s own VR branch |
+| A | nothing yet |
 | B | `Input.EscapePressed` — the cursor toggle while seated, standing up otherwise |
 | left stick | `Input.AnalogMove` |
 | right stick | `Input.AnalogLook` yaw, smooth, `VrInput.TurnRate` degrees per second |
@@ -139,6 +139,9 @@ Two rules hold this together:
   true on the rising edge, and the engine's own flip clears it.
 - **The sticks write only off centre**, which is what leaves mouse look and WASD working exactly as
   they do on the desktop.
+- **`use` is pulsed only while roaming.** It is also what closes an engaged info board, so a
+  trigger pull that clicked a button on that board would shut it on the same press. Engaged, the
+  trigger is the pointer and nothing else, and B is the way out.
 
 ### The hands and the beam
 
@@ -181,6 +184,8 @@ the same thing the desktop's look aim relies on.
 - No IK and no arms — the controller model floats where the device is. The intended end is the
   citizen's own arm and fingers driven by IK, with the ray still cast from the controller transform
   regardless of where the animation puts the hand.
+- Every hint still names a key: "Press E to sit", the info board's "E or Esc". The copy has no VR
+  branch, so it describes controls the headset player is not using.
 - `LocalMusicSystem` builds its own `ScreenPanel` on a `NotSaved` object, which `VrHud` does not
   adopt — the music HUD is still flat in both eyes.
 - The seated body is hidden locally in VR (`LobbyPlayer.HideLocalAvatar`); remote players still

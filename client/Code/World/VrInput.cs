@@ -87,11 +87,18 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		var aim = Pointing == Hand.Left ? left.AimTransform : right.AimTransform;
 		AimRay = new Ray( aim.Position, aim.Rotation.Forward );
 
-		// Either trigger picks a square. A panel click is not here: WorldInput reads the trigger
-		// itself in VR, which is why the pointer lives on a hand (see VrHands).
-		if ( leftPulled || rightPulled ) Input.SetAction( "Select", true );
+		// Either trigger does both jobs a click does: pick a square, and sit down at whatever you
+		// are standing next to. A panel click is not here — WorldInput reads the trigger itself in
+		// VR, which is why the pointer lives on a hand (see VrHands).
+		if ( leftPulled || rightPulled )
+		{
+			Input.SetAction( "Select", true );
 
-		if ( Pressed( left.ButtonA ) || Pressed( right.ButtonA ) ) Input.SetAction( "use", true );
+			// "use" is also what CLOSES an engaged info board (LobbyPlayer reads it there), so
+			// pulsing it while engaged would shut the board on the same press that clicked a
+			// button on it. Engaged, the trigger is the pointer and nothing else; B leaves.
+			if ( LobbyPlayer.Local is not { Engaged: true } ) Input.SetAction( "use", true );
+		}
 
 		// Escape is not an action — it is its own settable global, and LobbyPlayer clears it when
 		// it consumes one (the cursor toggle while seated, standing up otherwise).
