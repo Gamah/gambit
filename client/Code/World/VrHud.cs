@@ -4,7 +4,7 @@ using Sandbox;
 namespace Gambit.World;
 
 /// <summary>
-/// Draws the lobby's screen UI on one quad pinned in front of the headset, head-locked.
+/// Draws the lobby's screen UI on one quad hung in the room in front of the player.
 ///
 /// <para><b>A screen panel cannot work in a stereo view.</b> <c>GameRootPanel.IsWorldPanel</c> is
 /// false, so it composites flat into each eye at identical screen coordinates — no disparity, so
@@ -19,9 +19,10 @@ namespace Gambit.World;
 /// <see cref="LobbyPlayer"/> exactly as the desktop has them. Panel pixels become panel pixels on a
 /// quad, so edge-anchored rows sit on the quad's own edges instead of in the periphery.</para>
 ///
-/// <para><b>Head-locked is a staging post, not the destination</b> — a panel welded to the view is
-/// the thing VR players complain about, and it still covers the board. It stands until the UI is
-/// something you point a controller at.</para>
+/// <para><b>A desktop layout on a quad is a staging post, not the destination.</b> Squared onto the
+/// board it is readable and the beam can click it, but it is still a 1920x1080 screen with a
+/// crosshair on it, and it still covers the board it is centred on. It stands until the UI is
+/// something built to be pointed at.</para>
 /// </summary>
 public sealed class VrHud : Component
 {
@@ -38,15 +39,26 @@ public sealed class VrHud : Component
 	/// <summary>How far out the quad hangs, in world units. With <see cref="RenderScale"/> it sets
 	/// how much of the view the HUD covers: the quad is <c>PanelSize.x * 0.05 * RenderScale</c>
 	/// units wide (the engine's <c>ScenePanelObject.ScreenToWorldScale</c>), and that width at this
-	/// distance is the angle it subtends.</summary>
-	[Property] public float Distance { get; set; } = 85f;
+	/// distance is the angle it subtends.
+	///
+	/// <para><b>Seated, this must land SHORT of the board</b>, which is why it is not a free number:
+	/// a quad centred on the board direction at more than <c>ChessRing.SeatOrbitRadius</c> (56) sits
+	/// past the board centre and is buried in the tabletop, panels and all. Short of it, the quad
+	/// floats between the eye and the board with the board behind its middle.</para></summary>
+	[Property] public float Distance { get; set; } = 46f;
 
-	/// <summary>How far the quad is lifted above the eye it hangs in front of. Seated, this is what
-	/// keeps it off the pieces.</summary>
-	[Property] public float Height { get; set; } = 26f;
+	/// <summary>How far the quad is lifted above the point it hangs in front of. Zero puts it on
+	/// the view direction itself, which seated means centred on the board; lift it from inside the
+	/// headset (<c>gambit_vr_hud_height</c>) to clear the pieces at the cost of that centring.</summary>
+	[Property] public float Height { get; set; } = 0f;
 
-	/// <summary>World units per panel pixel, on top of the engine's 0.05.</summary>
-	[Property] public float RenderScale { get; set; } = 1.4f;
+	/// <summary>World units per panel pixel, on top of the engine's 0.05.
+	///
+	/// <para><b>Paired with <see cref="Distance"/>:</b> what the player sees is the ratio of the
+	/// two, so the quad has to be scaled down by whatever the distance was pulled in by or the
+	/// panel grows in the view. Tune either from the headset and the other follows by
+	/// arithmetic.</para></summary>
+	[Property] public float RenderScale { get; set; } = 0.76f;
 
 	/// <summary>The quad's pixel size, which is the layout space every panel's CSS is written
 	/// against. 1920x1080 is what the desktop's <c>ConsistentHeight</c> screen panel gives them, so
@@ -135,13 +147,15 @@ public sealed class VrHud : Component
 	/// <summary>Hang the quad in the world, in front of the player but never on their head.
 	///
 	/// <para><b>Nothing here follows head rotation.</b> A panel welded to the view turns with every
-	/// glance, which makes it impossible to look away from and impossible to read while moving. The
-	/// two placements it does have are both yaw-only and both in world space: over the board the
-	/// player is sitting at, or ahead of the body while roaming.</para>
+	/// glance, which makes it impossible to look away from and impossible to read while moving.
+	/// Both placements are in world space, off the body rather than the head: squared onto the
+	/// board the player is sitting at, or ahead of the body while roaming.</para>
 	///
-	/// <para>Seated, the quad is lifted clear of the board by <see cref="Height"/> so the pieces
-	/// stay visible under it; the seat anchor already points at the board centre, and only its yaw
-	/// is used, because the anchor itself is pitched steeply down.</para>
+	/// <para>Seated, the quad takes the seat anchor's whole direction, pitch included — the anchor
+	/// aims at the board centre, so the quad's centre is the board's and the panels laid out
+	/// against a 1920x1080 screen sit around it the way they do on the monitor. <see cref="Height"/>
+	/// lifts it off the pieces from there, at the cost of that centring. Roaming, only yaw is used:
+	/// a quad that pitched with the look would swing while walking.</para>
 	///
 	/// <para>Roaming, it follows the body: position from the feet at eye height, direction from the
 	/// controller's eye angles rather than the headset's. Walking and turning carry it along;
@@ -168,8 +182,14 @@ public sealed class VrHud : Component
 		}
 
 		// VrRig owns where "in front of the player" is, so this and the state board cannot
-		// disagree about it.
-		if ( !VrRig.ViewAnchor( _controller, CameraObject, out var from, out var forward ) ) return;
+		// disagree about it. Seated, the FULL seat-anchor direction is taken rather than its yaw:
+		// that direction is the one the anchor was built to aim at the board centre, so the quad
+		// comes out centred on the board exactly as the desktop screen is — which is what the
+		// 1920x1080 layout on it was composed against. Flattening it instead hangs a quad level
+		// with the eye while the board is well below, and no Height offset can centre that, only
+		// raise or lower a panel the board is never behind.
+		if ( !VrRig.ViewAnchor( _controller, CameraObject, out var from, out var forward,
+			flattenSeated: false ) ) return;
 
 		Host.WorldPosition = from + forward * Distance + Vector3.Up * Height;
 		Host.WorldRotation = Rotation.LookAt( -forward, Vector3.Up );

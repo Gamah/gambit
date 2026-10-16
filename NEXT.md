@@ -37,10 +37,13 @@ the game has been played once.
   cache (`r.shadows.updates`, default 8) now serving three views. Console ladder:
   `gambit_vr_companion` (drop the third view), `r.shadows.csm.enabled 0`, `r.shadows.updates 64`,
   `r.shadows.debug 1`.
-- **The Index B button may never bind.** `game/core/cfg/fpxr/valve_knuckles.json` in the engine
-  gives `button_b` a `paths` key holding a single string, where every other single binding in both
-  shipped profiles uses `path`. Escape answers to A as well, so nothing depends on it. Worth a
-  one-character PR upstream if confirmed.
+- **The Index B button never binds — confirmed, and the fix is one character.**
+  `game/core/cfg/fpxr/valve_knuckles.json:32` gives `button_b` a `paths` key holding a bare string.
+  Every other `paths` in both shipped profiles is the per-hand object map (`valve_knuckles.json:44`,
+  `oculus_touch.json:26,35,50`) and every single binding uses `path`, so `paths` → `path` is the
+  change. The fpxr loader is native, so "a string there is ignored rather than throwing" is read off
+  the shape, not the code. Escape answers to A as well, so nothing here depends on it: it is an
+  upstream PR, not a branch task.
 - **A `LineRenderer` with its component enabled and two valid points drew nothing.** Replaced with
   a stretched box rather than chased. If one is wanted later, it needs an answer first.
 
@@ -52,10 +55,11 @@ the game has been played once.
   (`docs/engine.md`), and `LobbyPlayer.OnStart` runs once per spawn.
 - **A headset cannot read a console.** `gambit_vr_debug` puts the rig's state on a board in the
   room; `gambit_vr_status` prints it; `gambit_vr_log <seconds>` leaves a trail to read afterwards.
-- **Verify VR facts against `../sbox-public`, never from memory.** Three separate failures on this
+- **Verify VR facts against `../sbox-public`, never from memory.** Four separate failures on this
   branch were engine behaviour that nothing documents: `VRController.GetModel` returns a dev cube
   for every device, `AnalogMove` is consumed in the fixed update while `AnalogLook` is consumed in
-  the update, and a stereo camera never renders to the swap chain.
+  the update, a stereo camera never renders to the swap chain, and `WorldInput` takes its VR click
+  from one named hand that has nothing to do with the ray it casts.
 
 ## Knobs
 

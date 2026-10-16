@@ -291,8 +291,15 @@ public sealed class VrRig : Component
 	///
 	/// <para>One place decides this, because two things hang off it (the HUD quad and the debug
 	/// board) and a panel that disagreed with the other about where "in front" is would look like a
-	/// bug in whichever one you noticed second.</para></summary>
-	public static bool ViewAnchor( PlayerController controller, GameObject camera, out Vector3 from, out Vector3 forward )
+	/// bug in whichever one you noticed second.</para>
+	///
+	/// <para><paramref name="flattenSeated"/> false keeps the seat anchor's own PITCH, which is the
+	/// whole seated view direction rather than the body's: the anchor is aimed at the board centre,
+	/// so a quad hung along it lands centred on the board the same way the desktop screen does.
+	/// Anything hung at a fixed height in the room wants the flattened direction instead, which is
+	/// why this is a choice and not a change.</para></summary>
+	public static bool ViewAnchor( PlayerController controller, GameObject camera,
+		out Vector3 from, out Vector3 forward, bool flattenSeated = true )
 	{
 		from = default;
 		forward = default;
@@ -304,6 +311,13 @@ public sealed class VrRig : Component
 		{
 			from = seat.WorldPosition;
 			forward = seat.WorldRotation.Forward;
+
+			if ( !flattenSeated )
+			{
+				if ( forward.LengthSquared < 0.0001f ) return false;
+				forward = forward.Normal;
+				return true;
+			}
 		}
 		else if ( controller.IsValid() && camera.IsValid() )
 		{

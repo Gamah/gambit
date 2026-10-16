@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Sandbox;
+using Sandbox.VR;
 
 namespace Gambit.World;
 
@@ -26,10 +27,11 @@ namespace Gambit.World;
 /// pose would hold it at an odd angle; aiming from the grip pose would miss low.</para>
 ///
 /// <para><b>Panels are pointed at through the engine's own <c>WorldInput</c></b>, which casts its
-/// GameObject's forward and, in VR, reads the trigger as a left click — so the HUD quad and the
-/// tabletop plate need nothing new. It must be the only one in the scene: the ray it feeds the UI
-/// is a global, so a second one (the camera's, on the desktop) would fight it frame by frame. That
-/// is why <see cref="LobbyPlayer"/> leaves the camera's off in VR.</para>
+/// GameObject's forward and, in VR, reads one named hand's trigger as a left click — so the HUD
+/// quad and the tabletop plate need nothing new, as long as that named hand is kept in step with
+/// the pointer (see <see cref="PlacePointer"/>). It must be the only one in the scene: the ray it
+/// feeds the UI is a global, so a second one (the camera's, on the desktop) would fight it frame by
+/// frame. That is why <see cref="LobbyPlayer"/> leaves the camera's off in VR.</para>
 ///
 /// <para><b>Placed by <see cref="VrRig"/>, not by its own update</b> — the poses come off the
 /// playspace anchor, so whatever sets the anchor has to be the thing that places anything derived
@@ -242,7 +244,21 @@ public sealed class VrHands : Component
 			return;
 		}
 
-		if ( _input.IsValid() ) _input.Enabled = true;
+		if ( _input.IsValid() )
+		{
+			_input.Enabled = true;
+
+			// WHICH TRIGGER CLICKS IS A SEPARATE SETTING FROM WHERE THE RAY POINTS, and it defaults
+			// to Left. WorldInput casts this object's forward, which follows the pointing hand, but
+			// takes the VR click off Input.VR.<VRHandSource>.Trigger. Left unset, a right-handed
+			// player hovers a button and nothing ever presses it. Nothing else can produce that
+			// symptom: a world-panel hit is ray-to-plane maths over the root panels
+			// (WorldPanelInput.Tick), so no model, collider or beam geometry can occlude a click.
+			_input.VRHandSource = VrInput.Pointing == VrInput.Hand.Left
+				? VRHand.HandSources.Left
+				: VRHand.HandSources.Right;
+		}
+
 		if ( _tip.IsValid() ) _tip.Enabled = true;
 
 		_pointer.WorldPosition = ray.Position;

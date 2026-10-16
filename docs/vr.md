@@ -110,9 +110,13 @@ the quad's edges. `gambit_vr_hud_distance`, `gambit_vr_hud_height` and `gambit_v
 from inside the headset.
 
 **Nothing about the quad follows head rotation.** `VrRig.ViewAnchor` is the one place that decides
-where "in front of the player" is — the seat anchor's yaw while seated, the controller's eye angles
-while roaming, never the headset's — and both the quad and the state board hang off it, so they
-cannot disagree.
+where "in front of the player" is — the seat anchor while seated, the controller's eye angles while
+roaming, never the headset's — and both the quad and the state board hang off it, so they cannot
+disagree. The quad takes that seated direction with its **pitch**, which is what centres it on the
+board: the seat anchor is aimed at the board centre, so the panels composed against a 1920x1080
+screen sit around the board the way they do on the monitor. The state board takes the yaw alone,
+because it hangs at a fixed height in the room. `gambit_vr_hud_height` lifts the quad off the pieces
+from there, and gives up the centring to do it.
 
 **The adopted desktop UI is drawn, because it is the only way to drive a game.** It is a 1920x1080
 screen layout with edge-anchored rows, a crosshair and keyboard hints, and no amount of scaling
@@ -138,7 +142,7 @@ computed and before any component runs — writes them, and **nothing downstream
 
 | control | does |
 | --- | --- |
-| either trigger | `Select` (pick a square), `use` (sit down, engage a board) while roaming, and a panel click through `WorldInput`'s own VR branch |
+| either trigger | `Select` (pick a square), `use` (sit down, engage a board) while roaming, and a panel click through `WorldInput`'s own VR branch — which watches **one named hand**, `WorldInput.VRHandSource`, defaulting to Left: `VrHands` writes it from `VrInput.Pointing` every frame, or the beam hovers a button that no trigger can press |
 | B, and A | `Input.EscapePressed` — the cursor toggle while seated, standing up otherwise |
 | left stick | `Input.AnalogMove`, in the direction the player is LOOKING |
 | right stick | `Input.AnalogLook` yaw, smooth, `VrInput.TurnRate` degrees per second |
