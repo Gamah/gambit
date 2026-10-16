@@ -63,8 +63,12 @@ public sealed class VrHands : Component
 	ModelRenderer _tip;
 
 	GameObject _pointer;
-	LineRenderer _beam;
+	ModelRenderer _beam;
 	WorldInput _input;
+
+	/// <summary>The dev box's own size, so everything built from it can be scaled to world units
+	/// without loading the model again per frame.</summary>
+	Vector3 _boxSize = new( 50f, 50f, 50f );
 
 	/// <summary>Why there are no hands, when there are no hands. A component that throws in
 	/// <c>OnStart</c> leaves no trace a headset can see: the objects are simply absent, which looks
@@ -104,18 +108,11 @@ public sealed class VrHands : Component
 		_tip = AddBox( _pointer, "Tip", TipSize, new Color( 2.4f, 3.2f, 4f ) );
 		_input = _pointer.AddComponent<WorldInput>();
 
-		_beam = _pointer.AddComponent<LineRenderer>();
-		_beam.UseVectorPoints = true;
-		_beam.Color = BeamColor;
-		_beam.Width = BeamWidth;
-		// Cylinder, not camera-facing: a camera-facing strip builds its quad from the cross product
-		// of the line and the view vector, and this line points nearly straight away from the eye
-		// it is drawn for, where that product collapses and the beam thins to nothing.
-		_beam.Face = SceneLineObject.FaceMode.Cylinder;
-
-		// A beam that casts shadows is both wrong-looking and a shadow map we would be paying for
-		// every frame it moves.
-		_beam.CastShadows = false;
+		// The beam is a stretched box, not a LineRenderer. Everything that renders in this scene is
+		// a tinted dev box normalised by its bounds, including the grips and the tip above, and a
+		// beam built any other way is a second rendering path to be wrong in — which it was, twice
+		// over, while a box of the same dimensions could not be.
+		_beam = AddBox( _pointer, "Beam", new Vector3( 1f, BeamWidth, BeamWidth ), BeamColor );
 	}
 
 	protected override void OnDestroy()
@@ -137,14 +134,14 @@ public sealed class VrHands : Component
 	/// <summary>A box of a given world size, the way every primitive in this scene is built: the
 	/// dev box normalised by its own bounds, tinted, on a child object so the hand's own transform
 	/// stays the controller pose and nothing has to undo a scale to read it.</summary>
-	static ModelRenderer AddBox( GameObject parent, string name, Vector3 size, Color tint )
+	ModelRenderer AddBox( GameObject parent, string name, Vector3 size, Color tint )
 	{
 		var model = Model.Load( "models/dev/box.vmdl" );
 		if ( model == null ) return null;
 
 		var go = new GameObject( true, name ) { Parent = parent };
-		var bounds = model.Bounds.Size;
-		go.LocalScale = new Vector3( size.x / bounds.x, size.y / bounds.y, size.z / bounds.z );
+		_boxSize = model.Bounds.Size;
+		go.LocalScale = new Vector3( size.x / _boxSize.x, size.y / _boxSize.y, size.z / _boxSize.z );
 
 		var renderer = go.AddComponent<ModelRenderer>();
 		renderer.Model = model;
@@ -266,8 +263,12 @@ public sealed class VrHands : Component
 		if ( !_beam.IsValid() ) return;
 
 		_beam.Enabled = true;
-		_beam.Color = BeamColor;
-		_beam.Width = BeamWidth;
-		_beam.VectorPoints = new List<Vector3> { Vector3.Zero, Vector3.Forward * length };
+		_beam.Tint = BeamColor;
+
+		// The box's own +X is the aim direction (the pointer object looks along the ray), so it is
+		// stretched along X and pushed half its length forward to start at the hand.
+		var box = _beam.GameObject;
+		box.LocalScale = new Vector3( length / _boxSize.x, BeamWidth / _boxSize.y, BeamWidth / _boxSize.z );
+		box.LocalPosition = new Vector3( length * 0.5f, 0f, 0f );
 	}
 }

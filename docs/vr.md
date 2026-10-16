@@ -203,11 +203,9 @@ pattern). A grip-sized box per hand at the grip pose, a small bright tip at the 
 controller that stops reporting hides its grip rather than leaving it floating, because a grip left
 in mid-air claims tracking that isn't happening.
 
-The beam is a **cylinder**, not a camera-facing strip: a camera-facing strip builds its quad from
-the cross product of the line and the view vector, and this line points nearly straight away from
-the eye it is drawn for, where that product collapses. Its length is clamped, because a ray that
-starts inside a collider traces zero and two identical points are a line with no extent — drawn,
-enabled and invisible.
+**The beam is a stretched box too**, not a `LineRenderer`: one rendering path for everything the
+rig draws, and it is the path the rest of this scene already proves. Its length is clamped, because
+a ray that starts inside a collider traces zero, and a beam is only as useful as it is visible.
 
 ### The state board
 
