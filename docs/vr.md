@@ -114,11 +114,12 @@ where "in front of the player" is — the seat anchor's yaw while seated, the co
 while roaming, never the headset's — and both the quad and the state board hang off it, so they
 cannot disagree.
 
-**The adopted desktop UI is off by default** (`gambit_vr_hud` shows it). It is a 1920x1080 screen
-layout with edge-anchored rows, a crosshair and keyboard hints; enlarging it does not make it belong
-in a room. The adoption still happens, because a screen panel has to stop being a screen panel
-either way or it draws flat in both eyes — but the quad stays dark until there is a panel designed
-for this. **A VR panel is wall-board sized and built the way the wall boards are**
+**The adopted desktop UI is drawn, because it is the only way to drive a game.** It is a 1920x1080
+screen layout with edge-anchored rows, a crosshair and keyboard hints, and no amount of scaling
+makes that a VR UI — but every control for starting a game, offering a draw or standing up lives on
+it, and the beam can click it. `gambit_vr_hud` parks it (below the room, never disabled: disabling
+the world panel deletes the root its panels are children of while they go on building trees against
+it). **A VR panel is wall-board sized and built the way the wall boards are**
 (`WallBoardGeometry`: default `PanelSize`, content `height:auto`, `BoardScale` as the GO scale); the
 state board below is the first one, and the pattern to copy.
 
@@ -210,10 +211,10 @@ a ray that starts inside a collider traces zero, and a beam is only as useful as
 ### The state board
 
 **A headset has no console in it**, and every VR fact worth knowing is only true while one is being
-worn. So `UI/VrStatusPanel.razor` puts the rig's state on a wall-board-scale panel in the room:
+worn. So `UI/VrStatusPanel.razor` puts the rig's state on a wall-board-scale panel in the room
+(`gambit_vr_debug`, off by default — it is an instrument, and it covers the room it reports on):
 whether the input system exists, whether the controllers report at all, what the sticks read,
-whether the models arrived, how many times the hands have been placed. `gambit_vr_debug` hides it;
-`gambit_vr_status` prints the same lines to the console and `gambit_vr_log <seconds>` dumps them once
+whether the models arrived, how many times the hands have been placed. `gambit_vr_status` prints the same lines to the console and `gambit_vr_log <seconds>` dumps them once
 a second, for reading after the headset comes off.
 
 It also carries `VrRig.LastError` and `VrHands.LastError`. **An exception in a VR component is

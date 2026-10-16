@@ -62,12 +62,11 @@ public sealed class VrHud : Component
 
 	/// <summary>Whether the desktop screen UI is drawn at all in VR.
 	///
-	/// <para><b>Off by default, because that UI is not a VR UI.</b> It is a 1920x1080 screen layout
-	/// with edge-anchored rows, a crosshair and keyboard hints, and enlarging it does not make it
-	/// belong in a room. The adoption still happens — the screen panel has to stop being a screen
-	/// panel either way, or it draws flat in both eyes — but the quad stays dark until there is a
-	/// panel designed for this, or until <c>gambit_vr_hud</c> asks for it.</para></summary>
-	public static bool Shown { get; private set; }
+	/// <para><b>On, because it is the only way to drive a game.</b> It is a 1920x1080 screen layout
+	/// with edge-anchored rows, a crosshair and keyboard hints — not a VR UI, and no amount of
+	/// scaling makes it one — but every control a player needs to start a game, offer a draw or
+	/// stand up lives on it, and the beam can click it. <c>gambit_vr_hud</c> parks it.</para></summary>
+	public static bool Shown { get; private set; } = true;
 
 	/// <summary>Move the lobby's panels off the screen and onto a quad. Called before
 	/// <see cref="LobbyPlayer"/>'s runtime panels attach, so they are built against the world panel

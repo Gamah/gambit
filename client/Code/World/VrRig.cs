@@ -56,9 +56,9 @@ public sealed class VrRig : Component
 	CameraComponent _companion;
 	GameObject _board;
 
-	/// <summary>The state board is on while this is a spike: nothing else in a headset can say
-	/// why a controller is doing nothing.</summary>
-	static bool DebugBoard = true;
+	/// <summary>The state board, off until asked for (<c>gambit_vr_debug</c>). It is an instrument,
+	/// not furniture: it hangs in front of the player and covers the room it is reporting on.</summary>
+	static bool DebugBoard;
 
 	/// <summary>Where the state board hangs, in world units.</summary>
 	static float BoardDistance = 170f;
