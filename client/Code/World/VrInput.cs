@@ -268,7 +268,16 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	static string Fmt( Vector3 v ) => $"{v.x:0},{v.y:0},{v.z:0}";
 	static string Fmt( Vector2 v ) => $"{v.x:0.00},{v.y:0.00}";
 	static string Bit( DigitalInput d ) => d.IsPressed ? "1" : "0";
-	static string Name( Model m ) => m == null ? "none" : m.ResourceName;
+	/// <summary>A model's file name. The resource path is longer than a row of this board, and the
+	/// directory it sits in has never been the question.</summary>
+	static string Name( Model m )
+	{
+		if ( m == null ) return "none";
+
+		var path = m.ResourceName ?? "?";
+		int slash = path.LastIndexOf( '/' );
+		return slash < 0 ? path : path[(slash + 1)..];
+	}
 
 	/// <summary>Everything the rig believes about itself, to the console. Prefer the in-world
 	/// board (<c>gambit_vr_debug</c>) while wearing the headset; a console you cannot see is the

@@ -56,6 +56,10 @@ public sealed class VrHud : Component
 	WorldPanel _panel;
 	PlayerController _controller;
 
+	/// <summary>Where a hidden HUD waits: far enough below the room that nothing sees it, close
+	/// enough that its coordinates stay sane.</summary>
+	static readonly Vector3 ParkedAt = new( 0f, 0f, -20000f );
+
 	/// <summary>Whether the desktop screen UI is drawn at all in VR.
 	///
 	/// <para><b>Off by default, because that UI is not a VR UI.</b> It is a 1920x1080 screen layout
@@ -93,8 +97,6 @@ public sealed class VrHud : Component
 		_panel.LookAtCamera = false; // Place() owns the rotation, in the same frame as the position
 
 		Rehome();
-		_panel.Enabled = Shown;
-
 		Place();
 	}
 
@@ -115,19 +117,11 @@ public sealed class VrHud : Component
 		}
 	}
 
-	/// <summary>Draw the adopted desktop UI, or don't. Re-showing rebuilds the panels, because the
-	/// world panel deletes its root when disabled and takes their parents with it.</summary>
+	/// <summary>Draw the adopted desktop UI, or don't.</summary>
 	[ConCmd( "gambit_vr_hud" )]
 	public static void ToggleHud()
 	{
 		Shown = !Shown;
-
-		if ( Instance?._panel.IsValid() ?? false )
-		{
-			Instance._panel.Enabled = Shown;
-			if ( Shown ) Instance.Rehome();
-		}
-
 		Log.Info( $"[Gambit] vr: desktop HUD {(Shown ? "ON" : "OFF")}" );
 	}
 
@@ -163,6 +157,16 @@ public sealed class VrHud : Component
 
 		// Re-applied so the tuning commands take effect without a re-adopt.
 		if ( _panel.IsValid() ) _panel.RenderScale = RenderScale;
+
+		// Hidden means PARKED, not disabled. Disabling the world panel deletes the root its panels
+		// are children of, and a PanelComponent whose parent was deleted keeps building its tree
+		// against it. Every panel here stays alive and attached; it is simply nowhere near the
+		// player.
+		if ( !Shown )
+		{
+			Host.WorldPosition = ParkedAt;
+			return;
+		}
 
 		// VrRig owns where "in front of the player" is, so this and the state board cannot
 		// disagree about it.
