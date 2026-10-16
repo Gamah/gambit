@@ -1,0 +1,199 @@
+@using System;
+@using System.Collections.Generic;
+@using Sandbox;
+@using Sandbox.UI;
+@using Sandbox.VR;
+@using Gambit.World;
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	The rig's own state, on a board in the room, at wall-board scale. A headset has no console in
+	it: every VR fact worth knowing is only true while wearing one, and only readable here.
+
+	VrRig builds and places it, because VrRig is the one VR component whose own symptom (a tracked
+	view) proves it is running. A diagnostic hosted by the thing it diagnoses says nothing when
+	that thing is dead.
+
+	It is deliberately NOT themed like the wall boards. Those are furniture a player reads at
+	leisure; this is an instrument read across a room through lenses, while something is wrong.
+	Hence one shouted verdict, a red line when something threw, four pass/fail chips, and the
+	numbers last in the size that leaves — rather than a tidy column of equal grey lines, which is
+	what it was and which made the one line that mattered impossible to find.
+*@
+
+<root>
+	<div class="board">
+		<div class="verdict" style="color:@VerdictColor;">@VrInput.HandsVerdict()</div>
+
+		@if ( VrInput.Error != null )
+		{
+			<div class="error">@VrInput.Error</div>
+		}
+
+		<div class="chips">
+			<div class="chip @Cls( Sandbox.Game.IsRunningInVR )">VR</div>
+			<div class="chip @Cls( VrRig.Active )">RIG</div>
+			<div class="chip @Cls( VrInput.Current != null )">SYS</div>
+			<div class="chip @Cls( VrHud.Instance != null )">HUD</div>
+		</div>
+
+		@if ( Sandbox.Game.IsRunningInVR )
+		{
+			<div class="hands">
+				<div class="hand">@HandLine( Input.VR.LeftHand, "L" )</div>
+				<div class="hand">@HandLine( Input.VR.RightHand, "R" )</div>
+			</div>
+
+			<div class="event" style="color:@( (float)VrInput.LastTrigger < 1f ? Hot : Dim );">
+				TRIGGERS @VrInput.PullCount · @Ago() · @VrInput.HoverName()
+			</div>
+
+			<div class="rows">
+				@foreach ( var line in VrInput.DetailLines() )
+				{
+					<div class="row">@line</div>
+				}
+			</div>
+		}
+
+		<div class="hint">gambit_vr_debug</div>
+	</div>
+</root>
+
+<style>
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	/* Fixed px in the panel's own 512-wide space, like every board here. The sizes are chosen so
+	   the verdict is legible across the room and the numbers are legible from a step away: it is
+	   a hierarchy, not a wall of text. */
+	.board {
+		width: 100%;
+		height: auto;
+		flex-direction: column;
+		align-items: stretch;
+		padding: 22px;
+		border-radius: 8px;
+		background-color: rgba(5, 7, 11, 0.93);
+		border: 3px solid #223044;
+		font-family: Consolas, monospace;
+		gap: 10px;
+		overflow: hidden;
+	}
+
+	.board > div {
+		flex-shrink: 0;
+	}
+
+	/* Sizes are measured, not guessed: at 48px about nine characters spanned this board's width in
+	   a headset capture, so the budget is roughly 9 x 48 / size characters per line. The longest
+	   verdict ("HANDS: UNPLACED") is 15, the longest detail row about 30. A line that clips is
+	   worse than a smaller one, and this board is read at arm's length, not across a room. */
+	.verdict {
+		justify-content: center;
+		white-space: nowrap;
+		font-size: 26px;
+		font-weight: bold;
+		letter-spacing: 1px;
+	}
+
+	.error {
+		color: #ff5a4d;
+		font-size: 14px;
+		font-weight: bold;
+		white-space: normal;
+	}
+
+	.chips {
+		flex-direction: row;
+		justify-content: space-between;
+		gap: 8px;
+	}
+
+	.chip {
+		flex-grow: 1;
+		justify-content: center;
+		font-size: 17px;
+		font-weight: bold;
+		padding: 4px 0;
+		border-radius: 5px;
+	}
+
+	.ok {
+		color: #0d1206;
+		background-color: #7ee04a;
+	}
+
+	.bad {
+		color: #fff0ee;
+		background-color: #c02a1d;
+	}
+
+	.hands {
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.hand {
+		font-size: 15px;
+		color: #9fd4ff;
+		white-space: nowrap;
+	}
+
+	.event {
+		font-size: 16px;
+		font-weight: bold;
+		white-space: nowrap;
+	}
+
+	.rows {
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.row {
+		font-size: 12px;
+		color: #7f8c9d;
+		white-space: nowrap;
+	}
+
+	.hint {
+		justify-content: center;
+		font-size: 9px;
+		color: #4a5666;
+	}
+</style>
+
+@code
+{
+	const string Hot = "#ffd24a";
+	const string Dim = "#7f8c9d";
+
+	string VerdictColor => VrInput.HandsVerdict() == "HANDS: DRAWN" ? "#7ee04a" : "#ff5a4d";
+
+	/// <summary>Colour carries a chip's answer; its label only says which question it answers,
+	/// because a word read across a room is a shape before it is a word.</summary>
+	static string Cls( bool ok ) => ok ? "ok" : "bad";
+
+	static string Ago() => ((float)VrInput.LastTrigger).ToString( "0.0" ) + "s AGO";
+
+	/// <summary>A hand's whole state in one line: whether the device reports at all, where it is,
+	/// and how far its trigger has travelled. Position matters as much as tracking — hands drawn
+	/// at the wrong place and hands not drawn look identical from inside the headset.</summary>
+	string HandLine( VRController hand, string tag )
+	{
+		var p = hand.Transform.Position;
+		string active = hand.Joystick.Active ? "ON " : "OFF";
+
+		return $"{tag} {active} {p.x:0},{p.y:0},{p.z:0} trig {hand.Trigger.Value:0.00}";
+	}
+
+	/// <summary>Repaint ten times a second: every number here is a live input value, and a board
+	/// keyed on a settled hash would sit on a stale frame exactly when it matters. Ten is fast
+	/// enough to watch a stick move and slow enough not to rebuild the tree every frame.</summary>
+	protected override int BuildHash() => (int)(RealTime.Now * 10f);
+}

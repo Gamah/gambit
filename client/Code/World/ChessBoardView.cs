@@ -276,6 +276,15 @@ public sealed class ChessBoardView : Component
 	List<string> _targets = new();
 	int _hoverSquare = -1;
 
+	/// <summary>The square the local player's pick ray is over, or -1. Set only while this client
+	/// may actually interact, which is what makes it worth reporting in VR: "the trigger did
+	/// nothing" and "the trigger was aimed nowhere" are different faults.</summary>
+	public int HoverSquare => _hoverSquare;
+
+	/// <summary>Algebraic name for a square index, or null if there is none.</summary>
+	public static string NameOf( int square ) =>
+		square >= 0 && square < 64 ? SquareNames[square] : null;
+
 	/// <summary>Does this client want the green target squares painted (issue #26)?
 	/// Read live rather than cached so the south-wall toggle takes effect on the next
 	/// frame; <see cref="Gambit.Game.PlayerData.Load"/> is memoised, so it is a field
@@ -830,7 +839,12 @@ public sealed class ChessBoardView : Component
 		// Cursor mode picks under the pointer; LOOK aim (P99) picks under the centre of the
 		// screen. SeatAim.PickPixel is the only place that chooses, so the square you pick
 		// and the crosshair GameHud draws can never disagree.
-		var ray = camera.ScreenPixelToRay( SeatAim.PickPixel() );
+		//
+		// In VR the ray is the pointing controller's, because there the player has a hand in the
+		// same space as the board and a screen pixel is a worse description of where they are
+		// aiming than the device itself is. Neither aim mode applies: a seated camera ray would
+		// pick from the eye, which is both less accurate and not where the beam is drawn.
+		var ray = VrInput.AimRay ?? camera.ScreenPixelToRay( SeatAim.PickPixel() );
 
 		// Station-local ray (stations are unscaled, yaw-only)
 		var origin = Station.GameObject.WorldTransform.PointToLocal( ray.Position );
