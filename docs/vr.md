@@ -143,7 +143,7 @@ computed and before any component runs — writes them, and **nothing downstream
 | control | does |
 | --- | --- |
 | either trigger | `Select` (pick a square), `use` (sit down, engage a board) while roaming, and a panel click through `WorldInput`'s own VR branch — which watches **one named hand**, `WorldInput.VRHandSource`, defaulting to Left: `VrHands` writes it from `VrInput.Pointing` every frame, or the beam hovers a button that no trigger can press |
-| B, and A | `Input.EscapePressed` — the cursor toggle while seated, standing up otherwise |
+| B, and A | `Input.EscapePressed` — the cursor toggle while seated, standing up otherwise. **Both, because B may never arrive on an Index**: `game/core/cfg/fpxr/valve_knuckles.json` gives `button_b` a `paths` key holding a bare string, where every other `paths` in both shipped profiles is the per-hand object map and every single binding uses `path`. `[SOURCE]` — the fpxr loader is native, so the shape is the evidence. |
 | left stick | `Input.AnalogMove`, in the direction the player is LOOKING |
 | right stick | `Input.AnalogLook` yaw, smooth, `VrInput.TurnRate` degrees per second |
 | grip | nothing, deliberately: it is what grabbing a piece will want |
