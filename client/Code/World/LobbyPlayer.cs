@@ -301,7 +301,8 @@ public sealed class LobbyPlayer : Component
 	/// group converted to <c>Action</c> allocates a delegate per conversion, and this is a
 	/// per-frame path.</summary>
 	Action _stepSeatedAt, _stepMatchmaking, _stepPublishName, _stepSeatAim, _stepHideAvatar,
-		_stepSitPose, _stepSeatCamera;
+		_stepSitPose, _stepSeatCamera, _stepSeatSwitch, _stepLeaveCamera, _stepProxyVisibility,
+		_stepProxySeating;
 
 	protected override void OnUpdate()
 	{
@@ -309,8 +310,9 @@ public sealed class LobbyPlayer : Component
 
 		if ( IsProxy )
 		{
-			RestoreProxyVisibility();
-			UpdateProxySeating();
+			FrameTrace.Run( "lobby.proxyVisibility",
+				_stepProxyVisibility ??= RestoreProxyVisibility );
+			FrameTrace.Run( "lobby.proxySeating", _stepProxySeating ??= UpdateProxySeating );
 			return;
 		}
 
@@ -332,7 +334,7 @@ public sealed class LobbyPlayer : Component
 
 		if ( _leaving )
 		{
-			UpdateLeaveCamera();
+			FrameTrace.Run( "lobby.leaveCamera", _stepLeaveCamera ??= UpdateLeaveCamera );
 			return;
 		}
 
@@ -404,7 +406,7 @@ public sealed class LobbyPlayer : Component
 			// A seat switch schwoops the avatar (UpdateSeatSwitch) and the child camera
 			// rides along — it takes priority until it lands, then the locked camera holds.
 			if ( _switching )
-				UpdateSeatSwitch();
+				FrameTrace.Run( "lobby.seatSwitch", _stepSeatSwitch ??= UpdateSeatSwitch );
 			else if ( ChessStation.Active != null )
 				FrameTrace.Run( "lobby.seatCamera", _stepSeatCamera ??= UpdateLockedCamera );
 			return;
