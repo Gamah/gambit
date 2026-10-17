@@ -300,8 +300,8 @@ public sealed class LobbyPlayer : Component
 	/// by name and loses only itself (<see cref="FrameTrace"/>). Held as fields because a method
 	/// group converted to <c>Action</c> allocates a delegate per conversion, and this is a
 	/// per-frame path.</summary>
-	Action _stepSeatedAt, _stepMatchmaking, _stepPublishName, _stepSeatAim, _stepTrimAvatar,
-		_stepSeatCamera;
+	Action _stepSeatedAt, _stepMatchmaking, _stepPublishName, _stepSeatAim, _stepHideAvatar,
+		_stepSitPose, _stepSeatCamera;
 
 	protected override void OnUpdate()
 	{
@@ -395,7 +395,10 @@ public sealed class LobbyPlayer : Component
 			// so remote/networked Terries stay drawn — M13 depends on seeing the other
 			// player. Chess seats only; wall boards leave you standing and visible.
 			if ( ChessStation.Active != null )
-				FrameTrace.Run( "lobby.trimAvatar", _stepTrimAvatar ??= TrimSeatedAvatar );
+			{
+				FrameTrace.Run( "lobby.hideAvatar", _stepHideAvatar ??= HideLocalAvatar );
+				FrameTrace.Run( "lobby.sitPose", _stepSitPose ??= ApplySitPose );
+			}
 
 			// Only the chess seat drives the camera; wall boards leave it where it is.
 			// A seat switch schwoops the avatar (UpdateSeatSwitch) and the child camera
@@ -460,14 +463,6 @@ public sealed class LobbyPlayer : Component
 		var data = Gambit.Game.PlayerData.Load();
 		var uname = data?.DisplayName() ?? "";
 		if ( GambitName != uname ) GambitName = uname;
-	}
-
-	/// <summary>Keep our own seated avatar trimmed, re-asserted every frame. One step rather than
-	/// two calls at the call site so a throw in either is reported against one name.</summary>
-	void TrimSeatedAvatar()
-	{
-		HideLocalAvatar();
-		ApplySitPose();
 	}
 
 	/// <summary>Which station and seat this avatar occupies, or null. Derived from the
