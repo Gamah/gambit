@@ -50,7 +50,7 @@ public sealed class VrHud : Component
 	/// <summary>How far the quad is lifted above the point it hangs in front of — what puts it
 	/// OVER the board rather than across it. Zero puts it on the view direction itself, which
 	/// seated means centred on the board.</summary>
-	[Property] public float Height { get; set; } = 14f;
+	[Property] public float Height { get; set; } = 22f;
 
 	/// <summary>How much of the seated view's downward pitch the quad takes: 1 squares it onto the
 	/// board, 0 stands it upright.

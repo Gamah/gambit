@@ -314,6 +314,21 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		Input.AnalogMove = Rotation.FromYaw( VrRig.BodyYaw ).Inverse * world;
 	}
 
+	/// <summary>Total yaw the right stick has asked for, in degrees, accumulated for as long as
+	/// this system has been running.
+	///
+	/// <para><b>Seated, the stick has nothing else to turn.</b> <c>AnalogLook</c> reaches the view
+	/// through <c>PlayerController.UpdateEyeAngles</c>, and the controller is disabled while
+	/// seated — so without this the right stick is dead at a table, where a player still wants to
+	/// look around the room. <see cref="VrRig"/> takes the difference since it captured the seat
+	/// and yaws the playspace by it.</para>
+	///
+	/// <para>Accumulated HERE because this system's update runs exactly once a frame, where
+	/// <c>VrRig.Drive</c> runs in both <c>OnUpdate</c> and <c>OnPreRender</c> and would integrate
+	/// the same frame twice. Only the difference is ever read, so it is free to run while roaming
+	/// and be ignored.</para></summary>
+	public static float TurnYaw { get; private set; }
+
 	/// <summary>Right stick turns, smoothly. <c>AnalogLook</c> is added to the controller's eye
 	/// angles as degrees for this frame, so the rate is scaled by frame time here; yaw runs
 	/// anticlockwise, which is why pushing right is negative.</summary>
@@ -321,6 +336,8 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	{
 		if ( MathF.Abs( stick.x ) < Deadzone ) return;
 
-		Input.AnalogLook = new Angles( 0f, -stick.x * TurnRate * Time.Delta, 0f );
+		float yaw = -stick.x * TurnRate * Time.Delta;
+		TurnYaw += yaw;
+		Input.AnalogLook = new Angles( 0f, yaw, 0f );
 	}
 }

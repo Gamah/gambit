@@ -69,6 +69,7 @@ public sealed class VrRig : Component
 	// chair is, yaw so facing forward in that chair faces the board.
 	Vector3 _seatHead;
 	float _seatHeadYaw;
+	float _seatTurnBase;
 	bool _seatCaptured;
 	GameObject _seatAnchor;
 
@@ -243,9 +244,21 @@ public sealed class VrRig : Component
 			var local = Input.VR.Anchor.ToLocal( Input.VR.Head );
 			_seatHead = local.Position;
 			_seatHeadYaw = local.Rotation.Angles().yaw;
+			_seatTurnBase = VrInput.TurnYaw;
 			_seatCaptured = true;
 			_seatAnchor = seat;
 		}
+
+		// The right stick turns the chair. It is the only thing it can turn while seated — the
+		// controller that consumes AnalogLook is disabled — and a player at a table still wants to
+		// look around the room. Measured from the capture, so a stick that has been pushed while
+		// roaming does not arrive as a crooked chair, and so gambit_vr_recentre squares it up by
+		// capturing again.
+		//
+		// Yawing the ANCHOR about the seat's eye point turns the view and leaves the room alone:
+		// the board, the HUD quad and the state board all hang off the seat anchor, not off this,
+		// so turning away and back puts the board exactly where it was.
+		rot *= Rotation.FromYaw( VrInput.TurnYaw - _seatTurnBase );
 
 		// Undo the captured head yaw, then place the floor origin so that captured head position
 		// lands on the seat's eye point.

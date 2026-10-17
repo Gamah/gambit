@@ -58,7 +58,7 @@ frame pins the eye there and throws positional tracking away.
 | where the player is | anchor |
 | --- | --- |
 | roaming | their feet, yawed by `PlayerController.EyeAngles` — so WASD still goes where the mouse points, and head yaw rides on top |
-| at a chess seat | the seat's **eye** anchor's position and yaw, offset by the head pose captured at sit-down |
+| at a chess seat | the seat's **eye** anchor's position and yaw, offset by the head pose captured at sit-down, yawed by the right stick since that capture |
 | at a wall board | left where it was |
 
 The seated capture is what makes the board land in front of a player whose chair is anywhere in
@@ -81,6 +81,20 @@ about 30° down rather than the orbit anchor's 63°, which is what everything hu
 `SeatEyeBack` and `SeatEyeHeight` are both `[GUESS]` — "seated eye ≈ 31 above the pad", from human
 proportion scaled to a 72-unit citizen — so the anchor is right in shape and unverified in size.
 `gambit_terry` is what prints them beside the citizen's own eye bone (`docs/terry.md`).
+
+**The right stick turns the chair, because nothing else can turn it.** `AnalogLook` reaches the
+view through `PlayerController.UpdateEyeAngles`, and the controller is disabled while seated, so
+left as it comes the right stick is dead at a table. `VrInput.TurnYaw` accumulates what the stick
+has asked for — once a frame, in the system's own update, because `VrRig.Drive` runs in both
+`OnUpdate` and `OnPreRender` and would integrate the same frame twice — and the seated anchor yaws
+by the difference since it captured the seat. Measured from the capture, so a stick pushed while
+roaming does not arrive as a crooked chair, and `gambit_vr_recentre` squares it up by capturing
+again.
+
+The yaw goes on the **anchor, about the seat's eye point**, so turning moves the view and nothing
+else: the board, the HUD quad and the state board all hang off the seat anchor rather than off the
+playspace, so turning away and back puts the board exactly where it was. Remote players see the
+seated citizen where it has always been — the turn is local to the headset.
 
 A wall board is the one engaged state that does **not** move the playspace. The desktop camera
 flies to the board; a VR player walked up to it and is standing there, and taking the room out
@@ -173,7 +187,7 @@ computed and before any component runs — writes them, and **nothing downstream
 | either trigger | `Select` (pick a square), `use` (sit down, engage a board) while roaming, and a panel click through `WorldInput`'s own VR branch — which watches **one named hand**, `WorldInput.VRHandSource`, defaulting to Left: `VrHands` writes it from `VrInput.Pointing` every frame, or the beam hovers a button that no trigger can press |
 | B, and A | `Input.EscapePressed` — the cursor toggle while seated, standing up otherwise. **Both, because B may never arrive on an Index**: `game/core/cfg/fpxr/valve_knuckles.json` gives `button_b` a `paths` key holding a bare string, where every other `paths` in both shipped profiles is the per-hand object map and every single binding uses `path`. `[SOURCE]` — the fpxr loader is native, so the shape is the evidence. |
 | left stick | `Input.AnalogMove`, in the direction the player is LOOKING |
-| right stick | `Input.AnalogLook` yaw, smooth, `VrInput.TurnRate` degrees per second |
+| right stick | yaw, smooth, `VrInput.TurnRate` degrees per second: `Input.AnalogLook` while roaming, the playspace anchor while seated |
 | grip | nothing, deliberately: it is what grabbing a piece will want |
 
 **Escape answers to A as well as B**, which is not symmetry for its own sake: of the two
