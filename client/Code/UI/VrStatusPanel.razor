@@ -57,7 +57,22 @@
 			</div>
 		}
 
-		<div class="hint">gambit_vr_debug</div>
+		@*
+			A wrapped per-frame step that is throwing. It belongs on this board for the reason the
+			rest of it does: the stack is in a console the player cannot reach, and the symptom of
+			a step that throws every frame is behaviour that is simply absent.
+		*@
+		@if ( FrameTrace.Count > 0 )
+		{
+			<div class="faults">
+				@foreach ( var line in FrameTrace.Lines )
+				{
+					<div class="fault">@line</div>
+				}
+			</div>
+		}
+
+		<div class="hint">gambit_vr_debug · gambit_trace</div>
 	</div>
 </root>
 
@@ -99,6 +114,17 @@
 		font-size: 26px;
 		font-weight: bold;
 		letter-spacing: 1px;
+	}
+
+	.faults {
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.fault {
+		color: #ffb03a;
+		font-size: 13px;
+		white-space: normal;
 	}
 
 	.error {

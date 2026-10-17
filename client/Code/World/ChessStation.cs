@@ -44,6 +44,14 @@ public sealed class ChessStation : Component
 	[Property] public GameObject WhiteTopAnchor { get; set; }
 	[Property] public GameObject BlackTopAnchor { get; set; }
 
+	/// <summary>Where a seated player's EYES are, one per seat — <c>ChessRing.SeatEyeBack</c> back
+	/// of the board centre at <c>SeatEyeHeight</c>, aimed at the board from there. Set by ChessRing
+	/// at build time. Read by the VR rig and nothing else: the desktop camera uses
+	/// <see cref="WhiteAnchor"/>/<see cref="BlackAnchor"/>, which sit at the orbit point the board
+	/// is readable from on a monitor — 31 units higher, and a unit is an inch.</summary>
+	[Property] public GameObject WhiteEyeAnchor { get; set; }
+	[Property] public GameObject BlackEyeAnchor { get; set; }
+
 	/// <summary>SteamId of the player in the White seat, 0 if free. Host-authoritative.</summary>
 	[Sync( SyncFlags.FromHost )] public ulong WhiteSteamId { get; set; }
 	[Sync( SyncFlags.FromHost )] public string WhiteName { get; set; }
@@ -137,6 +145,13 @@ public sealed class ChessStation : Component
 	/// Falls back to the orbit anchor if the top anchors weren't built (e.g. an old scene).</summary>
 	public GameObject TopAnchor( ChessSeat seat ) =>
 		( seat == ChessSeat.White ? WhiteTopAnchor : BlackTopAnchor ) ?? SeatAnchor( seat );
+
+	/// <summary>The seated eye for this seat — where a headset's head belongs. Mirrors
+	/// <see cref="SeatAnchor"/>, and falls back to it if the eye anchors weren't built, which keeps
+	/// VR working against a scene that predates them rather than putting the playspace at the
+	/// origin.</summary>
+	public GameObject EyeAnchor( ChessSeat seat ) =>
+		( seat == ChessSeat.White ? WhiteEyeAnchor : BlackEyeAnchor ) ?? SeatAnchor( seat );
 
 	/// <summary>Where a player stands to claim this seat — used for the "Press E"
 	/// proximity pick. The camera anchor's ground position is exactly that spot.

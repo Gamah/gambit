@@ -727,8 +727,15 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 
 			var component = station.AddComponent<ChessStation>();
 			component.Number = i;   // same index the plaque shows (BuildStationPlaque below)
-			component.WhiteAnchor = BuildSeatAnchor( station, "WhiteAnchor", -1f );
-			component.BlackAnchor = BuildSeatAnchor( station, "BlackAnchor", +1f );
+			component.WhiteAnchor = BuildSeatAnchor( station, "WhiteAnchor", -1f, SeatEyeBlend );
+			component.BlackAnchor = BuildSeatAnchor( station, "BlackAnchor", +1f, SeatEyeBlend );
+			// The seated EYE, which is the far end of SeatEyeBlend built as its own anchor rather
+			// than reached by turning the knob down: the knob moves the desktop camera, where the
+			// eye end is unplayable (13.6° to the far rank). A headset needs the eye and nothing
+			// else, so it gets a second anchor and the desktop view is untouched — BuildTopAnchor's
+			// precedent exactly.
+			component.WhiteEyeAnchor = BuildSeatAnchor( station, "WhiteEyeAnchor", -1f, 0f );
+			component.BlackEyeAnchor = BuildSeatAnchor( station, "BlackEyeAnchor", +1f, 0f );
 			// Top-down (nadir) anchors for 2D play mode (M16) — a second per-seat camera target,
 			// used instead of the orbit anchor when PlayMode is "2d". Separate GO, separate maths.
 			component.WhiteTopAnchor = BuildTopAnchor( station, "WhiteTopAnchor", -1f );
@@ -1736,10 +1743,10 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	/// +1 = Black (inward). Positioned above and behind the board edge, pre-aimed
 	/// down at the board center so LobbyPlayer can lerp straight to it.
 	///
-	/// <para>Since M13 the position is a blend between the seated player's eyes and that
-	/// orbit point — see <see cref="SeatEyeBlend"/>, whose default of 1 makes this method
-	/// return exactly what it always did.</para></summary>
-	GameObject BuildSeatAnchor( GameObject station, string name, float side )
+	/// <para>The position is a blend between the seated player's eyes and that orbit point:
+	/// <paramref name="blend"/> 1 is the orbit point, 0 the eye. The camera's anchor is built at
+	/// <see cref="SeatEyeBlend"/>; the VR eye anchor at 0.</para></summary>
+	GameObject BuildSeatAnchor( GameObject station, string name, float side, float blend )
 	{
 		// Spherical orbit around the board center: SeatOrbitRadius sets the range,
 		// SeatPitch the elevation on that sphere. The camera sits dead on the
@@ -1752,9 +1759,9 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			SeatOrbitRadius * MathF.Sin( pitch ) );
 
 		// Where the player's own eyes are, roughly (see SeatEyeBack/SeatEyeHeight — both
-		// [GUESS], both knobs). At SeatEyeBlend 1 this value is multiplied by zero.
+		// [GUESS], both knobs). At blend 1 this value is multiplied by zero.
 		var eye = new Vector3( side * SeatEyeBack, 0, SeatEyeHeight );
-		var pos = Vector3.Lerp( eye, orbit, SeatEyeBlend );
+		var pos = Vector3.Lerp( eye, orbit, blend );
 
 		var anchor = new GameObject( true, name );
 		anchor.Parent = station;
@@ -1762,10 +1769,9 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		// Aim at the board center, then pitch the aim down by SeatLookDownAngle —
 		// a pure rotation of the view, position unchanged (positive = look lower).
 		//
-		// Derived from the BLENDED position and never itself blended: that is what keeps
-		// the camera aimed at the board at every value of SeatEyeBlend with one formula
-		// instead of two, and it is why this line is unchanged from before M13 — which is
-		// half of the bit-for-bit proof (the other half being Lerp(eye, orbit, 1) === orbit).
+		// Derived from the BLENDED position and never itself blended: that is what keeps the
+		// view aimed at the board at every blend with one formula instead of two, and it is
+		// what gives the eye anchor a shallower pitch than the orbit one for free.
 		anchor.LocalRotation = Rotation.LookAt( center - anchor.LocalPosition, Vector3.Up )
 			* Rotation.FromPitch( SeatLookDownAngle );
 		return anchor;

@@ -1,3 +1,4 @@
+using System;
 using Sandbox;
 
 namespace Gambit.World;
@@ -49,7 +50,13 @@ public sealed class SeatSettingsPlate : Component
 	/// pair per frame forever.</summary>
 	bool _buildFailed;
 
-	protected override void OnUpdate()
+	/// <summary>The per-frame body, wrapped once (<see cref="FrameTrace"/>): a method group
+	/// converted to <c>Action</c> allocates a delegate per conversion.</summary>
+	Action _step;
+
+	protected override void OnUpdate() => FrameTrace.Run( "plate.place", _step ??= Place );
+
+	void Place()
 	{
 		// Only for the player sitting at a chess seat, and never while the panel it opens is
 		// already up — the panel has its own ✕ and would otherwise be sitting on top of its own

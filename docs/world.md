@@ -96,7 +96,9 @@ First claim wins, one player cannot hold both sides, and a client that loses the
 up in `OnUpdate`. Two players pressing E on one seat within about an RTT is resolved by the host.
 
 - You take the side you walk up to. Seat cameras orbit the board centre (`SeatOrbitRadius`,
-  `SeatPitch`, `SeatLookDownAngle`).
+  `SeatPitch`, `SeatLookDownAngle`). Each seat also carries an **eye** anchor at the far end of
+  `SeatEyeBlend` — where a seated player's eyes actually are, 31 units below the orbit point —
+  which the VR rig uses and the desktop camera never does (`docs/vr.md`).
 - **Standing up from a live game does not resign it.** `LeaveCameraKeepSeat` drops the camera and
   keeps the claim, so the game keeps running; walk back and sit to resume. Anything that is not a
   live game is a full leave. Resign is its own two-press button on the seated HUD.

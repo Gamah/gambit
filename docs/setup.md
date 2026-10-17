@@ -94,5 +94,10 @@ In `client/Code/Api/GamchessCommands.cs`:
 | `gambit_tv` | The whole TV chain: the local setting, the channel, what the wall thinks it shows, and gamchess's raw state. |
 | `gambit_clock` | For the table you are seated at: which controller owns the board, what it thinks the game is doing, and what the seam answers for each seat's clock. |
 
+`gambit_trace` (in `client/Code/World/FrameTrace.cs`) prints every per-frame step wrapped in
+`FrameTrace` that has thrown, with the stack from its first throw; `gambit_trace_clear` forgets
+them. A throw in an `OnUpdate` is otherwise silent (`docs/engine.md`).
+
 The 34 `gambit_terry_*` commands are the seated-hands tuning harness, dev tools rather than
-player-facing; see `docs/terry.md`.
+player-facing; see `docs/terry.md`. The `gambit_vr_*` commands are the headset's, since it has no
+console in it; see `docs/vr.md`.

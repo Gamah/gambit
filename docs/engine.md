@@ -30,6 +30,24 @@ repeated here.
   that did not exist when Play started never runs, however many times the code reloads — stop and
   start Play. It fails silently and looks exactly like broken logic inside the system.
 
+### A throw in `OnUpdate` costs the rest of the method, silently
+
+The engine catches an exception at the component boundary and calls the component again next frame,
+so one bad deref in an early line stops every line after it from ever running. The symptom is
+behaviour that is simply absent — nothing crashes, nothing stops — and in a headset there is no
+console to read either.
+
+`World/FrameTrace.cs` is the answer: `FrameTrace.Run( "site", step )` wraps one step of a per-frame
+method, so a throw loses only that step and is reported against its name. The first throw per site
+logs the whole stack and every one after it moves a counter, because a fault in a 90Hz update
+writes thousands of identical stacks. `gambit_trace` prints what accumulated, `gambit_trace_clear`
+forgets it (clear, play the case, dump is how a fix is verified), and `VrStatusPanel` lists the
+faulting sites so a headset can see them. `LobbyPlayer.OnUpdate` and `SeatSettingsPlate.OnUpdate`
+are wrapped step by step.
+
+The steps are held as `Action` fields rather than passed as method groups: a method group converted
+to a delegate allocates one per conversion, and these are per-frame paths.
+
 ### Self-attaching UI
 
 `GameHud`, `SpectatorScreen`, `VoiceScreen` + `VoicePanel`, `HudHints` and `BoardSettingsScreen`

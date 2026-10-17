@@ -58,13 +58,29 @@ frame pins the eye there and throws positional tracking away.
 | where the player is | anchor |
 | --- | --- |
 | roaming | their feet, yawed by `PlayerController.EyeAngles` — so WASD still goes where the mouse points, and head yaw rides on top |
-| at a chess seat | the 3D seat anchor's position and yaw, offset by the head pose captured at sit-down |
+| at a chess seat | the seat's **eye** anchor's position and yaw, offset by the head pose captured at sit-down |
 | at a wall board | left where it was |
 
 The seated capture is what makes the board land in front of a player whose chair is anywhere in
 the room and at any height: position so their seated head is on the seat's eye point, yaw so
 facing forward in that chair faces the board. It happens once per seat, so leaning in is real
 movement afterwards. `gambit_vr_recentre` captures again.
+
+**The seated eye is its own anchor, not the camera's.** `ChessStation.WhiteAnchor`/`BlackAnchor`
+sit at the desktop seat camera's orbit point — `ChessRing.SeatOrbitRadius` 56 at `SeatPitch` 55°,
+which is 80 above the floor and 32 back from the board centre — and a unit is an inch, so a head
+placed there is 31 inches above where a seated player's eyes are. `ChessRing.SeatEyeBlend` is the
+knob that walks a seat camera from that orbit point down to the eye, but it moves the **desktop**
+camera, where the eye end is unplayable: 13.6° to the far rank, a king hiding eight squares behind
+it. So the eye end is built as a second anchor per seat instead —
+`ChessStation.WhiteEyeAnchor`/`BlackEyeAnchor`, `ChessStation.EyeAnchor(seat)`, one blend formula
+in `ChessRing.BuildSeatAnchor` — read by `VrRig` and nothing else, exactly as `BuildTopAnchor`
+gives 2D mode its own. The eye anchor is aimed at the board centre from the eye, so it is pitched
+about 30° down rather than the orbit anchor's 63°, which is what everything hung along it inherits.
+
+`SeatEyeBack` and `SeatEyeHeight` are both `[GUESS]` — "seated eye ≈ 31 above the pad", from human
+proportion scaled to a 72-unit citizen — so the anchor is right in shape and unverified in size.
+`gambit_terry` is what prints them beside the citizen's own eye bone (`docs/terry.md`).
 
 A wall board is the one engaged state that does **not** move the playspace. The desktop camera
 flies to the board; a VR player walked up to it and is standing there, and taking the room out
@@ -106,17 +122,29 @@ So `World/VrHud.cs` swaps the **root**, not the panels: the scene's UI object ke
 stylesheet and `Ensure*` attach point, and its `ScreenPanel` is destroyed in favour of a
 `WorldPanel` hung in the world. Panel pixels stay panel pixels (the quad's layout space is
 1920x1080, what the desktop's `ConsistentHeight` strategy gives them), so edge-anchored rows land on
-the quad's edges. `gambit_vr_hud_distance`, `gambit_vr_hud_height` and `gambit_vr_hud_scale` tune it
-from inside the headset.
+the quad's edges. `gambit_vr_hud_distance`, `gambit_vr_hud_height`, `gambit_vr_hud_scale` and
+`gambit_vr_hud_pitch` tune it from inside the headset.
+
+**`WorldPanel.RenderScale` is not a size.** It multiplies the quad's transform and divides the
+layout rect by the same number, so the world size cancels and only the layout space moves: at 0.76
+a 1920-wide panel lays out in 2526 px and every row in it is drawn smaller than its CSS asks for
+(`engine/Sandbox.Engine/Scene/Components/UI/WorldPanel.cs`, `OnPreRender` — `[SOURCE]`, read off the
+implementation). It is 1, so `PanelSize` is the layout space the stylesheets were written against,
+and the quad's world size is the host object's **scale** (`VrHud.Size`), which is what
+`gambit_vr_hud_scale` sets.
 
 **Nothing about the quad follows head rotation.** `VrRig.ViewAnchor` is the one place that decides
-where "in front of the player" is — the seat anchor while seated, the controller's eye angles while
+where "in front of the player" is — the eye anchor while seated, the controller's eye angles while
 roaming, never the headset's — and both the quad and the state board hang off it, so they cannot
-disagree. The quad takes that seated direction with its **pitch**, which is what centres it on the
-board: the seat anchor is aimed at the board centre, so the panels composed against a 1920x1080
-screen sit around the board the way they do on the monitor. The state board takes the yaw alone,
-because it hangs at a fixed height in the room. `gambit_vr_hud_height` lifts the quad off the pieces
-from there, and gives up the centring to do it.
+disagree. The quad hangs along that seated direction, which is aimed at the board centre, and that
+is the only direction with the board **behind** the quad rather than below it. The state board takes
+the yaw alone, because it hangs at a fixed height in the room.
+
+**How much of that pitch the quad keeps is `VrHud.PitchBlend`** (`gambit_vr_hud_pitch`): 1 squares
+the quad onto the board, 0 stands it upright. Fully squared is a panel lying 30° back towards the
+ceiling, which reads as a panel on the floor; flat loses the aim at the thing being looked at.
+Position and rotation both take the blended direction, so the quad is always square to the view and
+`gambit_vr_hud_height` alone decides how far above the board it hangs.
 
 **The adopted desktop UI is drawn, because it is the only way to drive a game.** It is a 1920x1080
 screen layout with edge-anchored rows, a crosshair and keyboard hints, and no amount of scaling

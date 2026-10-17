@@ -296,9 +296,16 @@ public sealed class LobbyPlayer : Component
 		// ChessStation.LocalNadir), alongside the station occupancy sign — one rule, both panels.
 	}
 
+	/// <summary>The seated frame's steps, wrapped once each so a throw in one of them is reported
+	/// by name and loses only itself (<see cref="FrameTrace"/>). Held as fields because a method
+	/// group converted to <c>Action</c> allocates a delegate per conversion, and this is a
+	/// per-frame path.</summary>
+	Action _stepSeatedAt, _stepMatchmaking, _stepPublishName, _stepSeatAim, _stepTrimAvatar,
+		_stepSeatCamera;
+
 	protected override void OnUpdate()
 	{
-		UpdateSeatedAt();
+		FrameTrace.Run( "lobby.seatedAt", _stepSeatedAt ??= UpdateSeatedAt );
 
 		if ( IsProxy )
 		{
@@ -310,7 +317,8 @@ public sealed class LobbyPlayer : Component
 		// Cross-session matchmaking (M19): poll our own open advert, and auto-engage the
 		// seat a match dropped us into. Client-local; a no-op unless we're waiting or just
 		// joined. Runs even while engaged — a joiner needs to be seated into their game.
-		Gambit.Game.Matchmaking.Tick();
+		FrameTrace.Run( "lobby.matchmaking",
+			_stepMatchmaking ??= Gambit.Game.Matchmaking.Tick );
 
 		// Fell off the map: only possible while roaming (the controller is off while
 		// engaged), so catch it before the engage/leave handling below.
@@ -319,9 +327,7 @@ public sealed class LobbyPlayer : Component
 
 		// Publish the display name for everyone's name tags. Load() is cached.
 		// DisplayName is the single source of truth — the Steam persona name.
-		var data = Gambit.Game.PlayerData.Load();
-		var uname = data?.DisplayName() ?? "";
-		if ( GambitName != uname ) GambitName = uname;
+		FrameTrace.Run( "lobby.publishName", _stepPublishName ??= PublishDisplayName );
 
 
 		if ( _leaving )
@@ -334,7 +340,7 @@ public sealed class LobbyPlayer : Component
 		{
 			// Cursor vs LOOK aim at the board (P99), before the Escape handling below —
 			// SeatAim decides whether Escape means "give me the cursor" or "stand up".
-			UpdateSeatAim();
+			FrameTrace.Run( "lobby.seatAim", _stepSeatAim ??= UpdateSeatAim );
 
 			// With look aim on and a game live, Escape CYCLES the cursor: off, on, off. It
 			// is the whole control — there is no world-space button, and there was one
@@ -389,10 +395,7 @@ public sealed class LobbyPlayer : Component
 			// so remote/networked Terries stay drawn — M13 depends on seeing the other
 			// player. Chess seats only; wall boards leave you standing and visible.
 			if ( ChessStation.Active != null )
-			{
-				HideLocalAvatar();
-				ApplySitPose();
-			}
+				FrameTrace.Run( "lobby.trimAvatar", _stepTrimAvatar ??= TrimSeatedAvatar );
 
 			// Only the chess seat drives the camera; wall boards leave it where it is.
 			// A seat switch schwoops the avatar (UpdateSeatSwitch) and the child camera
@@ -400,7 +403,7 @@ public sealed class LobbyPlayer : Component
 			if ( _switching )
 				UpdateSeatSwitch();
 			else if ( ChessStation.Active != null )
-				UpdateLockedCamera();
+				FrameTrace.Run( "lobby.seatCamera", _stepSeatCamera ??= UpdateLockedCamera );
 			return;
 		}
 
@@ -448,6 +451,23 @@ public sealed class LobbyPlayer : Component
 			EngageInfo( NearbyInfo );
 		else if ( NearbySpectator != null && Input.Pressed( "use" ) )
 			EngageSpectator( NearbySpectator );
+	}
+
+	/// <summary>Publish the Steam persona name for everyone's name tags. <c>Load()</c> is cached;
+	/// <c>DisplayName</c> is the single source of truth.</summary>
+	void PublishDisplayName()
+	{
+		var data = Gambit.Game.PlayerData.Load();
+		var uname = data?.DisplayName() ?? "";
+		if ( GambitName != uname ) GambitName = uname;
+	}
+
+	/// <summary>Keep our own seated avatar trimmed, re-asserted every frame. One step rather than
+	/// two calls at the call site so a throw in either is reported against one name.</summary>
+	void TrimSeatedAvatar()
+	{
+		HideLocalAvatar();
+		ApplySitPose();
 	}
 
 	/// <summary>Which station and seat this avatar occupies, or null. Derived from the

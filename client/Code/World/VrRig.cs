@@ -204,7 +204,7 @@ public sealed class VrRig : Component
 	void UpdateAnchor()
 	{
 		var station = ChessStation.Active;
-		var seat = station?.SeatAnchor( ChessStation.ActiveSeat );
+		var seat = station?.EyeAnchor( ChessStation.ActiveSeat );
 
 		if ( seat.IsValid() )
 		{
@@ -284,8 +284,8 @@ public sealed class VrRig : Component
 	}
 
 	/// <summary>Where the player is looking, as a body rather than as a head: a point to hang
-	/// something in front of, and a horizontal direction to hang it along. Seated, that is the seat
-	/// anchor's yaw (the anchor itself is pitched steeply down at the board); roaming, it is the
+	/// something in front of, and a horizontal direction to hang it along. Seated, that is the eye
+	/// anchor's yaw (the anchor itself is pitched down at the board); roaming, it is the
 	/// controller's eye angles — NOT the headset's, so that a glance does not drag the world's
 	/// furniture around with it.
 	///
@@ -305,7 +305,7 @@ public sealed class VrRig : Component
 		forward = default;
 
 		var station = ChessStation.Active;
-		var seat = station?.SeatAnchor( ChessStation.ActiveSeat );
+		var seat = station?.EyeAnchor( ChessStation.ActiveSeat );
 
 		if ( seat.IsValid() )
 		{

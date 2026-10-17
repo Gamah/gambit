@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Sandbox;
 
@@ -19,10 +20,10 @@ namespace Gambit.World;
 /// <see cref="LobbyPlayer"/> exactly as the desktop has them. Panel pixels become panel pixels on a
 /// quad, so edge-anchored rows sit on the quad's own edges instead of in the periphery.</para>
 ///
-/// <para><b>A desktop layout on a quad is a staging post, not the destination.</b> Squared onto the
+/// <para><b>A desktop layout on a quad is a staging post, not the destination.</b> Hung over the
 /// board it is readable and the beam can click it, but it is still a 1920x1080 screen with a
-/// crosshair on it, and it still covers the board it is centred on. It stands until the UI is
-/// something built to be pointed at.</para>
+/// crosshair on it, and at a size big enough to read it covers most of the view. It stands until
+/// the UI is something built to be pointed at.</para>
 /// </summary>
 public sealed class VrHud : Component
 {
@@ -36,29 +37,47 @@ public sealed class VrHud : Component
 	/// here, so it must keep working after the swap.</summary>
 	public GameObject Host { get; private set; }
 
-	/// <summary>How far out the quad hangs, in world units. With <see cref="RenderScale"/> it sets
-	/// how much of the view the HUD covers: the quad is <c>PanelSize.x * 0.05 * RenderScale</c>
-	/// units wide (the engine's <c>ScenePanelObject.ScreenToWorldScale</c>), and that width at this
-	/// distance is the angle it subtends.
+	/// <summary>How far out the quad hangs, in world units. With <see cref="Size"/> it sets how much
+	/// of the view the HUD covers.
 	///
 	/// <para><b>Seated, this must land SHORT of the board</b>, which is why it is not a free number:
-	/// a quad centred on the board direction at more than <c>ChessRing.SeatOrbitRadius</c> (56) sits
-	/// past the board centre and is buried in the tabletop, panels and all. Short of it, the quad
-	/// floats between the eye and the board with the board behind its middle.</para></summary>
-	[Property] public float Distance { get; set; } = 46f;
+	/// the seat's eye anchor is about 39 units from the board centre
+	/// (<c>ChessRing.SeatEyeBack</c> back and <c>SeatEyeHeight</c> above it), and a quad hung
+	/// further along that direction is buried in the tabletop, panels and all. Short of it, the
+	/// quad floats between the eye and the board with the board behind its middle.</para></summary>
+	[Property] public float Distance { get; set; } = 30f;
 
-	/// <summary>How far the quad is lifted above the point it hangs in front of. Zero puts it on
-	/// the view direction itself, which seated means centred on the board; lift it from inside the
-	/// headset (<c>gambit_vr_hud_height</c>) to clear the pieces at the cost of that centring.</summary>
-	[Property] public float Height { get; set; } = 0f;
+	/// <summary>How far the quad is lifted above the point it hangs in front of — what puts it
+	/// OVER the board rather than across it. Zero puts it on the view direction itself, which
+	/// seated means centred on the board.</summary>
+	[Property] public float Height { get; set; } = 14f;
 
-	/// <summary>World units per panel pixel, on top of the engine's 0.05.
+	/// <summary>How much of the seated view's downward pitch the quad takes: 1 squares it onto the
+	/// board, 0 stands it upright.
 	///
-	/// <para><b>Paired with <see cref="Distance"/>:</b> what the player sees is the ratio of the
-	/// two, so the quad has to be scaled down by whatever the distance was pulled in by or the
-	/// panel grows in the view. Tune either from the headset and the other follows by
-	/// arithmetic.</para></summary>
-	[Property] public float RenderScale { get; set; } = 0.76f;
+	/// <para><b>Fully squared onto the board is a panel lying back towards the ceiling.</b> The
+	/// seat's eye anchor looks about 30° down at the board, so a quad normal to it is tilted that
+	/// far back; readable, but it reads as a panel on the floor rather than one in front of you.
+	/// The pitch is worth keeping some of — it is what aims the quad at the thing the player is
+	/// looking at — so this is a blend and not a flag.</para></summary>
+	[Property, Range( 0f, 1f )] public float PitchBlend { get; set; } = 0.4f;
+
+	/// <summary>The quad's size in the world, as the host object's scale.
+	///
+	/// <para><b>This is the only knob that changes how big the quad is</b>: its world width is
+	/// <c>PanelSize.x * 0.05 * Size</c> (the engine's <c>ScenePanelObject.ScreenToWorldScale</c>),
+	/// and with <see cref="Distance"/> that width is the angle it subtends.</para></summary>
+	[Property] public float Size { get; set; } = 0.7f;
+
+	/// <summary>The engine's panel-space divisor, which is <b>not</b> a size: <c>WorldPanel</c>
+	/// multiplies the quad's transform by it and divides the layout rect by it, so the world size
+	/// cancels out and only the layout space moves — at 0.76 a 1920-wide panel lays out in 2526
+	/// px and every row in it is drawn smaller
+	/// (<c>engine/Sandbox.Engine/Scene/Components/UI/WorldPanel.cs</c>, <c>OnPreRender</c>;
+	/// <b>[SOURCE]</b> — read off the implementation, not documented). It is 1 so that
+	/// <see cref="PanelSize"/> is the layout space the desktop's stylesheets were written
+	/// against.</summary>
+	[Property] public float RenderScale { get; set; } = 1f;
 
 	/// <summary>The quad's pixel size, which is the layout space every panel's CSS is written
 	/// against. 1920x1080 is what the desktop's <c>ConsistentHeight</c> screen panel gives them, so
@@ -105,6 +124,7 @@ public sealed class VrHud : Component
 		_panel = Host.AddComponent<WorldPanel>();
 		_panel.PanelSize = PanelSize;
 		_panel.RenderScale = RenderScale;
+		Host.WorldScale = Size;
 		_panel.LookAtCamera = false; // Place() owns the rotation, in the same frame as the position
 
 		Rehome();
@@ -148,14 +168,13 @@ public sealed class VrHud : Component
 	///
 	/// <para><b>Nothing here follows head rotation.</b> A panel welded to the view turns with every
 	/// glance, which makes it impossible to look away from and impossible to read while moving.
-	/// Both placements are in world space, off the body rather than the head: squared onto the
-	/// board the player is sitting at, or ahead of the body while roaming.</para>
+	/// Both placements are in world space, off the body rather than the head: over the board the
+	/// player is sitting at, or ahead of the body while roaming.</para>
 	///
-	/// <para>Seated, the quad takes the seat anchor's whole direction, pitch included — the anchor
-	/// aims at the board centre, so the quad's centre is the board's and the panels laid out
-	/// against a 1920x1080 screen sit around it the way they do on the monitor. <see cref="Height"/>
-	/// lifts it off the pieces from there, at the cost of that centring. Roaming, only yaw is used:
-	/// a quad that pitched with the look would swing while walking.</para>
+	/// <para>Seated, the quad hangs along the seat's eye direction, which aims at the board centre,
+	/// with <see cref="PitchBlend"/> rotating it back towards upright and <see cref="Height"/>
+	/// lifting it above the pieces. Roaming, the direction is already level: a quad that pitched
+	/// with the look would swing while walking.</para>
 	///
 	/// <para>Roaming, it follows the body: position from the feet at eye height, direction from the
 	/// controller's eye angles rather than the headset's. Walking and turning carry it along;
@@ -170,6 +189,7 @@ public sealed class VrHud : Component
 
 		// Re-applied so the tuning commands take effect without a re-adopt.
 		if ( _panel.IsValid() ) _panel.RenderScale = RenderScale;
+		Host.WorldScale = Size;
 
 		// Hidden means PARKED, not disabled. Disabling the world panel deletes the root its panels
 		// are children of, and a PanelComponent whose parent was deleted keeps building its tree
@@ -182,17 +202,37 @@ public sealed class VrHud : Component
 		}
 
 		// VrRig owns where "in front of the player" is, so this and the state board cannot
-		// disagree about it. Seated, the FULL seat-anchor direction is taken rather than its yaw:
-		// that direction is the one the anchor was built to aim at the board centre, so the quad
-		// comes out centred on the board exactly as the desktop screen is — which is what the
-		// 1920x1080 layout on it was composed against. Flattening it instead hangs a quad level
-		// with the eye while the board is well below, and no Height offset can centre that, only
-		// raise or lower a panel the board is never behind.
+		// disagree about it. Seated, the UNFLATTENED direction is asked for: it aims at the board
+		// centre, which is the only direction that puts the board behind the quad rather than
+		// below it. How much of that aim the quad keeps is PitchBlend's, below — taken here and
+		// flattened there, because the flattening has to happen after the pitch is known.
 		if ( !VrRig.ViewAnchor( _controller, CameraObject, out var from, out var forward,
 			flattenSeated: false ) ) return;
 
+		forward = BlendPitch( forward, PitchBlend );
+
 		Host.WorldPosition = from + forward * Distance + Vector3.Up * Height;
 		Host.WorldRotation = Rotation.LookAt( -forward, Vector3.Up );
+	}
+
+	/// <summary>Rotate a direction towards horizontal, keeping its yaw. <paramref name="blend"/> 1
+	/// returns it untouched; 0 flattens it.
+	///
+	/// <para>Position and rotation both take the blended direction, so the quad is always square
+	/// to the player and <see cref="Height"/> alone decides how far above the board it hangs. A
+	/// quad positioned down the full board direction but faced horizontally would be read at the
+	/// same oblique angle this is here to remove.</para>
+	///
+	/// <para>A straight-up or straight-down direction has no yaw to keep, so it is returned as it
+	/// came rather than snapped to an arbitrary one.</para></summary>
+	static Vector3 BlendPitch( Vector3 forward, float blend )
+	{
+		var flat = forward.WithZ( 0f );
+		if ( flat.LengthSquared < 0.0001f ) return forward;
+
+		flat = flat.Normal;
+		float pitch = MathF.Asin( Math.Clamp( forward.z, -1f, 1f ) ) * blend;
+		return flat * MathF.Cos( pitch ) + Vector3.Up * MathF.Sin( pitch );
 	}
 
 	/// <summary>How far in front of the eye the HUD quad sits. Tune it from inside the headset.</summary>
@@ -215,13 +255,25 @@ public sealed class VrHud : Component
 		Log.Info( $"[Gambit] vr: HUD height {units}" );
 	}
 
-	/// <summary>World units per panel pixel: how big the HUD is at its distance.</summary>
+	/// <summary>How big the HUD quad is in the world: with the distance, how much of the view it
+	/// covers.</summary>
 	[ConCmd( "gambit_vr_hud_scale" )]
 	public static void SetScale( float scale )
 	{
 		if ( Instance == null ) { Log.Info( "[Gambit] vr: no HUD (not running in VR?)" ); return; }
 
-		Instance.RenderScale = scale;
+		Instance.Size = scale;
 		Log.Info( $"[Gambit] vr: HUD scale {scale}" );
+	}
+
+	/// <summary>How much of the seated view's downward pitch the quad takes: 1 squares it onto the
+	/// board, 0 stands it upright.</summary>
+	[ConCmd( "gambit_vr_hud_pitch" )]
+	public static void SetPitch( float blend )
+	{
+		if ( Instance == null ) { Log.Info( "[Gambit] vr: no HUD (not running in VR?)" ); return; }
+
+		Instance.PitchBlend = Math.Clamp( blend, 0f, 1f );
+		Log.Info( $"[Gambit] vr: HUD pitch blend {Instance.PitchBlend}" );
 	}
 }
