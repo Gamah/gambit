@@ -38,6 +38,19 @@ public static class WallBoardGeometry
 	/// <summary>GO LocalScale for a wall display board. Use this; don't invent one.</summary>
 	public static Vector3 BoardScale => Stretch * Master;
 
+	/// <summary>Master multiplier for a board at a TABLE rather than on a wall — the VR
+	/// seated board (<see cref="VrTableUi"/>).
+	///
+	/// <para><b>Same <see cref="Stretch"/>, a smaller master, and that is the whole
+	/// difference.</b> Keeping the stretch is what keeps one font space: the px values in a
+	/// table board's stylesheet mean what they mean on every wall board, and glyphs are
+	/// distorted by exactly the same amount. A wall sign is read across the room; this one is
+	/// read at arm's length, so it is the master and nothing else that moves.</para></summary>
+	public const float TableMaster = 0.4f;
+
+	/// <summary>GO LocalScale for a board at a table. Use this; don't invent one.</summary>
+	public static Vector3 TableBoardScale => Stretch * TableMaster;
+
 	/// <summary>World half-height of a board's intrinsic rect per unit of GO Z-scale — the
 	/// calibration constant behind <see cref="FloorAnchor"/>. It only means anything for a board
 	/// left at the default PanelSize, which is one more reason boards must not change it.</summary>

@@ -160,19 +160,51 @@ ceiling, which reads as a panel on the floor; flat loses the aim at the thing be
 Position and rotation both take the blended direction, so the quad is always square to the view and
 `gambit_vr_hud_height` alone decides how far above the board it hangs.
 
-**The adopted desktop UI is drawn, because it is the only way to drive a game.** It is a 1920x1080
-screen layout with edge-anchored rows, a crosshair and keyboard hints, and no amount of scaling
-makes that a VR UI — but every control for starting a game, offering a draw or standing up lives on
-it, and the beam can click it. `gambit_vr_hud` parks it (below the room, never disabled: disabling
-the world panel deletes the root its panels are children of while they go on building trees against
-it). **A VR panel is wall-board sized and built the way the wall boards are**
-(`WallBoardGeometry`: default `PanelSize`, content `height:auto`, `BoardScale` as the GO scale); the
-state board below is the first one, and the pattern to copy.
+**The adopted desktop UI is parked, because the seated controls are at the table now** (below the
+room, never disabled: disabling the world panel deletes the root its panels are children of while
+they go on building trees against it). It is still the only home of the pre-game flows — the time
+control, Ready, the four lichess start flows — and of the promotion picker, so two things bring it
+back: the GAME MENU plate while a table is idle, and a pending promotion, which shows it whatever
+the toggle says. A parked picker is a game that cannot continue; `VrHud.PromotionWaiting` is that
+override, and `gambit_vr_hud` is the console's way in.
+
+**A VR panel is wall-board sized and built the way the wall boards are** (`WallBoardGeometry`:
+default `PanelSize`, content `height:auto`, a `*BoardScale` from that file as the GO scale); the
+state board and the seated board below are both built that way.
 
 `LobbyPlayer.HudHost()` is the one seam that knows about this: the self-attaching screens hang on
 the UI **GameObject**, whichever root panel it carries. `EnsureVr` runs before them so the world
 panel is in place when they are built, and it calls `VrHud.Adopt` directly rather than leaving it to
 a component's own `OnStart` for the same reason.
+
+## The seated controls are at the table
+
+`World/VrTableUi.cs`, built by `VrRig` the same lazy way the hands are, and client-local and
+parented to nothing for the reason the settings plate records: a `ChessStation` is NetworkSpawned,
+so a child of one rides the host's snapshot.
+
+**Reading and doing want opposite things, so they are different objects.** What a player reads is a
+wall-board-shaped panel off to the seat's right, a glance away and never in front of the board
+(`UI/VrSeatBoardPanel.razor`: the seats, whose move it is, the result, the move list). What a
+player presses is a flat plate on the tabletop, where their hands already are and big enough to hit
+with a beam — the one world control this room already proves (`SeatSettingsPlate`, issue #28).
+
+`WallBoardGeometry.TableMaster` is the only thing a table board changes: same `Stretch`, so the px
+values in its stylesheet mean what they mean on every wall board and glyphs are distorted by the
+same amount. A wall sign is read across the room, this one at arm's length.
+
+**The plates keep their slots whether or not they are showing.** Stand up is slot 0 and always
+there; slot 1 is NEW GAME, the draw offer, or GAME MENU; slot 2 is resign, in its own two-stage
+press. A plate that slid along the strip as the game changed state would move the resign plate
+under the hand reaching for "stand up", so an inapplicable verb leaves a bare patch of table rather
+than closing the gap. Three is what fits: `ChessRing.VerbPlateCenterY` runs them in from the
+tabletop's right-hand edge, against the settings plate's own 13.6 on the left.
+
+`ChessRing` owns all of that geometry — `SeatVerbPlateLocal`, `VrSeatBoardLocal`, and the one
+`BuildTextPlate` both plate kinds are built by — because it is the file that knows where the
+table's margins are. `gambit_vr_board`, `gambit_vr_board_pos` and `gambit_vr_board_scale` move the
+board from inside the headset. **Its numbers are world units, like `SeatEyeBack`**, not base units
+× `TableScale`: it is placed against the seat's eye anchor rather than against the tabletop.
 
 ## The controllers, bridged onto the controls that already exist
 

@@ -2014,8 +2014,6 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	const float SettingsTextSpanHeight = 1.1f;   // across the margin (table X)
 	const float SettingsPlateMarginY = 0.8f;
 	const float SettingsPlateMarginX = 0.7f;
-	internal static float SettingsPlateLength => SettingsTextSpanLength + 2f * SettingsPlateMarginY; // 13.6
-	internal static float SettingsPlateDepth => SettingsTextSpanHeight + 2f * SettingsPlateMarginX;  // 3.0
 	const float SettingsPlateThickness = 0.3f;
 	const float SettingsTextOutset = 0.05f;
 
@@ -2060,20 +2058,38 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	// so a wider pixel space means SMALLER glyphs on the same plate. That is the knob for "the
 	// text is too big" — NOT SettingsTextSpanLength, which scales the panel and the glyphs
 	// together and leaves the overflow looking exactly the same, only further away.
-	static float SettingsPxWidth => SettingsMaxChars * SettingsCharAdvanceEm * SettingsFontPx / SettingsTextFitFraction;
-	static float SettingsPxHeight => SettingsPxWidth * SettingsTextSpanHeight / SettingsTextSpanLength;
+	static float PlatePxWidth( int maxChars ) =>
+		maxChars * SettingsCharAdvanceEm * SettingsFontPx / SettingsTextFitFraction;
 
 	/// <summary>Build the plate + its one-string panel on a caller-owned GameObject. The caller
 	/// owns the LIFETIME on purpose: this thing must be strictly client-local, and a station is
 	/// NetworkSpawned — hanging it under one would put its transform and its enabled state on the
 	/// host's snapshot, which is the trap docs/engine.md records for the music board. See
 	/// <see cref="SeatSettingsPlate"/>, which parents it to nothing and drives it in world space.</summary>
-	public Gambit.UI.SeatSettingsPanel BuildSeatSettingsPlate( GameObject plate )
+	public Gambit.UI.SeatSettingsPanel BuildSeatSettingsPlate( GameObject plate ) =>
+		BuildTextPlate( plate, SettingsTextSpanLength, SettingsTextSpanHeight, SettingsMaxChars );
+
+	/// <summary>A verb plate for the VR seated controls (<see cref="VrTableUi"/>): the same
+	/// one-string plate, shorter, so three of them fit the strip the settings plate leaves.
+	/// Sized for <see cref="VerbMaxChars"/> whatever it currently says, so a plate that
+	/// changes state ("RESIGN" → "SURE? RESIGN") keeps one font size and one width.</summary>
+	public Gambit.UI.SeatSettingsPanel BuildVerbPlate( GameObject plate ) =>
+		BuildTextPlate( plate, VerbTextSpanLength, VerbTextSpanHeight, VerbMaxChars );
+
+	/// <summary>The one plate builder: a mesh plate carrying one string, sized from the text
+	/// SPAN it has to hold. <paramref name="maxChars"/> is the longest string that plate will
+	/// ever show — it sets the pixel space, so a shorter string simply sits in more slack and
+	/// a longer one hangs off the ends.</summary>
+	Gambit.UI.SeatSettingsPanel BuildTextPlate( GameObject plate, float spanLength,
+		float spanHeight, int maxChars )
 	{
 		float s = TableScale;
+		float pxWidth = PlatePxWidth( maxChars );
+		float pxHeight = pxWidth * spanHeight / spanLength;
 
 		var box = AddBoxGo( plate, "Face", Vector3.Zero,
-			new Vector3( SettingsPlateThickness, SettingsPlateLength, SettingsPlateDepth ) * s,
+			new Vector3( SettingsPlateThickness, spanLength + 2f * SettingsPlateMarginY,
+				spanHeight + 2f * SettingsPlateMarginX ) * s,
 			null, ClockPlateColor );
 		if ( box is null ) return null;   // no box model: AddBox has always drawn nothing
 
@@ -2086,10 +2102,10 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 		// Scale DERIVED from the text SPAN, never from the plate and never eyeballed: a
 		// WorldPanel's world size is PanelSize × PxToWorld × scale, and guessing it is what once
 		// rendered the clock as an invisible speck.
-		face.LocalScale = ( SettingsTextSpanLength * s ) / ( SettingsPxWidth * PxToWorld );
+		face.LocalScale = ( spanLength * s ) / ( pxWidth * PxToWorld );
 
 		var worldPanel = face.AddComponent<WorldPanel>();
-		worldPanel.PanelSize = new Vector2( SettingsPxWidth, SettingsPxHeight );
+		worldPanel.PanelSize = new Vector2( pxWidth, pxHeight );
 
 		return face.AddComponent<Gambit.UI.SeatSettingsPanel>();
 	}
@@ -2114,6 +2130,84 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 			-SettingsPlateCenterY * side,
 			TableTopZ + SettingsPlateThickness * 0.5f ) * s;
 		return ( pos, Rotation.LookAt( Vector3.Up, new Vector3( -side, 0f, 0f ) ) );
+	}
+
+	// ── The VR seated controls (VrTableUi) ──
+	//
+	// A headset player gets the game's DISPLAY on a board beside the table and the game's
+	// VERBS on plates in front of them. Both are client-local and both live here for the same
+	// reason the settings plate does: this is the file that knows where the table's margins
+	// are, and a scale or an offset invented at the call site cannot be fixed from here.
+
+	/// <summary>The verb plates' text span, base units — shorter than the settings plate's so
+	/// three of them fit the strip it leaves. See <see cref="SeatVerbPlateLocal"/> for the
+	/// arithmetic that "fit" is.</summary>
+	const float VerbTextSpanLength = 6.5f;
+	const float VerbTextSpanHeight = 1.1f;
+
+	/// <summary>The longest string a verb plate shows ("SURE? RESIGN"). One size for every
+	/// plate and every state, exactly as the settings plate keeps one for both of its.</summary>
+	const int VerbMaxChars = 12;
+
+	/// <summary>How many verb plates the strip holds. Three is the arithmetic below, not a
+	/// preference: <see cref="VrTableUi"/> shows the verbs that apply and never more.</summary>
+	public const int VerbPlateCount = 3;
+
+	static float VerbPlateLength => VerbTextSpanLength + 2f * SettingsPlateMarginY;   // 8.1
+
+	/// <summary>Plate centre along the near edge for one verb, base units, measured toward the
+	/// seat's RIGHT — the half of the strip the settings plate does not use.
+	///
+	/// <para>The strip is the X margin (|x| 14.5 → 20) and runs the tabletop's whole Y span
+	/// (±22). The settings plate sits on the LEFT at −12.5 and is 13.6 long, so it occupies
+	/// −19.3 → −5.7; these three run inward from the right-hand edge instead, the first one a
+	/// plate-half plus a little clear of it, and the third ends at −4.4 with 1.3 of bare table
+	/// between it and the settings plate.</para></summary>
+	static float VerbPlateCenterY( int index ) =>
+		TopSizeY * 0.5f - VerbPlateLength * 0.5f - 0.5f - index * ( VerbPlateLength + 0.8f );
+
+	/// <summary>Where one verb plate sits for one seat, in STATION-local space. Flat on the
+	/// tabletop, read the same way up as the settings plate, in the seat's near-RIGHT half —
+	/// <see cref="SeatSettingsPlateLocal"/> owns the left.</summary>
+	public (Vector3 Pos, Rotation Rot) SeatVerbPlateLocal( ChessSeat seat, int index )
+	{
+		float s = TableScale;
+		float side = seat == ChessSeat.White ? -1f : 1f;
+		var pos = new Vector3(
+			SettingsPlateCenterX * side,
+			VerbPlateCenterY( index ) * side,
+			TableTopZ + SettingsPlateThickness * 0.5f ) * s;
+		return ( pos, Rotation.LookAt( Vector3.Up, new Vector3( -side, 0f, 0f ) ) );
+	}
+
+	/// <summary>Where the VR seated board hangs — beside the table on the seated player's
+	/// RIGHT, standing up, turned to face their eye.
+	///
+	/// <para><b>World units, like <see cref="SeatEyeBack"/>, not base units × TableScale.</b>
+	/// It is placed against the eye anchor rather than against the tabletop, so it shares that
+	/// anchor's units; a board sized off the table and aimed at the eye in two different unit
+	/// systems is the mistake this sentence exists to prevent.</para>
+	///
+	/// <para>Off to one side rather than in front: the thing in front of a seated player is
+	/// the board they are playing on. The defaults put it about 44 units from the eye at some
+	/// 43° of yaw — a glance, not a head turn — with its bottom edge above the tabletop, and
+	/// <c>gambit_vr_board_*</c> moves all three from inside the headset.</para></summary>
+	[Property] public float VrBoardX { get; set; } = 4f;
+	[Property] public float VrBoardY { get; set; } = 30f;
+	[Property] public float VrBoardZ { get; set; } = 47f;
+
+	public (Vector3 Pos, Rotation Rot) VrSeatBoardLocal( ChessSeat seat )
+	{
+		float side = seat == ChessSeat.White ? -1f : 1f;
+		var pos = new Vector3( VrBoardX * side, VrBoardY * side, VrBoardZ );
+
+		// The seated eye, the same point BuildSeatAnchor lerps its eye end to. The panel's
+		// FORWARD is its face normal, so it looks at the eye rather than away from it.
+		var eye = new Vector3( side * SeatEyeBack, 0f, SeatEyeHeight );
+		var toEye = eye - pos;
+		if ( toEye.LengthSquared < 0.0001f ) return ( pos, Rotation.Identity );
+
+		return ( pos, Rotation.LookAt( toEye.Normal, Vector3.Up ) );
 	}
 
 	/// <summary>Base-unit center of a square: ranks along local X (rank 1 nearest

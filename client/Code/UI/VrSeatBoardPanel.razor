@@ -1,0 +1,190 @@
+@using System
+@using System.Collections.Generic
+@using Sandbox
+@using Sandbox.UI
+@using Gambit.Game
+@using Gambit.World
+@namespace Gambit.UI
+@inherits PanelComponent
+
+@*
+	The seated player's game board in VR: who is playing, whose move it is, and the move
+	list, on a panel beside the table instead of on a quad in front of the eye. Built and
+	placed by World/VrTableUi.cs, which owns where it hangs and when it exists.
+
+	It is a DISPLAY board — the wall boards' own shape (flex on root, height:auto, the
+	default PanelSize so these px values are the same font space the wall boards are
+	calibrated in, WallBoardGeometry.TableBoardScale as the GO scale). Every control a
+	player PRESSES is a tabletop plate instead: the verbs are too few and too consequential
+	to hunt for on a panel, and a plate is the one world control this room already proves.
+
+	No chess glyphs: s&box renders some of them as colour emoji, so the seats say their
+	names (the same rule SpectatorInfoPanel keeps).
+*@
+
+<root>
+	<div class="board" style="background-color:@WallTheme.Bg; border:1.5px solid @WallTheme.Border;">
+		<div class="title" style="color:@WallTheme.Text;">@Title()</div>
+		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+
+		<div class="seat" style="color:@SeatColor( ChessSeat.White );">WHITE  @SeatName( ChessSeat.White )</div>
+		<div class="seat" style="color:@SeatColor( ChessSeat.Black );">BLACK  @SeatName( ChessSeat.Black )</div>
+
+		<div class="divider" style="background-color:@WallTheme.Divider;"></div>
+		<div class="status" style="color:@WallTheme.AccentCss;">@StatusText()</div>
+
+		@if ( MoveRows() is { Count: > 0 } rows )
+		{
+			<div class="moves">
+				@* One whole "12. Nf3 Nc6" string per div — inline spans inside a text div
+				   become separate flex items (docs/engine.md). *@
+				@foreach ( var line in rows )
+				{
+					<div class="move-row" style="color:@WallTheme.TextDim;">@line</div>
+				}
+			</div>
+		}
+	</div>
+</root>
+
+<style>
+	@@import "WallTheme.scss";
+
+	root {
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+	}
+
+	/* Fixed px in the default WorldPanel's intrinsic space, at the wall boards' own font
+	   scale — the board is smaller than a wall sign because it is read at arm's length
+	   rather than across the room (WallBoardGeometry.TableMaster), and that is the only
+	   number that differs. Change these px, not the GO scale, to fix spacing. */
+	.board {
+		width: 100%;
+		height: auto;
+		flex-direction: column;
+		align-items: stretch;
+		justify-content: flex-start;
+		padding: 9px 12px;
+		border-radius: 7.5px;
+		font-family: $wall-font;
+		gap: 4px;
+	}
+
+	/* Fixed-height flex column: without this, items shrink to ~one line and wrapped text
+	   spills under the following divider. */
+	.board > div { flex-shrink: 0; }
+
+	.title {
+		font-size: 13px;
+		font-weight: bold;
+		letter-spacing: 3px;
+		text-align: center;
+	}
+
+	.divider { height: 0.75px; margin: 1.5px 0; }
+
+	.seat {
+		font-size: 9px;
+		font-weight: bold;
+		letter-spacing: 1px;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.status {
+		font-size: 8px;
+		letter-spacing: 1px;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.moves {
+		flex-direction: column;
+		/* Overflow hidden, no scroll: a scroll panel drag-pans and fights input
+		   (docs/engine.md), and MoveRows caps the tail anyway. */
+		overflow: hidden;
+		background-color: rgba(255, 255, 255, 0.05);
+		border-radius: 6px;
+		padding: 5px 7px;
+	}
+
+	.move-row {
+		font-size: 7px;
+		font-family: monospace;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+</style>
+
+@code
+{
+	static LocalGameController Controller() => LocalGameController.For( ChessStation.Active );
+	static LichessGameController Lichess() => LichessGameController.For( ChessStation.Active );
+	static RelayGameController Relay() => RelayGameController.For( ChessStation.Active );
+
+	/// <summary>Whichever controller owns this board — the same seam the HUD, the view and the
+	/// sounds resolve through, so this board cannot describe a different game from them.</summary>
+	static IBoardGame Source() => BoardGame.Source( Controller(), Lichess(), Relay() );
+
+	static string Title() => ( Controller()?.HasGame ?? false ) ? "GAME" : "CHESS BOARD";
+
+	static string SeatName( ChessSeat seat ) =>
+		ChessStation.Active?.SeatName( seat ) is { Length: > 0 } name ? name : "—";
+
+	/// <summary>The side to move is the bright one. Colour only, like the wall boards: a
+	/// second box or a size change here would move every row below it.</summary>
+	static string SeatColor( ChessSeat seat )
+	{
+		if ( Source() is not { Playing: true, Game: { } game } ) return WallTheme.TextDim;
+		var ticking = game.WhiteToMove ? ChessSeat.White : ChessSeat.Black;
+		return ticking == seat ? WallTheme.Text : WallTheme.TextDim;
+	}
+
+	/// <summary>The one line that says what the board is doing: the result if it is over,
+	/// otherwise whose move it is, otherwise what it is waiting for.</summary>
+	static string StatusText()
+	{
+		var src = Source();
+		if ( src is { GameOver: true } ) return Result();
+		if ( src?.Game == null || !src.Playing ) return "Waiting";
+		if ( src.IsMyTurn ) return src.Game.IsCheck ? "Your move — check!" : "Your move";
+		return src.Game.WhiteToMove ? "White is thinking…" : "Black is thinking…";
+	}
+
+	/// <summary>How the game ended, from whoever is the authority on it: lichess and the
+	/// relay each own their own game's result, and the local table's controller carries one
+	/// the position cannot state (a resignation, an abandonment).</summary>
+	static string Result()
+	{
+		if ( Lichess() is { Engaged: true } lc ) return lc.ResultString ?? "Game over";
+		if ( Relay() is { Engaged: true } rc ) return rc.ResultString ?? "Game over";
+		return Controller()?.OverResult ?? Source()?.Game?.ResultString ?? "Game over";
+	}
+
+	/// <summary>The move rows, "12. Nf3 Nc6" style, tail-first-fit. A shorter tail than the
+	/// desktop column's: this board is read at a glance from a seat, not scanned.</summary>
+	static List<string> MoveRows()
+	{
+		var san = Source()?.Game?.SanMoves;
+		if ( san == null || san.Count == 0 ) return null;
+
+		const int maxRows = 10;
+		var rows = new List<string>();
+		int totalRows = ( san.Count + 1 ) / 2;
+		for ( int row = Math.Max( 0, totalRows - maxRows ); row < totalRows; row++ )
+		{
+			int i = row * 2;
+			string line = $"{row + 1}. {san[i]}";
+			if ( i + 1 < san.Count ) line += $"  {san[i + 1]}";
+			rows.Add( line );
+		}
+
+		return rows;
+	}
+
+	protected override int BuildHash() => HashCode.Combine(
+		SeatName( ChessSeat.White ), SeatName( ChessSeat.Black ),
+		SeatColor( ChessSeat.White ), StatusText(), Source()?.Game?.MoveCount, Title() );
+}

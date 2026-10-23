@@ -57,6 +57,10 @@ may read `ChessStation.Active`**: every row is client-local and the wall door ha
   `letter-spacing`. Round the advance up: understating it is the failure that shows.
 - **In LOOK aim it stops offering a click and says `ESC FOR CURSOR`.** The pointer is hidden, and
   a live-looking control there reads as broken.
+- **In a headset the plate has neighbours**: the game's verbs are plates of the same build on the
+  near-RIGHT half of the same strip, and the board's state is a panel beside the table
+  (`docs/vr.md`). One builder makes all of them — `ChessRing.BuildTextPlate`, sized from the
+  longest string that plate will ever show.
 
 ### Modal for `SeatAim`
 

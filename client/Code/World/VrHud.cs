@@ -20,10 +20,11 @@ namespace Gambit.World;
 /// <see cref="LobbyPlayer"/> exactly as the desktop has them. Panel pixels become panel pixels on a
 /// quad, so edge-anchored rows sit on the quad's own edges instead of in the periphery.</para>
 ///
-/// <para><b>A desktop layout on a quad is a staging post, not the destination.</b> Hung over the
-/// board it is readable and the beam can click it, but it is still a 1920x1080 screen with a
-/// crosshair on it, and at a size big enough to read it covers most of the view. It stands until
-/// the UI is something built to be pointed at.</para>
+/// <para><b>It is parked by default, because the seated controls are at the table.</b> The board,
+/// the names, the move list and the game's verbs are <see cref="VrTableUi"/>'s. What is left here
+/// is what lives nowhere else — the time control, Ready, the four lichess start flows, and the
+/// promotion picker — so the quad is called back by the GAME MENU plate, by
+/// <c>gambit_vr_hud</c>, or by a promotion that is waiting on its picker.</para>
 /// </summary>
 public sealed class VrHud : Component
 {
@@ -93,11 +94,18 @@ public sealed class VrHud : Component
 
 	/// <summary>Whether the desktop screen UI is drawn at all in VR.
 	///
-	/// <para><b>On, because it is the only way to drive a game.</b> It is a 1920x1080 screen layout
-	/// with edge-anchored rows, a crosshair and keyboard hints — not a VR UI, and no amount of
-	/// scaling makes it one — but every control a player needs to start a game, offer a draw or
-	/// stand up lives on it, and the beam can click it. <c>gambit_vr_hud</c> parks it.</para></summary>
-	public static bool Shown { get; private set; } = true;
+	/// <para><b>Off, because the seated controls are at the table now</b> — the board, the names,
+	/// the move list and the game's verbs are <see cref="VrTableUi"/>'s, and a 1920x1080 screen
+	/// layout with edge-anchored rows and a crosshair covers most of the view at a size big enough
+	/// to read.</para>
+	///
+	/// <para><b>It is still the only home of the pre-game flows</b>: the time control, Ready, the
+	/// four lichess start flows, and the promotion picker. So a player can call it back — the
+	/// GAME MENU plate while a table is idle (<see cref="VrTableUi"/>), or <c>gambit_vr_hud</c>
+	/// from a console they can only reach with the headset off — and a pending promotion shows it
+	/// whatever this says. See <see cref="PromotionWaiting"/>: a parked picker is a game that
+	/// cannot continue.</para></summary>
+	public static bool Shown { get; set; }
 
 	/// <summary>Move the lobby's panels off the screen and onto a quad. Called before
 	/// <see cref="LobbyPlayer"/>'s runtime panels attach, so they are built against the world panel
@@ -148,6 +156,13 @@ public sealed class VrHud : Component
 		}
 	}
 
+	/// <summary>A promotion is waiting on the picker, which lives on this quad and nowhere else.
+	/// Parked, the move is made and the game cannot go on: the picker is the only thing that
+	/// calls <c>ChessBoardView.ChoosePromotion</c>. So it overrides the toggle rather than being
+	/// something the player has to know to switch on mid-game.</summary>
+	static bool PromotionWaiting() =>
+		ChessStation.Active?.Components.Get<ChessBoardView>()?.PendingPromotion != null;
+
 	/// <summary>Draw the adopted desktop UI, or don't.</summary>
 	[ConCmd( "gambit_vr_hud" )]
 	public static void ToggleHud()
@@ -195,7 +210,7 @@ public sealed class VrHud : Component
 		// are children of, and a PanelComponent whose parent was deleted keeps building its tree
 		// against it. Every panel here stays alive and attached; it is simply nowhere near the
 		// player.
-		if ( !Shown )
+		if ( !Shown && !PromotionWaiting() )
 		{
 			Host.WorldPosition = ParkedAt;
 			return;

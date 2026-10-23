@@ -171,6 +171,7 @@ public sealed class VrRig : Component
 		// component added by a code hotload into a running session is never asked for and fails
 		// silently — the same trap as a GameObjectSystem added mid-session (docs/engine.md).
 		if ( VrHands.Instance == null ) Components.GetOrCreate<VrHands>();
+		if ( VrTableUi.Instance == null ) Components.GetOrCreate<VrTableUi>();
 
 		UpdateAnchor();
 

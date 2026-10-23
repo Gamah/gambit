@@ -202,7 +202,7 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 
 	/// <summary>Whatever went wrong, as a sentence, or null. Either component's throw will do:
 	/// in a headset they are the same fault — something is missing and nothing said why.</summary>
-	public static string Error => VrHands.LastError ?? VrRig.LastError;
+	public static string Error => VrHands.LastError ?? VrRig.LastError ?? VrTableUi.LastError;
 
 	public static List<string> StatusLines()
 	{
@@ -212,6 +212,7 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 			$"vr={Sandbox.Game.IsRunningInVR} rig={VrRig.Active} system={Current != null}"
 				+ $" hud={VrHud.Instance != null}",
 			VrHands.Status(),
+			VrTableUi.Status(),
 		};
 
 		if ( Error != null ) lines.Add( $"err: {Error}" );
