@@ -231,7 +231,7 @@ public static class TerryPose
 	public const float FadeOutTime = 0.45f;
 
 	// Finger poses, as holdtype_pose_hand. POLARITY IS UNVERIFIED — the parameter, its
-	// 0..1 range and its finger role are all read off citizen.vanmgrph, but which end is
+	// 0..1 range and its finger role are all read off human.vanmgrph, but which end is
 	// open and which is closed is not knowable on this host. If it reads inverted in the
 	// editor, flip these four constants and nothing else.
 	public const float FingersHovering = 0.25f;

@@ -346,7 +346,7 @@
          "MaterialGroup": null,
          "MaterialOverride": null,
          "Materials": null,
-         "Model": "models/citizen/citizen.vmdl",
+         "Model": "models/citizen_human/human.vmdl",
          "Morphs": {},
          "OnComponentDestroy": null,
          "OnComponentDisabled": null,

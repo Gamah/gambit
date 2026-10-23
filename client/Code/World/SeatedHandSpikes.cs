@@ -236,7 +236,7 @@ public static class SeatedHandSpikes
 	/// <c>gambit_terry</c> under each.</summary>
 	public static int SitPose = 1;
 
-	/// <summary>Clamp <see cref="SitPose"/> into citizen.vanmgrph's real <c>sit</c> enum
+	/// <summary>Clamp <see cref="SitPose"/> into human.vanmgrph's real <c>sit</c> enum
 	/// (0 not_sitting, 1 sitting_01, 2 sitting_02, 3 sitting_03) so a fat-fingered lever can't
 	/// write a value the animgraph will silently ignore.</summary>
 	public static int SitPoseClamped => SitPose < 1 ? 1 : SitPose > 3 ? 3 : SitPose;

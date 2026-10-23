@@ -2,6 +2,32 @@
 
 Seated bodies at the tables, the hands that play the moves, and the `gambit_terry_*` knobs.
 
+## The body is the engine's human model
+
+`models/citizen_human/human.vmdl` with `animgraphs/human.vanmgrph`, set on the scene's
+`SkinnedModelRenderer`. It is what the engine itself builds now —
+`PlayerController.CreateBodyRenderer` loads that model, and its own sample scenes and the menu's
+avatar preview use it — and it is where the old citizen's facts have moved to:
+
+- **Every parameter this code writes exists on it, identically named**, and the graph is a
+  superset of the citizen's: `sit` (same eight-option enum, `not_sitting`, `sitting_01..03`,
+  `sitting_ground_01..04`), `sit_offset_height` (same ±12 range), `holdtype`,
+  `holdtype_handedness`, `holdtype_pose_hand`, and the four `ik.*` chains. New here, unused by
+  us: `body_type`, `b_climb`, `scale_heel`/`scale_height`.
+- **The hand IK applies in `postprocess.vsubgrph`, outside the holdtype branches** — chain
+  `right_arm_IK`, model-space parameter target. So the chain is honoured whatever the holdtype,
+  and a hand that does not follow is a hand asking for somewhere its arm cannot go.
+- **The Head bodygroup is EIGHT choices, hidden last** ("Male 01-05, female 01-02, hidden"), and
+  none of them are named, so the index is the whole API. `LobbyPlayer.BodyGroupOff` is 7: on the
+  old two-choice group 1 meant "no head", and on this one it means male head 02 — a trim that
+  swaps the face instead of removing it.
+- Five bodygroups as before (Head, Chest, Legs, Hands, Feet) with the arms inside the chest mesh,
+  so arms-only still cannot be done.
+- **`PlayerController.BodyHeight` is still 72**, so the seated `[GUESS]`es scaled to a 72-unit
+  body are still in the right units — but they were eyeballed against a different skeleton's
+  proportions. `gambit_terry` is the ruler: it reads the live bones and prints them beside the
+  guesses.
+
 ## Switches and where values live
 
 - **`ChessRing.TerrySeated`** is the kill switch: false is the world with no seated bodies, where
@@ -26,7 +52,7 @@ A seated citizen's arm cannot reach the far ranks from the chair. When a square 
 leaned arm, the terry **half-rises**: the pelvis bone is overridden up and forward toward the
 piece, bounded by the **legs** (feet planted, a small step allowed, never into the table's foot
 plate) rather than by the chair. The feet stay planted via the animgraph's own
-`foot_left`/`foot_right` IK (`citizen.vanmgrph` has four IK targets), and the off hand braces on
+`foot_left`/`foot_right` IK (`human.vanmgrph` has four IK targets), and the off hand braces on
 the tabletop via `hand_left` only when the left arm can actually reach it. The torso yaws toward
 the piece (`TorsoYawMax`), authored on the spine override, because two-bone IK can never turn the
 chest.

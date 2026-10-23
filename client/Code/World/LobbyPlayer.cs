@@ -1081,9 +1081,9 @@ public sealed class LobbyPlayer : Component
 	/// worth making.</para>
 	///
 	/// <para><b>Arms-only cannot be done any other way, and this is the record of it.</b>
-	/// The citizen has no arms mesh: <c>citizen_bodygrouplist.vmdl_prefab</c> defines
-	/// exactly five groups — Head, Chest, Legs, Hands, Feet — and the arms live inside
-	/// <c>Torso_LOD0..3</c>, i.e. Chest. So <c>SetBodyGroup("Chest", 1)</c> takes the arms
+	/// The body has no arms mesh: <c>human.vmdl</c> defines exactly five groups — Head, Chest,
+	/// Legs, Hands, Feet — and the arms live inside <c>male_chest</c>/<c>female_chest</c>, i.e.
+	/// Chest. So <c>SetBodyGroup("Chest", 1)</c> takes the arms
 	/// with it, and bone-zeroing can't help either (the arms hang off the spine chain, so
 	/// collapsing the torso collapses them). As SeatEyeBlend descends, more torso enters
 	/// frame and there is NOTHING to remove it with. That is the limit, not a TODO.</para>
@@ -1210,10 +1210,9 @@ public sealed class LobbyPlayer : Component
 				_viewerTagged.Add( r.GameObject );
 		}
 
-		// The head. SetBodyGroup(string, INT) — the string overload silently matches
-		// nothing on four of the five groups, because only Head's choices carry
-		// name = "on"/"off"; the other four BodyGroupChoice nodes have no name field at
-		// all. It would work here and fail the moment it was copied to Chest.
+		// The head. SetBodyGroup(string, INT) — the string overload matches nothing on this
+		// model at all: human.vmdl's BodyGroupChoice nodes carry no name field, on Head or on
+		// any other group. The INDEX is the API, and Head's last choice is the hidden one.
 		_bodyRenderer?.SetBodyGroup( HeadGroup, BodyGroupOff );
 		_headHidden = true;
 	}
@@ -1224,7 +1223,13 @@ public sealed class LobbyPlayer : Component
 	const string ClothingTag = "clothing";
 	const string HeadGroup = "Head";
 	const int BodyGroupOn = 0;
-	const int BodyGroupOff = 1;
+
+	/// <summary>The Head bodygroup choice that draws NO head. <c>human.vmdl</c>'s Head group is
+	/// eight choices, in the order its own note gives them — "Male 01-05, female 01-02, hidden" —
+	/// so hiding the head is the LAST index, and the index is the whole API here because none of
+	/// the choices are named. Index 1 is male head 02: a trim written against the old citizen's
+	/// two-choice group silently swaps the face instead of removing it.</summary>
+	const int BodyGroupOff = 7;
 
 	readonly List<GameObject> _viewerTagged = new();
 	bool _headHidden;
@@ -1245,7 +1250,7 @@ public sealed class LobbyPlayer : Component
 	/// engaging and standing, and a pose that is asserted once is a pose that quietly
 	/// reverts. Same reasoning as re-asserting the trim above.</para>
 	///
-	/// <para><b>"sit" is an int, not a bool, and "b_sit" DOES NOT EXIST.</b> citizen.vanmgrph
+	/// <para><b>"sit" is an int, not a bool, and "b_sit" DOES NOT EXIST.</b> human.vanmgrph
 	/// declares <c>sit</c> as a CEnumAnimParameter — not_sitting, sitting_01..03,
 	/// sitting_ground_01..04 — so 1 is BaseChair's AnimatorSitPose.Chair1 (≡ the helper's
 	/// SittingStyle.Chair). There is no <c>b_sit</c> parameter anywhere in the graph: the
@@ -1333,7 +1338,7 @@ public sealed class LobbyPlayer : Component
 		_bodyRenderer?.Set( "sit_offset_height", 0f );
 	}
 
-	/// <summary>citizen.vanmgrph's <c>sit</c> enum: 0 = not_sitting, 1 = sitting_01.
+	/// <summary>human.vanmgrph's <c>sit</c> enum: 0 = not_sitting, 1 = sitting_01.
 	/// BaseChair spells these AnimatorSitPose.None / .Chair1, which are the better
 	/// names for identical values.</summary>
 	const int SitPoseStanding = 0;
@@ -2318,7 +2323,7 @@ public sealed class LobbyPlayer : Component
 	static Vector3 FromPlanner( Gambit.Chess.V3 v, ChessSeat seat ) =>
 		seat == ChessSeat.Black ? new Vector3( -v.X, -v.Y, v.Z ) : new Vector3( v.X, v.Y, v.Z );
 
-	/// <summary>The animgraph's foot IK chains — citizen.vanmgrph declares exactly four
+	/// <summary>The animgraph's foot IK chains — human.vanmgrph declares exactly four
 	/// game-facing IK targets (hand_left/right, foot_left/right); these are the other two.</summary>
 	const string IkLeft = "hand_left";
 	const string IkFootLeft = "foot_left";
@@ -2408,7 +2413,7 @@ public sealed class LobbyPlayer : Component
 		return null;
 	}
 
-	/// <summary>citizen.vanmgrph's holdtype enum (none, pistol, rifle, shotgun, holditem, …)
+	/// <summary>human.vanmgrph's holdtype enum (none, pistol, rifle, shotgun, holditem, …)
 	/// — HoldItem is the one the finger-blend (holdtype_pose_hand) is wired into.
 	/// Handedness: 2H, RH, LH — so Right is 1.</summary>
 	const int HoldTypeNone = 0;

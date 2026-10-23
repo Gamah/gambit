@@ -185,7 +185,7 @@ public sealed class ChessStation : Component
 	///
 	/// <para><b>The Z is the FLOOR, and that is not an oversight.</b> The citizen's origin
 	/// is at its FEET, not its hips: the sit pose carries its own seat height above the
-	/// origin, and <c>sit_offset_height</c> trims it by ±12 inches. (citizen.vanmgrph's own
+	/// origin, and <c>sit_offset_height</c> trims it by ±12 inches. (human.vanmgrph's own
 	/// comment — "30 units at the source, 12 after scaling to inches. Feet IK disables
 	/// through tag on +12 node" — only makes sense if the feet reach the floor at offset 0;
 	/// dangling feet on a high stool is exactly what that tag turns IK off for.) Planting

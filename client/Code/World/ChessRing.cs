@@ -126,7 +126,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	///
 	/// <para><b>The citizen's origin is its feet, not its hips</b> — the sit pose carries
 	/// its own seat height above the origin and <see cref="SitOffsetHeight"/> trims it.
-	/// citizen.vanmgrph's comment on that parameter ("30 units at the source, 12 after
+	/// human.vanmgrph's comment on that parameter ("30 units at the source, 12 after
 	/// scaling to inches. Feet IK disables through tag on +12 node") only makes sense if
 	/// the feet reach the floor at offset 0 — dangling feet on a high stool is what the tag
 	/// turns IK off for. Planting the origin on the chair's pad would float the terry a
@@ -161,7 +161,7 @@ public sealed class ChessRing : Component, Component.ExecuteInEditor
 	///
 	/// <para><b>And it cannot reach 0 while keeping arms-only.</b> As it descends, more of
 	/// your own torso enters frame and there is NO clean mechanism to remove it: the citizen
-	/// has no arms mesh (they live in Torso_LOD*, i.e. the Chest bodygroup) and bone-zeroing
+	/// has no arms mesh (they live in the chest mesh, i.e. the Chest bodygroup) and bone-zeroing
 	/// takes the arms with the spine. Usable band is roughly 0.6–1.0. Stated as a limit
 	/// rather than discovered as a disappointment.</para>
 	///
