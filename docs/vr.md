@@ -352,50 +352,28 @@ square is one of them, and the move leaves through `IBoardGame.TryMakeMove`. The
 gesture — a lift, a carry, a release — and nothing about which moves exist. Promotion parks on the
 picker exactly as a click does, and a premove carry queens silently for the same reason.
 
-**Your hand if you can touch it, your beam if you cannot**, decided when the piece is picked up
-and never changed mid-carry (`ChessBoardView.Carrier`):
+**The grip grabs along its own line, off the palm.** `VrInput.GrabRay` leaves the grip pose
+turned by `PalmAngles` (`gambit_vr_palm_rot`), `VrHands` draws it warm against the pointer's cold,
+and `ChessBoardView.SquareUnderGrab` picks, carries and drops along it. Two gestures, two lines,
+each one drawn — a hand reaching for a piece is turned palm-down over the board, not pointing at
+it, and the rule this scene keeps is that the square you pick and the line you see cannot
+disagree. `gambit_vr_palm_grab` puts the grab back on the pointing ray.
 
-- A grip closed within `GrabRadius` of one of your pieces picks up the nearest one, **wherever the
-  beam is aimed** — a player reaching for a pawn is not also pointing at it — and the piece
-  follows that hand, turning with the wrist, until it is let go.
-- **Hand motion is MAGNIFIED onto the board** (`ReachGainX`, `gambit_vr_reach`). A real arm does
-  not cover this board: at full stretch a seated player gets about as far as the 5th rank, and a
-  game is played to the far back rank from the first move. The gain is applied to the hand's
-  station-local offset from the centre line of the seat's own first rank — the one line the
-  player is always sitting at, so the gain never moves the piece they just picked up — and the
-  default puts the opponent's back rank inside about the 4th rank's worth of real reach. Across
-  the board the gain is 1: the board is 39 units wide and a sideways gain multiplies tracking
-  jitter into whole files. Height is never scaled; it is read against the bands, which are facts
-  about the room.
-- **Nothing magnifies the ARM.** The published wrist pose stays the real one, so other clients see
-  the player's own reach and the piece floats out past it. The amplified point is where the hand
-  is on the BOARD, not where the body claims to be.
-- **A held piece lands on the square under the hand while the hand is low over the board
-  (`PlaceBand`), and on the square the hand is POINTING at while it is raised.** Reaching and
-  pointing are two motions and a hand holding a piece is doing one of them; the beam comes off
-  the carrying hand (`VrInput.Pointing` follows the grip), so the line the player sees is the line
-  that decides it, and the hovered highlight says what either zone will land on before the
-  release commits it.
-- A grip closed with the hand away from the board falls back to the square under the beam, and
-  that piece rides the pointed square lifted clear of the board. Not a nicety: the board is about
-  39 units across and the far rank some 60 from a seated shoulder, so nothing reaches it, and a
-  piece over there can only be moved by pointing. Swapping authority mid-carry would be worse than
-  either — a held piece landing where the player was looking, or a far piece yanked into their lap.
-- Reach is horizontal distance to the square's centre inside a height band (`GrabBand`), not a 3D
-  distance: a piece is 10 units tall, and a 3D radius would make a king easier to grab than a
-  pawn. Below the surface is the tabletop, far above it is a hand up by the face — where a
-  controller sits when it is pointing rather than reaching. `gambit_vr_grab <radius> <band>` and
-  `gambit_vr_carry_offset x y z` dial both.
-- **The grip is measured against a calibrated REST, never against zero.** Both shipped profiles
-  bind `/input/squeeze/value`; on an Index that is the capacitive grip, which reads a real value
-  for a hand merely holding the controller — fingers have to be round it to hold it at all.
-  Against absolute thresholds that baseline is a grip that presses and then never releases: the
-  value falls back to resting, which is still above the release line, and the piece never leaves
-  the hand. `VrInput.GripRest` follows what each hand reads while NOT gripping (frozen while it
-  is, or a long carry calibrates its own squeeze away and lets go by itself), and
-  `gambit_vr_grip_press <press> <release>` are deltas on top of it. The state board prints value,
-  rest and both deltas.
+**The palm's own forward is a `[GUESS]`** — a runtime defines the grip pose against the device,
+not against a hand — which is exactly what drawing the line makes answerable: turn it until it
+leaves your palm.
 
+**REACHING for a piece is not how this works, and that was measured rather than argued.** A hand
+position only names a square if the virtual seat is where the player's body really is, and that is
+`SeatEyeBack`/`SeatEyeHeight`, both `[GUESS]`. In a headset a reach for e2 picked up d2 or e1 — a
+square of systematic error, which no radius absorbs and a reach gain multiplies (d2 dropped on a7).
+A ray has no such error: it and the board are in the same space, and the hovered square is drawn,
+so the player sees what they are about to lift and corrects it before they squeeze. Proximity
+grabbing is worth revisiting when the room's scale has been checked against a real eye height, and
+not before.
+
+- A carried piece rides the square the grab line names, lifted clear of the board, turned by the
+  wrist holding it (`gambit_vr_carry_rot`).
 - **The piece is only ever moved, never re-parented or re-authored.** Every drop puts it back on
   the square it was lifted from first, and the FEN diff decides where it really goes — so a
   refused drop costs nothing and a legal one slides from the square it actually left. Its home is

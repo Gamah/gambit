@@ -50,6 +50,12 @@ public sealed class VrHands : Component
 	/// <summary>HDR values (&gt;1) read as a glow with bloom, like the sun sphere's colour.</summary>
 	[Property] public Color BeamColor { get; set; } = new Color( 1.4f, 2.6f, 3.4f );
 
+	/// <summary>The GRAB beam's colour — warm against the pointer's cold, because the two lines
+	/// do different things and leave the same hand. The pointer clicks panels and picks squares
+	/// with the trigger; this one is where the grip will take a piece from
+	/// (<see cref="VrInput.GrabRay"/>).</summary>
+	[Property] public Color GrabColor { get; set; } = new Color( 3.4f, 1.8f, 0.5f );
+
 	/// <summary>Grip size in world units — 1 unit is an inch, so this is about 5 x 5 x 13 cm, a
 	/// chunky controller grip.</summary>
 	static readonly Vector3 GripSize = new( 2f, 2f, 5f );
@@ -67,6 +73,9 @@ public sealed class VrHands : Component
 	GameObject _pointer;
 	ModelRenderer _beam;
 	WorldInput _input;
+
+	GameObject _grab;
+	ModelRenderer _grabBeam;
 
 	/// <summary>The dev box's own size, so everything built from it can be scaled to world units
 	/// without loading the model again per frame.</summary>
@@ -115,6 +124,11 @@ public sealed class VrHands : Component
 		// beam built any other way is a second rendering path to be wrong in — which it was, twice
 		// over, while a box of the same dimensions could not be.
 		_beam = AddBox( _pointer, "Beam", new Vector3( 1f, BeamWidth, BeamWidth ), BeamColor );
+
+		// The grab line is its own object: it leaves the same hand as the pointer but in a
+		// different direction, so it cannot hang off the pointer's transform.
+		_grab = MakeLocalObject( "VR Grab Beam" );
+		_grabBeam = AddBox( _grab, "Beam", new Vector3( 1f, BeamWidth, BeamWidth ), GrabColor );
 	}
 
 	protected override void OnDestroy()
@@ -124,6 +138,7 @@ public sealed class VrHands : Component
 		_left?.Destroy();
 		_right?.Destroy();
 		_pointer?.Destroy();
+		_grab?.Destroy();
 	}
 
 	GameObject MakeHand( string name, out ModelRenderer model )
@@ -229,6 +244,7 @@ public sealed class VrHands : Component
 		PlaceHand( _right, right.Transform, right.Active );
 
 		PlacePointer();
+		PlaceGrabBeam();
 
 		// A frame that got all the way here had nothing to report; leaving a stale message on the
 		// board would pin it at THREW over one transient throw.
@@ -244,6 +260,38 @@ public sealed class VrHands : Component
 
 		go.WorldPosition = pose.Position;
 		go.WorldRotation = pose.Rotation;
+	}
+
+	/// <summary>Draw the grab line along <see cref="VrInput.GrabRay"/>. Nothing is hung off it —
+	/// no <c>WorldInput</c>, no tip — because it is not a pointer: it is the line the grip picks
+	/// a piece up along, and drawing it is the only way the palm's own direction (a
+	/// <c>[GUESS]</c>, <c>gambit_vr_palm_rot</c>) can be dialled in at all.</summary>
+	void PlaceGrabBeam()
+	{
+		if ( !_grab.IsValid() || !_grabBeam.IsValid() ) return;
+
+		// Off while the grab uses the pointing ray: two lines drawn down the same direction read
+		// as one line with a colour bug.
+		if ( !VrInput.PalmGrab || VrInput.GrabRay is not { } ray )
+		{
+			_grabBeam.Enabled = false;
+			return;
+		}
+
+		_grab.WorldPosition = ray.Position;
+		_grab.WorldRotation = Rotation.LookAt( ray.Forward );
+
+		var trace = Scene.Trace.Ray( ray, Reach )
+			.IgnoreGameObjectHierarchy( GameObject.Root )
+			.Run();
+		float length = MathF.Max( trace.Hit ? trace.Distance : Reach, 6f );
+
+		_grabBeam.Enabled = true;
+		_grabBeam.Tint = GrabColor;
+
+		var box = _grabBeam.GameObject;
+		box.LocalScale = new Vector3( length / _boxSize.x, BeamWidth / _boxSize.y, BeamWidth / _boxSize.z );
+		box.LocalPosition = new Vector3( length * 0.5f, 0f, 0f );
 	}
 
 	void PlacePointer()

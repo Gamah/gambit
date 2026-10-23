@@ -760,9 +760,10 @@ public sealed class ChessBoardView : Component
 		int square = SquareUnderCursor();
 		_hoverSquare = square;
 
-		// Grip carries a piece; the trigger clicks squares. A frame the grip owns is not also
-		// a click frame — see UpdateCarry.
-		if ( UpdateCarry( source, premoving, square ) ) return;
+		// Grip carries a piece along the PALM ray; the trigger clicks squares along the pointing
+		// ray. Two gestures, two lines, each one drawn (VrHands) — and a frame the grip owns is
+		// not also a click frame, see UpdateCarry.
+		if ( UpdateCarry( source, premoving, SquareUnderGrab() ) ) return;
 
 		if ( !Input.Pressed( "Select" ) || square < 0 )
 			return;
@@ -870,78 +871,9 @@ public sealed class ChessBoardView : Component
 	/// square it is going to. A hand-carried piece is in the hand instead.</summary>
 	[Property] public float CarryLift { get; set; } = 0.9f;
 
-	/// <summary>Which authority is carrying the piece, decided when it is picked up and never
-	/// changed mid-carry: <b>your hand if you can touch it, your beam if you cannot.</b>
-	///
-	/// <para>Both are needed and neither does the other's job. The board is about 39 units across
-	/// and the far rank is some 60 from a seated shoulder — nothing reaches it, so a piece over
-	/// there can only be moved by pointing. And a piece within reach wants to be picked up, not
-	/// aimed at: that is the whole gesture a headset has that a mouse does not.</para>
-	///
-	/// <para>Switching mid-carry would be worse than either: a hand-held piece whose drop square
-	/// came off the beam would land where the player was looking rather than where their hand
-	/// was, and a beam-carried piece that snapped into the palm would yank a piece off the far
-	/// rank into your lap.</para></summary>
-	enum Carrier { Hand, Beam }
-	Carrier _carrier;
-
-	/// <summary>How close the hand has to be to a piece to pick it up, in world units, measured
-	/// HORIZONTALLY to the square's centre. A cell is about 4.9 units, so the default is a little
-	/// over one square: generous enough for tracking and for a hand that can't feel the board,
-	/// tight enough that the nearest piece is the one the player meant.</summary>
-	public static float GrabRadius { get; private set; } = 6f;
-
-	/// <summary>How far above the board surface the hand still counts as being AT the board, in
-	/// world units. Below it is the tabletop (a hand resting on the table is not reaching for a
-	/// piece); far above it is a hand up by the player's face, which is where a controller sits
-	/// when it is being used to point rather than to reach.</summary>
-	public static float GrabBand { get; private set; } = 22f;
-
-	/// <summary>How close to the board surface the hand has to come to PLACE a piece by holding
-	/// it over a square, in world units.
-	///
-	/// <para><b>This is the gesture the carry needed and did not have.</b> Reaching is one
-	/// motion and pointing is another, and a hand holding a piece is doing one of them: low over
-	/// the board it is putting the piece down on the square underneath it, and raised it is
-	/// pointing at a square it cannot reach — the far rank is some 60 units from a seated
-	/// shoulder. Two zones, one gesture each, with the beam off the carrying hand showing where
-	/// the raised one is aimed and the hovered square showing what either will land on.</para></summary>
-	public static float PlaceBand { get; private set; } = 12f;
-
-	/// <summary>A nudge on where a held piece sits, in station-local units, on top of the mapped
-	/// hand point (<c>gambit_vr_carry_offset</c>). The piece's origin is its BASE.</summary>
-	public static Vector3 CarryOffset { get; private set; } = new( 0f, 0f, 2f );
-
-	/// <summary>How much board a hand covers: the gain on its station-local offset from the
-	/// centre line of the seat's OWN first rank, along the board (x) and across it (y).
-	///
-	/// <para><b>A real arm does not cover this board.</b> At full stretch a seated player gets
-	/// about as far as the 5th rank, and the far back rank is where a game is played from the
-	/// first move — so hand motion is magnified rather than mapped 1:1, about a line the player
-	/// never has to reach for. The default puts the opponent's back rank at about the 4th rank's
-	/// worth of real reach, which is the comfortable stretch the owner measured.</para>
-	///
-	/// <para>Across the board the default is 1: the board is only 39 units wide and a sideways
-	/// gain multiplies tracking jitter into whole files.</para>
-	///
-	/// <para><b>Nothing magnifies the ARM</b> — the published wrist pose stays the real one, so
-	/// other clients see the player's own reach and the piece floats out past it (`docs/vr.md`).
-	/// The amplified point is where the HAND is on the board, not where the body claims to be.</para></summary>
-	public static float ReachGainX { get; private set; } = 2.3f;
-	public static float ReachGainY { get; private set; } = 1f;
-
 	/// <summary>How a held piece is turned relative to the wrist that holds it. Zero means the
 	/// piece takes the controller's own rotation.</summary>
 	public static Angles CarryAngles { get; private set; } = Angles.Zero;
-
-	/// <summary>How much board a hand covers: the gain along the board and across it.</summary>
-	[ConCmd( "gambit_vr_reach" )]
-	public static void SetReach( float alongBoard, float acrossBoard )
-	{
-		ReachGainX = alongBoard;
-		ReachGainY = acrossBoard;
-		Log.Info( $"[Gambit] vr: reach gain x{alongBoard} y{acrossBoard}" );
-	}
 
 	/// <summary>How a held piece is turned relative to the wrist.</summary>
 	[ConCmd( "gambit_vr_carry_rot" )]
@@ -949,18 +881,6 @@ public sealed class ChessBoardView : Component
 	{
 		CarryAngles = new Angles( pitch, yaw, roll );
 		Log.Info( $"[Gambit] vr: carry angles {CarryAngles}" );
-	}
-
-	/// <summary>The VR grab's reach: how near the hand has to be to pick a piece up, how far above
-	/// the board it still counts as reaching for one, and how low it has to come to place a piece
-	/// on the square under it rather than on the square it is pointing at.</summary>
-	[ConCmd( "gambit_vr_grab" )]
-	public static void SetGrab( float radius, float band, float place )
-	{
-		GrabRadius = radius;
-		GrabBand = band;
-		PlaceBand = place;
-		Log.Info( $"[Gambit] vr: grab radius {radius}, band {band}, place {place}" );
 	}
 
 	/// <summary>Everything the carry believes about itself, for the VR state board. A carry that
@@ -973,12 +893,9 @@ public sealed class ChessBoardView : Component
 		if ( view == null ) return "carry: NOT SEATED";
 
 		if ( view._carryFrom < 0 )
-			return $"carry: none  near={NameOf( view.NearestOwnPiece() )?.ToUpperInvariant() ?? "-"}"
-				+ $"  hand={view.HandAbove()?.ToString( "0.0" ) ?? "away"}"
-				+ $"  reach=x{ReachGainX:0.0}";
+			return $"carry: none  beam={NameOf( view._hoverSquare )?.ToUpperInvariant() ?? "off board"}";
 
-		return $"carry: {NameOf( view._carryFrom )?.ToUpperInvariant()} by {view._carrier}"
-			+ $"  hand={view.HandAbove()?.ToString( "0.0" ) ?? "away"}"
+		return $"carry: {NameOf( view._carryFrom )?.ToUpperInvariant()}"
 			+ $"  target={NameOf( view._hoverSquare )?.ToUpperInvariant() ?? "-"}"
 			+ $"  legal={view._targets.Count}";
 	}
@@ -1000,24 +917,6 @@ public sealed class ChessBoardView : Component
 		Log.Info( $"[Gambit] vr: drop {what}" );
 	}
 
-	/// <summary>How far the carrying hand is above the board surface, or null when there is no
-	/// hand or it is nowhere near the board. The one number both bands are read against.</summary>
-	float? HandAbove()
-	{
-		var ring = ChessRing.Instance;
-		if ( ring == null || Station == null || VrInput.GripTransform is not { } pose ) return null;
-
-		return Station.GameObject.WorldTransform.PointToLocal( pose.Position ).z - ring.BoardSurfaceZ;
-	}
-
-	/// <summary>Where a held piece sits in the hand.</summary>
-	[ConCmd( "gambit_vr_carry_offset" )]
-	public static void SetCarryOffset( float x, float y, float z )
-	{
-		CarryOffset = new Vector3( x, y, z );
-		Log.Info( $"[Gambit] vr: carry offset {CarryOffset}" );
-	}
-
 	/// <summary>The square being carried from, for the VR state board — "the grip did nothing"
 	/// and "the grip picked up the wrong piece" are different faults.</summary>
 	public static string CarryName()
@@ -1037,19 +936,28 @@ public sealed class ChessBoardView : Component
 		{
 			if ( !VrInput.GripPressed ) return false;
 
-			// Reach first, point second. A grip closed next to a piece picks THAT piece up
-			// wherever the beam happens to be aimed — a player reaching for a pawn is not also
-			// pointing at it — and a grip closed with the hand nowhere near the board falls back
-			// to the square under the beam, which is the only way to reach the far rank.
-			int pick = NearestOwnPiece();
-			var carrier = Carrier.Hand;
+			// THE BEAM PICKS, and it is the only thing that does.
+			//
+			// Reaching for the piece was the obvious gesture and it cannot work from here: a hand
+			// position only names a square if the virtual seat is where the player's body really
+			// is, and that is ChessRing.SeatEyeBack/SeatEyeHeight, both [GUESS]. Measured in a
+			// headset, a reach for e2 picked up d2 or e1 — a square of systematic error, which no
+			// radius absorbs and a reach gain multiplies. The beam has no such error: the ray and
+			// the board are in the same space, and the hovered square is drawn, so the player can
+			// see what they are about to lift and correct it before they squeeze.
+			int pick = square;
 			if ( pick < 0 )
 			{
-				pick = square;
-				carrier = Carrier.Beam;
+				Verdict( "grab with the beam off the board" );
+				return false;
 			}
 
-			if ( pick < 0 || !IsOwnPiece( _rendered[pick] ) ) return false;
+			if ( !IsOwnPiece( _rendered[pick] ) )
+			{
+				Verdict( $"grab on {SquareName( pick ).ToUpperInvariant()}: not your piece" );
+				return false;
+			}
+
 			var piece = _pieces[pick];
 			if ( !piece.IsValid() ) return false;
 
@@ -1061,9 +969,10 @@ public sealed class ChessBoardView : Component
 			_carryPiece = piece;
 			_carryHome = piece.LocalPosition;
 			_carryHomeRot = piece.LocalRotation;
-			_carrier = carrier;
 			Select( SquareName( pick ), premoving );
 			_hoverSquare = pick;
+			Verdict( $"holding {SquareName( pick ).ToUpperInvariant()}"
+				+ $" ({_targets.Count} squares it can go to)" );
 			return true;
 		}
 
@@ -1077,10 +986,10 @@ public sealed class ChessBoardView : Component
 			return true;
 		}
 
-		// Where this carry would land if it were let go now. Painted as the hovered square, so
-		// the player can see the answer before they commit to it — the same highlight the
-		// desktop's look aim relies on as a reticle.
-		int target = CarryTarget( square );
+		// Where this carry would land if it were let go now: the square under the beam, painted
+		// as the hovered square so the player can see the answer before they commit to it — the
+		// same highlight the desktop's look aim relies on as a reticle.
+		int target = square;
 		_hoverSquare = target;
 
 		Carry( target );
@@ -1091,121 +1000,18 @@ public sealed class ChessBoardView : Component
 		return true;
 	}
 
-	/// <summary>The square a carry would land on: under the hand while a hand is carrying (and
-	/// under the beam once that hand leaves the board, so a piece carried out past the edge still
-	/// has somewhere to go), under the beam throughout a beam carry.</summary>
-	int CarryTarget( int beamSquare )
-	{
-		if ( _carrier == Carrier.Beam ) return beamSquare;
-
-		// Low over the board: the square under the hand. Raised, or off the board: the square the
-		// hand is POINTING at — the beam comes off the carrying hand (VrInput.Pointing follows
-		// the grip), so the line the player sees is the line that decides this.
-		int hand = SquareUnderHand();
-		return hand >= 0 ? hand : beamSquare;
-	}
-
-	/// <summary>Hold the piece: in the hand that picked it up, or over the square the beam names,
-	/// lifted clear of the board. A beam carry falls back to its own square while the beam is off
-	/// the board, so a piece is never held somewhere a drop could not land it.</summary>
+	/// <summary>Hold the piece over the square the beam names, lifted clear of the board, and
+	/// turned by the wrist holding it — a piece that ignored the hand would not read as held at
+	/// all. The beam off the board holds it over its own square, so a piece is never held
+	/// somewhere a drop could not land it.</summary>
 	void Carry( int target )
 	{
-		var ring = ChessRing.Instance;
-
-		// A hand carry holds the piece at the hand's MAPPED point — amplified along the board, so
-		// the piece goes where the hand is pointing on the board rather than where the hand is in
-		// the room — and turns it with the wrist, because a piece that ignored the hand holding
-		// it would not read as held at all.
-		if ( _carrier == Carrier.Hand && ring != null && HandLocal( ring, GrabBand ) is { } local
-			&& VrInput.GripTransform is { } pose )
-		{
-			_carryPiece.LocalPosition = local + CarryOffset;
-			_carryPiece.WorldRotation = pose.Rotation * Rotation.From( CarryAngles );
-			return;
-		}
-
-		float cell = ring?.CellWorldSize ?? 5f;
+		float cell = ChessRing.Instance?.CellWorldSize ?? 5f;
 		var over = SquareLocal( target >= 0 ? target : _carryFrom );
 		_carryPiece.LocalPosition = over + Vector3.Up * cell * CarryLift;
-		_carryPiece.LocalRotation = _carryHomeRot;
-	}
 
-	/// <summary>The own piece nearest the carrying hand, or -1 when the hand is not at the board
-	/// or has nothing of ours within <see cref="GrabRadius"/>.
-	///
-	/// <para>Distance is HORIZONTAL to the square's centre, with height answered by a band
-	/// instead: a piece is 10 units tall and a hand can hold a king by the crown or a pawn by the
-	/// base, so a 3D distance would make the tall pieces easier to grab than the short ones.</para></summary>
-	int NearestOwnPiece()
-	{
-		var ring = ChessRing.Instance;
-		if ( ring == null || Station == null ) return -1;
-		if ( HandLocal( ring, GrabBand ) is not { } local ) return -1;
-
-		int best = -1;
-		float bestDist = GrabRadius;
-
-		for ( int sq = 0; sq < 64; sq++ )
-		{
-			if ( !IsOwnPiece( _rendered[sq] ) ) continue;
-
-			var centre = SquareLocal( sq );
-			float dist = new Vector2( local.x - centre.x, local.y - centre.y ).Length;
-			if ( dist >= bestDist ) continue;
-
-			bestDist = dist;
-			best = sq;
-		}
-
-		return best;
-	}
-
-	/// <summary>The square the carrying hand is PLACING on: the one under it, while it is low
-	/// enough over the board to be putting a piece down (<see cref="PlaceBand"/>). -1 when it is
-	/// off the board or raised, which is when pointing takes over.</summary>
-	int SquareUnderHand()
-	{
-		var ring = ChessRing.Instance;
-		if ( ring == null || Station == null ) return -1;
-		if ( HandLocal( ring, PlaceBand ) is not { } local ) return -1;
-
-		return CellAt( ring, local );
-	}
-
-	/// <summary>The carrying hand in station-local space, or null when there is no hand or it is
-	/// not at the board — under the tabletop, or up at head height where a controller sits when
-	/// it is pointing rather than reaching.</summary>
-	Vector3? HandLocal( ChessRing ring, float band )
-	{
-		if ( VrInput.GripTransform is not { } pose ) return null;
-
-		var local = Station.GameObject.WorldTransform.PointToLocal( pose.Position );
-
-		// The BAND is checked on the real height, before any gain: it answers "is this hand at
-		// the board", which is a fact about the room.
-		float above = local.z - ring.BoardSurfaceZ;
-		if ( above < -4f || above > band ) return null;
-
-		return Reach( ring, local );
-	}
-
-	/// <summary>Magnify a station-local hand point onto the board: <see cref="ReachGainX"/> along
-	/// the board and <see cref="ReachGainY"/> across it, about the centre line of the seat's own
-	/// first rank — the one line the player is always sitting at, so the gain never moves the
-	/// piece they just picked up.
-	///
-	/// <para>Height is left alone. It is read against the bands, which are about where the hand
-	/// is in the room rather than where it is on the board.</para></summary>
-	static Vector3 Reach( ChessRing ring, Vector3 local )
-	{
-		float cell = ring.CellWorldSize;
-		float side = ChessStation.ActiveSeat == ChessSeat.White ? -1f : 1f;
-		float anchorX = side * 3.5f * cell;
-
-		return new Vector3(
-			anchorX + ( local.x - anchorX ) * ReachGainX,
-			local.y * ReachGainY,
-			local.z );
+		if ( VrInput.GripTransform is { } pose )
+			_carryPiece.WorldRotation = pose.Rotation * Rotation.From( CarryAngles );
 	}
 
 	/// <summary>Put the carried piece down. The piece goes home first and always — the move it
@@ -1218,7 +1024,7 @@ public sealed class ChessBoardView : Component
 
 		if ( square < 0 )
 		{
-			Verdict( $"{fromName}→nowhere: hand off the board and beam off it too" );
+			Verdict( $"{fromName}→nowhere: the beam was off the board" );
 			ClearSelection();
 			return;
 		}
@@ -1310,9 +1116,8 @@ public sealed class ChessBoardView : Component
 	/// </summary>
 	int SquareUnderCursor()
 	{
-		var ring = ChessRing.Instance;
 		var camera = Scene?.Camera;
-		if ( ring == null || camera == null || Station == null ) return -1;
+		if ( camera == null ) return -1;
 
 		// Cursor mode picks under the pointer; LOOK aim (P99) picks under the centre of the
 		// screen. SeatAim.PickPixel is the only place that chooses, so the square you pick
@@ -1322,7 +1127,19 @@ public sealed class ChessBoardView : Component
 		// same space as the board and a screen pixel is a worse description of where they are
 		// aiming than the device itself is. Neither aim mode applies: a seated camera ray would
 		// pick from the eye, which is both less accurate and not where the beam is drawn.
-		var ray = VrInput.AimRay ?? camera.ScreenPixelToRay( SeatAim.PickPixel() );
+		return SquareUnder( VrInput.AimRay ?? camera.ScreenPixelToRay( SeatAim.PickPixel() ) );
+	}
+
+	/// <summary>The square the GRAB ray is over, or -1. The palm's line rather than the pointer's
+	/// — see <see cref="VrInput.GrabRay"/> for why a grab is not a point — and -1 on the desktop,
+	/// where there is no palm and the click path owns every pick.</summary>
+	int SquareUnderGrab() => VrInput.GrabRay is { } ray ? SquareUnder( ray ) : -1;
+
+	/// <summary>Where a ray crosses the board, as a square index, or -1.</summary>
+	int SquareUnder( Ray ray )
+	{
+		var ring = ChessRing.Instance;
+		if ( ring == null || Station == null ) return -1;
 
 		// Station-local ray (stations are unscaled, yaw-only)
 		var origin = Station.GameObject.WorldTransform.PointToLocal( ray.Position );

@@ -46,6 +46,48 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	/// <see cref="SeatAim.PickPixel"/> keeps for the desktop.</summary>
 	public static Ray? AimRay { get; private set; }
 
+	/// <summary>Where the GRAB hand is aimed: a ray off the palm — the grip pose, turned by
+	/// <see cref="PalmAngles"/> — or null when no VR rig is driving.
+	///
+	/// <para><b>Two rays, because there are two gestures.</b> The trigger points: its ray is the
+	/// device's own aim pose, which is what a runtime defines for pointing and what every panel
+	/// click goes through. The grip grabs, and a hand reaching for a piece is not pointing at
+	/// it — it is turned palm-down over the board. So the grab gets its own ray off the grip
+	/// pose, and <see cref="VrHands"/> draws it, because the rule this scene keeps is that the
+	/// square you pick and the line you see cannot disagree.</para>
+	///
+	/// <para><b>The palm's own forward is a [GUESS]</b> — a runtime defines the grip pose against
+	/// the device, not against a hand, and no two headsets have to agree. That is what
+	/// <c>gambit_vr_palm_rot</c> is for, and what drawing the beam makes answerable: turn it until
+	/// the line leaves your palm.</para></summary>
+	public static Ray? GrabRay { get; private set; }
+
+	/// <summary>How the grab ray is turned relative to the grip pose. Pitched down by default:
+	/// the grip pose's own forward runs along the handle, and a hand over a board is holding that
+	/// handle roughly horizontal with the palm down.</summary>
+	public static Angles PalmAngles { get; private set; } = new( 45f, 0f, 0f );
+
+	/// <summary>Whether the grab uses the palm ray at all. Off, it uses the pointing ray, which
+	/// is the same line the trigger clicks with — the way back if the palm ray cannot be
+	/// dialled in.</summary>
+	public static bool PalmGrab { get; private set; } = true;
+
+	/// <summary>Which way the grab ray leaves the palm.</summary>
+	[ConCmd( "gambit_vr_palm_rot" )]
+	public static void SetPalmAngles( float pitch, float yaw, float roll )
+	{
+		PalmAngles = new Angles( pitch, yaw, roll );
+		Log.Info( $"[Gambit] vr: palm angles {PalmAngles}" );
+	}
+
+	/// <summary>Grab along the palm ray, or along the pointing ray like the trigger.</summary>
+	[ConCmd( "gambit_vr_palm_grab" )]
+	public static void TogglePalmGrab()
+	{
+		PalmGrab = !PalmGrab;
+		Log.Info( $"[Gambit] vr: grab ray {( PalmGrab ? "off the PALM" : "the pointing ray" )}" );
+	}
+
 	/// <summary>Degrees per second of smooth yaw from the right stick.</summary>
 	public static float TurnRate { get; set; } = 110f;
 
@@ -172,6 +214,7 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		if ( !Sandbox.Game.IsRunningInVR || !VrRig.Active )
 		{
 			AimRay = null;
+			GrabRay = null;
 			GripPressed = GripReleased = GripHeld = false;
 			GripTransform = null;
 			_gripHand = null;
@@ -237,6 +280,14 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 
 		var aim = Pointing == Hand.Left ? left.AimTransform : right.AimTransform;
 		AimRay = new Ray( aim.Position, aim.Rotation.Forward );
+
+		// The grab ray comes off the hand that is gripping, or off the pointing hand when neither
+		// is — so the line is already where the grab will be before the grip closes, which is
+		// what makes it something to aim with rather than something to notice afterwards.
+		var palm = GripTransform ?? ( Pointing == Hand.Left ? left.Transform : right.Transform );
+		GrabRay = PalmGrab
+			? new Ray( palm.Position, ( palm.Rotation * Rotation.From( PalmAngles ) ).Forward )
+			: AimRay;
 
 		// Either trigger does both jobs a click does: pick a square, and sit down at whatever you
 		// are standing next to. A panel click is not here — WorldInput reads the trigger itself in
