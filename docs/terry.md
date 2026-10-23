@@ -86,9 +86,9 @@ The planner (`Code/Chess/HalfRise.cs`) is Sandbox-free:
 
 ## The gesture
 
-- **A VR player's own hands are their controllers'**, not this machine's: `ApplyHandPose`
-  early-returns for the local player while `LobbyPlayer.VrHandsDriving`, and
-  `ApplyVrHandIk` writes the same two IK chains from the device poses instead (`docs/vr.md`).
+- **A VR player's hands are their controllers', on every screen**: their wrist poses are synced
+  and written into the same two IK chains by `LobbyPlayer.ApplyVrHands`, driven every frame from
+  `OnUpdate` rather than from here, and `ApplyHandPose` yields while `VrHandsLive` (`docs/vr.md`).
   Every other seat on that client still gestures — that is what moves the opponent's hand over
   the opponent's piece.
 - **Hands rest unless a move is confirmed** (the ply advanced). Nothing extra crosses the wire:

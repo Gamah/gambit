@@ -317,6 +317,33 @@ trail the body by a frame.
 toggle and the music screen each set for their own reasons. A visible cursor sends `WorldInput` down
 its camera-ray branch, so the hand would stop pointing the moment a panel with a button appeared.
 
+### The hands other people see
+
+**A headset player's hands go on the wire as a POSE.** The gesture machine animates a *move*: it
+is fed a ply and a UCI string and every client derives the same reach from them. A pair of
+controllers is not that — it is a pose that changes every frame and is known only to the machine
+holding them. So `LobbyPlayer.PublishVrHands` syncs the two wrist poses (plus a tracked/grip flag
+int) in the seat's **station-local** space, and `ApplyVrHands` writes them into the same two IK
+chains the gesture machine uses, on whichever client is drawing that body.
+
+- **Station-local, not world**: the ring slides when the admin changes the board count, and a
+  world pose would slide with it.
+- **Driven from `LobbyPlayer.OnUpdate`, above the proxy branch** — not from `SeatedTerry`, which
+  early-returns on a table with no game. A player's hands are theirs from the moment they sit
+  down, and reaching for the board is the first thing they do. `ApplyHandPose` yields while
+  `VrHandsLive`, so the two can never both write to one arm.
+- **Nothing clamps the ask.** The gesture path pulls its target inside the arm the solver really
+  has; a controller is not a target we invented, it is where the player's hand is, and moving the
+  wrist somewhere else would make every other screen disagree with the player about their own
+  arm. Where the arm runs out the engine stops the wrist short, pointing the right way from as
+  close as it gets — and the piece is not held by that hand anyway, it floats to the square the
+  player names.
+- **A controller that stops reporting publishes as absent**, which clears its chain. An arm
+  frozen mid-reach on someone else's screen claims tracking that isn't happening.
+- The bone and parameter names are the same on both citizen animgraphs, and the hand IK applies
+  in `postprocess.vsubgrph` outside the holdtype branches, so none of this depends on which model
+  is under it (`docs/terry.md`).
+
 ### The grip carries a piece
 
 **A grab is not a second way to decide a move.** `ChessBoardView.UpdateCarry` runs the same seam
@@ -386,17 +413,14 @@ the same thing the desktop's look aim relies on.
 
 ## Known gaps
 
-- **No IK and no arms, and not for want of wiring.** Both citizen animgraphs expose
-  `ik.hand_left/right.{enabled,position,rotation}` and the human one applies them in
-  `postprocess.vsubgrph` whatever the holdtype — but a wrist driven to where a real controller is
-  lands outside the arm, and the engine's two-bone IK then clamps it onto the reach sphere along
-  the shoulder→ask ray and slides it around there. The gesture machine never shows that because
-  it pulls the ask inside the arm first, with lean and half-rise to buy the rest
-  (`docs/terry.md`). A seated citizen's arm is ~24 units and a1 is ~33 from White's shoulder, so
-  this is a fact about the body and the board before it is anything about VR, and the room's
-  scale against a real eye height is the thing to settle first.
-- The seated body is hidden locally in VR (`LobbyPlayer.HideLocalAvatar`) for the same reason;
-  remote players still see the citizen sitting.
+- **The headset player's own body is not drawn to them** (`LobbyPlayer.HideLocalAvatar`), and
+  that is a decision rather than a gap: a wrist driven to where a real controller is lands
+  outside a ~24-unit arm, and the engine's two-bone IK then stops it short along the
+  shoulder→ask ray — fine to watch on someone else, wrong to wear. The rig's own primitives are
+  the hands locally; the arms are for everyone else (above).
+- World scale is the desktop's (`ChessRing.SeatEyeHeight` is a `[GUESS]`), unchecked against a
+  real eye height — so how much of the board is inside a real arm's reach is unknown, and the
+  piece floats rather than being carried there.
 - Every hint still names a key: "Press E to sit", the info board's "E or Esc". The copy has no VR
   branch, so it describes controls the headset player is not using.
 - `LocalMusicSystem` builds its own `ScreenPanel` on a `NotSaved` object, which `VrHud` does not

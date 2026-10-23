@@ -193,6 +193,7 @@ public sealed class VrRig : Component
 		// every one of those poses is the anchor's: a component placing itself in its own update
 		// would read whichever anchor the frame happened to have when it ran.
 		VrHands.Instance?.Place();
+		PublishHands();
 		PlaceDebugBoard();
 
 		// The pointer is a physical object now. The cursor has to be out of the way for that: a
@@ -202,6 +203,33 @@ public sealed class VrRig : Component
 		// seat's aim toggle and the music screen both set for their own reasons.
 		Mouse.Visibility = MouseVisibility.Hidden;
 	}
+
+	/// <summary>Put this player's wrist poses on the wire, so every other client's copy of their
+	/// body follows the controllers (<see cref="LobbyPlayer.PublishVrHands"/>).
+	///
+	/// <para><b>Seated only, and published rather than applied.</b> Our own body is not drawn to
+	/// us at all in a headset — the rig's primitives are our hands — so this exists entirely for
+	/// the opponent and the spectators, which is also why it is state and not a local write.</para>
+	///
+	/// <para>A controller that has stopped reporting is published as absent, not as its last
+	/// pose: an arm frozen mid-reach on someone else's screen claims tracking that isn't
+	/// happening, the same rule the grips keep locally.</para></summary>
+	void PublishHands()
+	{
+		if ( !_player.IsValid() ) return;
+
+		var station = ChessStation.Active;
+		if ( station == null )
+		{
+			_player.ClearVrHands();
+			return;
+		}
+
+		_player.PublishVrHands( station, Pose( Input.VR.LeftHand ), Pose( Input.VR.RightHand ),
+			VrInput.GripHeld );
+	}
+
+	static Transform? Pose( VRController hand ) => hand.Active ? hand.Transform : null;
 
 	void UpdateAnchor()
 	{

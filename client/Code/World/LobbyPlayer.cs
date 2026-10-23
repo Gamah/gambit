@@ -302,11 +302,17 @@ public sealed class LobbyPlayer : Component
 	/// per-frame path.</summary>
 	Action _stepSeatedAt, _stepMatchmaking, _stepPublishName, _stepSeatAim, _stepHideAvatar,
 		_stepSitPose, _stepSeatCamera, _stepSeatSwitch, _stepLeaveCamera, _stepProxyVisibility,
-		_stepProxySeating;
+		_stepProxySeating, _stepVrHands;
 
 	protected override void OnUpdate()
 	{
 		FrameTrace.Run( "lobby.seatedAt", _stepSeatedAt ??= UpdateSeatedAt );
+
+		// Before the proxy branch, because this is the one piece of the seated body that a
+		// PROXY's screen is the whole point of: a headset player's own arms are not drawn to
+		// them. It also has to run with no game on the table — hands follow the controllers
+		// from the moment they sit down, where the gesture machine only ever animates a move.
+		FrameTrace.Run( "lobby.vrHands", _stepVrHands ??= DriveVrHands );
 
 		if ( IsProxy )
 		{
@@ -1367,6 +1373,12 @@ public sealed class LobbyPlayer : Component
 		if ( r == null || ring == null || station == null ) return;
 		if ( ring is { TerrySeated: false } ) return;
 
+		// A VR player's hands are their CONTROLLERS', on every screen that draws them. This runs
+		// here, inside the call SeatedTerry already makes for every seat on every client, so a
+		// proxy's arms follow the headset player's real arms with no second code path and no
+		// second authority — see ApplyVrHands.
+		if ( VrHandsLive ) { ApplyVrHands( r, station ); return; }
+
 		// M14: the hands are a SPIKE, off by default — the shipped world is bodies only. The
 		// bodies stay on their own gate (TerrySeated) above; this is the independent hand switch.
 		if ( !SeatedHandSpikes.HandsOn )
@@ -2360,6 +2372,150 @@ public sealed class LobbyPlayer : Component
 	public Vector3? LastHandIkTarget { get; private set; }
 
 	/// <summary>
+	// ── A VR player's hands, as every client sees them ──
+	//
+	// The gesture machine animates a MOVE: it is fed a ply and a UCI string, and every client
+	// derives the same reach from them. A headset player's hands are not that — they are a pose,
+	// changing every frame, known only to the machine holding the controllers. So the pose itself
+	// goes on the wire, in the seat's own station-local space (the ring slides when the admin
+	// changes the board count, and a world pose would slide with it), and every client writes it
+	// into the same two IK chains the gesture machine uses.
+	//
+	// WHAT THIS DOES NOT DO IS CLAMP. The gesture path pulls its ask inside the arm the solver
+	// really has, because a square across the board is past where an arm goes. A controller is
+	// not an ask we invented: it is where the player's hand IS, and moving the wrist somewhere
+	// else would make every other client disagree with the player about their own arm. Where the
+	// arm runs out, the engine's own two-bone IK stops the wrist short along the shoulder→ask ray
+	// and the hand points the right way from as close as it gets — and the PIECE is not held by
+	// that hand anyway, it floats to the square the player names (docs/vr.md).
+
+	[Sync] Vector3 VrLeftPos { get; set; }
+	[Sync] Rotation VrLeftRot { get; set; }
+	[Sync] Vector3 VrRightPos { get; set; }
+	[Sync] Rotation VrRightRot { get; set; }
+
+	/// <summary>Which hands are reporting, and whether one is gripping — one synced int rather
+	/// than three synced bools, because every one of these is a separate network property and
+	/// they always change together.</summary>
+	[Sync] int VrHandFlags { get; set; }
+
+	const int VrFlagLeft = 1;
+	const int VrFlagRight = 2;
+	const int VrFlagGrip = 4;
+
+	/// <summary>This player is in VR with at least one controller reporting, so their arms are
+	/// theirs to drive and the gesture machine must keep off them. Read on every client, off
+	/// synced state — a proxy has no other way to know.</summary>
+	public bool VrHandsLive => ( VrHandFlags & ( VrFlagLeft | VrFlagRight ) ) != 0;
+
+	/// <summary>Publish this frame's wrist poses, in station-local space. Called by
+	/// <see cref="VrRig"/> on the local VR player only; everything downstream of here runs
+	/// everywhere.
+	///
+	/// <para>Null for a hand that is not reporting, which clears its chain rather than freezing
+	/// the arm where tracking stopped — the rule the rig's own primitives keep.</para></summary>
+	public void PublishVrHands( ChessStation station, Transform? left, Transform? right, bool grip )
+	{
+		if ( station == null ) return;
+
+		int flags = 0;
+		var tx = station.WorldTransform;
+
+		if ( left is { } l )
+		{
+			flags |= VrFlagLeft;
+			VrLeftPos = tx.PointToLocal( l.Position );
+			VrLeftRot = station.WorldRotation.Inverse * l.Rotation;
+		}
+
+		if ( right is { } r )
+		{
+			flags |= VrFlagRight;
+			VrRightPos = tx.PointToLocal( r.Position );
+			VrRightRot = station.WorldRotation.Inverse * r.Rotation;
+		}
+
+		if ( grip ) flags |= VrFlagGrip;
+
+		VrHandFlags = flags;
+	}
+
+	/// <summary>Stop claiming VR hands — a headset player who stood up, took it off, or whose
+	/// controllers went to sleep. One synced write, so every client lets the arms go on the same
+	/// frame rather than holding the last pose forever.</summary>
+	public void ClearVrHands()
+	{
+		if ( VrHandFlags == 0 ) return;
+
+		VrHandFlags = 0;
+
+		if ( _bodyRenderer is { } r )
+		{
+			r.ClearIk( IkLeft );
+			r.ClearIk( IkRight );
+			r.Set( "holdtype", HoldTypeNone );
+			r.Set( "holdtype_pose_hand", 0f );
+		}
+	}
+
+	/// <summary>Write the synced wrist poses into this body's hand IK, on whichever client is
+	/// drawing it.
+	///
+	/// <para>The gesture machine's own leftovers are released first: the bone overrides and the
+	/// half-rise have no owner but <see cref="ApplyHandPose"/>, so a body that was mid-gesture
+	/// when its player put a headset on would keep a leaned spine and a planted foot forever.</para></summary>
+	void ApplyVrHands( SkinnedModelRenderer r, ChessStation station )
+	{
+		if ( _reachSpikeApplied ) { r.ClearPhysicsBones(); _reachSpikeApplied = false; }
+		ReleaseRiseIk( r );
+		_riseApplied = Vector3.Zero;
+		_leanApplied = Vector3.Zero;
+		_pitchApplied = Vector3.Zero;
+
+		if ( ( VrHandFlags & VrFlagLeft ) != 0 )
+			r.SetIk( IkLeft, new Transform( station.WorldTransform.PointToWorld( VrLeftPos ),
+				station.WorldRotation * VrLeftRot ) );
+		else
+			r.ClearIk( IkLeft );
+
+		if ( ( VrHandFlags & VrFlagRight ) != 0 )
+			r.SetIk( IkRight, new Transform( station.WorldTransform.PointToWorld( VrRightPos ),
+				station.WorldRotation * VrRightRot ) );
+		else
+			r.ClearIk( IkRight );
+
+		// Handedness stays RH: it is the branch every working seated pose here has been written
+		// under, and the hand IK applies in postprocess outside those branches anyway
+		// (docs/terry.md). Fingers are one blend for both hands — the graph has no per-hand
+		// channel — so a grip in either closes both.
+		r.Set( "holdtype", HoldTypeItem );
+		r.Set( "holdtype_handedness", HandednessRight );
+		r.Set( "holdtype_pose_hand", ( VrHandFlags & VrFlagGrip ) != 0
+			? Gambit.Chess.TerryPose.FingersGrasping
+			: Gambit.Chess.TerryPose.FingersHovering );
+	}
+
+	/// <summary>Drive this body's arms from the synced wrist poses, local or proxy, every frame
+	/// it is sitting at a chess seat. A no-op for every player who is not in a headset.
+	///
+	/// <para><b>Not called from the gesture machine's own path</b> (<see cref="SeatedTerry"/>),
+	/// which early-returns on a table with no game: a player's hands are theirs whether or not a
+	/// game is running, and the first thing a VR player does at a table is reach for it.
+	/// <see cref="ApplyHandPose"/> still yields to this, so the two can never both write.</para></summary>
+	void DriveVrHands()
+	{
+		if ( !VrHandsLive || _bodyRenderer is not { } r ) return;
+		if ( ChessRing.Instance is { TerrySeated: false } ) return;
+		if ( SeatedAt is not { Station: { } station } ) return;
+
+		ApplyVrHands( r, station );
+	}
+
+	/// <summary>What this player is publishing, for the VR state board. The local headset player
+	/// is the one machine that cannot see the result, so it reports the ask instead.</summary>
+	public string VrHandStatus() =>
+		$"vrhands flags={VrHandFlags} L {VrLeftPos.z:0.0} R {VrRightPos.z:0.0} (station z)";
+
 	/// Let the arm go — the whole arm, not just the IK.
 	///
 	/// <para><b>Releasing only the IK is not enough, and this is why a player who stood up
