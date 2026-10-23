@@ -302,6 +302,7 @@ public sealed class ChessBoardView : Component
 
 		SyncPieces();
 		AdvanceSlides();
+		WatchGameStart();
 		UpdateInput();
 		PaintHighlights();
 	}
@@ -695,6 +696,25 @@ public sealed class ChessBoardView : Component
 				_slides.RemoveAt( i );
 			}
 		}
+	}
+
+	/// <summary>A game starting at the local table clears the VR grip trail and the last drop
+	/// verdict, so the console and the state board describe the game being played rather than
+	/// whatever happened while someone was finding the controls.</summary>
+	bool _wasPlaying;
+
+	void WatchGameStart()
+	{
+		bool playing = Source?.Playing ?? false;
+		bool started = playing && !_wasPlaying;
+		_wasPlaying = playing;
+
+		if ( !started || !Sandbox.Game.IsRunningInVR ) return;
+		if ( ChessStation.Active != Station ) return;
+
+		_verdict = "none yet";
+		_verdictAt = 0f;
+		VrInput.ResetGripLog();
 	}
 
 	// ── Input ──

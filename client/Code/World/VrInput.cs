@@ -195,6 +195,12 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		bool gripPulled = ( leftGrip && !_leftGrip ) || ( rightGrip && !_rightGrip );
 		bool gripDropped = ( !leftGrip && _leftGrip ) || ( !rightGrip && _rightGrip );
 
+		// EVERY edge, to the console. A grab that the board never hears and a grab that never
+		// happened are the same silence otherwise, and the console log outlives the session —
+		// which is the only way to read any of this with a headset on your face.
+		if ( leftGrip != _leftGrip ) LogGrip( Hand.Left, leftGrip, left.Grip.Value, _leftRest );
+		if ( rightGrip != _rightGrip ) LogGrip( Hand.Right, rightGrip, right.Grip.Value, _rightRest );
+
 		if ( leftGrip && !_leftGrip ) Pointing = Hand.Left;
 		if ( rightGrip && !_rightGrip ) Pointing = Hand.Right;
 		_leftGrip = leftGrip;
@@ -276,6 +282,46 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	}
 
 	static bool Pressed( DigitalInput d ) => d.IsPressed && !d.WasPressed;
+
+	/// <summary>Whether every grip edge is logged to the console. On, for now: the grab is the
+	/// one control whose failures are all invisible, and the log is the only instrument that
+	/// survives the headset coming off.</summary>
+	public static bool GripLog { get; private set; } = true;
+
+	static int _gripEvents;
+
+	/// <summary>One line per grip edge: which hand, which way, and the three numbers the decision
+	/// was made from — the raw value, the calibrated rest it is measured against, and the deltas.
+	/// The count is what makes a missing RELEASE obvious: presses and releases should alternate,
+	/// and a log of nothing but presses is the carry that can never be dropped.</summary>
+	static void LogGrip( Hand hand, bool down, float value, float rest )
+	{
+		if ( !GripLog ) return;
+
+		_gripEvents++;
+		Log.Info( $"[Gambit] vr: grip #{_gripEvents} {hand} {( down ? "GRAB" : "release" )}"
+			+ $" v={value:0.00} rest={rest:0.00} +{GripPressDelta:0.00}/-{GripReleaseDelta:0.00}"
+			+ $" carry={ChessBoardView.CarryName() ?? "none"}" );
+	}
+
+	/// <summary>Start the grip trail again, and say so. Called when a game starts at the local
+	/// table (<see cref="ChessBoardView"/>): what matters is the attempts made in the game being
+	/// played, and everything before the first move is someone finding the controls.</summary>
+	public static void ResetGripLog()
+	{
+		if ( !GripLog ) return;
+
+		_gripEvents = 0;
+		Log.Info( "[Gambit] vr: ── game started, grip trail cleared ──" );
+	}
+
+	/// <summary>Stop (or restart) logging every grip edge.</summary>
+	[ConCmd( "gambit_vr_grip_log" )]
+	public static void ToggleGripLog()
+	{
+		GripLog = !GripLog;
+		Log.Info( $"[Gambit] vr: grip logging {( GripLog ? "ON" : "OFF" )}" );
+	}
 
 	/// <summary>Is this hand gripping? <paramref name="rest"/> is calibrated here, which is the
 	/// whole point of doing it in one place: it may only move while the hand is NOT gripping, or

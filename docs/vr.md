@@ -406,6 +406,11 @@ and never changed mid-carry (`ChessBoardView.Carrier`):
   hopping out of mid-air.
 - **A frame the grip owns is not a click frame.** Otherwise a trigger pulled mid-carry selects the
   square under the piece being carried.
+- **Every grip edge is logged to the console** (`VrInput.GripLog`, on, `gambit_vr_grip_log` to
+  stop): which hand, which way, the raw value, the calibrated rest and the deltas, numbered. The
+  number is the point — presses and releases alternate, so a trail of nothing but GRABs is the
+  carry that can never be dropped. A game starting at the local table clears the trail and the
+  drop verdict, so what is on screen describes the game being played.
 - **A drop says what it did** (`ChessBoardView.DropStatus`, on the state board and in the log). A
   refused drop and a release that never arrived are identical from inside a headset — the piece is
   back on its square either way, with nothing said — and so are "that square is not a legal
