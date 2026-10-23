@@ -440,6 +440,11 @@ public sealed class ChessBoardView : Component
 		// Any position change invalidates the current selection — and a pending
 		// promotion (a diff can only arrive under one via resync or a new game;
 		// our own promotion move clears PendingPromotion before it applies).
+		//
+		// A VR carry goes back on its square FIRST, before the pairing pass below reads
+		// piece positions for its slide origins: a held piece is a piece lifted clear of
+		// the board, and a slide starting there is a piece hopping out of mid-air.
+		CancelCarry();
 		ClearSelection();
 		PendingPromotion = null;
 
@@ -709,12 +714,20 @@ public sealed class ChessBoardView : Component
 		// permissive, so leaving them up once it IS your turn would paint illegal
 		// moves green and then refuse them on click.
 		if ( Selected != null && _targetsArePremove != premoving )
+		{
+			CancelCarry();
 			ClearSelection();
+		}
 
 		if ( source == null || ( !source.IsMyTurn && !premoving ) || PendingPromotion != null )
 		{
 			// Game ended or reset from under us (resign/abandon produce no board
 			// diff) — drop any half-finished input state.
+			// The carry goes home whatever the reason: a turn that flipped, a game that
+			// ended, a promotion picker that opened. A piece left in the air is the one
+			// failure state a grab has that a click does not.
+			CancelCarry();
+
 			if ( !( source?.Playing ?? false ) )
 			{
 				ClearSelection();
@@ -722,10 +735,14 @@ public sealed class ChessBoardView : Component
 			}
 			return;
 		}
-		if ( LobbyPlayer.Local is not { CameraSettled: true } ) return;
+		if ( LobbyPlayer.Local is not { CameraSettled: true } ) { CancelCarry(); return; }
 
 		int square = SquareUnderCursor();
 		_hoverSquare = square;
+
+		// Grip carries a piece; the trigger clicks squares. A frame the grip owns is not also
+		// a click frame — see UpdateCarry.
+		if ( UpdateCarry( source, premoving, square ) ) return;
 
 		if ( !Input.Pressed( "Select" ) || square < 0 )
 			return;
@@ -805,6 +822,149 @@ public sealed class ChessBoardView : Component
 	{
 		Selected = null;
 		if ( _targets.Count > 0 ) _targets = new List<string>();
+	}
+
+	// ── The VR carry: pick a piece up, carry it, put it down ──
+	//
+	// A grab is not a second way to decide a move. It runs the SAME seam the click path runs:
+	// Select() builds the legal (or premove) targets, the drop is refused unless the square is
+	// one of them, and the move goes through IBoardGame.TryMakeMove. What the grip adds is the
+	// gesture — a lift, a carry and a release — and nothing about which moves exist.
+	//
+	// The piece itself is only ever MOVED, never re-parented or re-authored: the view stays
+	// FEN-authoritative, so every drop puts the piece back on the square it came from and lets
+	// the diff (or no diff, for a refused drop) decide where it really goes. That is the same
+	// rule gambit_terry_scholars keeps for its demo.
+
+	/// <summary>The square a carried piece came from, or -1. The piece's own home position is
+	/// kept beside it because the square's centre is not where a piece necessarily sat: a piece
+	/// mid-slide, or one a previous frame had lifted, would be snapped somewhere it never was.
+	/// </summary>
+	int _carryFrom = -1;
+	GameObject _carryPiece;
+	Vector3 _carryHome;
+
+	/// <summary>How far above the board a carried piece rides, in cells. High enough to read as
+	/// lifted over the pieces it passes, low enough that the hand holding it is still over the
+	/// square it is going to.</summary>
+	[Property] public float CarryLift { get; set; } = 0.9f;
+
+	/// <summary>The square being carried from, for the VR state board — "the grip did nothing"
+	/// and "the grip picked up the wrong piece" are different faults.</summary>
+	public static string CarryName()
+	{
+		var view = ChessStation.Active?.Components.Get<ChessBoardView>();
+		if ( view == null || view._carryFrom < 0 ) return null;
+
+		return NameOf( view._carryFrom )?.ToUpperInvariant();
+	}
+
+	/// <summary>Run the grip for this frame. Returns true when the grip owns the frame, which is
+	/// what keeps one hand gesture from also being a click: a trigger pulled during a carry would
+	/// otherwise select a square under the piece being carried.</summary>
+	bool UpdateCarry( IBoardGame source, bool premoving, int square )
+	{
+		if ( _carryFrom < 0 )
+		{
+			if ( !VrInput.GripPressed || square < 0 ) return false;
+			if ( !IsOwnPiece( _rendered[square] ) ) return false;
+			var piece = _pieces[square];
+			if ( !piece.IsValid() ) return false;
+
+			// Any input cancels an armed premove, exactly as a click does — re-arming costs
+			// the same gesture that armed it.
+			source.ClearPremove();
+
+			_carryFrom = square;
+			_carryPiece = piece;
+			_carryHome = piece.LocalPosition;
+			Select( SquareName( square ), premoving );
+			return true;
+		}
+
+		// The piece went away under the carry (a resync, a promotion): there is nothing to put
+		// down, and the selection it was holding is no longer about anything.
+		if ( !_carryPiece.IsValid() )
+		{
+			_carryFrom = -1;
+			_carryPiece = null;
+			ClearSelection();
+			return true;
+		}
+
+		Carry( square );
+
+		if ( !VrInput.GripReleased ) return true;
+
+		Drop( source, premoving, square );
+		return true;
+	}
+
+	/// <summary>Hold the piece over the square the hand is pointing at, lifted clear of the
+	/// board — or over its own square while the hand is off the board, so a piece is never held
+	/// somewhere a drop could not land it.</summary>
+	void Carry( int square )
+	{
+		float cell = ChessRing.Instance?.CellWorldSize ?? 5f;
+		var over = SquareLocal( square >= 0 ? square : _carryFrom );
+		_carryPiece.LocalPosition = over + Vector3.Up * cell * CarryLift;
+	}
+
+	/// <summary>Put the carried piece down. The piece goes home first and always — the move it
+	/// may have just made is rendered by the FEN diff, from the square it actually left.</summary>
+	void Drop( IBoardGame source, bool premoving, int square )
+	{
+		int from = _carryFrom;
+		string fromName = SquareName( from );
+		CancelCarry();
+
+		if ( square < 0 || square == from )
+		{
+			ClearSelection();
+			return;
+		}
+
+		string to = SquareName( square );
+		if ( !_targets.Contains( to ) )
+		{
+			// Dropped somewhere it may not go. The piece is already home; nothing else happens,
+			// because a refused drop that re-selected would leave a selection the player did not
+			// ask for under a hand that has let go.
+			ClearSelection();
+			return;
+		}
+
+		var game = source.Game;
+		if ( premoving )
+		{
+			// Queen, silently, like the click path: the picker is a modal on a board it is not
+			// your turn to touch, and a premoved pawn may never reach the last rank at all.
+			string promo = game.IsPromotion( fromName, to ) ? "q" : "";
+			source.SetPremove( fromName + to + promo );
+		}
+		else if ( game.IsPromotion( fromName, to ) )
+		{
+			// Park until the picker calls ChoosePromotion — the same park the click path uses,
+			// and VrHud shows the picker's quad for exactly this.
+			PendingPromotion = ( fromName, to );
+		}
+		else
+		{
+			source.TryMakeMove( fromName + to );
+		}
+
+		ClearSelection();
+	}
+
+	/// <summary>Put a carried piece back where it was lifted from and forget the carry. A no-op
+	/// when nothing is being carried, so every path out of input can call it.</summary>
+	void CancelCarry()
+	{
+		if ( _carryFrom < 0 ) return;
+
+		if ( _carryPiece.IsValid() ) _carryPiece.LocalPosition = _carryHome;
+		_carryFrom = -1;
+		_carryPiece = null;
 	}
 
 	/// <summary>GameHud promotion picker chose a piece ('q','r','b','n').</summary>

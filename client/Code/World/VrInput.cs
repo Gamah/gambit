@@ -28,7 +28,9 @@ namespace Gambit.World;
 /// exactly as they do on the desktop — the engine computes those into the same two properties
 /// earlier in the frame, and an unconditional write would zero them.</para>
 ///
-/// <para>Grip is deliberately unused: it is what grabbing a piece will want.</para>
+/// <para>Grip is the one control that is not bridged onto anything: it grabs a piece, which is a
+/// gesture the desktop has no equivalent of (see <see cref="GripPressed"/> and
+/// <see cref="ChessBoardView"/>'s carry).</para>
 /// </summary>
 public sealed class VrInput : GameObjectSystem<VrInput>
 {
@@ -47,8 +49,17 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	/// <summary>Degrees per second of smooth yaw from the right stick.</summary>
 	public static float TurnRate { get; set; } = 110f;
 
-	/// <summary>How far a trigger travels before it counts as a press.</summary>
-	const float TriggerPress = 0.5f;
+	/// <summary>How far a trigger travels before it counts as a press — the engine's own VR
+	/// click threshold (<c>WorldInput.OnUpdate</c>, <c>hand.Trigger.Value &gt; 0.75f</c>), so a
+	/// pull that clicks a panel and a pull that picks a square are the same pull. A lower one
+	/// here left a band where the square moved and the button under the beam did not.</summary>
+	const float TriggerPress = 0.75f;
+
+	/// <summary>How far the grip travels before it counts as a grab, and how far it has to come
+	/// back to be a release. Softer than the trigger: a grip is held for the length of a carry,
+	/// and a hand that relaxes mid-board should not drop the piece.</summary>
+	const float GripPress = 0.6f;
+	const float GripRelease = 0.4f;
 
 	/// <summary>Stick travel below this is centre: it writes nothing, which is what leaves the
 	/// desktop's own movement and look alone.</summary>
@@ -56,6 +67,19 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 
 	bool _leftTrigger;
 	bool _rightTrigger;
+	bool _leftGrip;
+	bool _rightGrip;
+
+	/// <summary>The grip, this frame, for whichever hand is using it: pressed and released are
+	/// single-frame edges, held is the state in between. Read by <see cref="ChessBoardView"/> in
+	/// its own update, after this system has run (<c>Stage.StartUpdate</c>).
+	///
+	/// <para><b>Grip is a GRAB, and that is all it is.</b> It picks a piece up, carries it and
+	/// drops it on a square; it never clicks a panel and it is never an action the keyboard also
+	/// writes, so unlike the trigger it has no edge to share with anything.</para></summary>
+	public static bool GripPressed { get; private set; }
+	public static bool GripReleased { get; private set; }
+	public static bool GripHeld { get; private set; }
 
 	/// <summary>Seconds since either trigger was pulled, and how many pulls this session: with no
 	/// other feedback in the headset, "did that register at all" is the first question.</summary>
@@ -102,6 +126,7 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		if ( !Sandbox.Game.IsRunningInVR || !VrRig.Active )
 		{
 			AimRay = null;
+			GripPressed = GripReleased = GripHeld = false;
 			return;
 		}
 
@@ -114,6 +139,24 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		bool rightPulled = rightTrigger && !_rightTrigger;
 		_leftTrigger = leftTrigger;
 		_rightTrigger = rightTrigger;
+
+		// Grip: hysteresis rather than one threshold, so a grip that drifts around the press
+		// point during a carry doesn't drop the piece and pick it up again.
+		bool leftGrip = left.Grip.Value >= ( _leftGrip ? GripRelease : GripPress );
+		bool rightGrip = right.Grip.Value >= ( _rightGrip ? GripRelease : GripPress );
+		bool gripPulled = ( leftGrip && !_leftGrip ) || ( rightGrip && !_rightGrip );
+		bool gripDropped = ( !leftGrip && _leftGrip ) || ( !rightGrip && _rightGrip );
+
+		if ( leftGrip && !_leftGrip ) Pointing = Hand.Left;
+		if ( rightGrip && !_rightGrip ) Pointing = Hand.Right;
+		_leftGrip = leftGrip;
+		_rightGrip = rightGrip;
+
+		GripPressed = gripPulled;
+		// Released only when NEITHER hand is still holding: a piece handed from one hand to the
+		// other is one carry, not a drop and a new grab.
+		GripReleased = gripDropped && !leftGrip && !rightGrip;
+		GripHeld = leftGrip || rightGrip;
 
 		if ( leftPulled ) Pointing = Hand.Left;
 		if ( rightPulled ) Pointing = Hand.Right;
@@ -130,7 +173,12 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		// Either trigger does both jobs a click does: pick a square, and sit down at whatever you
 		// are standing next to. A panel click is not here — WorldInput reads the trigger itself in
 		// VR, which is why the pointer lives on a hand (see VrHands).
-		if ( leftPulled || rightPulled )
+		// A trigger pull over a PANEL is a click and nothing else. WorldInput reads the trigger
+		// itself in VR, so the same pull was also pulsing Select — which picked the square behind
+		// the quad, and on the tabletop plate the square under the plate. The hover state is last
+		// frame's (WorldInput writes it in its own update, after this one), which is exactly right
+		// for a press: a hover held long enough to aim a trigger at was already there.
+		if ( ( leftPulled || rightPulled ) && !VrHands.PointerHovering )
 		{
 			Input.SetAction( "Select", true );
 
@@ -242,6 +290,9 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 			$"stick L {Fmt( left.Joystick.Value )}  R {Fmt( right.Joystick.Value )}",
 			$"btn L a{Bit( left.ButtonA )} b{Bit( left.ButtonB )}"
 				+ $"  R a{Bit( right.ButtonA )} b{Bit( right.ButtonB )}",
+			$"grip L {left.Grip.Value:0.00} R {right.Grip.Value:0.00}"
+				+ $"  held={GripHeld} carry={ChessBoardView.CarryName() ?? "none"}"
+				+ $"  panel={VrHands.PointerHovering}",
 			$"yaw head {Input.VR.Head.Rotation.Angles().yaw:0}  body {VrRig.BodyYaw:0}",
 			$"move {Fmt( Input.AnalogMove )}  look {Input.AnalogLook.yaw:0.00}",
 			$"head {Fmt( Input.VR.Head.Position )}  anchor {Fmt( Input.VR.Anchor.Position )}",

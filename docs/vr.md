@@ -216,11 +216,11 @@ computed and before any component runs — writes them, and **nothing downstream
 
 | control | does |
 | --- | --- |
-| either trigger | `Select` (pick a square), `use` (sit down, engage a board) while roaming, and a panel click through `WorldInput`'s own VR branch — which watches **one named hand**, `WorldInput.VRHandSource`, defaulting to Left: `VrHands` writes it from `VrInput.Pointing` every frame, or the beam hovers a button that no trigger can press |
+| either trigger | `Select` (pick a square), `use` (sit down, engage a board) while roaming, and a panel click through `WorldInput`'s own VR branch — which watches **one named hand**, `WorldInput.VRHandSource`, defaulting to Left: `VrHands` writes it from `VrInput.Pointing` every frame, or the beam hovers a button that no trigger can press. Over a button it is a click and nothing else: `VrHands.PointerHovering` suppresses the `Select` pulse, or the pull that clicked a panel also picked the square behind it |
 | B, and A | `Input.EscapePressed` — the cursor toggle while seated, standing up otherwise. **Both, because B may never arrive on an Index**: `game/core/cfg/fpxr/valve_knuckles.json` gives `button_b` a `paths` key holding a bare string, where every other `paths` in both shipped profiles is the per-hand object map and every single binding uses `path`. `[SOURCE]` — the fpxr loader is native, so the shape is the evidence. |
 | left stick | `Input.AnalogMove`, in the direction the player is LOOKING |
 | right stick | yaw, smooth, `VrInput.TurnRate` degrees per second: `Input.AnalogLook` while roaming, the playspace anchor while seated |
-| grip | nothing, deliberately: it is what grabbing a piece will want |
+| grip | pick a piece up, carry it, drop it on a square (`ChessBoardView.UpdateCarry`) |
 
 **Escape answers to A as well as B**, which is not symmetry for its own sake: of the two
 controller profiles the engine ships (`game/core/cfg/fpxr/`), the Index one gives `button_b` a
@@ -317,6 +317,28 @@ trail the body by a frame.
 toggle and the music screen each set for their own reasons. A visible cursor sends `WorldInput` down
 its camera-ray branch, so the hand would stop pointing the moment a panel with a button appeared.
 
+### The grip carries a piece
+
+**A grab is not a second way to decide a move.** `ChessBoardView.UpdateCarry` runs the same seam
+the click path runs: `Select` builds the legal (or premove) targets, a drop is refused unless the
+square is one of them, and the move leaves through `IBoardGame.TryMakeMove`. The grip adds the
+gesture — a lift, a carry, a release — and nothing about which moves exist. Promotion parks on the
+picker exactly as a click does, and a premove carry queens silently for the same reason.
+
+- **The piece is only ever moved, never re-parented or re-authored.** Every drop puts it back on
+  the square it was lifted from first, and the FEN diff decides where it really goes — so a
+  refused drop costs nothing and a legal one slides from the square it actually left. Its home is
+  remembered as a position, not derived from the square: a piece mid-slide was not standing on its
+  centre.
+- **A diff that lands under a carry drops the carry first** (`SyncPieces`), before the pairing pass
+  reads piece positions for its slide origins. A slide starting from a held piece is a piece
+  hopping out of mid-air.
+- **A frame the grip owns is not a click frame.** Otherwise a trigger pulled mid-carry selects the
+  square under the piece being carried.
+- Grip has hysteresis (press 0.6, release 0.4) and releases only when NEITHER hand holds: a piece
+  passed from one hand to the other is one carry, and a grip that drifts around one threshold
+  mid-board would drop the piece and pick it up again.
+
 ### The board pick comes off the controller
 
 `ChessBoardView.SquareUnderCursor` takes `VrInput.AimRay` when there is one, and the desktop's
@@ -332,7 +354,6 @@ the same thing the desktop's look aim relies on.
 
 ## Known gaps
 
-- No grab: a piece is still picked square-by-square, not lifted. Grip is reserved for it.
 - No IK and no arms — the controller model floats where the device is. The intended end is the
   citizen's own arm and fingers driven by IK, with the ray still cast from the controller transform
   regardless of where the animation puts the hand.

@@ -186,6 +186,22 @@ public sealed class VrHands : Component
 		&& Instance._leftModel.Enabled && Instance._leftModel.Model != null;
 	public static bool BeamOn => (Instance?._beam.IsValid() ?? false) && Instance._beam.Enabled;
 
+	/// <summary>The beam is over something a click would land on.
+	///
+	/// <para><b>What makes this a usable answer is which panels it counts.</b>
+	/// <c>WorldPanelInput.Tick</c> only ray-tests roots whose <c>ChildrenWantMouseInput</c> is
+	/// set, and only sets <c>Hovered</c> from one that takes the mouse — so a display board (the
+	/// wall signs, the seated board, every panel built <c>pointer-events: none</c>) is not
+	/// hovered however squarely the beam crosses it. This is "the beam is on a button", not "the
+	/// beam is on a panel".</para>
+	///
+	/// <para>It is last frame's: <c>WorldInput</c> writes it in its own update, after
+	/// <see cref="VrInput"/>'s. For deciding what a press means that is the right frame — a
+	/// hover held long enough to aim a trigger at was already there.</para></summary>
+	public static bool PointerHovering =>
+		(Instance?._input.IsValid() ?? false) && Instance._input.Enabled
+			&& Instance._input.Hovered != null;
+
 	/// <summary>Put both hands and the pointer where the controllers are, this frame. Called by
 	/// <see cref="VrRig"/> once the playspace anchor is set.</summary>
 	public void Place()
