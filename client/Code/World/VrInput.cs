@@ -372,6 +372,7 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 				+ $" +{GripPressDelta:0.00}/-{GripReleaseDelta:0.00}"
 				+ $"  held={GripHeld} panel={VrHands.PointerHovering}",
 			ChessBoardView.CarryStatus(),
+			ChessBoardView.DropStatus(),
 			LobbyPlayer.Local?.VrHandStatus() ?? "vrhands: no player",
 			$"yaw head {Input.VR.Head.Rotation.Angles().yaw:0}  body {VrRig.BodyYaw:0}",
 			$"move {Fmt( Input.AnalogMove )}  look {Input.AnalogLook.yaw:0.00}",

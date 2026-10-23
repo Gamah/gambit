@@ -356,8 +356,20 @@ picker exactly as a click does, and a premove carry queens silently for the same
 and never changed mid-carry (`ChessBoardView.Carrier`):
 
 - A grip closed within `GrabRadius` of one of your pieces picks up the nearest one, **wherever the
-  beam is aimed** — a player reaching for a pawn is not also pointing at it — and the piece sits
-  in that hand (`CarryOffset`) until it is let go.
+  beam is aimed** — a player reaching for a pawn is not also pointing at it — and the piece
+  follows that hand, turning with the wrist, until it is let go.
+- **Hand motion is MAGNIFIED onto the board** (`ReachGainX`, `gambit_vr_reach`). A real arm does
+  not cover this board: at full stretch a seated player gets about as far as the 5th rank, and a
+  game is played to the far back rank from the first move. The gain is applied to the hand's
+  station-local offset from the centre line of the seat's own first rank — the one line the
+  player is always sitting at, so the gain never moves the piece they just picked up — and the
+  default puts the opponent's back rank inside about the 4th rank's worth of real reach. Across
+  the board the gain is 1: the board is 39 units wide and a sideways gain multiplies tracking
+  jitter into whole files. Height is never scaled; it is read against the bands, which are facts
+  about the room.
+- **Nothing magnifies the ARM.** The published wrist pose stays the real one, so other clients see
+  the player's own reach and the piece floats out past it. The amplified point is where the hand
+  is on the BOARD, not where the body claims to be.
 - **A held piece lands on the square under the hand while the hand is low over the board
   (`PlaceBand`), and on the square the hand is POINTING at while it is raised.** Reaching and
   pointing are two motions and a hand holding a piece is doing one of them; the beam comes off
@@ -394,6 +406,11 @@ and never changed mid-carry (`ChessBoardView.Carrier`):
   hopping out of mid-air.
 - **A frame the grip owns is not a click frame.** Otherwise a trigger pulled mid-carry selects the
   square under the piece being carried.
+- **A drop says what it did** (`ChessBoardView.DropStatus`, on the state board and in the log). A
+  refused drop and a release that never arrived are identical from inside a headset — the piece is
+  back on its square either way, with nothing said — and so are "that square is not a legal
+  target", "dropped on its own square" and "the controller refused the move". The verdict names
+  which.
 - **The carry belongs to the hand that closed first** and passes to the other if that one is still
   holding when it opens: one gesture, two hands. The grip has hysteresis for the same reason —
   one that drifted around a single threshold mid-board would drop the piece and pick it up again.

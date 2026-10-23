@@ -843,6 +843,7 @@ public sealed class ChessBoardView : Component
 	int _carryFrom = -1;
 	GameObject _carryPiece;
 	Vector3 _carryHome;
+	Rotation _carryHomeRot;
 
 	/// <summary>How far above the board a BEAM-carried piece rides, in cells. High enough to read
 	/// as lifted over the pieces it passes, low enough that the hand holding it is still over the
@@ -887,11 +888,48 @@ public sealed class ChessBoardView : Component
 	/// the raised one is aimed and the hovered square showing what either will land on.</para></summary>
 	public static float PlaceBand { get; private set; } = 12f;
 
-	/// <summary>Where a held piece sits in the hand's own frame. The piece's origin is its BASE,
-	/// so zero stands it on the grip point; <b>[GUESS]</b> until it has been looked at in a
-	/// headset, which is also true of the grip pose it is measured from
-	/// (<c>gambit_vr_carry_offset</c>).</summary>
-	public static Vector3 CarryOffset { get; private set; } = new( 0f, 0f, -2f );
+	/// <summary>A nudge on where a held piece sits, in station-local units, on top of the mapped
+	/// hand point (<c>gambit_vr_carry_offset</c>). The piece's origin is its BASE.</summary>
+	public static Vector3 CarryOffset { get; private set; } = new( 0f, 0f, 2f );
+
+	/// <summary>How much board a hand covers: the gain on its station-local offset from the
+	/// centre line of the seat's OWN first rank, along the board (x) and across it (y).
+	///
+	/// <para><b>A real arm does not cover this board.</b> At full stretch a seated player gets
+	/// about as far as the 5th rank, and the far back rank is where a game is played from the
+	/// first move — so hand motion is magnified rather than mapped 1:1, about a line the player
+	/// never has to reach for. The default puts the opponent's back rank at about the 4th rank's
+	/// worth of real reach, which is the comfortable stretch the owner measured.</para>
+	///
+	/// <para>Across the board the default is 1: the board is only 39 units wide and a sideways
+	/// gain multiplies tracking jitter into whole files.</para>
+	///
+	/// <para><b>Nothing magnifies the ARM</b> — the published wrist pose stays the real one, so
+	/// other clients see the player's own reach and the piece floats out past it (`docs/vr.md`).
+	/// The amplified point is where the HAND is on the board, not where the body claims to be.</para></summary>
+	public static float ReachGainX { get; private set; } = 2.3f;
+	public static float ReachGainY { get; private set; } = 1f;
+
+	/// <summary>How a held piece is turned relative to the wrist that holds it. Zero means the
+	/// piece takes the controller's own rotation.</summary>
+	public static Angles CarryAngles { get; private set; } = Angles.Zero;
+
+	/// <summary>How much board a hand covers: the gain along the board and across it.</summary>
+	[ConCmd( "gambit_vr_reach" )]
+	public static void SetReach( float alongBoard, float acrossBoard )
+	{
+		ReachGainX = alongBoard;
+		ReachGainY = acrossBoard;
+		Log.Info( $"[Gambit] vr: reach gain x{alongBoard} y{acrossBoard}" );
+	}
+
+	/// <summary>How a held piece is turned relative to the wrist.</summary>
+	[ConCmd( "gambit_vr_carry_rot" )]
+	public static void SetCarryAngles( float pitch, float yaw, float roll )
+	{
+		CarryAngles = new Angles( pitch, yaw, roll );
+		Log.Info( $"[Gambit] vr: carry angles {CarryAngles}" );
+	}
 
 	/// <summary>The VR grab's reach: how near the hand has to be to pick a piece up, how far above
 	/// the board it still counts as reaching for one, and how low it has to come to place a piece
@@ -916,12 +954,30 @@ public sealed class ChessBoardView : Component
 
 		if ( view._carryFrom < 0 )
 			return $"carry: none  near={NameOf( view.NearestOwnPiece() )?.ToUpperInvariant() ?? "-"}"
-				+ $"  hand={view.HandAbove()?.ToString( "0.0" ) ?? "away"}";
+				+ $"  hand={view.HandAbove()?.ToString( "0.0" ) ?? "away"}"
+				+ $"  reach=x{ReachGainX:0.0}";
 
 		return $"carry: {NameOf( view._carryFrom )?.ToUpperInvariant()} by {view._carrier}"
 			+ $"  hand={view.HandAbove()?.ToString( "0.0" ) ?? "away"}"
 			+ $"  target={NameOf( view._hoverSquare )?.ToUpperInvariant() ?? "-"}"
 			+ $"  legal={view._targets.Count}";
+	}
+
+	/// <summary>The last drop's verdict, for the state board.</summary>
+	public static string DropStatus() => $"drop: {_verdict} ({_verdictAt:0}s ago)";
+
+	/// <summary>What the last drop did, and when. <b>The whole point is that a refused drop and a
+	/// release that never arrived look identical from inside a headset</b> — the piece is back on
+	/// its square either way, with nothing said. This is read on the state board and logged once
+	/// per drop, so it survives the headset coming off.</summary>
+	static string _verdict = "none yet";
+	static RealTimeSince _verdictAt;
+
+	void Verdict( string what )
+	{
+		_verdict = what;
+		_verdictAt = 0f;
+		Log.Info( $"[Gambit] vr: drop {what}" );
 	}
 
 	/// <summary>How far the carrying hand is above the board surface, or null when there is no
@@ -984,6 +1040,7 @@ public sealed class ChessBoardView : Component
 			_carryFrom = pick;
 			_carryPiece = piece;
 			_carryHome = piece.LocalPosition;
+			_carryHomeRot = piece.LocalRotation;
 			_carrier = carrier;
 			Select( SquareName( pick ), premoving );
 			_hoverSquare = pick;
@@ -1033,17 +1090,24 @@ public sealed class ChessBoardView : Component
 	/// the board, so a piece is never held somewhere a drop could not land it.</summary>
 	void Carry( int target )
 	{
-		if ( _carrier == Carrier.Hand && VrInput.GripTransform is { } pose )
+		var ring = ChessRing.Instance;
+
+		// A hand carry holds the piece at the hand's MAPPED point — amplified along the board, so
+		// the piece goes where the hand is pointing on the board rather than where the hand is in
+		// the room — and turns it with the wrist, because a piece that ignored the hand holding
+		// it would not read as held at all.
+		if ( _carrier == Carrier.Hand && ring != null && HandLocal( ring, GrabBand ) is { } local
+			&& VrInput.GripTransform is { } pose )
 		{
-			// The piece is where the hand is, which is the point: the player is holding it, and
-			// anything else is a piece that disagrees with the hand they can see.
-			_carryPiece.WorldPosition = pose.Position + pose.Rotation * CarryOffset;
+			_carryPiece.LocalPosition = local + CarryOffset;
+			_carryPiece.WorldRotation = pose.Rotation * Rotation.From( CarryAngles );
 			return;
 		}
 
-		float cell = ChessRing.Instance?.CellWorldSize ?? 5f;
+		float cell = ring?.CellWorldSize ?? 5f;
 		var over = SquareLocal( target >= 0 ? target : _carryFrom );
 		_carryPiece.LocalPosition = over + Vector3.Up * cell * CarryLift;
+		_carryPiece.LocalRotation = _carryHomeRot;
 	}
 
 	/// <summary>The own piece nearest the carrying hand, or -1 when the hand is not at the board
@@ -1096,10 +1160,32 @@ public sealed class ChessBoardView : Component
 		if ( VrInput.GripTransform is not { } pose ) return null;
 
 		var local = Station.GameObject.WorldTransform.PointToLocal( pose.Position );
+
+		// The BAND is checked on the real height, before any gain: it answers "is this hand at
+		// the board", which is a fact about the room.
 		float above = local.z - ring.BoardSurfaceZ;
 		if ( above < -4f || above > band ) return null;
 
-		return local;
+		return Reach( ring, local );
+	}
+
+	/// <summary>Magnify a station-local hand point onto the board: <see cref="ReachGainX"/> along
+	/// the board and <see cref="ReachGainY"/> across it, about the centre line of the seat's own
+	/// first rank — the one line the player is always sitting at, so the gain never moves the
+	/// piece they just picked up.
+	///
+	/// <para>Height is left alone. It is read against the bands, which are about where the hand
+	/// is in the room rather than where it is on the board.</para></summary>
+	static Vector3 Reach( ChessRing ring, Vector3 local )
+	{
+		float cell = ring.CellWorldSize;
+		float side = ChessStation.ActiveSeat == ChessSeat.White ? -1f : 1f;
+		float anchorX = side * 3.5f * cell;
+
+		return new Vector3(
+			anchorX + ( local.x - anchorX ) * ReachGainX,
+			local.y * ReachGainY,
+			local.z );
 	}
 
 	/// <summary>Put the carried piece down. The piece goes home first and always — the move it
@@ -1110,8 +1196,16 @@ public sealed class ChessBoardView : Component
 		string fromName = SquareName( from );
 		CancelCarry();
 
-		if ( square < 0 || square == from )
+		if ( square < 0 )
 		{
+			Verdict( $"{fromName}→nowhere: hand off the board and beam off it too" );
+			ClearSelection();
+			return;
+		}
+
+		if ( square == from )
+		{
+			Verdict( $"{fromName}→{fromName}: dropped on its own square" );
 			ClearSelection();
 			return;
 		}
@@ -1119,6 +1213,7 @@ public sealed class ChessBoardView : Component
 		string to = SquareName( square );
 		if ( !_targets.Contains( to ) )
 		{
+			Verdict( $"{fromName}{to} not a legal target ({_targets.Count} were)" );
 			// Dropped somewhere it may not go. The piece is already home; nothing else happens,
 			// because a refused drop that re-selected would leave a selection the player did not
 			// ask for under a hand that has let go.
@@ -1133,16 +1228,22 @@ public sealed class ChessBoardView : Component
 			// your turn to touch, and a premoved pawn may never reach the last rank at all.
 			string promo = game.IsPromotion( fromName, to ) ? "q" : "";
 			source.SetPremove( fromName + to + promo );
+			Verdict( $"{fromName}{to} premoved" );
 		}
 		else if ( game.IsPromotion( fromName, to ) )
 		{
 			// Park until the picker calls ChoosePromotion — the same park the click path uses,
 			// and VrHud shows the picker's quad for exactly this.
 			PendingPromotion = ( fromName, to );
+			Verdict( $"{fromName}{to} promotion picker" );
 		}
 		else
 		{
-			source.TryMakeMove( fromName + to );
+			// The controller's own answer, not ours: a move it refuses is a different fault from
+			// a square this view would not offer, and the two have looked identical from inside a
+			// headset for three sessions.
+			bool made = source.TryMakeMove( fromName + to );
+			Verdict( $"{fromName}{to} {( made ? "PLAYED" : "refused by controller" )}" );
 		}
 
 		ClearSelection();
@@ -1154,7 +1255,12 @@ public sealed class ChessBoardView : Component
 	{
 		if ( _carryFrom < 0 ) return;
 
-		if ( _carryPiece.IsValid() ) _carryPiece.LocalPosition = _carryHome;
+		if ( _carryPiece.IsValid() )
+		{
+			_carryPiece.LocalPosition = _carryHome;
+			_carryPiece.LocalRotation = _carryHomeRot;
+		}
+
 		_carryFrom = -1;
 		_carryPiece = null;
 	}
