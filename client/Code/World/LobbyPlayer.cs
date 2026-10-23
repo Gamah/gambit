@@ -2381,10 +2381,12 @@ public sealed class LobbyPlayer : Component
 	/// held by a real arm at a real distance from a real shoulder: clamping it would peel the
 	/// hand off the device the player is looking at, which is worse than a stretched arm.</para>
 	///
-	/// <para><b>Fingers are ONE blend for both hands.</b> <c>holdtype_pose_hand</c> is a single
-	/// parameter and <c>holdtype_handedness</c> an enum of 2H/RH/LH, so a grip held in one hand
-	/// closes whichever hands the handedness names — the graph has no per-hand finger channel to
-	/// give it (citizen.vanmgrph). Both tracked reads as 2H.</para>
+	/// <para><b>Fingers are ONE blend for both hands, and handedness stays RIGHT.</b>
+	/// <c>holdtype_pose_hand</c> is a single parameter and <c>holdtype_handedness</c> an enum of
+	/// 2H/RH/LH, so a grip in either hand closes both — the graph has no per-hand finger channel
+	/// (citizen.vanmgrph). RH is pinned because it is the branch every working seated gesture has
+	/// been written under; 2H is a different pose branch and may not carry the IK chains at all,
+	/// which looks exactly like IK that was never asked for.</para>
 	/// </summary>
 	public void ApplyVrHandIk( Transform? left, Transform? right )
 	{
@@ -2404,15 +2406,54 @@ public sealed class LobbyPlayer : Component
 		if ( right is { } rt ) r.SetIk( IkRight, rt );
 		else r.ClearIk( IkRight );
 
-		int handedness = left != null && right != null ? HandednessBoth
-			: right != null ? HandednessRight
-			: HandednessLeft;
+		_vrAskLeft = left?.Position;
+		_vrAskRight = right?.Position;
 
+		// RIGHT, whatever is tracked. holdtype_handedness picks which arm the holdtype pose
+		// shapes, and RH is the one value this graph is known to honour an IK chain under — it
+		// is what every working seated gesture has ever been written with. 2H is a different
+		// branch of the same pose, and a branch the IK may not be wired through at all; a hand
+		// that follows nothing looks exactly like IK that was never asked for.
 		r.Set( "holdtype", HoldTypeItem );
-		r.Set( "holdtype_handedness", handedness );
+		r.Set( "holdtype_handedness", HandednessRight );
 		r.Set( "holdtype_pose_hand", VrInput.GripHeld
 			? Gambit.Chess.TerryPose.FingersGrasping
 			: Gambit.Chess.TerryPose.FingersHovering );
+	}
+
+	/// <summary>Where VR last asked each wrist to be, in world space. Kept for
+	/// <see cref="VrIkStatus"/> and nothing else.</summary>
+	Vector3? _vrAskLeft;
+	Vector3? _vrAskRight;
+
+	/// <summary>How far each wrist ended up from where VR asked it to go, for the VR state board.
+	///
+	/// <para><b>This is the line that tells an unwired IK chain from an untracked controller.</b>
+	/// A citizen whose arms sit in the seated idle pose while the controllers move looks the same
+	/// either way from inside a headset: nothing follows. A small error means the chain took the
+	/// ask; an error in the tens of units means the write went nowhere, and the chain name or the
+	/// holdtype branch is why. <c>gambit_terry</c> prints the same comparison for the gesture
+	/// hand, and this is that instrument pointed at the VR one.</para>
+	///
+	/// <para>The bone read is the ANIMATION pose, which is what the gesture path measures too;
+	/// the number is a magnitude to read, not a residual to tune against.</para></summary>
+	public string VrIkStatus()
+	{
+		if ( !VrHandsDriving ) return "ik: not driving";
+
+		var r = _bodyRenderer;
+		if ( r == null ) return "ik: no body";
+
+		return $"ik L {BoneMiss( r, "hand_L", _vrAskLeft )} R {BoneMiss( r, "hand_R", _vrAskRight )}";
+	}
+
+	static string BoneMiss( SkinnedModelRenderer r, string bone, Vector3? ask )
+	{
+		if ( ask is not { } target ) return "none";
+		if ( r.Model?.Bones.GetBone( bone ) is not { } b ) return "NO BONE";
+		if ( !r.TryGetBoneTransformAnimation( b, out var tx ) ) return "NO POSE";
+
+		return $"{( tx.Position - target ).Length:0.0}";
 	}
 
 	/// <summary>Give the arms back to the animator. Idempotent, and safe when VR never drove
@@ -2421,6 +2462,8 @@ public sealed class LobbyPlayer : Component
 	public void ClearVrHandIk()
 	{
 		VrHandsDriving = false;
+		_vrAskLeft = null;
+		_vrAskRight = null;
 
 		var r = _bodyRenderer;
 		if ( r == null ) return;
@@ -2490,9 +2533,7 @@ public sealed class LobbyPlayer : Component
 	/// Handedness: 2H, RH, LH — so Right is 1.</summary>
 	const int HoldTypeNone = 0;
 	const int HoldTypeItem = 4;
-	const int HandednessBoth = 0;
 	const int HandednessRight = 1;
-	const int HandednessLeft = 2;
 
 	/// <summary>The animgraph's IK CHAIN name (ik.hand_right.*) — not the bone name, which
 	/// is hand_R. Two different vocabularies for one arm.</summary>

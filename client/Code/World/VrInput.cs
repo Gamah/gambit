@@ -55,23 +55,41 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	/// here left a band where the square moved and the button under the beam did not.</summary>
 	const float TriggerPress = 0.75f;
 
-	/// <summary>How far the grip travels before it counts as a grab, and how far it has to come
-	/// back to be a release. Softer than the trigger, in both senses: a grip is held for the
-	/// length of a carry, so a hand that relaxes mid-board must not drop the piece — and what a
-	/// runtime reports for a squeeze is not standard. Both shipped profiles bind
-	/// <c>/input/squeeze/value</c>, which on an Index is a force reading that a comfortable grab
-	/// does not take anywhere near 1. <c>gambit_vr_grip_press</c> is the way to find out from
-	/// inside the headset; the state board prints the raw value beside it.</summary>
-	public static float GripPress { get; private set; } = 0.4f;
-	static float GripRelease => GripPress * 0.6f;
+	/// <summary>How much HARDER than resting the grip has to be squeezed to grab, and how far
+	/// back toward resting it has to come to let go.
+	///
+	/// <para><b>Both are measured against a calibrated rest, not against zero</b>, because a
+	/// squeeze reading is not a standard quantity. Both shipped profiles bind
+	/// <c>/input/squeeze/value</c>; on an Index that is the capacitive grip, which reports a real
+	/// value for a hand that is merely holding the controller — fingers have to be round it to
+	/// hold it at all. Against absolute thresholds that baseline is a grip that can be pressed
+	/// and then never released: the value falls back to resting, which is still above the release
+	/// line, so the piece never leaves the hand. That is exactly a carry that starts and cannot
+	/// be dropped.</para>
+	///
+	/// <para>So <see cref="GripRest"/> tracks what the hand reads while NOT gripping, and these
+	/// two are deltas on top of it. The band between them is the hysteresis.</para></summary>
+	public static float GripPressDelta { get; private set; } = 0.3f;
+	public static float GripReleaseDelta { get; private set; } = 0.12f;
 
-	/// <summary>How hard the grip has to be squeezed to carry a piece. The release is 60% of it,
-	/// so one number keeps the hysteresis.</summary>
+	/// <summary>What each hand reads while it is not gripping — the controller merely held. Frozen
+	/// while that hand is gripping, so a long carry cannot calibrate its own squeeze away and
+	/// release itself; it follows the resting reading with about a half-second time constant
+	/// otherwise, so a runtime whose baseline moves is followed rather than fought.</summary>
+	public static float GripRest( Hand hand ) => hand == Hand.Left ? _leftRest : _rightRest;
+	static float _leftRest;
+	static float _rightRest;
+
+	/// <summary>How much harder than resting a squeeze has to be to grab a piece, and how far
+	/// back it has to come to let go. Both are deltas on the calibrated rest, which the state
+	/// board prints beside the raw value.</summary>
 	[ConCmd( "gambit_vr_grip_press" )]
-	public static void SetGripPress( float value )
+	public static void SetGripPress( float press, float release )
 	{
-		GripPress = value;
-		Log.Info( $"[Gambit] vr: grip press {value} (release {GripRelease:0.00})" );
+		GripPressDelta = press;
+		GripReleaseDelta = release;
+		Log.Info( $"[Gambit] vr: grip press +{press} release +{release} over rest"
+			+ $" (L {_leftRest:0.00} R {_rightRest:0.00})" );
 	}
 
 	/// <summary>Stick travel below this is centre: it writes nothing, which is what leaves the
@@ -170,10 +188,10 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		_leftTrigger = leftTrigger;
 		_rightTrigger = rightTrigger;
 
-		// Grip: hysteresis rather than one threshold, so a grip that drifts around the press
-		// point during a carry doesn't drop the piece and pick it up again.
-		bool leftGrip = left.Grip.Value >= ( _leftGrip ? GripRelease : GripPress );
-		bool rightGrip = right.Grip.Value >= ( _rightGrip ? GripRelease : GripPress );
+		// Grip, against a calibrated rest rather than an absolute threshold — see GripPressDelta
+		// for why an absolute one is a carry that can never be dropped.
+		bool leftGrip = Squeezed( left.Grip.Value, _leftGrip, ref _leftRest );
+		bool rightGrip = Squeezed( right.Grip.Value, _rightGrip, ref _rightRest );
 		bool gripPulled = ( leftGrip && !_leftGrip ) || ( rightGrip && !_rightGrip );
 		bool gripDropped = ( !leftGrip && _leftGrip ) || ( !rightGrip && _rightGrip );
 
@@ -259,6 +277,22 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 
 	static bool Pressed( DigitalInput d ) => d.IsPressed && !d.WasPressed;
 
+	/// <summary>Is this hand gripping? <paramref name="rest"/> is calibrated here, which is the
+	/// whole point of doing it in one place: it may only move while the hand is NOT gripping, or
+	/// a held squeeze slowly becomes the new resting value and the hand opens by itself.</summary>
+	static bool Squeezed( float value, bool held, ref float rest )
+	{
+		if ( !held )
+		{
+			// Downward instantly — a lower reading IS a resting reading. Upward on a ~0.5s
+			// constant, so a baseline that climbs is followed without a twitch counting as one.
+			rest = value < rest ? value : MathX.Lerp( rest, value, 1f - MathF.Exp( -2f * Time.Delta ) );
+			return value >= rest + GripPressDelta;
+		}
+
+		return value > rest + GripReleaseDelta;
+	}
+
 	/// <summary>Dump <see cref="Status"/> once a second for this many seconds, so a controller that
 	/// only misbehaves while worn leaves a trail in the log to read afterwards. Set a controller
 	/// down to read the console and it goes to sleep, which reads as "no input" — the one answer
@@ -340,9 +374,11 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 			$"stick L {Fmt( left.Joystick.Value )}  R {Fmt( right.Joystick.Value )}",
 			$"btn L a{Bit( left.ButtonA )} b{Bit( left.ButtonB )}"
 				+ $"  R a{Bit( right.ButtonA )} b{Bit( right.ButtonB )}",
-			$"grip L {left.Grip.Value:0.00} R {right.Grip.Value:0.00} press {GripPress:0.00}"
-				+ $"  held={GripHeld} carry={ChessBoardView.CarryName() ?? "none"}"
-				+ $"  panel={VrHands.PointerHovering}",
+			$"grip L {left.Grip.Value:0.00}/{_leftRest:0.00} R {right.Grip.Value:0.00}/{_rightRest:0.00}"
+				+ $" +{GripPressDelta:0.00}/-{GripReleaseDelta:0.00}"
+				+ $"  held={GripHeld} panel={VrHands.PointerHovering}",
+			ChessBoardView.CarryStatus(),
+			LobbyPlayer.Local?.VrIkStatus() ?? "ik: no player",
 			$"yaw head {Input.VR.Head.Rotation.Angles().yaw:0}  body {VrRig.BodyYaw:0}",
 			$"move {Fmt( Input.AnalogMove )}  look {Input.AnalogLook.yaw:0.00}",
 			$"head {Fmt( Input.VR.Head.Position )}  anchor {Fmt( Input.VR.Anchor.Position )}",

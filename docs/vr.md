@@ -295,6 +295,14 @@ and its beam are a separate object and stay either way: they are what the player
   sit — the controller is disabled — so the tag outlives the decision. With the seated trim
   excluding `viewer` on the camera, the whole body goes, arms included: a seated player with no
   hands, and nothing in the log. `TrimSeatedAvatar` clears it every seated frame.
+- **Handedness stays RH even with two controllers tracked.** `holdtype_handedness` picks which
+  branch of the holdtype pose shapes the arms, and RH is the one every working seated gesture has
+  been written under; 2H is a different branch and may not carry the IK chains at all, which from
+  inside a headset looks exactly like IK that was never asked for.
+- **`VrIkStatus` on the state board is what tells those two apart**: the distance from where VR
+  asked a wrist to go to where the bone ended up. Small means the chain took the ask; tens of
+  units means the write went nowhere, and `NO BONE` means the name is wrong. It is
+  `gambit_terry`'s own ask-versus-achieved comparison pointed at the VR hand.
 - **`gambit_vr_grips` brings the boxes back** on top of the citizen's hands. The alternative to a
   wrong hand must not be no hand, and the state board says `HANDS: IK` while the arms are
   driving.
@@ -363,8 +371,13 @@ and never changed mid-carry (`ChessBoardView.Carrier`):
 
 - A grip closed within `GrabRadius` of one of your pieces picks up the nearest one, **wherever the
   beam is aimed** — a player reaching for a pawn is not also pointing at it — and the piece sits
-  in that hand (`CarryOffset`) until it is let go. Its drop square is the square under the hand,
-  painted as the hovered square so the answer can be read before the release commits it.
+  in that hand (`CarryOffset`) until it is let go.
+- **A held piece lands on the square under the hand while the hand is low over the board
+  (`PlaceBand`), and on the square the hand is POINTING at while it is raised.** Reaching and
+  pointing are two motions and a hand holding a piece is doing one of them; the beam comes off
+  the carrying hand (`VrInput.Pointing` follows the grip), so the line the player sees is the line
+  that decides it, and the hovered highlight says what either zone will land on before the
+  release commits it.
 - A grip closed with the hand away from the board falls back to the square under the beam, and
   that piece rides the pointed square lifted clear of the board. Not a nicety: the board is about
   39 units across and the far rank some 60 from a seated shoulder, so nothing reaches it, and a
@@ -375,10 +388,15 @@ and never changed mid-carry (`ChessBoardView.Carrier`):
   pawn. Below the surface is the tabletop, far above it is a hand up by the face — where a
   controller sits when it is pointing rather than reaching. `gambit_vr_grab <radius> <band>` and
   `gambit_vr_carry_offset x y z` dial both.
-- **What a runtime reports for a squeeze is not standard.** Both shipped profiles bind
-  `/input/squeeze/value`, which on an Index is a force reading a comfortable grab does not take
-  anywhere near 1. `gambit_vr_grip_press` sets the threshold (release is 60% of it) and the state
-  board prints the raw value beside it.
+- **The grip is measured against a calibrated REST, never against zero.** Both shipped profiles
+  bind `/input/squeeze/value`; on an Index that is the capacitive grip, which reads a real value
+  for a hand merely holding the controller — fingers have to be round it to hold it at all.
+  Against absolute thresholds that baseline is a grip that presses and then never releases: the
+  value falls back to resting, which is still above the release line, and the piece never leaves
+  the hand. `VrInput.GripRest` follows what each hand reads while NOT gripping (frozen while it
+  is, or a long carry calibrates its own squeeze away and lets go by itself), and
+  `gambit_vr_grip_press <press> <release>` are deltas on top of it. The state board prints value,
+  rest and both deltas.
 
 - **The piece is only ever moved, never re-parented or re-authored.** Every drop puts it back on
   the square it was lifted from first, and the FEN diff decides where it really goes — so a
