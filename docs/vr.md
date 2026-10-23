@@ -289,6 +289,15 @@ and its beam are a separate object and stay either way: they are what the player
 - **`gambit_vr_hand_offset` and `gambit_vr_hand_rot` are `[GUESS]` until dialled in.** A runtime's
   grip pose is defined against the device, not against a citizen's wrist bone, and no two headsets
   have to agree.
+- **A seated body must have the engine's `viewer` tag CLEARED off it.**
+  `PlayerController.Animation` sets that tag on the body GameObject in first person (and
+  whenever the camera is within 20 units, whatever the mode), and stops running the moment we
+  sit — the controller is disabled — so the tag outlives the decision. With the seated trim
+  excluding `viewer` on the camera, the whole body goes, arms included: a seated player with no
+  hands, and nothing in the log. `TrimSeatedAvatar` clears it every seated frame.
+- **`gambit_vr_grips` brings the boxes back** on top of the citizen's hands. The alternative to a
+  wrong hand must not be no hand, and the state board says `HANDS: IK` while the arms are
+  driving.
 - **The body is trimmed, not hidden** (`gambit_vr_body` goes back to hiding it): the head bodygroup
   and our cosmetics come out of our own camera, which is the same trim a desktop seated player
   gets. Roaming is unchanged — the engine draws none of our own body to us there, which is why the

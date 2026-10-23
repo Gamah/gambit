@@ -41,6 +41,19 @@ public sealed class VrHands : Component
 {
 	public static VrHands Instance { get; private set; }
 
+	/// <summary>Draw the primitive grips even while the citizen's own hands are on the
+	/// controllers (<c>gambit_vr_grips</c>). Off: a box inside the palm is a second answer to
+	/// where the hand is.</summary>
+	public static bool ForceGrips { get; private set; }
+
+	/// <summary>Bring the primitive grips back on top of the citizen's hands.</summary>
+	[ConCmd( "gambit_vr_grips" )]
+	public static void ToggleGrips()
+	{
+		ForceGrips = !ForceGrips;
+		Log.Info( $"[Gambit] vr: box grips {(ForceGrips ? "FORCED ON" : "off while IK hands drive")}" );
+	}
+
 	/// <summary>How far the beam reaches when it hits nothing, in world units.</summary>
 	[Property] public float Reach { get; set; } = 160f;
 
@@ -230,7 +243,10 @@ public sealed class VrHands : Component
 		// are on the controllers (LobbyPlayer.ApplyVrHandIk) and a box inside the palm is a
 		// second answer to where the hand is. The pointer and its beam are a separate object and
 		// stay either way — they are what the player aims with.
-		bool grips = !LobbyPlayer.VrHandsDriving;
+		// ForceGrips is the way back from inside the headset: if the citizen's arms are not where
+		// its hands should be — an IK chain that didn't take, a wrist offset still a guess — the
+		// alternative to a wrong hand must not be NO hand.
+		bool grips = ForceGrips || !LobbyPlayer.VrHandsDriving;
 		PlaceHand( _left, left.Transform, left.Active && grips );
 		PlaceHand( _right, right.Transform, right.Active && grips );
 

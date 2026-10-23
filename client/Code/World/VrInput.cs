@@ -238,6 +238,11 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	/// ordered so the first failure is the one named.</summary>
 	public static string HandsVerdict()
 	{
+		// The citizen's own arms are the hands now, and the boxes below are hidden on purpose:
+		// every check after this one is about a box, so reporting on them would answer a
+		// question nobody is asking.
+		if ( LobbyPlayer.VrHandsDriving && !VrHands.ForceGrips ) return "HANDS: IK";
+
 		if ( VrHands.Instance == null ) return "HANDS: NONE";
 		if ( VrHands.LastError != null ) return "HANDS: THREW";
 		if ( !VrHands.Built ) return "HANDS: NO OBJS";

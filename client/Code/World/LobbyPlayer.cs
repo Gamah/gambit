@@ -1183,6 +1183,19 @@ public sealed class LobbyPlayer : Component
 		if ( cam != null && !cam.RenderExcludeTags.Has( ViewerTag ) )
 			cam.RenderExcludeTags.Add( ViewerTag );
 
+		// THE BODY MUST NOT CARRY THAT TAG ITSELF, and clearing it is not housekeeping.
+		// PlayerController.Animation sets "viewer" on the body GameObject whenever it is in
+		// first person — and whenever the camera is within 20 units, whatever the mode — then
+		// stops running the moment we sit, because the controller is disabled. So the tag
+		// outlives the decision that set it, and with the camera excluding it above, the WHOLE
+		// body goes: head, torso and the arms that play the moves. In a headset that is a seated
+		// player with no hands, which is the failure that looks like no failure at all.
+		//
+		// Our own doing is the only thing this can be fighting: Disengage re-enables the
+		// controller, which re-tags on its next frame.
+		var bodyGo = _bodyRenderer?.GameObject;
+		if ( bodyGo.IsValid() ) bodyGo.Tags.Set( ViewerTag, false );
+
 		// Cosmetics: created LOCALLY by DressFromAvatar's ApplyAsync on each client, so
 		// they are in nobody's network snapshot and tagging them cannot leak. Prefer them
 		// for exactly that reason — see the bodygroup below, which does not have this
