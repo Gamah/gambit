@@ -225,8 +225,14 @@ public sealed class VrHands : Component
 
 		// A controller that stopped reporting holds its last pose, and a grip left floating in the
 		// room is worse than no grip: it says "tracking" when nothing is.
-		PlaceHand( _left, left.Transform, left.Active );
-		PlaceHand( _right, right.Transform, right.Active );
+		//
+		// And a grip is only drawn while there is no HAND there: seated, the citizen's own arms
+		// are on the controllers (LobbyPlayer.ApplyVrHandIk) and a box inside the palm is a
+		// second answer to where the hand is. The pointer and its beam are a separate object and
+		// stay either way — they are what the player aims with.
+		bool grips = !LobbyPlayer.VrHandsDriving;
+		PlaceHand( _left, left.Transform, left.Active && grips );
+		PlaceHand( _right, right.Transform, right.Active && grips );
 
 		PlacePointer();
 
@@ -235,12 +241,12 @@ public sealed class VrHands : Component
 		LastError = null;
 	}
 
-	static void PlaceHand( GameObject go, Transform pose, bool tracked )
+	static void PlaceHand( GameObject go, Transform pose, bool show )
 	{
 		if ( !go.IsValid() ) return;
 
-		go.Enabled = tracked;
-		if ( !tracked ) return;
+		go.Enabled = show;
+		if ( !show ) return;
 
 		go.WorldPosition = pose.Position;
 		go.WorldRotation = pose.Rotation;

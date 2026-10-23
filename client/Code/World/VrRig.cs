@@ -193,6 +193,7 @@ public sealed class VrRig : Component
 		// every one of those poses is the anchor's: a component placing itself in its own update
 		// would read whichever anchor the frame happened to have when it ran.
 		VrHands.Instance?.Place();
+		DriveSeatedHands();
 		PlaceDebugBoard();
 
 		// The pointer is a physical object now. The cursor has to be out of the way for that: a
@@ -201,6 +202,80 @@ public sealed class VrRig : Component
 		// button appeared. Written every frame rather than once, because it is a global that the
 		// seat's aim toggle and the music screen both set for their own reasons.
 		Mouse.Visibility = MouseVisibility.Hidden;
+	}
+
+	/// <summary>Whether our own seated citizen is drawn to us in VR (<c>gambit_vr_body</c>).
+	///
+	/// <para><b>On, because the arms on the table are the hands that play the moves.</b> The
+	/// seat's eye anchor puts the headset where that citizen's head is, so its body is in the
+	/// right place to be ours; <see cref="LobbyPlayer"/> trims the head and our cosmetics out of
+	/// our own camera, exactly as it does for a desktop seated player. Off goes back to hiding
+	/// the lot, which is what to reach for if the seated rig looks wrong in the headset.</para></summary>
+	public static bool ShowBody { get; private set; } = true;
+
+	/// <summary>Where the citizen's wrist sits relative to the controller's GRIP pose, and how it
+	/// is turned there. <b>Both are [GUESS]</b> — a runtime's grip pose is defined against the
+	/// device, not against a citizen's wrist bone, and no two headsets have to agree about it.
+	/// <c>gambit_vr_hand_offset</c> and <c>gambit_vr_hand_rot</c> are how they get dialled in from
+	/// inside the headset, which is the only place the answer is visible.</summary>
+	static Vector3 HandOffset = Vector3.Zero;
+	static Angles HandAngles = Angles.Zero;
+
+	/// <summary>Put the seated citizen's own hands on the controllers.
+	///
+	/// <para><b>Seated only.</b> This replaces the seated gesture machine, which is seated-only
+	/// itself; while roaming the engine draws none of our own body to us (its <c>viewer</c> tag),
+	/// so there is nothing to hang a hand on and the primitive grips are the hands instead
+	/// (<see cref="VrHands"/>).</para>
+	///
+	/// <para>A controller that stops reporting hands its arm back to the animator rather than
+	/// holding the wrist where tracking stopped — the same rule the grips keep, for the same
+	/// reason: a hand left in mid-air claims tracking that isn't happening.</para></summary>
+	void DriveSeatedHands()
+	{
+		if ( !_player.IsValid() ) return;
+
+		if ( !ShowBody || ChessStation.Active == null )
+		{
+			if ( LobbyPlayer.VrHandsDriving ) _player.ClearVrHandIk();
+			return;
+		}
+
+		_player.ApplyVrHandIk( HandPose( Input.VR.LeftHand ), HandPose( Input.VR.RightHand ) );
+	}
+
+	static Transform? HandPose( VRController hand )
+	{
+		if ( !hand.Active ) return null;
+
+		var pose = hand.Transform;
+		return new Transform( pose.Position + pose.Rotation * HandOffset,
+			pose.Rotation * Rotation.From( HandAngles ) );
+	}
+
+	/// <summary>Draw our own seated body in the headset, or don't.</summary>
+	[ConCmd( "gambit_vr_body" )]
+	public static void ToggleBody()
+	{
+		ShowBody = !ShowBody;
+		Log.Info( $"[Gambit] vr: own seated body {(ShowBody ? "ON" : "OFF")}" );
+	}
+
+	/// <summary>Where the citizen's wrist sits relative to the controller grip, in the
+	/// controller's own frame (world units).</summary>
+	[ConCmd( "gambit_vr_hand_offset" )]
+	public static void SetHandOffset( float x, float y, float z )
+	{
+		HandOffset = new Vector3( x, y, z );
+		Log.Info( $"[Gambit] vr: hand offset {HandOffset}" );
+	}
+
+	/// <summary>How the citizen's wrist is turned relative to the controller grip.</summary>
+	[ConCmd( "gambit_vr_hand_rot" )]
+	public static void SetHandAngles( float pitch, float yaw, float roll )
+	{
+		HandAngles = new Angles( pitch, yaw, roll );
+		Log.Info( $"[Gambit] vr: hand angles {HandAngles}" );
 	}
 
 	void UpdateAnchor()

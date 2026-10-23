@@ -270,6 +270,30 @@ object's forward and reads the trigger as a click in VR — so the HUD quad and 
 needed nothing new. It has to be the **only** one in the scene, because the ray it feeds the UI is a
 global; `LobbyPlayer` leaves the camera's off in VR for that reason.
 
+**Seated, the hands are the citizen's own.** `LobbyPlayer.ApplyVrHandIk` puts both wrists on the
+controllers through the same `SetIk` the gesture machine uses, and the primitive grips below are
+hidden while it does — a box inside the palm is a second answer to where the hand is. The pointer
+and its beam are a separate object and stay either way: they are what the player aims with.
+
+- **The gesture machine keeps off our own arm while VR drives it** (`ApplyHandPose` early-returns
+  for the local player). It still runs for every other seat on this client — that is what moves
+  the opponent's hand over the opponent's piece — but two authorities on one arm fight frame by
+  frame.
+- **No reach clamp on a VR hand.** The gesture path pulls its ask inside the arm the solver really
+  has, because a square across the board is past where an arm goes. A controller is held by a real
+  arm at a real distance from a real shoulder, and peeling the hand off the device the player is
+  looking at is worse than a stretched arm.
+- **Fingers are one blend for both hands.** `holdtype_pose_hand` is a single parameter and
+  `holdtype_handedness` an enum of 2H/RH/LH, so a grip closes whichever hands the handedness names;
+  both tracked reads as 2H. The graph has no per-hand finger channel (citizen.vanmgrph).
+- **`gambit_vr_hand_offset` and `gambit_vr_hand_rot` are `[GUESS]` until dialled in.** A runtime's
+  grip pose is defined against the device, not against a citizen's wrist bone, and no two headsets
+  have to agree.
+- **The body is trimmed, not hidden** (`gambit_vr_body` goes back to hiding it): the head bodygroup
+  and our cosmetics come out of our own camera, which is the same trim a desktop seated player
+  gets. Roaming is unchanged — the engine draws none of our own body to us there, which is why the
+  grips are the hands while walking.
+
 **There is no device model to draw.** `VRController.GetModel` is a stub: it returns `Model.Cube`
 (`models/dev/box.vmdl`) for every device, and never null. Drawn unscaled at the grip pose that is a
 50-unit cube centred on the palm with the player's head inside it — every face a backface, so
@@ -354,14 +378,9 @@ the same thing the desktop's look aim relies on.
 
 ## Known gaps
 
-- No IK and no arms — the controller model floats where the device is. The intended end is the
-  citizen's own arm and fingers driven by IK, with the ray still cast from the controller transform
-  regardless of where the animation puts the hand.
 - Every hint still names a key: "Press E to sit", the info board's "E or Esc". The copy has no VR
   branch, so it describes controls the headset player is not using.
 - `LocalMusicSystem` builds its own `ScreenPanel` on a `NotSaved` object, which `VrHud` does not
   adopt — the music HUD is still flat in both eyes.
-- The seated body is hidden locally in VR (`LobbyPlayer.HideLocalAvatar`); remote players still
-  see the citizen sitting.
 - World scale is the desktop's (`ChessRing.SeatEyeHeight` is a `[GUESS]`), unchecked against a
   real eye height.

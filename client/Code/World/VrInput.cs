@@ -258,7 +258,8 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		{
 			HandsVerdict(),
 			$"vr={Sandbox.Game.IsRunningInVR} rig={VrRig.Active} system={Current != null}"
-				+ $" hud={VrHud.Instance != null}",
+				+ $" hud={VrHud.Instance != null} body={VrRig.ShowBody}"
+				+ $" ikhands={LobbyPlayer.VrHandsDriving}",
 			VrHands.Status(),
 			VrTableUi.Status(),
 		};
