@@ -56,10 +56,23 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	const float TriggerPress = 0.75f;
 
 	/// <summary>How far the grip travels before it counts as a grab, and how far it has to come
-	/// back to be a release. Softer than the trigger: a grip is held for the length of a carry,
-	/// and a hand that relaxes mid-board should not drop the piece.</summary>
-	const float GripPress = 0.6f;
-	const float GripRelease = 0.4f;
+	/// back to be a release. Softer than the trigger, in both senses: a grip is held for the
+	/// length of a carry, so a hand that relaxes mid-board must not drop the piece — and what a
+	/// runtime reports for a squeeze is not standard. Both shipped profiles bind
+	/// <c>/input/squeeze/value</c>, which on an Index is a force reading that a comfortable grab
+	/// does not take anywhere near 1. <c>gambit_vr_grip_press</c> is the way to find out from
+	/// inside the headset; the state board prints the raw value beside it.</summary>
+	public static float GripPress { get; private set; } = 0.4f;
+	static float GripRelease => GripPress * 0.6f;
+
+	/// <summary>How hard the grip has to be squeezed to carry a piece. The release is 60% of it,
+	/// so one number keeps the hysteresis.</summary>
+	[ConCmd( "gambit_vr_grip_press" )]
+	public static void SetGripPress( float value )
+	{
+		GripPress = value;
+		Log.Info( $"[Gambit] vr: grip press {value} (release {GripRelease:0.00})" );
+	}
 
 	/// <summary>Stick travel below this is centre: it writes nothing, which is what leaves the
 	/// desktop's own movement and look alone.</summary>
@@ -80,6 +93,21 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	public static bool GripPressed { get; private set; }
 	public static bool GripReleased { get; private set; }
 	public static bool GripHeld { get; private set; }
+
+	/// <summary>The GRIP pose of the hand doing the carrying — the palm, not the aim — in world
+	/// space, or null when neither grip is closed.
+	///
+	/// <para><b>It is the hand that closed first and keeps the carry.</b> A piece picked up by
+	/// one hand does not change hands because the other one squeezed, and if the carrying hand
+	/// lets go while the other is still holding, the carry passes rather than being dropped — one
+	/// gesture, two hands, which is what a player does without thinking about it.</para>
+	///
+	/// <para>The grip pose rather than the aim pose because this is where the hand IS:
+	/// <see cref="ChessBoardView"/> measures reach with it and holds the piece in it, and the
+	/// citizen's own wrist is driven to the same pose (<c>LobbyPlayer.ApplyVrHandIk</c>).</para></summary>
+	public static Transform? GripTransform { get; private set; }
+
+	Hand? _gripHand;
 
 	/// <summary>Seconds since either trigger was pulled, and how many pulls this session: with no
 	/// other feedback in the headset, "did that register at all" is the first question.</summary>
@@ -127,6 +155,8 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		{
 			AimRay = null;
 			GripPressed = GripReleased = GripHeld = false;
+			GripTransform = null;
+			_gripHand = null;
 			return;
 		}
 
@@ -151,6 +181,20 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		if ( rightGrip && !_rightGrip ) Pointing = Hand.Right;
 		_leftGrip = leftGrip;
 		_rightGrip = rightGrip;
+
+		// Which hand is carrying: the one that closed first, handed over if it opens while the
+		// other is still holding, and forgotten when both are open.
+		if ( !leftGrip && !rightGrip ) _gripHand = null;
+		else if ( _gripHand == null ) _gripHand = leftGrip ? Hand.Left : Hand.Right;
+		else if ( _gripHand == Hand.Left && !leftGrip ) _gripHand = Hand.Right;
+		else if ( _gripHand == Hand.Right && !rightGrip ) _gripHand = Hand.Left;
+
+		GripTransform = _gripHand switch
+		{
+			Hand.Left => left.Transform,
+			Hand.Right => right.Transform,
+			_ => null,
+		};
 
 		GripPressed = gripPulled;
 		// Released only when NEITHER hand is still holding: a piece handed from one hand to the
@@ -296,7 +340,7 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 			$"stick L {Fmt( left.Joystick.Value )}  R {Fmt( right.Joystick.Value )}",
 			$"btn L a{Bit( left.ButtonA )} b{Bit( left.ButtonB )}"
 				+ $"  R a{Bit( right.ButtonA )} b{Bit( right.ButtonB )}",
-			$"grip L {left.Grip.Value:0.00} R {right.Grip.Value:0.00}"
+			$"grip L {left.Grip.Value:0.00} R {right.Grip.Value:0.00} press {GripPress:0.00}"
 				+ $"  held={GripHeld} carry={ChessBoardView.CarryName() ?? "none"}"
 				+ $"  panel={VrHands.PointerHovering}",
 			$"yaw head {Input.VR.Head.Rotation.Angles().yaw:0}  body {VrRig.BodyYaw:0}",

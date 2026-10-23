@@ -358,6 +358,28 @@ square is one of them, and the move leaves through `IBoardGame.TryMakeMove`. The
 gesture — a lift, a carry, a release — and nothing about which moves exist. Promotion parks on the
 picker exactly as a click does, and a premove carry queens silently for the same reason.
 
+**Your hand if you can touch it, your beam if you cannot**, decided when the piece is picked up
+and never changed mid-carry (`ChessBoardView.Carrier`):
+
+- A grip closed within `GrabRadius` of one of your pieces picks up the nearest one, **wherever the
+  beam is aimed** — a player reaching for a pawn is not also pointing at it — and the piece sits
+  in that hand (`CarryOffset`) until it is let go. Its drop square is the square under the hand,
+  painted as the hovered square so the answer can be read before the release commits it.
+- A grip closed with the hand away from the board falls back to the square under the beam, and
+  that piece rides the pointed square lifted clear of the board. Not a nicety: the board is about
+  39 units across and the far rank some 60 from a seated shoulder, so nothing reaches it, and a
+  piece over there can only be moved by pointing. Swapping authority mid-carry would be worse than
+  either — a held piece landing where the player was looking, or a far piece yanked into their lap.
+- Reach is horizontal distance to the square's centre inside a height band (`GrabBand`), not a 3D
+  distance: a piece is 10 units tall, and a 3D radius would make a king easier to grab than a
+  pawn. Below the surface is the tabletop, far above it is a hand up by the face — where a
+  controller sits when it is pointing rather than reaching. `gambit_vr_grab <radius> <band>` and
+  `gambit_vr_carry_offset x y z` dial both.
+- **What a runtime reports for a squeeze is not standard.** Both shipped profiles bind
+  `/input/squeeze/value`, which on an Index is a force reading a comfortable grab does not take
+  anywhere near 1. `gambit_vr_grip_press` sets the threshold (release is 60% of it) and the state
+  board prints the raw value beside it.
+
 - **The piece is only ever moved, never re-parented or re-authored.** Every drop puts it back on
   the square it was lifted from first, and the FEN diff decides where it really goes — so a
   refused drop costs nothing and a legal one slides from the square it actually left. Its home is
@@ -368,9 +390,9 @@ picker exactly as a click does, and a premove carry queens silently for the same
   hopping out of mid-air.
 - **A frame the grip owns is not a click frame.** Otherwise a trigger pulled mid-carry selects the
   square under the piece being carried.
-- Grip has hysteresis (press 0.6, release 0.4) and releases only when NEITHER hand holds: a piece
-  passed from one hand to the other is one carry, and a grip that drifts around one threshold
-  mid-board would drop the piece and pick it up again.
+- **The carry belongs to the hand that closed first** and passes to the other if that one is still
+  holding when it opens: one gesture, two hands. The grip has hysteresis for the same reason —
+  one that drifted around a single threshold mid-board would drop the piece and pick it up again.
 
 ### The board pick comes off the controller
 
