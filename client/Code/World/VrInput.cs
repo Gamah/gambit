@@ -121,8 +121,8 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	/// gesture, two hands, which is what a player does without thinking about it.</para>
 	///
 	/// <para>The grip pose rather than the aim pose because this is where the hand IS:
-	/// <see cref="ChessBoardView"/> measures reach with it and holds the piece in it, and the
-	/// citizen's own wrist is driven to the same pose (<c>LobbyPlayer.ApplyVrHandIk</c>).</para></summary>
+	/// <see cref="ChessBoardView"/> measures reach with it and holds the carried piece in
+	/// it.</para></summary>
 	public static Transform? GripTransform { get; private set; }
 
 	Hand? _gripHand;
@@ -316,11 +316,6 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 	/// ordered so the first failure is the one named.</summary>
 	public static string HandsVerdict()
 	{
-		// The citizen's own arms are the hands now, and the boxes below are hidden on purpose:
-		// every check after this one is about a box, so reporting on them would answer a
-		// question nobody is asking.
-		if ( LobbyPlayer.VrHandsDriving && !VrHands.ForceGrips ) return "HANDS: IK";
-
 		if ( VrHands.Instance == null ) return "HANDS: NONE";
 		if ( VrHands.LastError != null ) return "HANDS: THREW";
 		if ( !VrHands.Built ) return "HANDS: NO OBJS";
@@ -341,8 +336,7 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 		{
 			HandsVerdict(),
 			$"vr={Sandbox.Game.IsRunningInVR} rig={VrRig.Active} system={Current != null}"
-				+ $" hud={VrHud.Instance != null} body={VrRig.ShowBody}"
-				+ $" ikhands={LobbyPlayer.VrHandsDriving}",
+				+ $" hud={VrHud.Instance != null}",
 			VrHands.Status(),
 			VrTableUi.Status(),
 		};
@@ -378,7 +372,6 @@ public sealed class VrInput : GameObjectSystem<VrInput>
 				+ $" +{GripPressDelta:0.00}/-{GripReleaseDelta:0.00}"
 				+ $"  held={GripHeld} panel={VrHands.PointerHovering}",
 			ChessBoardView.CarryStatus(),
-			LobbyPlayer.Local?.VrIkStatus() ?? "ik: no player",
 			$"yaw head {Input.VR.Head.Rotation.Angles().yaw:0}  body {VrRig.BodyYaw:0}",
 			$"move {Fmt( Input.AnalogMove )}  look {Input.AnalogLook.yaw:0.00}",
 			$"head {Fmt( Input.VR.Head.Position )}  anchor {Fmt( Input.VR.Anchor.Position )}",

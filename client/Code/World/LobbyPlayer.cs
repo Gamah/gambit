@@ -1097,14 +1097,15 @@ public sealed class LobbyPlayer : Component
 		// Hide the WHOLE body when the kill switch reverts to the pre-M13 world (TerrySeated
 		// false), OR when 2D play mode suppresses seated bodies (M16) — they are noise under the
 		// top-down camera. Same mechanism, same Disengage undo, for both.
-		// In VR the body is TRIMMED like any other seated body rather than hidden: the seat's eye
-		// anchor puts the headset where this citizen's own head is, so the arms on the table are
-		// in the right place to be ours — and they are the hands that play the moves
-		// (ApplyVrHandIk). The trim is what makes that bearable: the head bodygroup and our
-		// cosmetics come out of our OWN camera, so we are not looking at the inside of our own
-		// skull. gambit_vr_body goes back to hiding the lot.
+		// In VR the whole body comes off, not just the trim: a seated citizen's arm is ~24 units
+		// and its own back rank is 17–33 away, so an arm driven to where a real controller is
+		// hits the engine's two-bone clamp and pins the wrist to a sphere around the shoulder
+		// (see ApplyHandPose's clamp). Until the room's scale is checked against a real eye
+		// height there is no honest first-person body here, and the rig's own primitives are the
+		// hands instead (docs/vr.md). Local only — a remote player still sees our citizen
+		// sitting at the table.
 		bool hideAll = ChessRing.Instance is { TerrySeated: false } || SeatedTerry.ForceHidden
-			|| ( VrRig.Active && !VrRig.ShowBody );
+			|| VrRig.Active;
 		if ( hideAll )
 		{
 			HideEveryRenderer();
@@ -1363,13 +1364,7 @@ public sealed class LobbyPlayer : Component
 
 		// M14: the hands are a SPIKE, off by default — the shipped world is bodies only. The
 		// bodies stay on their own gate (TerrySeated) above; this is the independent hand switch.
-		//
-		// A VR player's own hands are their CONTROLLERS' (ApplyVrHandIk). The gesture machine
-		// still runs for every other seat on this client — it is what makes the opponent's hand
-		// move the opponent's piece — but ours would be a second authority on the one arm, and
-		// the gesture would fight the controller frame by frame. Same cleanup either way: the
-		// bone overrides and the rise have no owner but this method.
-		if ( !SeatedHandSpikes.HandsOn || ( VrHandsDriving && this == Local ) )
+		if ( !SeatedHandSpikes.HandsOn )
 		{
 			if ( _reachSpikeApplied ) { r.ClearPhysicsBones(); _reachSpikeApplied = false; }
 			ReleaseRiseIk( r );
@@ -2360,121 +2355,6 @@ public sealed class LobbyPlayer : Component
 	public Vector3? LastHandIkTarget { get; private set; }
 
 	/// <summary>
-	/// <summary>The local player's own hands are the controllers', so the gesture machine must
-	/// keep off their arms (see <see cref="ApplyHandPose"/>). False the moment nothing is driving
-	/// them — a headset taken off mid-session, a controller that stopped reporting — so the arm
-	/// goes back to the animator rather than freezing where the controller last was.</summary>
-	public static bool VrHandsDriving { get; private set; }
-
-	/// <summary>
-	/// Put this citizen's own hands where the VR controllers are.
-	///
-	/// <para><b>The same <c>SetIk</c> the gesture machine uses, with the pose coming off a device
-	/// instead of out of <see cref="Gambit.Chess.TerryPose"/></b> — world transforms, converted
-	/// internally, and no GameObjects to spawn or clean up. Neither hand is special here: chess
-	/// is played one-handed, but a player with two controllers has two hands, and the one holding
-	/// nothing is as visible as the one that is.</para>
-	///
-	/// <para><b>No reach clamp.</b> The gesture path clamps its ask inside the arm the solver
-	/// actually has, because a square across the board is past where an arm goes and an
-	/// unreachable IK target straightens the arm and drags the shoulder after it. A controller is
-	/// held by a real arm at a real distance from a real shoulder: clamping it would peel the
-	/// hand off the device the player is looking at, which is worse than a stretched arm.</para>
-	///
-	/// <para><b>Fingers are ONE blend for both hands, and handedness stays RIGHT.</b>
-	/// <c>holdtype_pose_hand</c> is a single parameter and <c>holdtype_handedness</c> an enum of
-	/// 2H/RH/LH, so a grip in either hand closes both — the graph has no per-hand finger channel
-	/// (citizen.vanmgrph). RH is pinned because it is the branch every working seated gesture has
-	/// been written under; 2H is a different pose branch and may not carry the IK chains at all,
-	/// which looks exactly like IK that was never asked for.</para>
-	/// </summary>
-	public void ApplyVrHandIk( Transform? left, Transform? right )
-	{
-		var r = _bodyRenderer;
-		if ( r == null ) return;
-
-		VrHandsDriving = left != null || right != null;
-		if ( !VrHandsDriving )
-		{
-			ClearVrHandIk();
-			return;
-		}
-
-		if ( left is { } l ) r.SetIk( IkLeft, l );
-		else r.ClearIk( IkLeft );
-
-		if ( right is { } rt ) r.SetIk( IkRight, rt );
-		else r.ClearIk( IkRight );
-
-		_vrAskLeft = left?.Position;
-		_vrAskRight = right?.Position;
-
-		// RIGHT, whatever is tracked. holdtype_handedness picks which arm the holdtype pose
-		// shapes, and RH is the one value this graph is known to honour an IK chain under — it
-		// is what every working seated gesture has ever been written with. 2H is a different
-		// branch of the same pose, and a branch the IK may not be wired through at all; a hand
-		// that follows nothing looks exactly like IK that was never asked for.
-		r.Set( "holdtype", HoldTypeItem );
-		r.Set( "holdtype_handedness", HandednessRight );
-		r.Set( "holdtype_pose_hand", VrInput.GripHeld
-			? Gambit.Chess.TerryPose.FingersGrasping
-			: Gambit.Chess.TerryPose.FingersHovering );
-	}
-
-	/// <summary>Where VR last asked each wrist to be, in world space. Kept for
-	/// <see cref="VrIkStatus"/> and nothing else.</summary>
-	Vector3? _vrAskLeft;
-	Vector3? _vrAskRight;
-
-	/// <summary>How far each wrist ended up from where VR asked it to go, for the VR state board.
-	///
-	/// <para><b>This is the line that tells an unwired IK chain from an untracked controller.</b>
-	/// A citizen whose arms sit in the seated idle pose while the controllers move looks the same
-	/// either way from inside a headset: nothing follows. A small error means the chain took the
-	/// ask; an error in the tens of units means the write went nowhere, and the chain name or the
-	/// holdtype branch is why. <c>gambit_terry</c> prints the same comparison for the gesture
-	/// hand, and this is that instrument pointed at the VR one.</para>
-	///
-	/// <para>The bone read is the ANIMATION pose, which is what the gesture path measures too;
-	/// the number is a magnitude to read, not a residual to tune against.</para></summary>
-	public string VrIkStatus()
-	{
-		if ( !VrHandsDriving ) return "ik: not driving";
-
-		var r = _bodyRenderer;
-		if ( r == null ) return "ik: no body";
-
-		return $"ik L {BoneMiss( r, "hand_L", _vrAskLeft )} R {BoneMiss( r, "hand_R", _vrAskRight )}";
-	}
-
-	static string BoneMiss( SkinnedModelRenderer r, string bone, Vector3? ask )
-	{
-		if ( ask is not { } target ) return "none";
-		if ( r.Model?.Bones.GetBone( bone ) is not { } b ) return "NO BONE";
-		if ( !r.TryGetBoneTransformAnimation( b, out var tx ) ) return "NO POSE";
-
-		return $"{( tx.Position - target ).Length:0.0}";
-	}
-
-	/// <summary>Give the arms back to the animator. Idempotent, and safe when VR never drove
-	/// them: <see cref="ClearHandPose"/>'s own warning applies — <c>holdtype</c> has no owner but
-	/// us, so an arm released by IK alone keeps its carrying shape forever.</summary>
-	public void ClearVrHandIk()
-	{
-		VrHandsDriving = false;
-		_vrAskLeft = null;
-		_vrAskRight = null;
-
-		var r = _bodyRenderer;
-		if ( r == null ) return;
-
-		r.ClearIk( IkLeft );
-		r.ClearIk( IkRight );
-		r.Set( "holdtype", HoldTypeNone );
-		r.Set( "holdtype_handedness", HandednessRight );
-		r.Set( "holdtype_pose_hand", 0f );
-	}
-
 	/// Let the arm go — the whole arm, not just the IK.
 	///
 	/// <para><b>Releasing only the IK is not enough, and this is why a player who stood up
